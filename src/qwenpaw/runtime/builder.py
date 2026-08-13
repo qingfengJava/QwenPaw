@@ -348,6 +348,9 @@ class AgentBuilder:
             governor,
         )
         extra_tools.extend(
+            self._collect_kb_tools(agent_id, request_context, governor),
+        )
+        extra_tools.extend(
             self._collect_visual_compression_tools(
                 agent_config,
                 agent_id,
@@ -805,6 +808,37 @@ class AgentBuilder:
             request_context=request_context,
             governor=governor,
         )
+
+    @staticmethod
+    def _collect_kb_tools(
+        agent_id: str,
+        request_context: dict[str, Any],
+        governor: Any = None,
+    ) -> list[Any]:
+        """M4-5: register ``kb_search`` when any knowledge base exists.
+
+        The tool filters bases by the caller's ACL at call time, so the
+        registration itself is unconditional once the deployment has at
+        least one base; without any base the tool would only ever answer
+        "(no accessible knowledge bases)", so it is omitted entirely.
+        """
+        try:
+            from ..app.kb.service import get_kb_service
+            from ..app.kb.tool import make_kb_search_tool
+
+            if not get_kb_service().list_kbs():
+                return []
+            return [
+                AgentBuilder._wrap_tool(
+                    make_kb_search_tool(),
+                    agent_id,
+                    request_context,
+                    governor,
+                ),
+            ]
+        except Exception:  # pylint: disable=broad-except
+            _logger.debug("kb tool registration skipped", exc_info=True)
+            return []
 
     @staticmethod
     def _collect_visual_compression_tools(

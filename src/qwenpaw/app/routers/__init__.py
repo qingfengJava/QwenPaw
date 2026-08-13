@@ -36,6 +36,7 @@ from .pawapps import router as pawapps_router
 from .harnesses import router as harnesses_router
 from .checkpoints import router as checkpoints_router
 from .admin import router as admin_router
+from .kb import router as kb_router
 
 router = APIRouter()
 
@@ -72,6 +73,7 @@ router.include_router(pawapps_router)
 router.include_router(harnesses_router)
 router.include_router(checkpoints_router)
 router.include_router(admin_router)
+router.include_router(kb_router)
 
 
 def create_agent_scoped_router() -> APIRouter:

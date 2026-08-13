@@ -31,6 +31,7 @@ PERM_ADMIN_USERS = "admin:users"
 PERM_ADMIN_ROLES = "admin:roles"
 PERM_ADMIN_AUDIT = "admin:audit"
 PERM_ADMIN_QUOTAS = "admin:quotas"
+PERM_ADMIN_KB = "admin:kb"
 
 #: Wildcard permission held by platform admins.
 PERM_ALL = "*"
