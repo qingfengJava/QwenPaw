@@ -467,6 +467,7 @@ class Runtime:
             getattr(request, "user_id", None),
             fallback=request.session_id,
             source="runtime._normalize",
+            channel=getattr(request, "channel", None) or None,
         )
         return request
 

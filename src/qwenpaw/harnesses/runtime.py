@@ -257,6 +257,8 @@ class HarnessRuntime:
                         getattr(request, "user_id", "") or None,
                         fallback=session_id,
                         source="harness.clear",
+                        channel=str(getattr(request, "channel", "") or "")
+                        or None,
                     ),
                     channel=str(getattr(request, "channel", "") or ""),
                 )

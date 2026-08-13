@@ -436,7 +436,7 @@ class DingTalkChannel(BaseChannel):
                 # For group, use suffix-only key (shared across users).
                 if conversation_type == "dm":
                     webhook_key = self.to_handle_from_target(
-                        user_id=getattr(request, "user_id", None) or "",
+                        user_id=self._routing_user_id(request),
                         session_id=session_id,
                     )
                 else:
@@ -2113,9 +2113,27 @@ class DingTalkChannel(BaseChannel):
         """No-op: handler ACKs immediately, no futures to unblock."""
         del key, payload, existing_items
 
+    @staticmethod
+    def _routing_user_id(request: Any) -> str:
+        """Return the user id used in webhook keys / routing handles.
+
+        M1: when a bound system owner is present in the request context,
+        keys are built from it so cron dispatch (whose target user_id is
+        the owner captured at job creation) and reply sending address
+        the same stored webhook entry.  Without a binding the raw sender
+        id is returned, preserving legacy behavior.
+        """
+        try:
+            from ...agent_context import get_current_user_id
+
+            owner = get_current_user_id()
+        except Exception:  # pylint: disable=broad-except
+            owner = None
+        return owner or getattr(request, "user_id", "") or ""
+
     def _resolve_to_handle(self, request: Any) -> str:
         """Resolve target handle from request using session-aware logic."""
-        user_id = getattr(request, "user_id", "") or ""
+        user_id = self._routing_user_id(request)
         sid = getattr(request, "session_id", "") or ""
         if sid:
             return self.to_handle_from_target(

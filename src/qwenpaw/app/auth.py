@@ -365,17 +365,15 @@ def is_auth_enabled() -> bool:
 # Multi-user store bridge (M1)
 # ---------------------------------------------------------------------------
 
-_user_store: Optional["UserStore"] = None
-
-
 def _get_user_store() -> "UserStore":
-    """Return the process-wide user store (lazy singleton)."""
-    global _user_store  # noqa: PLW0603
-    if _user_store is None:
-        from .users.store import UserStore
+    """Return the process-wide user store (lazy singleton).
 
-        _user_store = UserStore()
-    return _user_store
+    Delegates to :func:`qwenpaw.app.users.store.get_user_store` so auth
+    and channel identity resolution share one cached instance.
+    """
+    from .users.store import get_user_store
+
+    return get_user_store()
 
 
 def _ensure_users_migrated() -> None:

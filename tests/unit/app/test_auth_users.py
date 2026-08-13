@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 import qwenpaw.app.auth as auth
+import qwenpaw.app.users.store as users_store
 from qwenpaw.app.users.models import (
     PASSWORD_ALGO_ARGON2,
     PASSWORD_ALGO_SHA256,
@@ -26,7 +27,7 @@ def isolated_auth(
     auth_file = tmp_path / "secret" / "auth.json"
     store = UserStore(tmp_path / "secret" / "users.json")
     monkeypatch.setattr(auth, "AUTH_FILE", auth_file)
-    monkeypatch.setattr(auth, "_user_store", store)
+    monkeypatch.setattr(users_store, "_default_store", store)
     return store
 
 

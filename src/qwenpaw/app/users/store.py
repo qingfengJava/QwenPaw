@@ -87,6 +87,12 @@ class UserStore:
         # Flipped when the file exists but cannot be read/parsed: every
         # verification then fails closed.
         self._load_error = False
+        # mtime-keyed read cache: channel identity resolution and token
+        # verification hit ``_load`` on hot paths, so re-parse the file
+        # only when it actually changed on disk.
+        self._cache_valid = False
+        self._cache_key: Optional[int] = None
+        self._cache_data: Optional[UsersFile] = None
 
     @property
     def path(self) -> Path:
@@ -97,18 +103,40 @@ class UserStore:
     # ------------------------------------------------------------------
 
     def _load(self) -> UsersFile:
-        """Load ``users.json``; fail closed on read/parse errors."""
+        """Load ``users.json``; fail closed on read/parse errors.
+
+        Results are cached by ``st_mtime_ns`` so hot-path callers (auth
+        middleware, channel identity resolution) do not re-read and
+        re-parse the file on every call.  Writes through ``_save``
+        refresh the cache in-place.
+        """
+        try:
+            cache_key: Optional[int] = self._path.stat().st_mtime_ns
+        except OSError:
+            cache_key = None
+        if self._cache_valid and cache_key == self._cache_key:
+            # ``_cache_data`` is guaranteed non-None once the cache is
+            # marked valid.
+            return self._cache_data  # type: ignore[return-value]
+
         if not self._path.is_file():
             self._load_error = False
-            return UsersFile()
+            data = UsersFile()
+            self._cache_valid = True
+            self._cache_key, self._cache_data = cache_key, data
+            return data
         try:
             with open(self._path, "r", encoding="utf-8") as fh:
                 data = UsersFile.model_validate(json.load(fh))
             self._load_error = False
+            self._cache_valid = True
+            self._cache_key, self._cache_data = cache_key, data
             return data
         except (json.JSONDecodeError, OSError, ValueError) as exc:
             logger.error("Failed to load users file %s: %s", self._path, exc)
             self._load_error = True
+            # Do not cache failures: the next call retries the read so a
+            # transient error does not stick.
             return UsersFile()
 
     def _save(self, data: UsersFile) -> None:
@@ -122,6 +150,15 @@ class UserStore:
                 ensure_ascii=False,
             )
         _chmod_best_effort(self._path, 0o600)
+        # Refresh the read cache so subsequent ``_load`` calls in this
+        # process observe the write even when the filesystem timestamp
+        # granularity would hide it.
+        try:
+            self._cache_key = self._path.stat().st_mtime_ns
+        except OSError:
+            self._cache_key = None
+        self._cache_data = data
+        self._cache_valid = True
 
     # ------------------------------------------------------------------
     # queries
@@ -370,3 +407,19 @@ class UserStore:
             del data.identity_bindings[key]
             self._save(data)
         return True
+
+
+_default_store: Optional[UserStore] = None
+
+
+def get_user_store() -> UserStore:
+    """Return the process-wide default user store (lazy singleton).
+
+    Channel drivers resolve external sender identities through this
+    shared instance; ``qwenpaw.app.auth`` delegates to it as well so
+    identity bindings and account data always come from one cache.
+    """
+    global _default_store  # noqa: PLW0603
+    if _default_store is None:
+        _default_store = UserStore()
+    return _default_store

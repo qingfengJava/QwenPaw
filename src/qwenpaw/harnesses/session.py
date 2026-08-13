@@ -76,12 +76,13 @@ class HarnessSessionBridge:
         from ..app.agent_context import resolve_trusted_user_id
 
         session_id = str(getattr(request, "session_id", "") or "default")
+        channel = str(getattr(request, "channel", "") or "")
         user_id = resolve_trusted_user_id(
             getattr(request, "user_id", "") or None,
             fallback=session_id,
             source="harness.append_turn",
+            channel=channel or None,
         )
-        channel = str(getattr(request, "channel", "") or "")
         persisted = await self._session.get_session_state_dict(
             session_id,
             user_id,

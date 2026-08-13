@@ -288,6 +288,21 @@ def set_current_user_id(user_id: Optional[str]) -> None:
     _current_user_id.set(user_id)
 
 
+@contextmanager
+def scoped_user_id(user_id: Optional[str]) -> Iterator[None]:
+    """Temporarily expose one user identity through the request context.
+
+    Channel consume loops run inside long-lived queue worker tasks, so
+    the identity must be reset when the message finishes; tasks spawned
+    while the scope is active (e.g. TaskTracker runs) inherit it.
+    """
+    token = _current_user_id.set(user_id)
+    try:
+        yield
+    finally:
+        _current_user_id.reset(token)
+
+
 def get_current_user_id() -> Optional[str]:
     """Get current user ID from context."""
     return _current_user_id.get()
@@ -298,6 +313,7 @@ def resolve_trusted_user_id(
     *,
     fallback: str,
     source: str = "",
+    channel: Optional[str] = None,
 ) -> str:
     """Resolve the effective user id for one request (M1 shadow mode).
 
@@ -307,19 +323,42 @@ def resolve_trusted_user_id(
     ``user_id``; a mismatch is logged but the request proceeds with the
     trusted identity.  Without an authenticated identity the legacy
     fallback chain (``claimed`` → ``fallback``) applies unchanged.
+
+    A claimed id that resolves to the trusted identity through the
+    channel's ``identity_bindings`` entry is a legitimate mapping, not a
+    spoofing attempt, so it does not raise a warning.
     """
     auth_user = get_current_user_id()
     if auth_user:
         if claimed and claimed != auth_user and claimed != fallback:
-            logger.warning(
-                "Ignoring client-claimed user_id %r%s; using "
-                "authenticated user %r",
-                claimed,
-                f" from {source}" if source else "",
-                auth_user,
-            )
+            if not _is_bound_identity(channel, claimed, auth_user):
+                logger.warning(
+                    "Ignoring client-claimed user_id %r%s; using "
+                    "authenticated user %r",
+                    claimed,
+                    f" from {source}" if source else "",
+                    auth_user,
+                )
         return auth_user
     return claimed or fallback
+
+
+def _is_bound_identity(
+    channel: Optional[str],
+    claimed: str,
+    auth_user: str,
+) -> bool:
+    """True when ``claimed`` is bound to ``auth_user`` for ``channel``."""
+    if not channel or not claimed:
+        return False
+    try:
+        from .users.store import get_user_store
+
+        return (
+            get_user_store().resolve_identity(channel, claimed) == auth_user
+        )
+    except Exception:  # pylint: disable=broad-except
+        return False
 
 
 def set_current_channel(channel: Optional[str]) -> None:

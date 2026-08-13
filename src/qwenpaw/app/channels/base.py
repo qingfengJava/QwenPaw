@@ -538,9 +538,15 @@ class BaseChannel(ABC):
         user_id = getattr(request, "user_id", "") or ""
         channel_id = getattr(request, "channel", self.channel)
 
+        # M1: chats belong to the *system owner* (the scoped identity),
+        # not the raw channel sender id, so session files, chat specs and
+        # memory vaults are keyed consistently per account.
+        from ..agent_context import get_current_user_id
+
+        owner_id = get_current_user_id() or user_id
         chat = await self._workspace.chat_manager.get_or_create_chat(
             session_id,
-            user_id,
+            owner_id,
             channel_id,
             name=self._extract_chat_name(payload),
         )
@@ -1270,6 +1276,32 @@ class BaseChannel(ABC):
         """
         return f"{self.channel}:{sender_id}"
 
+    @staticmethod
+    def _resolve_owner_user_id(channel_id: str, sender_id: str) -> str:
+        """Map a channel-reported sender to the bound system account (M1).
+
+        Session file names, chat ownership and memory vaults are keyed by
+        the *system* username, never by the raw external sender id.  When
+        no identity binding exists the external id is returned unchanged,
+        preserving single-user and unmapped-channel behavior (unbound
+        senders keep flowing through the access-control pending flow).
+        """
+        if not channel_id or not sender_id:
+            return sender_id
+        try:
+            from ..users.store import get_user_store
+
+            resolved = get_user_store().resolve_identity(channel_id, sender_id)
+        except Exception:  # pylint: disable=broad-except
+            logger.debug(
+                "identity resolution failed for %s:%s",
+                channel_id,
+                sender_id[:20],
+                exc_info=True,
+            )
+            return sender_id
+        return resolved or sender_id
+
     def build_agent_request_from_user_content(
         self,
         channel_id: str,
@@ -1299,6 +1331,12 @@ class BaseChannel(ABC):
             role=Role.USER,
             content=content_parts,
         )
+        # NOTE: ``user_id`` intentionally stays the channel-reported
+        # sender id — reply routing (``get_to_handle_from_request``) and
+        # webhook keys are built from it.  Ownership is layered on top
+        # via the request-scoped identity context (see
+        # ``_scoped_request_identity``), which runtime normalization
+        # applies before any state is persisted.
         return AgentRequest(
             session_id=session_id,
             user_id=sender_id,
@@ -1495,43 +1533,71 @@ class BaseChannel(ABC):
             )
             if not is_control:
                 request = self._payload_to_request(payload)
-                await self._consume_with_tracker(request, payload)
+                with self._scoped_request_identity(request):
+                    await self._consume_with_tracker(request, payload)
                 return
 
         request = self._payload_to_request(payload)
-        # Build meta from payload so session_webhook is never lost when
-        # request has no channel_meta (e.g. AgentRequest schema has no field).
-        if isinstance(payload, dict):
-            meta_from_payload = dict(payload.get("meta") or {})
-            if payload.get("session_webhook"):
-                meta_from_payload["session_webhook"] = payload[
-                    "session_webhook"
-                ]
-            # Always attach so channel _before_consume_process can use it
-            # (e.g. Feishu save receive_id for cron send).
-            setattr(request, "channel_meta", meta_from_payload)
-        to_handle = self.get_to_handle_from_request(request)
-        await self._before_consume_process(request)
-        # Prefer meta built from payload so session_webhook is present when
-        # request.channel_meta is missing (AgentRequest may not have the attr).
-        if isinstance(payload, dict):
-            send_meta = dict(payload.get("meta") or {})
-            if payload.get("session_webhook"):
-                send_meta["session_webhook"] = payload["session_webhook"]
-        else:
-            send_meta = getattr(request, "channel_meta", None) or {}
-        bot_prefix = getattr(self, "bot_prefix", None) or getattr(
-            self,
-            "_bot_prefix",
-            "",
+        with self._scoped_request_identity(request):
+            # Build meta from payload so session_webhook is never lost when
+            # request has no channel_meta (e.g. AgentRequest schema has no
+            # field).
+            if isinstance(payload, dict):
+                meta_from_payload = dict(payload.get("meta") or {})
+                if payload.get("session_webhook"):
+                    meta_from_payload["session_webhook"] = payload[
+                        "session_webhook"
+                    ]
+                # Always attach so channel _before_consume_process can use
+                # it (e.g. Feishu save receive_id for cron send).
+                setattr(request, "channel_meta", meta_from_payload)
+            to_handle = self.get_to_handle_from_request(request)
+            await self._before_consume_process(request)
+            # Prefer meta built from payload so session_webhook is present
+            # when request.channel_meta is missing (AgentRequest may not
+            # have the attr).
+            if isinstance(payload, dict):
+                send_meta = dict(payload.get("meta") or {})
+                if payload.get("session_webhook"):
+                    send_meta["session_webhook"] = payload["session_webhook"]
+            else:
+                send_meta = getattr(request, "channel_meta", None) or {}
+            bot_prefix = getattr(self, "bot_prefix", None) or getattr(
+                self,
+                "_bot_prefix",
+                "",
+            )
+            if bot_prefix and "bot_prefix" not in send_meta:
+                send_meta = {**send_meta, "bot_prefix": bot_prefix}
+            logger.info(
+                "base _consume_one_request: send_meta has_session_webhook=%s",
+                bool((send_meta or {}).get("session_webhook")),
+            )
+            await self._run_process_loop(request, to_handle, send_meta)
+
+    @staticmethod
+    def _scoped_request_identity(request: "AgentRequest"):
+        """Expose the request's resolved owner through the task context (M1).
+
+        Channel consume loops run inside long-lived queue worker tasks;
+        scoping (rather than plainly setting) prevents one sender's
+        identity from leaking into the next message handled by the same
+        worker.  Tasks spawned inside the scope (TaskTracker runs)
+        inherit the identity, which is what runtime normalization and
+        per-user memory views rely on.
+
+        The scoped value is the *system owner*: the channel-reported
+        sender id mapped through ``identity_bindings``.  Without a
+        binding it equals the raw sender id, so unmapped deployments see
+        no behavior change.
+        """
+        from ..agent_context import scoped_user_id
+
+        channel_id = getattr(request, "channel", "") or ""
+        sender_id = getattr(request, "user_id", "") or ""
+        return scoped_user_id(
+            BaseChannel._resolve_owner_user_id(channel_id, sender_id),
         )
-        if bot_prefix and "bot_prefix" not in send_meta:
-            send_meta = {**send_meta, "bot_prefix": bot_prefix}
-        logger.info(
-            "base _consume_one_request: send_meta has_session_webhook=%s",
-            bool((send_meta or {}).get("session_webhook")),
-        )
-        await self._run_process_loop(request, to_handle, send_meta)
 
     async def _run_process_loop(
         self,
