@@ -154,6 +154,11 @@ class ChatManager:
             spec = ChatSpec(
                 session_id=session_id,
                 user_id=user_id,
+                # M1: the creating identity becomes the owner.  On the HTTP
+                # path user_id is already the verified account; channel
+                # drivers pass their platform sender id until identity
+                # bindings take over.
+                owner_id=user_id,
                 channel=channel,
                 name=name,
                 source=resolved_source,

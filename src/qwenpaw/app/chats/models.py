@@ -39,6 +39,14 @@ class ChatSpec(BaseModel):
         description="Session identifier (channel:user_id format)",
     )
     user_id: str = Field(..., description="User identifier")
+    owner_id: Optional[str] = Field(
+        default=None,
+        description=(
+            "Enterprise account (username) owning this chat (M1). "
+            "None marks a pre-M1 row whose effective owner falls back "
+            "to user_id."
+        ),
+    )
     channel: str = Field(default=DEFAULT_CHANNEL, description="Channel name")
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
@@ -74,6 +82,15 @@ class ChatSpec(BaseModel):
     def archived(self) -> bool:
         """Whether this chat is archived (derived from archived_at)."""
         return self.archived_at is not None
+
+    @property
+    def effective_owner(self) -> str:
+        """Owning account: owner_id, else legacy user_id, else "system".
+
+        Deliberately NOT serialized (plain property): the API contract
+        stays unchanged while ownership enforcement uses this internally.
+        """
+        return self.owner_id or self.user_id or "system"
 
 
 class ChatUpdate(BaseModel):

@@ -84,6 +84,33 @@ class ProjectDirectoryUpdate(BaseModel):
     project_dir: str
 
 
+async def get_owned_chat(
+    chat_id: str,
+    request: Request,
+    mgr: ChatManager = Depends(get_chat_manager),
+) -> ChatSpec:
+    """Load one chat and enforce ownership for authenticated callers (M1).
+
+    Returns 404 (never 403) when the chat belongs to another account, so
+    the existence of other users' chats is never disclosed.  When auth is
+    disabled there is no authenticated identity and the check is skipped
+    (single-user semantics).
+    """
+    chat = await mgr.get_chat(chat_id)
+    if chat is None:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    authenticated_user = getattr(request.state, "user", None)
+    if authenticated_user and chat.effective_owner != authenticated_user:
+        logger.warning(
+            "User %r blocked from chat %s (owner %r)",
+            authenticated_user,
+            chat_id,
+            chat.effective_owner,
+        )
+        raise HTTPException(status_code=404, detail="Chat not found")
+    return chat
+
+
 async def _project_directory_response(chat: ChatSpec, workspace) -> dict:
     """Build the effective Session project directory response."""
     from ...config.config import load_agent_config
@@ -157,25 +184,32 @@ async def list_chats(
 @router.post("", response_model=ChatSpec)
 async def create_chat(
     request: ChatSpec,
+    http_request: Request,
     mgr: ChatManager = Depends(get_chat_manager),
 ):
     """Create a new chat.
 
-    Server generates chat_id (UUID) automatically.
+    Server generates chat_id (UUID) automatically.  When authentication
+    is enabled the chat is always owned by the verified caller — any
+    client-claimed ``user_id``/``owner_id`` is discarded (M1).
 
     Args:
         request: Chat creation request
+        http_request: FastAPI request (carries the verified identity)
         mgr: Chat manager dependency
 
     Returns:
         Created chat spec with UUID
     """
+    authenticated_user = getattr(http_request.state, "user", None)
+    effective_user = authenticated_user or request.user_id
     chat_id = str(uuid4())
     spec = ChatSpec(
         id=chat_id,
         name=request.name,
         session_id=request.session_id,
-        user_id=request.user_id,
+        user_id=effective_user,
+        owner_id=effective_user,
         channel=request.channel,
         meta=request.meta,
     )
@@ -185,10 +219,14 @@ async def create_chat(
 @router.post("/batch-delete", response_model=dict)
 async def batch_delete_chats(
     chat_ids: list[str],
+    http_request: Request,
     mgr: ChatManager = Depends(get_chat_manager),
     workspace=Depends(get_workspace),
 ):
     """Delete chats by chat IDs.
+
+    M1: authenticated callers can only delete their own chats; foreign
+    IDs are silently dropped from the batch.
 
     Args:
         chat_ids: List of chat IDs
@@ -198,6 +236,14 @@ async def batch_delete_chats(
 
     """
     chats = {chat.id: chat for chat in await mgr.list_chats(archived=None)}
+    authenticated_user = getattr(http_request.state, "user", None)
+    if authenticated_user:
+        chat_ids = [
+            cid
+            for cid in chat_ids
+            if (c := chats.get(cid)) is not None
+            and c.effective_owner == authenticated_user
+        ]
     deleted = await mgr.delete_chats(chat_ids=chat_ids)
     if deleted:
         await CHECKPOINT_RUNTIME.delete_session_checkpoints(
@@ -224,16 +270,38 @@ class BatchChatIds(BaseModel):
     )
 
 
+async def _owned_chat_ids(
+    chat_ids: list[str],
+    request: Request,
+    mgr: ChatManager,
+) -> list[str]:
+    """Drop IDs not owned by the authenticated caller (M1).
+
+    One list + in-memory membership check (no per-id queries).  When auth
+    is disabled the batch passes through unchanged.
+    """
+    authenticated_user = getattr(request.state, "user", None)
+    if not authenticated_user:
+        return chat_ids
+    owned_ids = {
+        c.id
+        for c in await mgr.list_chats(archived=None)
+        if c.effective_owner == authenticated_user
+    }
+    return [cid for cid in chat_ids if cid in owned_ids]
+
+
 @router.post("/actions/batch-archive", response_model=BatchArchiveResult)
 async def batch_archive_chats(
     payload: BatchChatIds,
+    http_request: Request,
     mgr: ChatManager = Depends(get_chat_manager),
     workspace=Depends(get_workspace),
 ):
     """Batch archive chats. Running chats are skipped."""
     tracker = workspace.task_tracker
     return await mgr.batch_archive(
-        chat_ids=payload.chat_ids,
+        chat_ids=await _owned_chat_ids(payload.chat_ids, http_request, mgr),
         get_status=tracker.get_status,
     )
 
@@ -241,10 +309,13 @@ async def batch_archive_chats(
 @router.post("/actions/batch-unarchive", response_model=BatchArchiveResult)
 async def batch_unarchive_chats(
     payload: BatchChatIds,
+    http_request: Request,
     mgr: ChatManager = Depends(get_chat_manager),
 ):
     """Batch unarchive chats."""
-    return await mgr.batch_unarchive(chat_ids=payload.chat_ids)
+    return await mgr.batch_unarchive(
+        chat_ids=await _owned_chat_ids(payload.chat_ids, http_request, mgr),
+    )
 
 
 @router.post("/{chat_id}/archive", response_model=ChatSpec)
@@ -252,6 +323,7 @@ async def archive_chat(
     chat_id: str,
     mgr: ChatManager = Depends(get_chat_manager),
     workspace=Depends(get_workspace),
+    _owned: ChatSpec = Depends(get_owned_chat),
 ):
     """Archive a single chat. Idempotent.
 
@@ -277,6 +349,7 @@ async def archive_chat(
 async def unarchive_chat(
     chat_id: str,
     mgr: ChatManager = Depends(get_chat_manager),
+    _owned: ChatSpec = Depends(get_owned_chat),
 ):
     """Unarchive a single chat. Idempotent."""
     result = await mgr.unarchive_chat(chat_id)
@@ -293,6 +366,7 @@ async def get_chat_project_dir(
     chat_id: str,
     mgr: ChatManager = Depends(get_chat_manager),
     workspace=Depends(get_workspace),
+    _owned: ChatSpec = Depends(get_owned_chat),
 ) -> dict:
     """Return the Session override and effective project directory."""
     chat = await mgr.get_chat(chat_id)
@@ -307,6 +381,7 @@ async def set_chat_project_dir(
     body: ProjectDirectoryUpdate,
     mgr: ChatManager = Depends(get_chat_manager),
     workspace=Depends(get_workspace),
+    _owned: ChatSpec = Depends(get_owned_chat),
 ) -> dict:
     """Persist a validated Session project directory override."""
 
@@ -334,6 +409,7 @@ async def clear_chat_project_dir(
     chat_id: str,
     mgr: ChatManager = Depends(get_chat_manager),
     workspace=Depends(get_workspace),
+    _owned: ChatSpec = Depends(get_owned_chat),
 ) -> dict:
     """Clear the override and inherit the Agent default project directory."""
     chat = await mgr.set_project_dir(chat_id, None)
@@ -351,14 +427,15 @@ async def get_chat(
     mgr: ChatManager = Depends(get_chat_manager),
     session: SafeJSONSession = Depends(get_session),
     workspace=Depends(get_workspace),
+    owned: ChatSpec = Depends(get_owned_chat),
 ):
     """Get detailed information about a specific chat by UUID.
 
     Args:
-        request: FastAPI request (for agent context)
         chat_id: Chat UUID
         mgr: Chat manager dependency
         session: SafeJSONSession dependency
+        owned: Ownership-checked chat (M1; 404 when foreign)
 
     Returns:
         ChatHistory with messages and status (idle/running)
@@ -366,12 +443,7 @@ async def get_chat(
     Raises:
         HTTPException: If chat not found (404)
     """
-    chat_spec = await mgr.get_chat(chat_id)
-    if not chat_spec:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Chat not found: {chat_id}",
-        )
+    chat_spec = owned
 
     state = await session.get_session_state_dict(
         chat_spec.session_id,
@@ -433,6 +505,7 @@ async def update_chat(
     chat_id: str,
     spec: ChatUpdate,
     mgr: ChatManager = Depends(get_chat_manager),
+    _owned: ChatSpec = Depends(get_owned_chat),
 ):
     """Update an existing chat.
 
@@ -461,6 +534,7 @@ async def delete_chat(
     chat_id: str,
     mgr: ChatManager = Depends(get_chat_manager),
     workspace=Depends(get_workspace),
+    _owned: ChatSpec = Depends(get_owned_chat),
 ):
     """Delete a chat by UUID.
 
@@ -477,7 +551,7 @@ async def delete_chat(
     Raises:
         HTTPException: If chat not found (404)
     """
-    chat = await mgr.get_chat(chat_id)
+    chat = _owned
     deleted = await mgr.delete_chats(chat_ids=[chat_id])
     if not deleted:
         raise HTTPException(
