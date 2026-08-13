@@ -142,7 +142,16 @@
     "debug": "调试",
     "plugins": "插件",
     "backups": "备份",
-    "pluginManager": "插件管理"
+    "pluginManager": "插件管理",
+    "admin": "平台管理",
+    "adminUsers": "用户",
+    "adminRoles": "角色",
+    "adminTeams": "团队",
+    "adminAgentGrants": "Agent 授权",
+    "adminModelGrants": "模型授权",
+    "adminQuotas": "配额",
+    "adminAudit": "审计日志",
+    "adminKnowledge": "知识库"
   },
   "os": {
     "console": "控制台",

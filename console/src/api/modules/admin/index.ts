@@ -1,0 +1,21 @@
+/**
+ * admin/index.ts — barrel for the M5 admin API client modules.
+ *
+ * These wrap the `/admin/*` router family (M4-6). Every endpoint enforces
+ * `require_perm` server-side; these clients only shape requests.
+ */
+export * from "./types";
+export { adminUsersApi } from "./users";
+export type { CreateUserBody, UpdateUserBody } from "./users";
+export { adminRolesApi } from "./roles";
+export type { RoleBody } from "./roles";
+export { adminTeamsApi } from "./teams";
+export type { TeamBody } from "./teams";
+export { adminGrantsApi } from "./grants";
+export type { GrantBody } from "./grants";
+export { adminQuotasApi } from "./quotas";
+export type { QuotaRuleBody, QuotaKey } from "./quotas";
+export { adminAuditApi } from "./audit";
+export type { AuditQuery } from "./audit";
+export { adminKbApi } from "./kb";
+export type { KbBody, IngestBody, IngestResult } from "./kb";

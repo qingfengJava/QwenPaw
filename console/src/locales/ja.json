@@ -90,7 +90,16 @@
     "plugins": "プラグイン",
     "acp": "ACP",
     "backups": "バックアップ",
-    "pluginManager": "プラグインマネージャー"
+    "pluginManager": "プラグインマネージャー",
+    "admin": "管理",
+    "adminUsers": "ユーザー",
+    "adminRoles": "ロール",
+    "adminTeams": "チーム",
+    "adminAgentGrants": "エージェント権限",
+    "adminModelGrants": "モデル権限",
+    "adminQuotas": "クォータ",
+    "adminAudit": "監査ログ",
+    "adminKnowledge": "ナレッジベース"
   },
   "os": {
     "console": "コンソール",

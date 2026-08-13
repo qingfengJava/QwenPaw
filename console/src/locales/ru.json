@@ -90,7 +90,16 @@
     "plugins": "Плагины",
     "acp": "ACP",
     "backups": "Резервные копии",
-    "pluginManager": "Менеджер плагинов"
+    "pluginManager": "Менеджер плагинов",
+    "admin": "Администрирование",
+    "adminUsers": "Пользователи",
+    "adminRoles": "Роли",
+    "adminTeams": "Команды",
+    "adminAgentGrants": "Доступ к агентам",
+    "adminModelGrants": "Доступ к моделям",
+    "adminQuotas": "Квоты",
+    "adminAudit": "Журнал аудита",
+    "adminKnowledge": "Базы знаний"
   },
   "os": {
     "console": "Консоль",

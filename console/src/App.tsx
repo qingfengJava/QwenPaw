@@ -44,7 +44,11 @@ const DesktopOSPage = lazy(() => import("./os/DesktopOS"));
 import { authApi } from "./api/modules/auth";
 import { languageApi } from "./api/modules/language";
 import { useUploadLimitStore } from "./stores/uploadLimitStore";
-import { getApiUrl, getApiToken, clearAuthToken } from "./api/config";
+import {
+  useAuthStore,
+  AUTH_DISABLED_IDENTITY,
+} from "./stores/authStore";
+import { getApiToken, clearAuthToken } from "./api/config";
 import CloseWindowPrompt from "./tauri/CloseWindowPrompt";
 import { isTauri } from "@tauri-apps/api/core";
 import { isDesktopTauriRuntime } from "./utils/openExternalLink";
@@ -93,6 +97,8 @@ function AuthGuard({
         const res = await authApi.getStatus();
         if (cancelled) return;
         if (!res.enabled) {
+          // Single-user deployment: keep every menu visible (pre-M5 behaviour).
+          useAuthStore.getState().setIdentity(AUTH_DISABLED_IDENTITY);
           setStatus("ok");
           return;
         }
@@ -102,24 +108,30 @@ function AuthGuard({
           return;
         }
         try {
-          const r = await fetch(getApiUrl("/auth/verify"), {
-            headers: { Authorization: `Bearer ${token}` },
-          });
+          const r = await authApi.verify(token);
           if (cancelled) return;
-          if (r.ok) {
-            setStatus("ok");
-          } else {
-            clearAuthToken();
-            setStatus("auth-required");
-          }
+          // Record identity for role-based menu/route filtering (M5).
+          // Missing role fields (older backend) degrade to non-admin.
+          useAuthStore.getState().setIdentity({
+            username: r.username ?? "",
+            role: r.role ?? "",
+            roles: Array.isArray(r.roles) ? r.roles : [],
+          });
+          setStatus("ok");
         } catch {
           if (!cancelled) {
             clearAuthToken();
+            useAuthStore.getState().clear();
             setStatus("auth-required");
           }
         }
       } catch {
-        if (!cancelled) setStatus("ok");
+        // Status probe failed (backend unreachable / dev mode): preserve the
+        // historical fail-open behaviour.
+        if (!cancelled) {
+          useAuthStore.getState().setIdentity(AUTH_DISABLED_IDENTITY);
+          setStatus("ok");
+        }
       }
     })();
     return () => {

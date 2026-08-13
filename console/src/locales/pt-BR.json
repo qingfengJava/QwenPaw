@@ -92,7 +92,16 @@
     "debug": "Depuracao",
     "plugins": "Plugins",
     "backups": "Backups",
-    "pluginManager": "Gerenciador de Plugins"
+    "pluginManager": "Gerenciador de Plugins",
+    "admin": "Administração",
+    "adminUsers": "Usuários",
+    "adminRoles": "Funções",
+    "adminTeams": "Equipes",
+    "adminAgentGrants": "Acesso a agentes",
+    "adminModelGrants": "Acesso a modelos",
+    "adminQuotas": "Cotas",
+    "adminAudit": "Log de auditoria",
+    "adminKnowledge": "Bases de conhecimento"
   },
   "os": {
     "console": "Console",

@@ -48,12 +48,34 @@ import {
 import { GitBranch } from "lucide-react";
 import i18next from "i18next";
 import { Files } from "lucide-react";
+import {
+  BookOpen,
+  Bot,
+  Gauge,
+  KeyRound,
+  ScrollText,
+  ShieldCheck,
+  Users,
+  UsersRound,
+} from "lucide-react";
 import { menuRegistry } from "../../plugins/registry/store";
 import type { MenuItem } from "../../plugins/registry/types";
+import {
+  useAuthStore,
+  selectIsAdmin,
+} from "../../stores/authStore";
 
 /** Translate a nav key. Falls back to defaultValue when i18n hasn't loaded. */
 const navLabel = (key: string, defaultValue?: string) => (): string =>
   i18next.t(key, defaultValue ?? key);
+
+/**
+ * Admin menu visibility (M5): display-layer role filtering. The value is
+ * read at render time; AuthGuard populates the identity before MainLayout
+ * mounts, so the first Sidebar render already reflects the caller's role.
+ * Enforcement stays server-side (`require_perm`).
+ */
+const adminOnly = (): boolean => selectIsAdmin(useAuthStore.getState());
 
 export const BUILTIN_MENU: MenuItem[] = [
   // ── Agent-scoped (Sidebar Menu #1) ───────────────────────────────────────
@@ -307,6 +329,96 @@ export const BUILTIN_MENU: MenuItem[] = [
     icon: SparkPluginLine,
     route: "core.plugin-manager",
     order: 110,
+  },
+
+  // ── Admin (Sidebar Menu #2, admin-only display filtering; M5) ──────────
+  {
+    id: "core.admin-group",
+    location: "primary.settings",
+    label: navLabel("nav.admin", "Administration"),
+    isGroup: true,
+    order: 20,
+    visible: adminOnly,
+  },
+  {
+    id: "core.admin-users",
+    location: "primary.settings",
+    parentId: "core.admin-group",
+    label: navLabel("nav.adminUsers", "Users"),
+    icon: Users,
+    route: "core.admin-users",
+    order: 10,
+    visible: adminOnly,
+  },
+  {
+    id: "core.admin-roles",
+    location: "primary.settings",
+    parentId: "core.admin-group",
+    label: navLabel("nav.adminRoles", "Roles"),
+    icon: ShieldCheck,
+    route: "core.admin-roles",
+    order: 20,
+    visible: adminOnly,
+  },
+  {
+    id: "core.admin-teams",
+    location: "primary.settings",
+    parentId: "core.admin-group",
+    label: navLabel("nav.adminTeams", "Teams"),
+    icon: UsersRound,
+    route: "core.admin-teams",
+    order: 30,
+    visible: adminOnly,
+  },
+  {
+    id: "core.admin-agent-grants",
+    location: "primary.settings",
+    parentId: "core.admin-group",
+    label: navLabel("nav.adminAgentGrants", "Agent Access"),
+    icon: Bot,
+    route: "core.admin-agent-grants",
+    order: 40,
+    visible: adminOnly,
+  },
+  {
+    id: "core.admin-model-grants",
+    location: "primary.settings",
+    parentId: "core.admin-group",
+    label: navLabel("nav.adminModelGrants", "Model Access"),
+    icon: KeyRound,
+    route: "core.admin-model-grants",
+    order: 50,
+    visible: adminOnly,
+  },
+  {
+    id: "core.admin-quotas",
+    location: "primary.settings",
+    parentId: "core.admin-group",
+    label: navLabel("nav.adminQuotas", "Quotas"),
+    icon: Gauge,
+    route: "core.admin-quotas",
+    order: 60,
+    visible: adminOnly,
+  },
+  {
+    id: "core.admin-audit",
+    location: "primary.settings",
+    parentId: "core.admin-group",
+    label: navLabel("nav.adminAudit", "Audit Log"),
+    icon: ScrollText,
+    route: "core.admin-audit",
+    order: 70,
+    visible: adminOnly,
+  },
+  {
+    id: "core.admin-knowledge",
+    location: "primary.settings",
+    parentId: "core.admin-group",
+    label: navLabel("nav.adminKnowledge", "Knowledge Bases"),
+    icon: BookOpen,
+    route: "core.admin-knowledge",
+    order: 80,
+    visible: adminOnly,
   },
 ];
 

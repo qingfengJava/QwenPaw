@@ -92,7 +92,16 @@
     "debug": "Debug",
     "plugins": "Plugin",
     "pluginManager": "Manajer Plugin",
-    "backups": "Cadangan"
+    "backups": "Cadangan",
+    "admin": "Administrasi",
+    "adminUsers": "Pengguna",
+    "adminRoles": "Peran",
+    "adminTeams": "Tim",
+    "adminAgentGrants": "Akses Agen",
+    "adminModelGrants": "Akses Model",
+    "adminQuotas": "Kuota",
+    "adminAudit": "Log Audit",
+    "adminKnowledge": "Basis Pengetahuan"
   },
   "os": {
     "console": "Konsol",

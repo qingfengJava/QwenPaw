@@ -16,6 +16,7 @@ import { Suspense } from "react";
 import { Navigate } from "react-router-dom";
 import { lazyImportWithRetry } from "../../utils/lazyWithRetry";
 import { routeRegistry } from "../../plugins/registry/store";
+import { withRequireAdmin } from "../../components/RequireAdmin";
 import type { Route } from "../../plugins/registry/types";
 
 // Eager pages
@@ -55,6 +56,22 @@ const PluginManagerPage = lazyImportWithRetry(
 );
 const AppCenterPage = lazyImportWithRetry("../../pages/AppCenter");
 const FilesPage = lazyImportWithRetry("../../pages/Files");
+
+// Admin pages (M5): flat .tsx files, wrapped in the RoleGuard at registration.
+const AdminUsersPage = lazyImportWithRetry("../../pages/Admin/Users.tsx");
+const AdminRolesPage = lazyImportWithRetry("../../pages/Admin/Roles.tsx");
+const AdminTeamsPage = lazyImportWithRetry("../../pages/Admin/Teams.tsx");
+const AdminAgentGrantsPage = lazyImportWithRetry(
+  "../../pages/Admin/AgentGrants.tsx",
+);
+const AdminModelGrantsPage = lazyImportWithRetry(
+  "../../pages/Admin/ModelGrants.tsx",
+);
+const AdminQuotasPage = lazyImportWithRetry("../../pages/Admin/Quotas.tsx");
+const AdminAuditPage = lazyImportWithRetry("../../pages/Admin/Audit.tsx");
+const AdminKnowledgePage = lazyImportWithRetry(
+  "../../pages/Admin/Knowledge.tsx",
+);
 
 /**
  * "/" always lands on the canonical Chat workspace.
@@ -123,6 +140,48 @@ export const BUILTIN_ROUTES: Route[] = [
     id: "core.app-center.embed",
     path: "/apps/:appId",
     component: AppCenterPage,
+  },
+
+  // ── /admin/* branch (M5): RoleGuard bounces non-admin identities. ──────
+  {
+    id: "core.admin-users",
+    path: "/admin/users",
+    component: withRequireAdmin(AdminUsersPage),
+  },
+  {
+    id: "core.admin-roles",
+    path: "/admin/roles",
+    component: withRequireAdmin(AdminRolesPage),
+  },
+  {
+    id: "core.admin-teams",
+    path: "/admin/teams",
+    component: withRequireAdmin(AdminTeamsPage),
+  },
+  {
+    id: "core.admin-agent-grants",
+    path: "/admin/agent-grants",
+    component: withRequireAdmin(AdminAgentGrantsPage),
+  },
+  {
+    id: "core.admin-model-grants",
+    path: "/admin/model-grants",
+    component: withRequireAdmin(AdminModelGrantsPage),
+  },
+  {
+    id: "core.admin-quotas",
+    path: "/admin/quotas",
+    component: withRequireAdmin(AdminQuotasPage),
+  },
+  {
+    id: "core.admin-audit",
+    path: "/admin/audit",
+    component: withRequireAdmin(AdminAuditPage),
+  },
+  {
+    id: "core.admin-knowledge",
+    path: "/admin/knowledge",
+    component: withRequireAdmin(AdminKnowledgePage),
   },
 ];
 

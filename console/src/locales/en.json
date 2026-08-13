@@ -142,7 +142,16 @@
     "debug": "Debug",
     "plugins": "Plugins",
     "backups": "Backups",
-    "pluginManager": "Plugin Manager"
+    "pluginManager": "Plugin Manager",
+    "admin": "Administration",
+    "adminUsers": "Users",
+    "adminRoles": "Roles",
+    "adminTeams": "Teams",
+    "adminAgentGrants": "Agent Access",
+    "adminModelGrants": "Model Access",
+    "adminQuotas": "Quotas",
+    "adminAudit": "Audit Log",
+    "adminKnowledge": "Knowledge Bases"
   },
   "os": {
     "console": "Console",

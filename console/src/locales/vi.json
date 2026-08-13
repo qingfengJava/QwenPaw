@@ -94,7 +94,16 @@
     "debug": "Gỡ lỗi",
     "plugins": "Plugin",
     "backups": "Sao lưu",
-    "pluginManager": "Quản lý Plugin"
+    "pluginManager": "Quản lý Plugin",
+    "admin": "Quản trị",
+    "adminUsers": "Người dùng",
+    "adminRoles": "Vai trò",
+    "adminTeams": "Nhóm",
+    "adminAgentGrants": "Quyền Agent",
+    "adminModelGrants": "Quyền mô hình",
+    "adminQuotas": "Hạn ngạch",
+    "adminAudit": "Nhật ký kiểm toán",
+    "adminKnowledge": "Kho tri thức"
   },
   "os": {
     "console": "Bảng điều khiển",
