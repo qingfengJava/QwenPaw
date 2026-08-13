@@ -47,10 +47,32 @@ class ChatManager:
         """
         self._repo = repo
         self._on_session_closed = on_session_closed
-        self._lock = asyncio.Lock()
+        # M1: the former single global lock serialized every user's writes
+        # behind each other.  Now:
+        # - pure reads (list/get/count) take no lock at all — the repo's
+        #   atomic write means a reader always sees a complete file;
+        # - read-modify-write sequences (upsert/patch/delete/archive) take
+        #   ``_write_lock`` because the JSON single-file backend rewrites
+        #   the whole document, so cross-owner writes must stay mutually
+        #   exclusive until the M2 PostgreSQL backend makes row-level
+        #   transactions the concurrency mechanism;
+        # - ``get_or_create_chat`` additionally takes a per-owner decision
+        #   lock so concurrent first messages of one session create exactly
+        #   one chat without serializing different owners' lookups.
+        # Lock order is always owner-lock -> write-lock.
+        self._locks: dict[str, asyncio.Lock] = {}
+        self._write_lock = asyncio.Lock()
         logger.debug(
             f"ChatManager created with repo path: {repo.path}",
         )
+
+    def _owner_lock(self, owner: str) -> asyncio.Lock:
+        """Return the decision lock for one owner (created on demand)."""
+        lock = self._locks.get(owner)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[owner] = lock
+        return lock
 
     def set_on_session_closed(
         self,
@@ -79,17 +101,16 @@ class ChatManager:
         Returns:
             List of chat specifications
         """
-        async with self._lock:
-            logger.debug(
-                f"list_chats: repo path={self._repo.path}, "
-                f"filters: user_id={user_id}, channel={channel}, "
-                f"archived={archived}",
-            )
-            return await self._repo.filter_chats(
-                user_id=user_id,
-                channel=channel,
-                archived=archived,
-            )
+        logger.debug(
+            f"list_chats: repo path={self._repo.path}, "
+            f"filters: user_id={user_id}, channel={channel}, "
+            f"archived={archived}",
+        )
+        return await self._repo.filter_chats(
+            user_id=user_id,
+            channel=channel,
+            archived=archived,
+        )
 
     async def get_chat(self, chat_id: str) -> Optional[ChatSpec]:
         """Get chat spec by chat_id (UUID).
@@ -100,8 +121,7 @@ class ChatManager:
         Returns:
             Chat spec or None if not found
         """
-        async with self._lock:
-            return await self._repo.get_chat(chat_id)
+        return await self._repo.get_chat(chat_id)
 
     async def get_or_create_chat(
         self,
@@ -124,7 +144,7 @@ class ChatManager:
         Returns:
             Chat specification (existing or newly created)
         """
-        async with self._lock:
+        async with self._owner_lock(user_id):
             # Try to find existing by session_id
             logger.debug(
                 f"get_or_create_chat: Searching for existing chat: "
@@ -164,8 +184,10 @@ class ChatManager:
                 source=resolved_source,
             )
             logger.debug(f"get_or_create_chat: created spec={spec.id}")
-            # Call internal create without lock (already locked)
-            await self._repo.upsert_chat(spec)
+            # The JSON backend rewrites the whole file, so the upsert
+            # itself runs under the global write lock.
+            async with self._write_lock:
+                await self._repo.upsert_chat(spec)
             logger.info(
                 f"Auto-registered new chat: {spec.id} -> {session_id}",
             )
@@ -180,7 +202,7 @@ class ChatManager:
         Returns:
             Chat spec
         """
-        async with self._lock:
+        async with self._write_lock:
             await self._repo.upsert_chat(spec)
             return spec
 
@@ -190,7 +212,7 @@ class ChatManager:
         patch: ChatUpdate,
     ) -> Optional[ChatSpec]:
         """Merge a partial update into the latest persisted chat spec."""
-        async with self._lock:
+        async with self._write_lock:
             return await self._patch_locked(chat_id, patch)
 
     async def patch_chat_if_name_matches(
@@ -210,7 +232,7 @@ class ChatManager:
         Returns the updated spec on success, ``None`` if the chat does
         not exist or its name no longer matches.
         """
-        async with self._lock:
+        async with self._write_lock:
             existing = await self._repo.get_chat(chat_id)
             if existing is None or existing.name != expected_name:
                 return None
@@ -223,7 +245,7 @@ class ChatManager:
         *,
         existing: Optional[ChatSpec] = None,
     ) -> Optional[ChatSpec]:
-        """Internal patch helper. Caller must hold ``self._lock``."""
+        """Internal patch helper. Caller must hold ``self._write_lock``."""
         if existing is None:
             existing = await self._repo.get_chat(chat_id)
             if existing is None:
@@ -248,7 +270,7 @@ class ChatManager:
         project_dir: str | None,
     ) -> Optional[ChatSpec]:
         """Set or clear the controlled Session project directory override."""
-        async with self._lock:
+        async with self._write_lock:
             existing = await self._repo.get_chat(chat_id)
             if existing is None:
                 return None
@@ -279,7 +301,7 @@ class ChatManager:
             True if deleted, False if not found
         """
         session_ids: set[str] = set()
-        async with self._lock:
+        async with self._write_lock:
             for chat_id in chat_ids:
                 chat = await self._repo.get_chat(chat_id)
                 if chat is not None:
@@ -316,7 +338,7 @@ class ChatManager:
             ValueError: If the chat is currently running (in_progress)
         """
         archived: ChatSpec | None
-        async with self._lock:
+        async with self._write_lock:
             existing = await self._repo.get_chat(chat_id)
             if existing is None:
                 return None
@@ -356,7 +378,7 @@ class ChatManager:
         Returns:
             Updated ChatSpec, or None if not found
         """
-        async with self._lock:
+        async with self._write_lock:
             existing = await self._repo.get_chat(chat_id)
             if existing is None:
                 return None
@@ -385,7 +407,7 @@ class ChatManager:
         """
         result = BatchArchiveResult()
         session_ids: set[str] = set()
-        async with self._lock:
+        async with self._write_lock:
             for chat_id in chat_ids:
                 existing = await self._repo.get_chat(chat_id)
                 if existing is None:
@@ -436,7 +458,7 @@ class ChatManager:
             BatchArchiveResult with succeeded and failed lists
         """
         result = BatchArchiveResult()
-        async with self._lock:
+        async with self._write_lock:
             for chat_id in chat_ids:
                 existing = await self._repo.get_chat(chat_id)
                 if existing is None:
@@ -474,12 +496,11 @@ class ChatManager:
         Returns:
             Number of matching chats
         """
-        async with self._lock:
-            chats = await self._repo.filter_chats(
-                user_id=user_id,
-                channel=channel,
-            )
-            return len(chats)
+        chats = await self._repo.filter_chats(
+            user_id=user_id,
+            channel=channel,
+        )
+        return len(chats)
 
     async def get_chat_id_by_session(
         self,
@@ -507,32 +528,31 @@ class ChatManager:
             Returns most recently updated chat if multiple matches exist.
             O(N) scan of active chats. Future optimization: add index.
         """
-        async with self._lock:
-            chats = await self._repo.filter_chats(channel=channel)
-            # Single pass: match session_id, and when a user_id is given,
-            # also require it to match. An empty/None user_id means "no user
-            # filter" (backward-compatible).
-            matching_chats = [
-                chat
-                for chat in chats
-                if chat.session_id == session_id
-                and (not user_id or chat.user_id == user_id)
-            ]
+        chats = await self._repo.filter_chats(channel=channel)
+        # Single pass: match session_id, and when a user_id is given,
+        # also require it to match. An empty/None user_id means "no user
+        # filter" (backward-compatible).
+        matching_chats = [
+            chat
+            for chat in chats
+            if chat.session_id == session_id
+            and (not user_id or chat.user_id == user_id)
+        ]
 
-            if not matching_chats:
-                logger.debug(
-                    f"No chat found for session={session_id[:30]} "
-                    f"channel={channel} user_id={user_id}",
-                )
-                return None
-
-            most_recent = max(matching_chats, key=lambda c: c.updated_at)
+        if not matching_chats:
             logger.debug(
-                f"Found chat_id={most_recent.id} "
-                f"for session={session_id[:30]} user_id={user_id} "
-                f"(from {len(matching_chats)} matches)",
+                f"No chat found for session={session_id[:30]} "
+                f"channel={channel} user_id={user_id}",
             )
-            return most_recent.id
+            return None
+
+        most_recent = max(matching_chats, key=lambda c: c.updated_at)
+        logger.debug(
+            f"Found chat_id={most_recent.id} "
+            f"for session={session_id[:30]} user_id={user_id} "
+            f"(from {len(matching_chats)} matches)",
+        )
+        return most_recent.id
 
     async def touch_chat_by_session(
         self,
@@ -545,7 +565,7 @@ class ChatManager:
         This is the message-path variant of :meth:`touch_chat`. It avoids a
         separate session lookup followed by another read-modify-write cycle.
         """
-        async with self._lock:
+        async with self._write_lock:
             touched = await self._repo.touch_chat_by_session(
                 session_id=session_id,
                 channel=channel,

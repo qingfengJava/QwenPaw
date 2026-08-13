@@ -90,6 +90,7 @@ class ScrollContextManager:
         history: HistoryStore,
         session_id: str,
         agent_id: str | None = None,
+        owner_id: str | None = None,
         offloader: Any = None,
         compact_tool_result_max_bytes: int | None = None,
         tool_results_dir: str | None = None,
@@ -98,6 +99,9 @@ class ScrollContextManager:
         self._history = history
         self._session_id = session_id
         self._agent_id = agent_id
+        # M1: every persisted row carries the owning account so recall
+        # filters per user at the SQL level.
+        self._owner_id = owner_id
         # Kept for constructor compatibility with older integrations. Scroll
         # no longer folds live tool results at a fixed byte threshold; it
         # reclaims them only while the rebuilt context remains under pressure.
@@ -1596,6 +1600,7 @@ class ScrollContextManager:
                     seq = self._history.append(
                         session_id=self._session_id,
                         agent_id=self._agent_id,
+                        owner_id=self._owner_id,
                         entry=entry,
                         dedup_key=tcid,
                     )
@@ -1639,6 +1644,7 @@ class ScrollContextManager:
                     seq = self._history.append(
                         session_id=self._session_id,
                         agent_id=self._agent_id,
+                        owner_id=self._owner_id,
                         entry=entry,
                         dedup_key=mid,
                     )

@@ -127,12 +127,16 @@ def build_scroll_components(
     model: Any,
     session_id: str,
     agent_id: str | None = None,
+    owner_id: str | None = None,
     offloader: Any = None,
 ) -> ScrollComponents | None:
     """Construct the scroll strategy's components, or ``None`` if not selected.
 
     Returns ``None`` when ``strategy != "scroll"`` or no workspace is
     available, leaving the agent on its native context management.
+
+    ``owner_id`` (M1) tags every persisted history row and scopes every
+    recall query to the owning account.
     """
     try:
         lcc = agent_config.running.light_context_config
@@ -191,6 +195,7 @@ def build_scroll_components(
             history=history,
             session_id=session_id,
             agent_id=agent_id,
+            owner_id=owner_id,
             # Legacy dialog archive is opt-in; only hand the manager an
             # offloader when configured, so by default scroll writes nothing
             # to dialog/.
@@ -203,6 +208,7 @@ def build_scroll_components(
             history_db_path=str(history.path),
             session_id=session_id,
             agent_id=agent_id,
+            owner_id=owner_id,
             scratch_root=scratch_root,
             timeout_s=sc.repl_timeout_s,
             allow_unsandboxed=scroll_unsandboxed_allowed(sc),
@@ -215,6 +221,7 @@ def build_scroll_components(
             history_db_path=str(history.path),
             session_id=session_id,
             agent_id=agent_id,
+            owner_id=owner_id,
             loop_guard=recall_loop_guard,
             page_max_bytes=trc.pruning_recent_msg_max_bytes,
         )

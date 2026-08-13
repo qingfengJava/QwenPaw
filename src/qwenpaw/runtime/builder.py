@@ -876,6 +876,10 @@ class AgentBuilder:
             or getattr(ctx, "agent_id", None)
             or "default"
         )
+        # M1: tag history rows with the owning account. ``ctx.request`` has
+        # already been normalized, so its user_id is the trusted identity
+        # (authenticated user / bound channel owner), never a raw claim.
+        owner_id = getattr(getattr(ctx, "request", None), "user_id", None)
 
         from ..agents.context import build_scroll_components
 
@@ -889,6 +893,7 @@ class AgentBuilder:
             model=model,
             session_id=session_id,
             agent_id=agent_id,
+            owner_id=owner_id or None,
             offloader=offloader,
         )
 

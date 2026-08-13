@@ -90,6 +90,7 @@ def make_recall_history_python(
     history_db_path: str,
     session_id: str | None,
     agent_id: str | None = None,
+    owner_id: str | None = None,
     scratch_root: str,
     timeout_s: int = 300,
     allow_unsandboxed: bool = False,
@@ -127,6 +128,7 @@ def make_recall_history_python(
             f"    history_db_path={history_db_path!r},\n"
             f"    session_id={session_id!r},\n"
             f"    agent_id={agent_id!r},\n"
+            f"    owner_id={owner_id!r},\n"
             f"    scratch_db_path={scratch_db!r},\n"
             ")\n"
             # Safety net: ``ms`` is meant to be used directly, but models often

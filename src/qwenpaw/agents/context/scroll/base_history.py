@@ -43,12 +43,18 @@ class BaseHistoryStore(ABC):
         session_id: str,
         entry: LogEntry,
         agent_id: str | None = None,
+        owner_id: str | None = None,
         dedup_key: str | None = None,
     ) -> int:
         """Write-through one event. Returns the assigned ``seq`` watermark.
 
         A second append carrying the same ``(session_id, dedup_key)`` is a
         no-op returning the *existing* seq; a ``None`` key is never deduped.
+
+        ``owner_id`` tags the row with the owning account (M1); recall
+        queries filter on it so one user's history is never visible to
+        another.  Legacy rows written before M1 carry ``NULL`` until the
+        backfill script assigns them.
         """
         raise NotImplementedError
 
@@ -59,6 +65,7 @@ class BaseHistoryStore(ABC):
         session_id: str,
         entries: Sequence[tuple[LogEntry, str | None]],
         agent_id: str | None = None,
+        owner_id: str | None = None,
     ) -> int:
         """Append a group of events in one transaction.
 

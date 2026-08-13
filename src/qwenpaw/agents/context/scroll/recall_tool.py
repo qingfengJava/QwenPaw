@@ -797,6 +797,7 @@ def make_recall_history(
     history_db_path: str,
     session_id: str | None,
     agent_id: str | None = None,
+    owner_id: str | None = None,
     loop_guard: RecallLoopGuard | None = None,
     page_max_bytes: int = DEFAULT_MAX_BYTES,
 ):
@@ -806,6 +807,8 @@ def make_recall_history(
     read-only query, so the model never supplies code. A fresh
     :class:`MemorySpace` per call keeps the read-only ATTACH + authorizer
     setup identical to the REPL's and leaks no connection across calls.
+
+    ``owner_id`` (M1) scopes every query to the owning account's rows.
     """
 
     def _open_ms() -> Any:
@@ -818,6 +821,7 @@ def make_recall_history(
             history_db_path=history_db_path,
             session_id=session_id,
             agent_id=agent_id,
+            owner_id=owner_id,
         )
 
     def _run(  # pylint: disable=too-many-return-statements

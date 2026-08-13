@@ -39,6 +39,7 @@ _RECALL_TOOL_NAMES = (
 _INSERT_COLUMNS = (
     "session_id",
     "agent_id",
+    "owner_id",
     "kind",
     "role",
     "name",
@@ -152,6 +153,7 @@ class HistoryStore(BaseHistoryStore):
                     seq          INTEGER PRIMARY KEY AUTOINCREMENT,
                     session_id   TEXT NOT NULL,
                     agent_id     TEXT,
+                    owner_id     TEXT,
                     kind         TEXT NOT NULL,
                     role         TEXT,
                     name         TEXT,
@@ -167,6 +169,7 @@ class HistoryStore(BaseHistoryStore):
                 )
                 """,
             )
+            self._migrate_owner_column()
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS ch_session "
                 "ON conversation_history(session_id)",
@@ -174,6 +177,10 @@ class HistoryStore(BaseHistoryStore):
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS ch_agent "
                 "ON conversation_history(agent_id)",
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS ch_owner "
+                "ON conversation_history(owner_id)",
             )
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS ch_kind "
@@ -237,12 +244,38 @@ class HistoryStore(BaseHistoryStore):
                     exc,
                 )
 
+    def _migrate_owner_column(self) -> None:
+        """Add ``owner_id`` to a pre-M1 database (idempotent).
+
+        M1 tags every history row with the owning account so per-user
+        recall can filter at the SQL level.  ``CREATE TABLE IF NOT
+        EXISTS`` only helps fresh databases; an existing file keeps its
+        old schema unless the column is added here.  Legacy rows stay
+        ``NULL`` until the one-shot backfill script assigns them.
+        """
+        columns = {
+            row[1]
+            for row in self._conn.execute(
+                "PRAGMA table_info(conversation_history)",
+            )
+        }
+        if "owner_id" not in columns:
+            self._conn.execute(
+                "ALTER TABLE conversation_history ADD COLUMN owner_id TEXT",
+            )
+            logger.info(
+                "Migrated %s: added owner_id column (legacy rows stay NULL "
+                "until backfilled)",
+                self._path,
+            )
+
     # --- write path ----------------------------------------------------
 
     @staticmethod
     def _insert_row(
         session_id: str,
         agent_id: str | None,
+        owner_id: str | None,
         entry: LogEntry,
         dedup_key: str | None,
     ) -> tuple:
@@ -250,6 +283,7 @@ class HistoryStore(BaseHistoryStore):
         return (
             session_id,
             agent_id,
+            owner_id,
             entry.kind,
             entry.role,
             entry.name,
@@ -270,6 +304,7 @@ class HistoryStore(BaseHistoryStore):
         session_id: str,
         entry: LogEntry,
         agent_id: str | None = None,
+        owner_id: str | None = None,
         dedup_key: str | None = None,
     ) -> int:
         """Write-through one event. Returns the assigned ``seq`` (watermark).
@@ -281,7 +316,7 @@ class HistoryStore(BaseHistoryStore):
         restored window can re-link bookkeeping without duplicating rows. A
         ``None`` key is never deduped.
         """
-        row = self._insert_row(session_id, agent_id, entry, dedup_key)
+        row = self._insert_row(session_id, agent_id, owner_id, entry, dedup_key)
         placeholders = ", ".join("?" for _ in _INSERT_COLUMNS)
         with self._lock, self._conn:
             cur = self._conn.execute(
@@ -315,6 +350,7 @@ class HistoryStore(BaseHistoryStore):
         session_id: str,
         entries: Sequence[tuple[LogEntry, str | None]],
         agent_id: str | None = None,
+        owner_id: str | None = None,
     ) -> int:
         """Append a group of events in one transaction.
 
@@ -338,6 +374,7 @@ class HistoryStore(BaseHistoryStore):
                 row = self._insert_row(
                     session_id,
                     agent_id,
+                    owner_id,
                     entry,
                     dedup_key,
                 )

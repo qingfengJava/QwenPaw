@@ -345,6 +345,7 @@ class MemorySpace:
         history_db_path: str | Path | None = None,
         session_id: str | None = None,
         agent_id: str | None = None,
+        owner_id: str | None = None,
         row_cap: int = _DEFAULT_ROW_CAP,
         scratch_db_path: str | Path | None = None,
         saved_tool_scan_max_bytes: int = _SAVED_TOOL_SCAN_MAX_BYTES,
@@ -366,6 +367,11 @@ class MemorySpace:
         self._row_cap = row_cap
         self._session_id = session_id
         self._agent_id = agent_id
+        # M1: when set, every structured recall method constrains its SQL
+        # to this owner's rows, so one user's durable history is never
+        # visible to another.  ``None`` keeps legacy single-user behavior
+        # (no owner predicate at all).
+        self._owner_id = owner_id
         self._saved_tool_scan_max_bytes = max(0, saved_tool_scan_max_bytes)
         self._saved_tool_scan_max_seconds = max(
             0.0,
@@ -411,6 +417,23 @@ class MemorySpace:
         """The current agent id — scopes recall to this agent across
         sessions."""
         return self._agent_id
+
+    def _apply_owner_scope(
+        self,
+        where: list[str],
+        params: list,
+    ) -> None:
+        """Append the M1 owner predicate to a WHERE clause under build.
+
+        Rows written before the owner column existed stay ``NULL`` and
+        are therefore invisible to owner-scoped recall until the backfill
+        script assigns them — never widen this predicate with
+        ``OR owner_id IS NULL``, or every user could read unowned legacy
+        history.
+        """
+        if self._owner_id:
+            where.append("owner_id = ?")
+            params.append(self._owner_id)
 
     def sql_exec(self, sql: str, params: tuple | dict | None = None) -> int:
         """Run a non-SELECT statement. Returns rowcount or lastrowid.
@@ -469,6 +492,7 @@ class MemorySpace:
             # until startup reconciliation can claim the canonical session.
             where.append("(agent_id = ? OR agent_id IS NULL)")
             params.append(self._agent_id)
+        self._apply_owner_scope(where, params)
         return self._select(
             "SELECT seq, kind, role, name, content, headline, blocks, "
             "metadata, created_at "
@@ -495,6 +519,7 @@ class MemorySpace:
         if not all_agents and self._agent_id:
             where.append("agent_id = ?")
             params.append(self._agent_id)
+        self._apply_owner_scope(where, params)
         rows = self._select(
             "SELECT seq, kind, role, name, tool_input, tool_state, content, "
             "blocks, metadata, created_at "
@@ -523,6 +548,7 @@ class MemorySpace:
         if not all_agents and self._agent_id:
             where.append("agent_id = ?")
             params.append(self._agent_id)
+        self._apply_owner_scope(where, params)
         clause = ("WHERE " + " AND ".join(where) + " ") if where else ""
         params.append(int(limit))
         return self._select(
@@ -555,6 +581,7 @@ class MemorySpace:
         if not all_agents and self._agent_id:
             where.append("agent_id = ?")
             params.append(self._agent_id)
+        self._apply_owner_scope(where, params)
         params.append(int(limit))
         return self._select(
             "SELECT seq, kind, role, name, headline, content, created_at "
@@ -566,15 +593,22 @@ class MemorySpace:
     def agents(self, *, limit: int = 50) -> list[dict]:
         """List every agent that has written history in this workspace.
 
-        Always workspace-wide (a discovery/ops view), so it can surface other
-        agents — each row is an ``agent_id`` with its session and turn counts.
+        A discovery/ops view — each row is an ``agent_id`` with its
+        session and turn counts.  Owner-scoped when the space carries an
+        ``owner_id`` (M1), so one user cannot enumerate another user's
+        agent activity.
         """
+        where: list[str] = []
+        params: list = []
+        self._apply_owner_scope(where, params)
+        clause = ("WHERE " + " AND ".join(where) + " ") if where else ""
+        params.append(int(limit))
         return self._select(
             "SELECT agent_id, COUNT(DISTINCT session_id) AS sessions, "
             "COUNT(*) AS turns, MAX(created_at) AS last_at "
             "FROM hist.conversation_history "
-            "GROUP BY agent_id ORDER BY last_at DESC LIMIT ?",
-            (int(limit),),
+            f"{clause}GROUP BY agent_id ORDER BY last_at DESC LIMIT ?",
+            tuple(params),
         )
 
     def _scope_filters(
@@ -589,19 +623,24 @@ class MemorySpace:
         conversation / agent (AND-combined). With neither given, the default
         is this agent's own cross-session history; ``all_agents`` drops the
         filter to span every agent in the workspace.
+
+        The owner predicate (M1) is always ANDed on top when this space is
+        owner-scoped — even ``all_agents=True`` can never cross the owning
+        account boundary.
         """
+        pinned: list[tuple[str, str]] = []
         if session_id is not None or agent_id is not None:
-            pinned: list[tuple[str, str]] = []
             if session_id is not None:
                 pinned.append(("session_id", session_id))
             if agent_id is not None:
                 pinned.append(("agent_id", agent_id))
-            return pinned
-        if all_agents:
-            return []
-        if self._agent_id:
-            return [("agent_id", self._agent_id)]
-        return []
+        elif all_agents:
+            pass
+        elif self._agent_id:
+            pinned.append(("agent_id", self._agent_id))
+        if self._owner_id:
+            pinned.append(("owner_id", self._owner_id))
+        return pinned
 
     def _active_turn_floor(self) -> int | None:
         """Seq of the current session's latest real user message, or None.
@@ -640,6 +679,7 @@ class MemorySpace:
         if self._agent_id:
             where.append("agent_id = ?")
             params.append(self._agent_id)
+        self._apply_owner_scope(where, params)
         for tag in _SYNTHETIC_USER_TAGS:
             where.append("(metadata IS NULL OR metadata NOT LIKE ?)")
             params.append(f'%"{tag}"%')
@@ -1175,6 +1215,11 @@ class MemorySpace:
         agent_id = hit.get("agent_id")
         lineage = ["session_id = ?", "agent_id IS ?"]
         lineage_params: list = [session_id, agent_id]
+        # M1: a group-chat session can hold rows from several owners;
+        # never let turn expansion pull another owner's rows into context.
+        if self._owner_id:
+            lineage.append("owner_id IS ?")
+            lineage_params.append(self._owner_id)
         select_columns = (
             "seq, session_id, agent_id, kind, role, name, headline, "
             "content, blocks, tool_call_id, tool_input, tool_state, "
