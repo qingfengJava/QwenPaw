@@ -84,6 +84,8 @@ class ToolCallSpec:
         session_id: str,
         raw_params: dict[str, Any] | None = None,
         user_id: str = "",
+        user_roles: tuple[str, ...] = (),
+        user_teams: tuple[str, ...] = (),
     ) -> None:
         self.tool_name = tool_name
         self.target = target
@@ -91,6 +93,11 @@ class ToolCallSpec:
         self.session_id = session_id
         self.raw_params = raw_params or {}
         self.user_id = user_id
+        # M4: resolved RBAC context of the caller, used by subject-scoped
+        # rules ("role:employee" / "team:core").  Empty when RBAC data is
+        # unavailable — subject rules then simply never match (fail closed).
+        self.user_roles = tuple(user_roles)
+        self.user_teams = tuple(user_teams)
 
 
 @dataclass
@@ -124,9 +131,14 @@ class GovernanceRule:
     match: str  # "ToolName(pattern)"
     action: GovernanceAction = GovernanceAction.DENY
     reason: str = ""  # Rule description
-    grantee: str = "*"  # Authorized subject
+    grantee: str = "*"  # Authorized subject (agent_id; "*" matches all)
     duration: str = "permanent"  # "session" | "permanent"
     session_id: Optional[str] = None  # Chat session ID
+    # M4: optional subject scope — "user:<name>", "team:<name>" or
+    # "role:<name>".  Empty means the rule is global (pre-M4 behavior).
+    # A scoped rule only matches when the caller's ToolCallSpec carries a
+    # matching identity; rules with an unresolvable subject never match.
+    subject: str = ""
 
     def _globmatch(self, pattern: str, target: str) -> bool:
         """wcmatch globmatch with directory self-match support."""
@@ -145,6 +157,25 @@ class GovernanceRule:
             dir_pattern = pattern[:-3]
             if glob.globmatch(target, dir_pattern, flags=flags):
                 return True
+        return False
+
+    def _subject_matches(self, tc_spec: ToolCallSpec) -> bool:
+        """M4: evaluate the rule's optional subject scope.
+
+        ``user:<name>`` matches when the caller's trusted identity equals
+        ``<name>``; ``team:<name>`` / ``role:<name>`` consult the RBAC
+        context resolved onto the spec at build time.  Unknown subject
+        kinds and missing identity data never match (fail closed).
+        """
+        kind, sep, value = self.subject.partition(":")
+        if not sep or not value:
+            return False
+        if kind == "user":
+            return bool(tc_spec.user_id) and tc_spec.user_id == value
+        if kind == "team":
+            return value in getattr(tc_spec, "user_teams", ())
+        if kind == "role":
+            return value in getattr(tc_spec, "user_roles", ())
         return False
 
     def matches_tool_call(
@@ -168,6 +199,9 @@ class GovernanceRule:
         """
         # grantee check
         if self.grantee not in ("*", tc_spec.agent_id):
+            return False
+        # M4 subject check ("user:x" / "team:x" / "role:x"; empty = global).
+        if self.subject and not self._subject_matches(tc_spec):
             return False
         # session-level rule: bound to a specific chat session.
         # Fail-closed: if the rule is session-scoped, the request MUST carry

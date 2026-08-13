@@ -177,6 +177,10 @@ def _build_tc_spec(self: Any) -> ToolCallSpec:
             user_id = get_current_user_id() or ""
         except Exception:  # pylint: disable=broad-except
             user_id = ""
+    # M4: resolve the caller's RBAC roles/teams for subject-scoped rules.
+    # Resolution failures degrade to empty tuples, in which case subject
+    # rules simply never match (fail closed).
+    user_roles, user_teams = _resolve_user_groups(user_id)
     return ToolCallSpec(
         tool_name=tool_name,
         target=DEFAULT_REGISTRY.extract_target(
@@ -188,7 +192,29 @@ def _build_tc_spec(self: Any) -> ToolCallSpec:
         session_id=request_ctx.get("session_id", ""),
         raw_params=params,
         user_id=user_id,
+        user_roles=user_roles,
+        user_teams=user_teams,
     )
+
+
+def _resolve_user_groups(user_id: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Resolve one user's RBAC roles and teams (M4 policy context)."""
+    if not user_id:
+        return (), ()
+    try:
+        from ..app.rbac.store import get_rbac_store
+        from ..app.users.store import get_user_store
+
+        flat_role = ""
+        user = get_user_store().get_user(user_id)
+        if user is not None:
+            flat_role = user.role
+        store = get_rbac_store()
+        roles = tuple(store.roles_for_user(user_id, flat_role))
+        teams = tuple(store.teams_for_user(user_id))
+        return roles, teams
+    except Exception:  # pylint: disable=broad-except
+        return (), ()
 
 
 def _prepare_off_mode_sandbox(tool: Any, governor: Any) -> None:

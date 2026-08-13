@@ -42,7 +42,8 @@ CREATE TABLE IF NOT EXISTS audit_events (
     target        TEXT NOT NULL,
     decision      TEXT NOT NULL,
     reason        TEXT NOT NULL DEFAULT '',
-    extra         TEXT NOT NULL DEFAULT '{}'
+    extra         TEXT NOT NULL DEFAULT '{}',
+    actor_id      TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_events(ts);
 CREATE INDEX IF NOT EXISTS idx_audit_workspace ON audit_events(workspace_dir);
@@ -73,10 +74,17 @@ class AuditEvent:
     decision: str  # "allow" | "deny" | "ask" | "sandbox_fallback"
     reason: str = ""  # Additional explanation (e.g. violation cause)
     extra: dict = field(default_factory=dict)
+    # M4: the trusted user identity behind the call ("" when anonymous).
+    actor_id: str = ""
 
 
 def _event_from_row(row: sqlite3.Row) -> AuditEvent:
     """Construct an AuditEvent from a SQLite row."""
+    try:
+        actor_id = row["actor_id"]
+    except (KeyError, IndexError):
+        # Pre-M4 rows on an unmigrated database have no actor column.
+        actor_id = ""
     return AuditEvent(
         ts=row["ts"],
         workspace_dir=row["workspace_dir"],
@@ -87,6 +95,7 @@ def _event_from_row(row: sqlite3.Row) -> AuditEvent:
         decision=row["decision"],
         reason=row["reason"],
         extra=json.loads(row["extra"]),
+        actor_id=actor_id,
     )
 
 
@@ -221,8 +230,8 @@ class AuditLog:
                 conn.executemany(
                     "INSERT INTO audit_events "
                     "(ts, workspace_dir, agent_id, session_id, "
-                    "tool_name, target, decision, reason, extra) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "tool_name, target, decision, reason, extra, actor_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     rows,
                 )
                 conn.commit()
@@ -245,14 +254,25 @@ class AuditLog:
 
     @staticmethod
     def _migrate_legacy_schema(conn: sqlite3.Connection) -> None:
-        """Drop the table if its ``ts`` column was created as TEXT."""
+        """Drop the table if its ``ts`` column was created as TEXT.
+
+        M4: also backfills the ``actor_id`` column onto pre-M4 tables
+        (idempotent ALTER, following the same in-place pattern).
+        """
         cursor = conn.execute("PRAGMA table_info(audit_events)")
-        for row in cursor.fetchall():
+        rows = cursor.fetchall()
+        for row in rows:
             # row: (cid, name, type, notnull, dflt_value, pk)
             if row[1] == "ts" and row[2].upper() != "INTEGER":
                 conn.execute("DROP TABLE audit_events")
                 conn.commit()
-                break
+                return
+        if rows and not any(row[1] == "actor_id" for row in rows):
+            conn.execute(
+                "ALTER TABLE audit_events "
+                "ADD COLUMN actor_id TEXT NOT NULL DEFAULT ''",
+            )
+            conn.commit()
 
     def close(self) -> None:
         """Close the database connection and reset the singleton.
@@ -315,6 +335,9 @@ class AuditLog:
                     str(decision.action.value),
                     decision.reason,
                     "{}",
+                    # M4: who performed the call (trusted identity; may be
+                    # empty for pre-M4 paths or anonymous turns).
+                    getattr(tc_spec, "user_id", "") or "",
                 ),
             )
         except Exception as e:  # noqa: BLE001 - audit must never raise
