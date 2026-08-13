@@ -14,11 +14,12 @@ from pathlib import Path
 from typing import Any
 
 from ..types import LogEntry
+from .base_history import METADATA_UNSET, BaseHistoryStore
 
 logger = logging.getLogger(__name__)
 
 _BUSY_TIMEOUT_MS = 5000
-_UNSET = object()
+_UNSET = METADATA_UNSET
 
 # The recall tool's own turns — the model's ``ms.*`` Python source and its
 # printed stdout/stderr — are written through to history like any turn, but
@@ -53,7 +54,7 @@ _INSERT_COLUMNS = (
 )
 
 
-class HistoryStore:
+class HistoryStore(BaseHistoryStore):
     """Owns the *read-write* connection to the ``conversation_history`` file.
 
     Every event the agent appends is write-through-persisted here with full

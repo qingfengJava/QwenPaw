@@ -90,8 +90,8 @@ async def create_chat_service(ws: "Workspace", service):
         service: Existing ChatManager if reused, None if creating new
     """
     # pylint: disable=protected-access
+    from ..chats.factory import build_chat_repository
     from ..chats.manager import ChatManager
-    from ..chats.repo.json_repo import JsonChatRepository
     from ...browser.runtime.links import link_for
     from ...browser.execution.kernel import get_default_kernel_manager
     from ...browser.tool_entrypoint import derive_workspace_id
@@ -107,7 +107,7 @@ async def create_chat_service(ws: "Workspace", service):
         logger.info(f"Reusing ChatManager for {ws.agent_id}")
     else:
         chats_path = str(ws.workspace_dir / "chats.json")
-        chat_repo = JsonChatRepository(chats_path)
+        chat_repo = build_chat_repository(chats_path)
         cm = ChatManager(
             repo=chat_repo,
             on_session_closed=close_browser_session,

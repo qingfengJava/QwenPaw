@@ -21,6 +21,7 @@ from ...utils.io_utils import (
     write_json_atomic_async,
 )
 from ...utils.json_utils import safe_json_loads as _safe_json_loads
+from .session_store import BaseSessionStore
 
 logger = logging.getLogger(__name__)
 
@@ -202,7 +203,7 @@ def _rewrite_weixin_in_session_filename(name: str) -> str | None:
     return None
 
 
-class SafeJSONSession:
+class SafeJSONSession(BaseSessionStore):
     """Filename-safe JSON session store with async file I/O."""
 
     def __init__(

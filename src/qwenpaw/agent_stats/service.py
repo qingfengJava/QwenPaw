@@ -13,7 +13,7 @@ import aiofiles
 import aiofiles.os
 import orjson
 
-from ..app.chats.repo import JsonChatRepository
+from ..app.chats.factory import build_chat_repository
 from ..token_usage import get_token_usage_manager
 from ..token_usage.turn_usage import TURN_USAGE_META_KEY
 from .models import (
@@ -280,7 +280,7 @@ class AgentStatsService:
 
         if chats_file.exists():
             try:
-                repo = JsonChatRepository(chats_file)
+                repo = build_chat_repository(chats_file)
                 chats = await repo.list_chats()
                 for chat in chats:
                     if chat.created_at is None:

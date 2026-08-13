@@ -28,7 +28,8 @@ from .service_factories import (
 )
 from .local_workspace import QwenPawLocalWorkspace
 from ..task_tracker import TaskTracker
-from ..chats.session import SafeJSONSession
+from ..chats.factory import get_session_store_class
+from ..chats.session_store import BaseSessionStore
 from ..crons.manager import CronManager
 from ..crons.repo.json_repo import JsonJobRepository
 from ...config.config import load_agent_config
@@ -91,7 +92,7 @@ class Workspace:
 
     # Service access via properties (delegates to ServiceManager)
     @property
-    def session(self) -> Optional[SafeJSONSession]:
+    def session(self) -> Optional[BaseSessionStore]:
         """Get session instance from ServiceManager."""
         return self._service_manager.services.get("session")
 
@@ -367,7 +368,7 @@ class Workspace:
         sm.register(
             ServiceDescriptor(
                 name="session",
-                service_class=SafeJSONSession,
+                service_class=lambda ws: get_session_store_class(),
                 init_args=lambda ws: {
                     "save_dir": str(ws.workspace_dir / "sessions"),
                 },
