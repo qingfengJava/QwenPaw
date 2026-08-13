@@ -11,6 +11,7 @@ injects all dependencies into the agent constructor.
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable
 
@@ -23,6 +24,34 @@ if TYPE_CHECKING:
     )
 
 _logger = logging.getLogger(__name__)
+
+# M3-5: governor assembly cache.  ``build()`` runs per request, but the
+# ResourceGovernor depends only on (workspace_dir, coding_project_dir)
+# plus the on-disk policy — never on request/session state.  Starting a
+# governor reads *and rewrites* policy.yaml on every call, so each
+# request paid real disk I/O before this cache existed.  The cached
+# instance is validated against the policy file mtime; a change (e.g.
+# ``add_rule`` persisting an approved rule) rebuilds it on the next
+# request.  ``threading.Lock`` because ``_init_governor`` runs inside
+# ``run_sync_io`` worker threads.
+_governor_cache: dict[tuple[str, str], tuple[Any, float]] = {}
+_governor_cache_lock = threading.Lock()
+_GOVERNOR_CACHE_MAX = 32
+
+
+def _policy_mtime(governor: Any) -> float:
+    """Best-effort policy.yaml mtime; -1 when unreadable."""
+    try:
+        # pylint: disable=protected-access
+        return governor._policy_path.stat().st_mtime
+    except OSError:
+        return -1.0
+
+
+def reset_governor_cache() -> None:
+    """Drop all cached governors (tests / full config reloads)."""
+    with _governor_cache_lock:
+        _governor_cache.clear()
 
 
 def _descriptor_for(tool: Any) -> Any | None:
@@ -525,11 +554,31 @@ class AgentBuilder:
 
         Returns the started governor, or ``None`` when governance cannot
         be initialised (missing dependencies, unsupported platform, etc.).
+
+        M3-5: the started governor is cached by
+        ``(workspace_dir, coding_project_dir)`` and reused across requests
+        while the policy file mtime is unchanged.  ``ResourceGovernor``
+        evaluation is request-independent (per-call state lives in
+        ``ToolCallSpec``), and ``stop()`` is a no-op, so sharing the
+        instance is safe; ``add_rule`` rewrites policy.yaml, which bumps
+        the mtime and invalidates the entry on the next request.
         """
         if not workspace_dir:
             return None
         try:
             from ..governance import ResourceGovernor
+
+            cache_key = (
+                str(workspace_dir),
+                str(coding_project_dir) if coding_project_dir else "",
+            )
+            with _governor_cache_lock:
+                hit = _governor_cache.get(cache_key)
+            if hit is not None:
+                cached_governor, cached_mtime = hit
+                current_mtime = _policy_mtime(cached_governor)
+                if cached_mtime >= 0 and current_mtime == cached_mtime:
+                    return cached_governor
 
             governor = ResourceGovernor(
                 str(workspace_dir),
@@ -538,6 +587,13 @@ class AgentBuilder:
                 ),
             )
             governor.start()
+            mtime = _policy_mtime(governor)
+            if mtime >= 0:
+                with _governor_cache_lock:
+                    if len(_governor_cache) >= _GOVERNOR_CACHE_MAX:
+                        # Bounded map: drop the oldest inserted entry.
+                        _governor_cache.pop(next(iter(_governor_cache)))
+                    _governor_cache[cache_key] = (governor, mtime)
             _logger.info("Governance started: dir=%s", workspace_dir)
             return governor
         except Exception:
