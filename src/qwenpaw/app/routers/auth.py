@@ -2,6 +2,8 @@
 """Authentication API endpoints."""
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
@@ -20,6 +22,27 @@ from ..auth import (
 from ..rate_limiter import rate_limiter
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+logger = logging.getLogger(__name__)
+
+
+def _resolve_roles(username: str) -> "tuple[str, list[str]]":
+    """Best-effort flat + RBAC role resolution for ``/auth/verify``.
+
+    The roles power frontend role-based menu routing (M5) — display-layer
+    filtering only, enforcement stays server-side — so lookup failures
+    degrade to empty roles instead of failing the token check itself.
+    """
+    try:
+        from ..users.store import get_user_store
+        from ..rbac.store import get_rbac_store
+
+        user = get_user_store().get_user(username)
+        flat_role = user.role if user is not None else ""
+        return flat_role, get_rbac_store().roles_for_user(username, flat_role)
+    except Exception:  # pylint: disable=broad-except
+        logger.debug("verify: role resolution failed", exc_info=True)
+        return "", []
 
 
 class LoginRequest(BaseModel):
@@ -152,9 +175,20 @@ async def auth_status():
 
 @router.get("/verify")
 async def verify(request: Request):
-    """Verify that the caller's Bearer token is still valid."""
+    """Verify that the caller's Bearer token is still valid.
+
+    The response carries the caller's flat role and RBAC role names so the
+    console can route menus by role (M5).  With authentication disabled the
+    deployment is single-user: report the admin role so every menu stays
+    visible, matching the pre-RBAC behaviour.
+    """
     if not is_auth_enabled():
-        return {"valid": True, "username": ""}
+        return {
+            "valid": True,
+            "username": "",
+            "role": "admin",
+            "roles": ["platform_admin"],
+        }
 
     auth_header = request.headers.get("Authorization", "")
     token = auth_header[7:] if auth_header.startswith("Bearer ") else ""
@@ -168,7 +202,8 @@ async def verify(request: Request):
             detail="Invalid or expired token",
         )
 
-    return {"valid": True, "username": username}
+    role, roles = _resolve_roles(username)
+    return {"valid": True, "username": username, "role": role, "roles": roles}
 
 
 class UpdateProfileRequest(BaseModel):
