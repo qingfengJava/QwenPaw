@@ -41,8 +41,8 @@ from .continuation_summary import (
     redact_secrets,
     validate_summary_quality,
 )
+from .base_history import BaseHistoryStore
 from .eviction_index import EvictionIndex, Leaf, render_live_turn_banner
-from .history import HistoryStore
 from .serialize import msg_to_entries
 from ..types import ContextWindowUnfitError
 from ...utils.tool_message_utils import _remove_unpaired_tool_messages
@@ -87,7 +87,7 @@ class ScrollContextManager:
     def __init__(
         self,
         *,
-        history: HistoryStore,
+        history: BaseHistoryStore,
         session_id: str,
         agent_id: str | None = None,
         owner_id: str | None = None,

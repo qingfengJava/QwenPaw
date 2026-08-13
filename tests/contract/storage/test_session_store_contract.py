@@ -148,5 +148,41 @@ class TestSafeJSONSessionContract(SessionStoreContractTest):
         return SafeJSONSession(save_dir=self._save_dir)
 
 
-# Future backends (M2 milestone): add ``TestPgSessionStoreContract`` below —
-# every contract test above will automatically run against it.
+class TestPgSessionStoreContract(SessionStoreContractTest):
+    """PostgreSQL backend (M2). Runs only with QWENPAW_TEST_PG_DSN set."""
+
+    @pytest.fixture(autouse=True)
+    async def _storage(self, pg_engine) -> None:
+        self._engine = pg_engine
+
+    def create_instance(self) -> BaseSessionStore:
+        from qwenpaw.app.chats.pg_session_store import PgSessionStore
+
+        return PgSessionStore(engine=self._engine)
+
+
+class TestDualSessionStoreContract(SessionStoreContractTest):
+    """Dual backend (M2): JSON primary + PG shadow; reads hit primary."""
+
+    @pytest.fixture(autouse=True)
+    async def _storage(self, tmp_path: Path, pg_engine) -> None:
+        self._save_dir = str(tmp_path)
+        self._engine = pg_engine
+        self._instances: list = []
+
+    def create_instance(self) -> BaseSessionStore:
+        from qwenpaw.app.chats.dual_session_store import DualSessionStore
+        from qwenpaw.app.chats.pg_session_store import PgSessionStore
+
+        store = DualSessionStore(
+            primary=SafeJSONSession(save_dir=self._save_dir),
+            shadow=PgSessionStore(engine=self._engine),
+        )
+        self._instances.append(store)
+        return store
+
+    @pytest.fixture(autouse=True)
+    async def _drain(self):
+        yield
+        for store in getattr(self, "_instances", []):
+            await store.drain_shadow()

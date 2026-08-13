@@ -5,8 +5,8 @@
 
 - ``json`` (default): single-file JSON storage — current behavior.
 - ``dual``: JSON primary plus PostgreSQL shadow writes, for migration
-  rehearsal. Available from the M2 milestone.
-- ``pg``: PostgreSQL-backed storage. Available from the M2 milestone.
+  rehearsal (M2). Requires ``QWENPAW_PG_DSN`` and the ``qwenpaw[pg]`` extra.
+- ``pg``: PostgreSQL-backed storage (M2). Same requirements.
 
 The value is read on every call so tests and runtime reloads can switch
 backends by patching the environment.
@@ -17,7 +17,6 @@ import logging
 from pathlib import Path
 
 from ...constant import EnvVarLoader
-from ...exceptions import ConfigurationException
 from .repo.base import BaseChatRepository
 from .repo.json_repo import JsonChatRepository
 from .session import SafeJSONSession
@@ -54,16 +53,11 @@ def get_storage_backend() -> str:
     return backend
 
 
-def _unsupported_backend(backend: str) -> ConfigurationException:
-    """Build the error for backends scheduled for the M2 milestone."""
-    return ConfigurationException(
-        message=(
-            f"Storage backend '{backend}' requires the PostgreSQL storage "
-            f"module, which is not available in this build. "
-            f"Set {STORAGE_BACKEND_ENV}=json."
-        ),
-        config_key=STORAGE_BACKEND_ENV,
-    )
+def _pg_engine():
+    """Return the shared async engine, or a clear configuration error."""
+    from ...db.engine import create_pg_engine
+
+    return create_pg_engine()
 
 
 def build_chat_repository(path: str | Path) -> BaseChatRepository:
@@ -71,20 +65,39 @@ def build_chat_repository(path: str | Path) -> BaseChatRepository:
     backend = get_storage_backend()
     if backend == STORAGE_BACKEND_JSON:
         return JsonChatRepository(path)
-    raise _unsupported_backend(backend)
+    if backend == STORAGE_BACKEND_PG:
+        from .repo.pg_repo import PgChatRepository
+
+        return PgChatRepository(engine=_pg_engine())
+    # dual: JSON stays authoritative; PostgreSQL shadows every write.
+    from .repo.dual_repo import DualChatRepository
+    from .repo.pg_repo import PgChatRepository
+
+    return DualChatRepository(
+        primary=JsonChatRepository(path),
+        shadow=PgChatRepository(engine=_pg_engine()),
+    )
 
 
 def get_session_store_class() -> type[BaseSessionStore]:
     """Return the session store class for the configured backend.
 
     The workspace service manager resolves a non-type ``service_class``
-    callable to the actual class and instantiates it with ``init_args``;
-    returning the class here keeps that contract intact.
+    callable to the actual class and instantiates it with ``init_args``
+    (``save_dir``); every returned class accepts that keyword — the PG and
+    dual backends simply ignore it and resolve the engine from the
+    environment.
     """
     backend = get_storage_backend()
     if backend == STORAGE_BACKEND_JSON:
         return SafeJSONSession
-    raise _unsupported_backend(backend)
+    if backend == STORAGE_BACKEND_PG:
+        from .pg_session_store import PgSessionStore
+
+        return PgSessionStore
+    from .dual_session_store import DualSessionStore
+
+    return DualSessionStore
 
 
 def build_session_store(save_dir: str) -> BaseSessionStore:

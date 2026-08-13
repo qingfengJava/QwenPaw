@@ -596,11 +596,13 @@ class CommandHandler(ConversationCommandHandlerMixin):
         ):
             return None
         try:
-            from .context.scroll.history import HistoryStore
+            from .context.scroll.factory import build_history_store
             from .context.scroll.manager import ScrollContextManager
 
             sc = lcc.scroll_config
-            history = HistoryStore(Path(self._workspace_dir) / sc.db_filename)
+            history = build_history_store(
+                Path(self._workspace_dir) / sc.db_filename,
+            )
             # Must match the id normal turns persist under (the builder uses
             # ``ctx.session_id``), so these rows align with the live history.
             session_id = (

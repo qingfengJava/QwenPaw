@@ -7,6 +7,8 @@ volumes:
     name: qwenpaw-secrets
   qwenpaw-backups:
     name: qwenpaw-backups
+  qwenpaw-pgdata:
+    name: qwenpaw-pgdata
 
 services:
   qwenpaw:
@@ -20,7 +22,31 @@ services:
     #   - QWENPAW_AUTH_ENABLED=true
     #   - QWENPAW_AUTH_USERNAME=admin
     #   - QWENPAW_AUTH_PASSWORD=yourpassword
+    # PostgreSQL storage backend (M2): start the stack with
+    #   docker compose --profile pg up -d
+    # then point the app at it:
+    #   - QWENPAW_STORAGE_BACKEND=dual            # rehearsal: JSON primary
+    #   - QWENPAW_PG_DSN=postgresql+asyncpg://qwenpaw:CHANGE_ME@postgres:5432/qwenpaw
     volumes:
       - qwenpaw-data:/app/working
       - qwenpaw-secrets:/app/working.secret
       - qwenpaw-backups:/app/working.backups
+
+  # Optional PostgreSQL 16 for the dual/pg storage backends (M2). The
+  # "pg" profile keeps it out of the default single-container deployment.
+  postgres:
+    image: postgres:16
+    profiles: ["pg"]
+    container_name: qwenpaw-postgres
+    restart: always
+    environment:
+      - POSTGRES_USER=qwenpaw
+      - POSTGRES_PASSWORD=CHANGE_ME
+      - POSTGRES_DB=qwenpaw
+    volumes:
+      - qwenpaw-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U qwenpaw -d qwenpaw"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

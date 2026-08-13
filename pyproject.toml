@@ -135,6 +135,13 @@ test = [
 dev = [
     "pre-commit>=4.2.0",
 ]
+# PostgreSQL storage backend (M2): QWENPAW_STORAGE_BACKEND=dual|pg.
+# The default json backend needs none of these.
+pg = [
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.29",
+    "alembic>=1.13",
+]
 local = [
     "huggingface_hub>=0.20.0",
 ]

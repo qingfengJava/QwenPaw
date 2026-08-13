@@ -215,6 +215,46 @@ class TestJsonChatRepositoryContract(ChatRepositoryContractTest):
         return JsonChatRepository(self._path)
 
 
-# Future backends (M2 milestone): add ``TestDualChatRepositoryContract`` and
-# ``TestPgChatRepositoryContract`` subclasses below — every contract test
-# above will automatically run against them.
+class TestPgChatRepositoryContract(ChatRepositoryContractTest):
+    """PostgreSQL backend (M2). Runs only with QWENPAW_TEST_PG_DSN set."""
+
+    @pytest.fixture(autouse=True)
+    async def _storage(self, pg_engine) -> None:
+        self._engine = pg_engine
+
+    def create_instance(self) -> BaseChatRepository:
+        from qwenpaw.app.chats.repo.pg_repo import PgChatRepository
+
+        return PgChatRepository(engine=self._engine)
+
+
+class TestDualChatRepositoryContract(ChatRepositoryContractTest):
+    """Dual backend (M2): JSON primary + PG shadow.
+
+    Contract assertions read the primary, so the dual repo must behave
+    exactly like the JSON repo even while shadow writes are in flight.
+    """
+
+    @pytest.fixture(autouse=True)
+    async def _storage(self, tmp_path: Path, pg_engine) -> None:
+        self._path = tmp_path / "chats.json"
+        self._engine = pg_engine
+        self._instances: list = []
+
+    def create_instance(self) -> BaseChatRepository:
+        from qwenpaw.app.chats.repo.dual_repo import DualChatRepository
+        from qwenpaw.app.chats.repo.pg_repo import PgChatRepository
+
+        repo = DualChatRepository(
+            primary=JsonChatRepository(self._path),
+            shadow=PgChatRepository(engine=self._engine),
+        )
+        self._instances.append(repo)
+        return repo
+
+    @pytest.fixture(autouse=True)
+    async def _drain(self):
+        """Shadow writes must never outlive the test that scheduled them."""
+        yield
+        for repo in getattr(self, "_instances", []):
+            await repo.drain_shadow()

@@ -42,7 +42,7 @@ from agentscope.message import Msg
 from .serialize import msg_to_entries
 
 if TYPE_CHECKING:
-    from .history import HistoryStore
+    from .base_history import BaseHistoryStore
 
 logger = logging.getLogger(__name__)
 
@@ -288,7 +288,7 @@ def _extract_session(
 # one source file has one auditable migration boundary.
 # pylint: disable=too-many-branches
 def _sync_file(
-    history: "HistoryStore",
+    history: "BaseHistoryStore",
     path: Path,
     rel_name: str,
     *,
@@ -414,7 +414,7 @@ def _sync_file(
     return res
 
 
-def _skip_is_safe(history: "HistoryStore", prior: dict) -> bool:
+def _skip_is_safe(history: "BaseHistoryStore", prior: dict) -> bool:
     """Whether a manifest hit can be trusted to skip re-reading the file.
 
     The DB can be rebuilt under the manifest: ``HistoryStore`` quarantines a
@@ -579,7 +579,7 @@ def _report_orphan(
 # pylint: disable=too-many-branches,too-many-statements
 def sync_sessions_to_history(
     *,
-    history: "HistoryStore",
+    history: "BaseHistoryStore",
     sessions_dir: str | Path,
     chats_path: str | Path | None = None,
     agent_id: str | None = None,
@@ -738,7 +738,7 @@ def sync_sessions_to_history(
 
 
 def _purge_old_history(
-    history: HistoryStore,
+    history: "BaseHistoryStore",
     retention_days: int,
     agent_id: str | None = None,
 ) -> None:
@@ -793,7 +793,7 @@ def _sync_all_scroll_agents() -> None:
     # Imported lazily to keep this module importable without the app config.
     from ....config import load_config
     from ....config.config import load_agent_config
-    from .history import HistoryStore
+    from .factory import build_history_store
 
     config = load_config()
     total_rows = 0
@@ -864,7 +864,7 @@ def _sync_all_scroll_agents() -> None:
 
         db_path = workspace_dir / lcc.scroll_config.db_filename
         retention_days = lcc.scroll_config.history_retention_days
-        history = HistoryStore(db_path)
+        history = build_history_store(db_path)
         try:
             report = sync_sessions_to_history(
                 history=history,

@@ -168,7 +168,7 @@ def build_scroll_components(
         # Imported lazily so the native path never pays for the scroll
         # machinery — and so a missing scroll dependency degrades to native
         # here rather than breaking import of this module.
-        from .scroll.history import HistoryStore
+        from .scroll.factory import build_history_store
         from .scroll.manager import ScrollContextManager
         from .scroll.recall_tool import RecallLoopGuard, make_recall_history
         from .scroll.repl import make_recall_history_python
@@ -187,7 +187,7 @@ def build_scroll_components(
         else:
             # Existing store: nudge toward a retention window if it grew large.
             _warn_db_size(db_path)
-        history = HistoryStore(db_path)
+        history = build_history_store(db_path)
         recall_loop_guard = RecallLoopGuard()
         scratch_root = str(Path(workspace_dir) / ".scroll")
 

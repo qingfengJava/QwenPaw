@@ -76,15 +76,45 @@ def test_get_session_store_class_json() -> None:
 
 
 @pytest.mark.parametrize("backend", ["dual", "pg"])
-def test_dual_and_pg_backends_rejected_until_m2(
+def test_dual_and_pg_backends_require_pg_dsn(
     monkeypatch: pytest.MonkeyPatch,
     backend: str,
     tmp_path,
 ) -> None:
+    """M2: dual/pg need QWENPAW_PG_DSN; missing it is a clear error."""
     monkeypatch.setenv(STORAGE_BACKEND_ENV, backend)
-    with pytest.raises(ConfigurationException, match="not available"):
+    monkeypatch.delenv("QWENPAW_PG_DSN", raising=False)
+    monkeypatch.delenv("COPAW_PG_DSN", raising=False)
+    with pytest.raises(ConfigurationException, match="QWENPAW_PG_DSN"):
         build_chat_repository(tmp_path / "chats.json")
-    with pytest.raises(ConfigurationException, match="not available"):
+    with pytest.raises(ConfigurationException, match="QWENPAW_PG_DSN"):
         build_session_store(str(tmp_path))
-    with pytest.raises(ConfigurationException, match="not available"):
-        get_session_store_class()
+    with pytest.raises(ConfigurationException, match="QWENPAW_PG_DSN"):
+        get_session_store_class()(save_dir=str(tmp_path))
+
+
+@pytest.mark.parametrize("backend", ["dual", "pg"])
+def test_dual_and_pg_backends_build_with_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+    backend: str,
+    tmp_path,
+) -> None:
+    """Engine creation is lazy (no connection), so building is offline-safe."""
+    from qwenpaw.app.chats.dual_session_store import DualSessionStore
+    from qwenpaw.app.chats.pg_session_store import PgSessionStore
+    from qwenpaw.app.chats.repo.dual_repo import DualChatRepository
+    from qwenpaw.app.chats.repo.pg_repo import PgChatRepository
+
+    monkeypatch.setenv(STORAGE_BACKEND_ENV, backend)
+    monkeypatch.setenv(
+        "QWENPAW_PG_DSN",
+        "postgresql+asyncpg://u:p@127.0.0.1:5432/qwenpaw",
+    )
+
+    repo = build_chat_repository(tmp_path / "chats.json")
+    expected_repo = PgChatRepository if backend == "pg" else DualChatRepository
+    assert isinstance(repo, expected_repo)
+
+    store = build_session_store(str(tmp_path))
+    expected_store = PgSessionStore if backend == "pg" else DualSessionStore
+    assert isinstance(store, expected_store)
