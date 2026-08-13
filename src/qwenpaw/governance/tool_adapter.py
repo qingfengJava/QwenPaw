@@ -166,6 +166,17 @@ def _build_tc_spec(self: Any) -> ToolCallSpec:
         getattr(self, "name", "Unknown"),
     )
     request_ctx = getattr(self, "_qp_request_context", {}) or {}
+    # M3: policy context carries the trusted owner identity. The request
+    # context wins; otherwise fall back to the turn's ContextVar identity
+    # (set by AuthMiddleware / channel identity scoping).
+    user_id = str(request_ctx.get("user_id", "") or "")
+    if not user_id:
+        try:
+            from ..app.agent_context import get_current_user_id
+
+            user_id = get_current_user_id() or ""
+        except Exception:  # pylint: disable=broad-except
+            user_id = ""
     return ToolCallSpec(
         tool_name=tool_name,
         target=DEFAULT_REGISTRY.extract_target(
@@ -176,6 +187,7 @@ def _build_tc_spec(self: Any) -> ToolCallSpec:
         agent_id=request_ctx.get("agent_id", ""),
         session_id=request_ctx.get("session_id", ""),
         raw_params=params,
+        user_id=user_id,
     )
 
 

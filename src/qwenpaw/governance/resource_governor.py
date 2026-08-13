@@ -259,12 +259,13 @@ class ResourceGovernor:
         )
         logger.info(
             "governance decision: tool=%s target=%r action=%s source=%s "
-            "sandbox=%s reason=%s",
+            "sandbox=%s user=%s reason=%s",
             tc_spec.tool_name,
             target_repr,
             decision.action.value,
             decision.source,
             sandbox_mode,
+            getattr(tc_spec, "user_id", "") or "-",
             decision.reason,
         )
         return decision

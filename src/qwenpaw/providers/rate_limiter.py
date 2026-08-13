@@ -267,6 +267,7 @@ class LLMRateLimiter:
 # Each model gets its own limiter so that a 429 from one provider/model
 # (e.g. a dream cron using DashScope) does not stall user chats on a
 # completely different provider (e.g. OpenRouter, Anthropic).
+# M3: per-user quota limiters share this table under "user:{user_id}" keys.
 _limiters: dict[str, LLMRateLimiter] = {}
 _limiters_lock: asyncio.Lock | None = None
 
@@ -353,3 +354,40 @@ async def get_rate_limiter(
             resolved_jitter,
         )
     return limiter
+
+
+async def get_user_rate_limiter(
+    user_id: str,
+) -> LLMRateLimiter | None:
+    """Return the per-user LLM quota limiter, or ``None`` when disabled.
+
+    M3: keys are ``"user:{user_id}"`` so each user's concurrent in-flight
+    LLM calls (and optionally QPM) are capped independently across *all*
+    models — one heavy user cannot starve everyone else.  Empty *user_id*
+    maps to the ``"system"`` bucket (anonymous/background turns).
+
+    Disabled — returns ``None`` — when both
+    ``QWENPAW_USER_LLM_MAX_CONCURRENT`` and ``QWENPAW_USER_LLM_MAX_QPM``
+    are 0 (the default), preserving pre-M3 behavior exactly.
+
+    The returned limiter shares the ``LLMRateLimiter`` implementation but
+    never receives 429 pauses from the API: it is a pure local quota, so
+    callers must not invoke ``report_rate_limit()`` on it.
+    """
+    from ..constant import LLM_USER_MAX_CONCURRENT, LLM_USER_MAX_QPM
+
+    if LLM_USER_MAX_CONCURRENT <= 0 and LLM_USER_MAX_QPM <= 0:
+        return None
+    key = f"user:{user_id or 'system'}"
+    if key in _limiters:
+        return _limiters[key]
+    # A zero concurrency cap would deadlock asyncio.Semaphore(0); when only
+    # QPM is configured, use a concurrency ceiling that never binds.
+    max_concurrent = (
+        LLM_USER_MAX_CONCURRENT if LLM_USER_MAX_CONCURRENT > 0 else 1_000_000
+    )
+    return await get_rate_limiter(
+        limiter_key=key,
+        max_concurrent=max_concurrent,
+        max_qpm=max(0, LLM_USER_MAX_QPM),
+    )

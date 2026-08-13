@@ -72,6 +72,8 @@ class ToolCallSpec:
         agent_id: Agent ID that initiated the call
         session_id: Current session ID
         raw_params: Raw tool call arguments dict
+        user_id: Trusted owner identity of the turn (M3 policy context;
+            empty string when the turn has no authenticated user)
     """
 
     def __init__(
@@ -81,12 +83,14 @@ class ToolCallSpec:
         agent_id: str,
         session_id: str,
         raw_params: dict[str, Any] | None = None,
+        user_id: str = "",
     ) -> None:
         self.tool_name = tool_name
         self.target = target
         self.agent_id = agent_id
         self.session_id = session_id
         self.raw_params = raw_params or {}
+        self.user_id = user_id
 
 
 @dataclass
