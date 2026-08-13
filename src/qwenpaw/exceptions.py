@@ -55,6 +55,24 @@ class AgentRuntimeErrorException(AppBaseException):
         super().__init__(message=message, error_code=error_code, **kwargs)
 
 
+class AgentAccessDeniedException(AgentRuntimeErrorException):
+    """M4: the caller has no grant to use this agent (digital employee)."""
+
+    def __init__(
+        self,
+        agent_id: str,
+        details: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        self.agent_id = agent_id
+        super().__init__(
+            error_code="AGENT_ACCESS_DENIED",
+            message=f"Access denied to agent '{agent_id}'",
+            details=details,
+            **kwargs,
+        )
+
+
 class ModelExecutionException(AgentRuntimeErrorException):
     """Generic model execution failure (e.g. provider returned 5xx)."""
 

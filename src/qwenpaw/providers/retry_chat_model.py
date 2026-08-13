@@ -397,6 +397,44 @@ def _check_quota_gate(model_key: str) -> None:
         logger.debug("quota gate skipped: %s", exc, exc_info=True)
 
 
+def _check_model_grant(model_key: str) -> None:
+    """Enforce the M4 model whitelist for the current caller.
+
+    Raises ``UnauthorizedModelAccessException`` when a grant entry exists
+    for this model and the caller matches none of its roles/users/teams.
+    Inert while RBAC enforcement is off; fail open on store errors.
+    """
+    try:
+        from ..app.agent_context import get_current_user_id
+        from ..app.rbac.deps import (
+            _resolve_flat_role,
+            rbac_enforcement_enabled,
+        )
+        from ..app.rbac.store import get_rbac_store
+
+        if not rbac_enforcement_enabled():
+            return
+        user_id = get_current_user_id() or ""
+        flat_role = _resolve_flat_role(user_id) if user_id else ""
+        if not get_rbac_store().model_allowed(
+            user_id,
+            flat_role,
+            model_key,
+        ):
+            from ..exceptions import UnauthorizedModelAccessException
+
+            raise UnauthorizedModelAccessException(
+                model_key,
+                details={"user_id": user_id, "reason": "model grant"},
+            )
+    except Exception as exc:
+        from ..exceptions import UnauthorizedModelAccessException
+
+        if isinstance(exc, UnauthorizedModelAccessException):
+            raise
+        logger.debug("model grant check skipped: %s", exc, exc_info=True)
+
+
 class RetryChatModel(ChatModelBase):
     """Transparent retry wrapper around any :class:`ChatModelBase`.
 
@@ -553,6 +591,9 @@ class RetryChatModel(ChatModelBase):
         user_limiter = await _maybe_get_user_limiter()
         # M4: admin-managed quota rules (quotas.json). No rules → no-op.
         _check_quota_gate(self.model_key)
+        # M4: model whitelist (rbac.json model_grants). Inert unless
+        # QWENPAW_RBAC_ENFORCE=on.
+        _check_model_grant(self.model_key)
 
         retries = (
             self._retry_config.max_retries if self._retry_config.enabled else 0

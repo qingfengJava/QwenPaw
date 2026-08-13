@@ -85,6 +85,20 @@ class TeamRecord(BaseModel):
     description: str = ""
 
 
+class GrantRecord(BaseModel):
+    """ACL grant for one resource (agent or model).
+
+    A resource *absent* from the grants table is unrestricted (pre-M4
+    behavior); a resource present is restricted to the listed
+    roles/users/teams.
+    """
+
+    roles: List[str] = Field(default_factory=list)
+    users: List[str] = Field(default_factory=list)
+    teams: List[str] = Field(default_factory=list)
+    description: str = ""
+
+
 class RbacFile(BaseModel):
     """``rbac.json`` root document.
 
@@ -92,9 +106,13 @@ class RbacFile(BaseModel):
     ``BUILTIN_ROLE_PERMISSIONS`` on load and their ``builtin`` flag makes
     them immutable through the admin API.  ``user_roles`` maps a username
     onto extra role names (additive over the flat-role mapping).
+    ``agent_grants`` (key: agent_id) and ``model_grants`` (key:
+    ``provider:model``) gate access to digital employees and models.
     """
 
     version: int = 1
     roles: Dict[str, RoleRecord] = Field(default_factory=dict)
     user_roles: Dict[str, List[str]] = Field(default_factory=dict)
     teams: Dict[str, TeamRecord] = Field(default_factory=dict)
+    agent_grants: Dict[str, GrantRecord] = Field(default_factory=dict)
+    model_grants: Dict[str, GrantRecord] = Field(default_factory=dict)

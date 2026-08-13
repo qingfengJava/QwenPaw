@@ -25,6 +25,7 @@ from ...constant import SECRET_DIR
 from .models import (
     BUILTIN_ROLE_PERMISSIONS,
     FLAT_ROLE_TO_RBAC,
+    GrantRecord,
     RbacFile,
     RoleRecord,
     TeamRecord,
@@ -181,6 +182,7 @@ class RbacStore:
         flat_role: str = "",
     ) -> bool:
         """Permission check; fail closed when the store is unreadable."""
+        self._load()
         if self._load_error:
             # Fail closed except for the bootstrap guarantee: a flat admin
             # keeps full access so a corrupt rbac.json cannot lock
@@ -319,6 +321,133 @@ class RbacStore:
             for name, team in data.teams.items()
             if username in team.members
         ]
+
+    # ------------------------------------------------------------------
+    # resource grants (M4-3: agent / model ACLs)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _grant_allows(
+        grant: Optional[GrantRecord],
+        username: str,
+        user_role_names: List[str],
+        user_team_names: List[str],
+    ) -> bool:
+        """ACL check: absent grant = unrestricted; present grant requires
+        a role/user/team hit."""
+        if grant is None:
+            return True
+        if username and username in grant.users:
+            return True
+        if any(role in grant.roles for role in user_role_names):
+            return True
+        return any(team in grant.teams for team in user_team_names)
+
+    def agent_allowed(
+        self,
+        username: str,
+        flat_role: str,
+        agent_id: str,
+    ) -> bool:
+        """Whether *username* may use the agent (digital employee)."""
+        data = self._load()
+        if self._load_error:
+            # Fail closed: absent-grant means unrestricted, so an
+            # unreadable file must not resolve to "allow". The flat
+            # admin keeps access as the repair path.
+            return flat_role == "admin"
+        grant = data.agent_grants.get(agent_id)
+        return self._grant_allows(
+            grant,
+            username,
+            self.roles_for_user(username, flat_role),
+            self.teams_for_user(username),
+        )
+
+    def model_allowed(
+        self,
+        username: str,
+        flat_role: str,
+        model_key: str,
+    ) -> bool:
+        """Whether *username* may invoke ``provider:model``."""
+        data = self._load()
+        if self._load_error:
+            return flat_role == "admin"
+        grant = data.model_grants.get(model_key)
+        if grant is None:
+            # Wildcard entry ("*") applies when no exact key exists.
+            grant = data.model_grants.get("*")
+        return self._grant_allows(
+            grant,
+            username,
+            self.roles_for_user(username, flat_role),
+            self.teams_for_user(username),
+        )
+
+    def set_agent_grant(
+        self,
+        agent_id: str,
+        grant: GrantRecord,
+    ) -> bool:
+        """Create or replace the ACL for one agent."""
+        if not agent_id:
+            return False
+        with self._lock:
+            data = self._load()
+            if self._load_error:
+                return False
+            data.agent_grants[agent_id] = grant
+            self._save(data)
+        return True
+
+    def delete_agent_grant(self, agent_id: str) -> bool:
+        """Remove the ACL (the agent becomes unrestricted again)."""
+        with self._lock:
+            data = self._load()
+            if self._load_error or agent_id not in data.agent_grants:
+                return False
+            del data.agent_grants[agent_id]
+            self._save(data)
+        return True
+
+    def set_model_grant(
+        self,
+        model_key: str,
+        grant: GrantRecord,
+    ) -> bool:
+        """Create or replace the ACL for one ``provider:model`` (or ``*``)."""
+        if not model_key:
+            return False
+        with self._lock:
+            data = self._load()
+            if self._load_error:
+                return False
+            data.model_grants[model_key] = grant
+            self._save(data)
+        return True
+
+    def delete_model_grant(self, model_key: str) -> bool:
+        """Remove the ACL for one model."""
+        with self._lock:
+            data = self._load()
+            if self._load_error or model_key not in data.model_grants:
+                return False
+            del data.model_grants[model_key]
+            self._save(data)
+        return True
+
+    def get_agent_grant(self, agent_id: str) -> Optional[GrantRecord]:
+        return self._load().agent_grants.get(agent_id)
+
+    def get_model_grant(self, model_key: str) -> Optional[GrantRecord]:
+        return self._load().model_grants.get(model_key)
+
+    def list_agent_grants(self) -> dict:
+        return dict(self._load().agent_grants)
+
+    def list_model_grants(self) -> dict:
+        return dict(self._load().model_grants)
 
 
 _default_store: Optional[RbacStore] = None

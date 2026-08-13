@@ -30,7 +30,10 @@ from qwenpaw.schemas import (
 from ....config.config import ConsoleConfig as ConsoleChannelConfig
 from ...console_push_store import append as push_store_append
 from ....constant import DEFAULT_MEDIA_DIR
-from ....exceptions import ModelQuotaExceededException
+from ....exceptions import (
+    AgentAccessDeniedException,
+    ModelQuotaExceededException,
+)
 from ...concurrency_gate import TurnQueueFull
 from ..renderer import ChannelDisplayConfig
 from ..base import (
@@ -527,6 +530,24 @@ class ConsoleChannel(BaseChannel):
             )
             yield f"data: {tq_event}\n\n"
             self._print_error("The service is busy; please retry later.")
+        except AgentAccessDeniedException as e:
+            # M4 agent grant check: surface as a structured error event.
+            self._clear_session_turn_usage(session_id)
+            logger.warning("agent access denied: %s", e)
+            deny_event = _json.dumps(
+                {
+                    "type": "error",
+                    "error": (
+                        "You do not have access to this assistant. "
+                        "Please contact your administrator."
+                    ),
+                    "code": "AGENT_ACCESS_DENIED",
+                },
+            )
+            yield f"data: {deny_event}\n\n"
+            self._print_error(
+                "You do not have access to this assistant.",
+            )
         except ModelQuotaExceededException as e:
             self._clear_session_turn_usage(session_id)
             logger.warning("rate limit hit: %s", e)

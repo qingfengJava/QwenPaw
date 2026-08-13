@@ -41,6 +41,7 @@ from .schema import ChannelType
 from .access_control import get_access_control_store
 from ..concurrency_gate import TurnQueueFull
 from ...config.utils import load_config
+from ...exceptions import AgentAccessDeniedException
 
 # Optional callback to enqueue payload (set by manager)
 EnqueueCallback = Optional[Callable[[Any], None]]
@@ -1048,6 +1049,22 @@ class BaseChannel(ABC):
                 "Please try again shortly.",
             )
 
+        except AgentAccessDeniedException:
+            # M4 grant check: inform the user plainly, no re-raise.
+            logger.info(
+                "agent access denied: session=%s",
+                getattr(request, "session_id", "")[:30],
+            )
+            self._clear_session_turn_usage(session_id)
+            if process_iterator is not None:
+                await process_iterator.aclose()
+            await self._on_consume_error(
+                request,
+                to_handle,
+                "You do not have access to this assistant. "
+                "Please contact your administrator.",
+            )
+
         except Exception as e:
             logger.exception(
                 f"channel _stream_with_tracker failed: {e}, "
@@ -1693,6 +1710,19 @@ class BaseChannel(ABC):
                 to_handle,
                 "The service is busy right now. "
                 "Please try again shortly.",
+            )
+        except AgentAccessDeniedException:
+            # M4 grant check: inform the user plainly, no re-raise.
+            logger.info(
+                "agent access denied: session=%s",
+                getattr(request, "session_id", "")[:30],
+            )
+            self._clear_session_turn_usage(session_id)
+            await self._on_consume_error(
+                request,
+                to_handle,
+                "You do not have access to this assistant. "
+                "Please contact your administrator.",
             )
         except Exception:
             logger.exception("channel consume_one failed")

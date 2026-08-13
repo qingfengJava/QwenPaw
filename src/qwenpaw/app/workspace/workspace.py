@@ -304,9 +304,44 @@ class Workspace:
         owner = get_current_user_id() or str(
             getattr(request, "user_id", "") or "",
         )
+        # M4: agent grant check (inert unless QWENPAW_RBAC_ENFORCE=on).
+        self._assert_agent_grant(owner)
         async with get_concurrency_gate().slot(owner):
             async for item in self._stream_query_gated(request):
                 yield item
+
+    def _assert_agent_grant(self, owner: str) -> None:
+        """M4: reject turns for agents the caller has no grant to use.
+
+        Inert while RBAC enforcement is off; fail open on any store
+        error (the M1 identity layer remains the access backstop).
+        """
+        try:
+            from ..rbac.deps import rbac_enforcement_enabled
+
+            if not rbac_enforcement_enabled():
+                return
+            from ...exceptions import AgentAccessDeniedException
+            from ..rbac.deps import _resolve_flat_role
+            from ..rbac.store import get_rbac_store
+
+            flat_role = _resolve_flat_role(owner) if owner else ""
+            if not get_rbac_store().agent_allowed(
+                owner,
+                flat_role,
+                self.agent_id,
+            ):
+                raise AgentAccessDeniedException(
+                    self.agent_id,
+                    details={"user_id": owner},
+                )
+        except AgentAccessDeniedException:
+            raise
+        except Exception:  # pylint: disable=broad-except
+            logger.debug(
+                "agent grant check skipped",
+                exc_info=True,
+            )
 
     async def _stream_query_gated(
         self,
