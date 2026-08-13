@@ -2,7 +2,8 @@
 """AuditLog — Audit records for each assert_policy + audit call.
 
 Storage: single-file SQLite (~/.qwenpaw/audit.db), global singleton.
-- record() writes immediately, no in-memory buffer
+- record() queues the event (non-blocking); a daemon writer thread
+  flushes batches to SQLite — call flush() when durability is needed
 - query() supports filtering by workspace / agent / tool / decision /
   time range, with pagination
 - purge() deletes expired records and VACUUMs to reclaim space
@@ -14,6 +15,7 @@ from __future__ import annotations
 import atexit
 import json
 import logging
+import queue
 import sqlite3
 import threading
 from dataclasses import dataclass, field
@@ -92,22 +94,23 @@ class AuditLog:
     """Append-only audit log, SQLite-backed, global singleton.
 
     Shared by multiple ResourceGovernor instances; each audit()
-    call (typically after assert_policy()) invokes record() which writes
-    to the database immediately.
+    call (typically after assert_policy()) invokes record().
 
     .. note:: Threading & async
 
-        All SQLite operations are synchronous and protected by a
-        ``threading.Lock``.  When called from an async context
-        (e.g. ``check_permissions``), the event-loop thread is briefly
-        blocked for the INSERT + commit (~sub-ms with WAL mode).
-        TODO: migrate to ``aiosqlite`` or ``asyncio.to_thread()`` for
-        true non-blocking audit writes.
+        ``record()`` is non-blocking (M2): events go onto an in-process
+        queue and a daemon writer thread flushes them in batched
+        transactions, so the event loop never waits on SQLite fsync.
+        ``flush()`` blocks until every queued event is durable; tests,
+        graceful shutdown, and ``close()`` use it. Reads (``query``)
+        stay synchronous on the shared connection.
     """
 
     MAX_RECORDS = 100_000  # Threshold to trigger auto-cleanup
     PURGE_COUNT = 10_000  # Number of records to delete per cleanup
     _CHECK_INTERVAL = 1_000
+    _FLUSH_INTERVAL_S = 0.2  # writer wakes at least this often
+    _FLUSH_BATCH = 50  # or this many queued events, whichever first
 
     _instance: Optional[AuditLog] = None
     _instance_lock = threading.Lock()
@@ -115,6 +118,9 @@ class AuditLog:
     _conn: Optional[sqlite3.Connection]
     _insert_count: int
     _lock: threading.RLock
+
+    # Sentinel pushed onto the write queue to stop the writer thread.
+    _STOP = object()
 
     @classmethod
     def get_instance(
@@ -166,7 +172,76 @@ class AuditLog:
         obj._conn.commit()
         obj._insert_count = 0
         obj._lock = threading.RLock()
+        obj._write_queue: queue.Queue = queue.Queue()
+        obj._writer = threading.Thread(
+            target=obj._writer_loop,
+            name="qwenpaw-audit-writer",
+            daemon=True,
+        )
+        obj._writer.start()
         return obj
+
+    def _writer_loop(self) -> None:
+        """Drain the write queue in batched transactions (M2).
+
+        Wakes on the flush interval or batch size; the STOP sentinel
+        flushes the remainder and exits. ``task_done`` is signaled only
+        after a batch is actually durable, so ``flush()``'s ``join()``
+        truly waits for the rows to land. Write failures are logged but
+        never propagate — an audit outage must not disrupt decisions.
+        """
+        pending: list[tuple] = []
+        while True:
+            try:
+                item = self._write_queue.get(timeout=self._FLUSH_INTERVAL_S)
+            except queue.Empty:
+                item = None
+            if item is AuditLog._STOP:
+                if pending:
+                    self._flush_rows(pending)
+                    for _ in pending:
+                        self._write_queue.task_done()
+                self._write_queue.task_done()
+                return
+            if item is not None:
+                pending.append(item)
+            if pending and (item is None or len(pending) >= self._FLUSH_BATCH):
+                self._flush_rows(pending)
+                for _ in pending:
+                    self._write_queue.task_done()
+                pending.clear()
+
+    def _flush_rows(self, rows: list[tuple]) -> None:
+        """Insert one batch in a single transaction."""
+        try:
+            with self._lock:
+                conn = self._conn
+                if conn is None:
+                    return
+                conn.executemany(
+                    "INSERT INTO audit_events "
+                    "(ts, workspace_dir, agent_id, session_id, "
+                    "tool_name, target, decision, reason, extra) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    rows,
+                )
+                conn.commit()
+                self._insert_count += len(rows)
+                if self._insert_count >= self._CHECK_INTERVAL:
+                    self._insert_count = 0
+                    if self.count >= self.MAX_RECORDS:
+                        self._auto_purge()
+        except sqlite3.Error as exc:
+            _logger.error(
+                "AuditLog._flush_rows: SQLite error (%d rows): %s",
+                len(rows),
+                exc,
+                exc_info=True,
+            )
+
+    def flush(self) -> None:
+        """Block until every queued audit event is durable."""
+        self._write_queue.join()
 
     @staticmethod
     def _migrate_legacy_schema(conn: sqlite3.Connection) -> None:
@@ -182,10 +257,15 @@ class AuditLog:
     def close(self) -> None:
         """Close the database connection and reset the singleton.
 
-        Runs VACUUM before closing to reclaim space from any prior
-        auto-purge DELETE operations (VACUUM is intentionally NOT run
-        inside ``_auto_purge`` to avoid blocking the event loop).
+        Drains the write queue first (every queued event becomes durable),
+        then stops the writer thread. Runs VACUUM before closing to
+        reclaim space from any prior auto-purge DELETE operations
+        (VACUUM is intentionally NOT run inside ``_auto_purge`` to avoid
+        blocking the event loop).
         """
+        self._write_queue.put(AuditLog._STOP)
+        self._write_queue.join()
+        self._writer.join(timeout=5)
         with self._lock:
             if self._conn is not None:
                 try:
@@ -204,7 +284,7 @@ class AuditLog:
         tc_spec: ToolCallSpec,
         decision: GovernanceDecision,
     ) -> None:
-        """Record a policy decision, writing to SQLite immediately.
+        """Record a policy decision (queued; flushed by the writer thread).
 
         Args:
             workspace_dir: Workspace path this event belongs to
@@ -218,40 +298,28 @@ class AuditLog:
         ``ResourceGovernor.audit()`` before this method is called.
         If finer-grained filtering is needed later (for example,
         ``"write_only"``), apply it at the INSERT boundary.
+
+        M2: the event is queued and flushed by the writer thread; this
+        method never blocks on SQLite. A full queue would block — the
+        unbounded queue trades that for never dropping audit events.
         """
         try:
-            with self._lock:
-                conn = self._conn
-                if conn is None:
-                    return
-                conn.execute(
-                    "INSERT INTO audit_events "
-                    "(ts, workspace_dir, agent_id, session_id, "
-                    "tool_name, target, decision, reason, extra) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        _now_unix_ms(),
-                        workspace_dir,
-                        tc_spec.agent_id,
-                        tc_spec.session_id,
-                        tc_spec.tool_name,
-                        tc_spec.target,
-                        str(decision.action.value),
-                        decision.reason,
-                        "{}",
-                    ),
-                )
-                conn.commit()
-
-                # Auto-cleanup check
-                self._insert_count += 1
-                if self._insert_count >= self._CHECK_INTERVAL:
-                    self._insert_count = 0
-                    if self.count >= self.MAX_RECORDS:
-                        self._auto_purge()
-        except sqlite3.Error as e:
+            self._write_queue.put(
+                (
+                    _now_unix_ms(),
+                    workspace_dir,
+                    tc_spec.agent_id,
+                    tc_spec.session_id,
+                    tc_spec.tool_name,
+                    tc_spec.target,
+                    str(decision.action.value),
+                    decision.reason,
+                    "{}",
+                ),
+            )
+        except Exception as e:  # noqa: BLE001 - audit must never raise
             _logger.error(
-                "AuditLog.record: SQLite error (tool=%s, target=%r): %s",
+                "AuditLog.record: queue error (tool=%s, target=%r): %s",
                 tc_spec.tool_name,
                 (tc_spec.target or "")[:120],
                 e,

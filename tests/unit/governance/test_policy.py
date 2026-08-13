@@ -104,6 +104,7 @@ def test_governor_stop_keeps_process_audit_log_open(tmp_path):
             reason="test",
         ),
     )
+    audit_log.flush()  # M2: queued writes become durable asynchronously
     assert audit_log.count == 1
     audit_log.close()
 
@@ -614,6 +615,7 @@ class TestAssertPolicySSHCommands:
         governor.policy.audit_level = "none"
         tc = _tc("Write", "/tmp/audit-level-none.txt")
         decision = governor.assert_policy(tc)
+        governor.audit_log.flush()  # M2: drain prior queued events first
         before = governor.audit_log.count
 
         governor.audit(tc, decision)
@@ -628,6 +630,7 @@ class TestAssertPolicySSHCommands:
         before = governor.audit_log.count
 
         governor.audit(tc, decision)
+        governor.audit_log.flush()  # M2: queued writes flush asynchronously
 
         assert governor.audit_log.count == before + 1
 

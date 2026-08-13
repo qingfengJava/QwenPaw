@@ -79,6 +79,9 @@ def _spec_to_values(spec: ChatSpec, tenant_id: str) -> dict:
 class PgChatRepository(BaseChatRepository):
     """``chats`` table repository sharing the process-wide engine pool."""
 
+    #: Row-level transactions replace the file-era manager locks.
+    transactional = True
+
     def __init__(
         self,
         engine: "AsyncEngine",
@@ -86,6 +89,11 @@ class PgChatRepository(BaseChatRepository):
     ) -> None:
         self._engine = engine
         self._tenant_id = tenant_id
+
+    @property
+    def path(self) -> str:
+        """Storage identity (the JSON backend exposes a file path)."""
+        return f"pg://chats/{self._tenant_id}"
 
     # -- row helpers ----------------------------------------------------
 

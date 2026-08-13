@@ -25,6 +25,19 @@ logger = logging.getLogger(__name__)
 MAX_BATCH_SIZE = 500
 
 
+class _NoopAsyncLock:
+    """Async context manager with lock syntax but no mutual exclusion."""
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc_info) -> bool:
+        return False
+
+
+_NOOP_LOCK = _NoopAsyncLock()
+
+
 class ChatManager:
     """Manages chat specifications in repository.
 
@@ -60,14 +73,22 @@ class ChatManager:
         #   lock so concurrent first messages of one session create exactly
         #   one chat without serializing different owners' lookups.
         # Lock order is always owner-lock -> write-lock.
+        # M2: a transactional repository (PostgreSQL) makes row-level
+        # transactions the concurrency mechanism, so both locks degrade
+        # to no-ops (the plan's "delete the locks once pg is primary").
+        self._tx_safe = bool(getattr(repo, "transactional", False))
         self._locks: dict[str, asyncio.Lock] = {}
-        self._write_lock = asyncio.Lock()
+        self._write_lock = (
+            _NOOP_LOCK if self._tx_safe else asyncio.Lock()
+        )
         logger.debug(
             f"ChatManager created with repo path: {repo.path}",
         )
 
-    def _owner_lock(self, owner: str) -> asyncio.Lock:
+    def _owner_lock(self, owner: str):
         """Return the decision lock for one owner (created on demand)."""
+        if self._tx_safe:
+            return _NOOP_LOCK
         lock = self._locks.get(owner)
         if lock is None:
             lock = asyncio.Lock()
