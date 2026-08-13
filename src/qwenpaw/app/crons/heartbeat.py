@@ -27,6 +27,7 @@ from ...constant import (
     HEARTBEAT_TARGET_LAST,
 )
 from ..channels.schema import DEFAULT_CHANNEL
+from ..concurrency_gate import TurnQueueFull
 from ..inbox_store import append_event as append_inbox_event
 from ..inbox_trace_store import (
     append_trace_from_session_delta,
@@ -269,6 +270,9 @@ async def run_heartbeat_once(
                     "heartbeat run timed out after %ss",
                     timeout_seconds,
                 )
+            except TurnQueueFull:
+                # M3: system busy — skip this beat, next tick retries.
+                logger.warning("heartbeat skipped: turn queue full")
             return
 
     if target == HEARTBEAT_TARGET_INBOX:
@@ -326,6 +330,15 @@ async def run_heartbeat_once(
                     "target": target,
                     "query_file": str(path),
                 },
+            )
+        except TurnQueueFull:
+            # M3: system busy — finalize the trace and skip this beat
+            # (no raise; the cron tick should not report an error).
+            logger.warning("heartbeat skipped: turn queue full")
+            await finalize_trace(
+                run_id,
+                status="busy",
+                error="turn queue full",
             )
         except asyncio.TimeoutError:
             logger.warning(
@@ -404,3 +417,6 @@ async def run_heartbeat_once(
             "heartbeat run timed out after %ss",
             timeout_seconds,
         )
+    except TurnQueueFull:
+        # M3: system busy — skip this beat, next tick retries.
+        logger.warning("heartbeat skipped: turn queue full")

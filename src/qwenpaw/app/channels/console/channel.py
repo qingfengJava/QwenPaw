@@ -31,6 +31,7 @@ from ....config.config import ConsoleConfig as ConsoleChannelConfig
 from ...console_push_store import append as push_store_append
 from ....constant import DEFAULT_MEDIA_DIR
 from ....exceptions import ModelQuotaExceededException
+from ...concurrency_gate import TurnQueueFull
 from ..renderer import ChannelDisplayConfig
 from ..base import (
     BaseChannel,
@@ -508,6 +509,24 @@ class ConsoleChannel(BaseChannel):
         except asyncio.CancelledError:
             self._clear_session_turn_usage(session_id)
             raise
+        except TurnQueueFull as e:
+            # M3 backpressure: the per-user turn gate rejected this run.
+            # Surface it as a rate_limited event (same shape the web UI
+            # already handles for model quota) instead of a silent end.
+            self._clear_session_turn_usage(session_id)
+            logger.warning("turn queue full: %s", e)
+            tq_event = _json.dumps(
+                {
+                    "type": "rate_limited",
+                    "error": (
+                        "The service is busy right now. "
+                        "Please try again shortly."
+                    ),
+                    "retry_after": e.retry_after,
+                },
+            )
+            yield f"data: {tq_event}\n\n"
+            self._print_error("The service is busy; please retry later.")
         except ModelQuotaExceededException as e:
             self._clear_session_turn_usage(session_id)
             logger.warning("rate limit hit: %s", e)

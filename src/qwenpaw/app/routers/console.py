@@ -373,6 +373,27 @@ async def post_console_chat(
                     placeholder_name=name,
                 ),
             )
+        # M3: fail fast with 429 when this user's turn queue is already
+        # saturated, instead of starting a background run that would
+        # immediately fail in the concurrency gate. The gate inside
+        # stream_query remains the authoritative check.
+        from ..concurrency_gate import get_concurrency_gate
+
+        gate = get_concurrency_gate()
+        gate_owner = (
+            getattr(request.state, "user", None)
+            or native_payload["sender_id"]
+        )
+        if gate.would_reject(gate_owner):
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    "Too many concurrent turns; please retry later."
+                ),
+                headers={
+                    "Retry-After": str(int(gate.retry_after)),
+                },
+            )
         queue, _ = await tracker.attach_or_start(
             chat.id,
             native_payload,

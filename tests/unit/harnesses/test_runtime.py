@@ -178,10 +178,49 @@ async def test_runtime_recreates_adapter_when_binary_changes(
 
 
 @pytest.mark.asyncio
+async def test_adapters_pooled_per_user(tmp_path: Path) -> None:
+    """M3: (provider, user) keys — distinct users never share an adapter."""
+    runtime = HarnessRuntime(tmp_path)
+
+    with patch(
+        "qwenpaw.harnesses.runtime.create_adapter",
+        side_effect=lambda *_args, **_kwargs: FakeAdapter(),
+    ):
+        alice = await runtime.adapter("codex", None, user_id="alice")
+        bob = await runtime.adapter("codex", None, user_id="bob")
+        anon = await runtime.adapter("codex", None)
+        alice_again = await runtime.adapter("codex", None, user_id="alice")
+
+    assert alice is not bob
+    assert alice is not anon
+    assert alice_again is alice
+    assert len(runtime._adapters) == 3  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_adapter_pool_evicts_lru_beyond_cap(tmp_path: Path) -> None:
+    """M3: the pool stops the least-recently-used adapter past the cap."""
+    runtime = HarnessRuntime(tmp_path)
+    runtime._MAX_ADAPTERS = 2  # noqa: SLF001
+
+    with patch(
+        "qwenpaw.harnesses.runtime.create_adapter",
+        side_effect=lambda *_args, **_kwargs: FakeAdapter(),
+    ):
+        first = await runtime.adapter("codex", None, user_id="u1")
+        await runtime.adapter("codex", None, user_id="u2")
+        await runtime.adapter("codex", None, user_id="u3")
+
+    assert len(runtime._adapters) == 2  # noqa: SLF001
+    assert first.stopped is True
+    assert ("codex", "u1") not in runtime._adapters  # noqa: SLF001
+
+
+@pytest.mark.asyncio
 async def test_runtime_emits_qwenpaw_envelopes(tmp_path: Path) -> None:
     runtime = HarnessRuntime(tmp_path)
     adapter = FakeAdapter()
-    runtime._adapters["codex"] = adapter
+    runtime._adapters[("codex", "")] = adapter
     request = AgentRequest(
         session_id="chat-1",
         input=[
@@ -223,7 +262,7 @@ async def test_runtime_forwards_dropped_image_and_file(
     file_path = tmp_path / "requirements.txt"
     adapter = FakeAdapter()
     runtime = HarnessRuntime(tmp_path)
-    runtime._adapters["codex"] = adapter
+    runtime._adapters[("codex", "")] = adapter
     request = AgentRequest(
         session_id="chat-1",
         input=[
@@ -268,7 +307,7 @@ async def test_runtime_allows_attachment_only_turn(tmp_path: Path) -> None:
     image_path = tmp_path / "screenshot.png"
     adapter = FakeAdapter()
     runtime = HarnessRuntime(tmp_path)
-    runtime._adapters["codex"] = adapter
+    runtime._adapters[("codex", "")] = adapter
     request = AgentRequest(
         session_id="chat-1",
         input=[
@@ -298,7 +337,7 @@ async def test_runtime_emits_reasoning_and_native_tool_envelopes(
     tmp_path: Path,
 ) -> None:
     runtime = HarnessRuntime(tmp_path)
-    runtime._adapters["codex"] = ToolAdapter()
+    runtime._adapters[("codex", "")] = ToolAdapter()
     request = AgentRequest(
         session_id="chat-1",
         input=[
@@ -343,7 +382,7 @@ async def test_runtime_routes_declared_provider_command(
 ) -> None:
     runtime = HarnessRuntime(tmp_path)
     adapter = CommandAdapter()
-    runtime._adapters["codex"] = adapter
+    runtime._adapters[("codex", "")] = adapter
     request = AgentRequest(
         session_id="chat-1",
         input=[
@@ -374,7 +413,7 @@ async def test_runtime_handles_host_clear_for_every_backend(
 ) -> None:
     runtime = HarnessRuntime(tmp_path)
     adapter = CommandAdapter()
-    runtime._adapters["codex"] = adapter
+    runtime._adapters[("codex", "")] = adapter
     request = AgentRequest(
         session_id="chat-1",
         input=[

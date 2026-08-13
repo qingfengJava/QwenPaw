@@ -39,7 +39,16 @@ logger = logging.getLogger(__name__)
 
 
 class HarnessRuntime:
-    """Own adapters for one workspace and expose QwenPaw envelopes."""
+    """Own adapters for one workspace and expose QwenPaw envelopes.
+
+    M3: adapters are pooled per ``(provider_id, user_id)`` so one user's
+    provider session/config never contends with another's. The pool is
+    bounded: entries past ``_MAX_ADAPTERS`` are evicted least-recently-used,
+    and entries idle beyond ``_ADAPTER_TTL_S`` are reclaimed on access.
+    """
+
+    _MAX_ADAPTERS = 32
+    _ADAPTER_TTL_S = 1800.0  # 30 min idle reclaim
 
     def __init__(
         self,
@@ -50,8 +59,9 @@ class HarnessRuntime:
     ) -> None:
         self._state_dir = workspace_dir / "harnesses"
         self._agent_id = agent_id
-        self._adapters: dict[str, HarnessAdapter] = {}
-        self._adapter_keys: dict[str, tuple[Any, ...]] = {}
+        self._adapters: dict[tuple[str, str], HarnessAdapter] = {}
+        self._adapter_keys: dict[tuple[str, str], tuple[Any, ...]] = {}
+        self._adapter_used_at: dict[tuple[str, str], float] = {}
         self._adapter_lock = asyncio.Lock()
         self._session_bridge = (
             HarnessSessionBridge(session) if session is not None else None
@@ -92,22 +102,75 @@ class HarnessRuntime:
         self,
         provider_id: str,
         settings: dict[str, Any] | None = None,
+        user_id: str = "",
     ) -> HarnessAdapter:
-        """Return an adapter matching the current provider configuration."""
+        """Return the pooled adapter for ``(provider_id, user_id)``.
+
+        A config change rebuilds only the affected key. ``user_id`` is the
+        trusted owner id (empty for admin/status surfaces like
+        ``providers()``).
+        """
+        import time
+
         next_key = adapter_config_key(provider_id, settings)
+        pool_key = (provider_id, user_id)
         async with self._adapter_lock:
-            adapter = self._adapters.get(provider_id)
-            current_key = self._adapter_keys.get(provider_id)
+            await self._reap_idle_adapters()
+            adapter = self._adapters.get(pool_key)
+            current_key = self._adapter_keys.get(pool_key)
             if adapter is not None and (
                 current_key is None or current_key == next_key
             ):
+                self._adapter_used_at[pool_key] = time.monotonic()
                 return adapter
             if adapter is not None:
                 await adapter.stop()
             adapter = create_adapter(provider_id, self._state_dir, settings)
-            self._adapter_keys[provider_id] = next_key
-            self._adapters[provider_id] = adapter
+            self._adapter_keys[pool_key] = next_key
+            self._adapters[pool_key] = adapter
+            self._adapter_used_at[pool_key] = time.monotonic()
+            await self._evict_lru_if_full()
             return adapter
+
+    async def _reap_idle_adapters(self) -> None:
+        """Stop and drop adapters idle beyond the TTL (lock held)."""
+        import time
+
+        now = time.monotonic()
+        stale = [
+            key
+            for key, used in self._adapter_used_at.items()
+            if now - used > self._ADAPTER_TTL_S
+        ]
+        for key in stale:
+            adapter = self._adapters.pop(key, None)
+            self._adapter_keys.pop(key, None)
+            self._adapter_used_at.pop(key, None)
+            if adapter is not None:
+                try:
+                    await adapter.stop()
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("adapter TTL stop failed for %s: %s", key, exc)
+
+    async def _evict_lru_if_full(self) -> None:
+        """Evict least-recently-used adapters past the pool cap (lock held)."""
+        while len(self._adapters) > self._MAX_ADAPTERS:
+            oldest = min(
+                self._adapter_used_at.items(),
+                key=lambda item: item[1],
+            )[0]
+            adapter = self._adapters.pop(oldest, None)
+            self._adapter_keys.pop(oldest, None)
+            self._adapter_used_at.pop(oldest, None)
+            if adapter is not None:
+                try:
+                    await adapter.stop()
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "adapter LRU eviction stop failed for %s: %s",
+                        oldest,
+                        exc,
+                    )
 
     async def stream(  # pylint: disable=too-many-branches,too-many-statements
         self,
@@ -123,7 +186,10 @@ class HarnessRuntime:
         settings[
             "_runtime_capabilities"
         ] = await self._capability_resolver.resolve(request_context)
-        adapter = await self.adapter(backend, settings)
+        # M3: pool the adapter under the trusted owner so per-user provider
+        # sessions never share one adapter's serialized backend process.
+        owner_id = str(getattr(request, "user_id", "") or "")
+        adapter = await self.adapter(backend, settings, user_id=owner_id)
         session_id = str(getattr(request, "session_id", "") or "default")
         prompt, attachments = self._content_from_request(request)
         command, arguments = (
@@ -292,6 +358,7 @@ class HarnessRuntime:
                 await adapter.stop()
             self._adapters.clear()
             self._adapter_keys.clear()
+            self._adapter_used_at.clear()
 
     async def hydrate_session(
         self,

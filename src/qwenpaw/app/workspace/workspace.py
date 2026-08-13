@@ -295,6 +295,24 @@ class Workspace:
 
         Drop-in replacement for the old ``Runner.stream_query()``.
         """
+        # M3: admit the turn through the per-user concurrency gate before
+        # any pipeline work; TurnQueueFull propagates to the caller (HTTP
+        # layer maps it to 429 + Retry-After).
+        from ..agent_context import get_current_user_id
+        from ..concurrency_gate import get_concurrency_gate
+
+        owner = get_current_user_id() or str(
+            getattr(request, "user_id", "") or "",
+        )
+        async with get_concurrency_gate().slot(owner):
+            async for item in self._stream_query_gated(request):
+                yield item
+
+    async def _stream_query_gated(
+        self,
+        request: Any,
+    ) -> AsyncGenerator[Any, None]:
+        """The pre-M3 body of :meth:`stream_query` (gate already held)."""
         config = load_agent_config(self.agent_id)
         backend = config.backend
         if backend != "qwenpaw":

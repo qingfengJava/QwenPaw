@@ -39,6 +39,7 @@ from qwenpaw.schemas import (
 from .renderer import ChannelDisplayConfig, MessageRenderer, RenderStyle
 from .schema import ChannelType
 from .access_control import get_access_control_store
+from ..concurrency_gate import TurnQueueFull
 from ...config.utils import load_config
 
 # Optional callback to enqueue payload (set by manager)
@@ -1030,6 +1031,23 @@ class BaseChannel(ABC):
                 await process_iterator.aclose()
             raise
 
+        except TurnQueueFull:
+            # M3 backpressure: not a fault — tell the user to retry and
+            # end the run normally (no re-raise, no "internal error").
+            logger.info(
+                "turn queue full: session=%s",
+                getattr(request, "session_id", "")[:30],
+            )
+            self._clear_session_turn_usage(session_id)
+            if process_iterator is not None:
+                await process_iterator.aclose()
+            await self._on_consume_error(
+                request,
+                to_handle,
+                "The service is busy right now. "
+                "Please try again shortly.",
+            )
+
         except Exception as e:
             logger.exception(
                 f"channel _stream_with_tracker failed: {e}, "
@@ -1663,6 +1681,19 @@ class BaseChannel(ABC):
             )
             self._clear_session_turn_usage(session_id)
             raise
+        except TurnQueueFull:
+            # M3 backpressure: not a fault — tell the user to retry.
+            logger.info(
+                "turn queue full: session=%s",
+                getattr(request, "session_id", "")[:30],
+            )
+            self._clear_session_turn_usage(session_id)
+            await self._on_consume_error(
+                request,
+                to_handle,
+                "The service is busy right now. "
+                "Please try again shortly.",
+            )
         except Exception:
             logger.exception("channel consume_one failed")
             self._clear_session_turn_usage(session_id)
