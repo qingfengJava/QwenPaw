@@ -367,6 +367,36 @@ async def _maybe_get_user_limiter() -> LLMRateLimiter | None:
     return await get_user_rate_limiter(get_current_user_id() or "")
 
 
+def _check_quota_gate(model_key: str) -> None:
+    """Evaluate M4 admin-managed quota rules for the current context.
+
+    Raises ``ModelQuotaExceededException`` when a matching rule's window
+    is exhausted; silently no-ops when quotas are unconfigured or the
+    identity context is unavailable (fail open — the M3 limiter remains
+    the hard backstop).
+    """
+    try:
+        from ..app.agent_context import (
+            get_current_agent_id,
+            get_current_user_id,
+        )
+        from ..app.quotas.counter import check_llm_quota
+
+        check_llm_quota(
+            get_current_user_id() or "",
+            get_current_agent_id() or "",
+            model_key,
+        )
+    except Exception as exc:
+        # Quota-trip exceptions must propagate; infrastructure errors
+        # (store unreadable, context missing) must not block the call.
+        from ..exceptions import ModelQuotaExceededException
+
+        if isinstance(exc, ModelQuotaExceededException):
+            raise
+        logger.debug("quota gate skipped: %s", exc, exc_info=True)
+
+
 class RetryChatModel(ChatModelBase):
     """Transparent retry wrapper around any :class:`ChatModelBase`.
 
@@ -521,6 +551,8 @@ class RetryChatModel(ChatModelBase):
         # configured). Acquired after the model slot and released at the
         # same points, so both lifecycles stay paired.
         user_limiter = await _maybe_get_user_limiter()
+        # M4: admin-managed quota rules (quotas.json). No rules → no-op.
+        _check_quota_gate(self.model_key)
 
         retries = (
             self._retry_config.max_retries if self._retry_config.enabled else 0

@@ -347,6 +347,45 @@ class UserStore:
         logger.info("User '%s' disabled=%s", username, disabled)
         return True
 
+    def set_role(self, username: str, role: str) -> bool:
+        """Set the flat role (admin/employee) of an account (M4 admin API).
+
+        The flat role remains the bootstrap mapping onto RBAC roles, so
+        changing it changes the user's effective permissions.
+        """
+        if role not in VALID_ROLES:
+            return False
+        with self._lock:
+            data = self._load()
+            if self._load_error:
+                return False
+            user = next(
+                (u for u in data.users if u.username == username),
+                None,
+            )
+            if user is None:
+                return False
+            user.role = role
+            self._save(data)
+        logger.info("User '%s' role set to '%s'", username, role)
+        return True
+
+    def set_display_name(self, username: str, display_name: str) -> bool:
+        """Update one account's display name (M4 admin API)."""
+        with self._lock:
+            data = self._load()
+            if self._load_error:
+                return False
+            user = next(
+                (u for u in data.users if u.username == username),
+                None,
+            )
+            if user is None:
+                return False
+            user.display_name = display_name.strip()
+            self._save(data)
+        return True
+
     # ------------------------------------------------------------------
     # channel identity bindings
     # ------------------------------------------------------------------

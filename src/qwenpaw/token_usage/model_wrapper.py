@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Model wrapper that records token usage from LLM responses."""
 
+import logging
 from datetime import date, datetime, timezone
 from typing import Any, AsyncGenerator, Literal
 
@@ -10,6 +11,8 @@ from agentscope.model._model_usage import ChatUsage
 
 from .buffer import _UsageEvent
 from .manager import get_token_usage_manager
+
+logger = logging.getLogger(__name__)
 
 
 class TokenRecordingModelWrapper(ChatModelBase):
@@ -61,6 +64,25 @@ class TokenRecordingModelWrapper(ChatModelBase):
         )
         # Fire-and-forget: synchronous put_nowait, ~100 ns, no await needed.
         get_token_usage_manager().enqueue(event)
+
+        # M4: feed per-subject day-window token quotas (no-op when no
+        # quota rules are configured).
+        try:
+            from ..app.agent_context import (
+                get_current_agent_id,
+                get_current_user_id,
+            )
+            from ..app.quotas.counter import record_llm_tokens
+
+            record_llm_tokens(
+                get_current_user_id() or "",
+                get_current_agent_id() or "",
+                f"{self._provider_id}:{self.model}",
+                pt + ct,
+            )
+        except Exception:  # pylint: disable=broad-except
+            # Token accounting must never break the LLM response path.
+            logger.debug("quota token accounting skipped", exc_info=True)
 
         usage_data = {
             "provider_id": self._provider_id,
