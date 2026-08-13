@@ -249,10 +249,14 @@ class HarnessRuntime:
         )
         if self._session_bridge is not None and clear_history:
             try:
+                from ..app.agent_context import resolve_trusted_user_id
+
                 await self._session_bridge.clear(
                     session_id=session_id,
-                    user_id=str(
-                        getattr(request, "user_id", "") or session_id,
+                    user_id=resolve_trusted_user_id(
+                        getattr(request, "user_id", "") or None,
+                        fallback=session_id,
+                        source="harness.clear",
                     ),
                     channel=str(getattr(request, "channel", "") or ""),
                 )

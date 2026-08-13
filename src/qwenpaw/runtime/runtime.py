@@ -453,14 +453,21 @@ class Runtime:
 
     @staticmethod
     def _normalize(request: Any) -> Any:
+        from ..app.agent_context import resolve_trusted_user_id
         from ..schemas import AgentRequest
 
         if isinstance(request, dict):
             request = AgentRequest(**request)
         if not getattr(request, "session_id", None):
             request.session_id = uuid.uuid4().hex
-        if not getattr(request, "user_id", None):
-            request.user_id = request.session_id
+        # M1: an authenticated identity (when present) overrides any
+        # client-claimed user_id; otherwise the legacy session fallback
+        # applies.
+        request.user_id = resolve_trusted_user_id(
+            getattr(request, "user_id", None),
+            fallback=request.session_id,
+            source="runtime._normalize",
+        )
         return request
 
     def _build_context(self, request: Any) -> HookContext:

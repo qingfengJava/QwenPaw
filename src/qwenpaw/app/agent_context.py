@@ -4,6 +4,7 @@
 Provides utilities to get the correct agent instance for each request.
 """
 import asyncio
+import logging
 from contextvars import ContextVar
 from contextlib import contextmanager
 from pathlib import Path
@@ -12,6 +13,8 @@ from typing import Optional, TYPE_CHECKING
 from fastapi import Request
 from .multi_agent_manager import MultiAgentManager
 from ..config.utils import load_config
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .workspace import Workspace
@@ -288,6 +291,35 @@ def set_current_user_id(user_id: Optional[str]) -> None:
 def get_current_user_id() -> Optional[str]:
     """Get current user ID from context."""
     return _current_user_id.get()
+
+
+def resolve_trusted_user_id(
+    claimed: Optional[str],
+    *,
+    fallback: str,
+    source: str = "",
+) -> str:
+    """Resolve the effective user id for one request (M1 shadow mode).
+
+    An authenticated identity from the request context (set by
+    ``AuthMiddleware`` after token verification, or by a channel driver
+    after identity binding) always wins over a client-claimed
+    ``user_id``; a mismatch is logged but the request proceeds with the
+    trusted identity.  Without an authenticated identity the legacy
+    fallback chain (``claimed`` → ``fallback``) applies unchanged.
+    """
+    auth_user = get_current_user_id()
+    if auth_user:
+        if claimed and claimed != auth_user and claimed != fallback:
+            logger.warning(
+                "Ignoring client-claimed user_id %r%s; using "
+                "authenticated user %r",
+                claimed,
+                f" from {source}" if source else "",
+                auth_user,
+            )
+        return auth_user
+    return claimed or fallback
 
 
 def set_current_channel(channel: Optional[str]) -> None:

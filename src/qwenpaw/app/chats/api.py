@@ -107,6 +107,7 @@ async def _project_directory_response(chat: ChatSpec, workspace) -> dict:
 
 @router.get("", response_model=list[ChatSpec])
 async def list_chats(
+    request: Request,
     user_id: Optional[str] = Query(None, description="Filter by user ID"),
     channel: Optional[str] = Query(None, description="Filter by channel"),
     archived: Optional[bool] = Query(
@@ -125,7 +126,21 @@ async def list_chats(
     When ``archived`` is omitted, returns all chats (both active and archived).
     Pass ``archived=false`` for active only,
     ``archived=true`` for archived only.
+
+    M1: an authenticated caller only ever sees their own chats — the
+    ``user_id`` query parameter is advisory and can never widen the
+    result beyond the verified identity.
     """
+    authenticated_user = getattr(request.state, "user", None)
+    if authenticated_user:
+        if user_id and user_id != authenticated_user:
+            logger.warning(
+                "Ignoring user_id=%r query param from authenticated user %r",
+                user_id,
+                authenticated_user,
+            )
+        user_id = authenticated_user
+
     chats = await mgr.list_chats(
         user_id=user_id,
         channel=channel,

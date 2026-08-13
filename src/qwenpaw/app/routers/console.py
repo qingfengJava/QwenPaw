@@ -133,14 +133,21 @@ async def _apply_session_project_dir(
     return updated or chat
 
 
-def _extract_session_and_payload(request_data: Union[AgentRequest, dict]):
+def _extract_session_and_payload(
+    request_data: Union[AgentRequest, dict],
+    authenticated_user: str | None = None,
+):
     """Extract run_key (ChatSpec.id), session_id, and native payload.
 
     run_key must be ChatSpec.id (chat_id) so it matches list_chats/get_chat.
+
+    When ``authenticated_user`` is given (verified by AuthMiddleware), it
+    replaces any client-claimed ``user_id`` (M1 shadow mode: the mismatch
+    is logged, never honored).
     """
     if isinstance(request_data, AgentRequest):
         channel_id = getattr(request_data, "channel", None) or "console"
-        sender_id = request_data.user_id or "default"
+        claimed_id = request_data.user_id or ""
         session_id = request_data.session_id or "default"
         content_parts = (
             list(request_data.input[0].content) if request_data.input else []
@@ -150,7 +157,7 @@ def _extract_session_and_payload(request_data: Union[AgentRequest, dict]):
         )
     else:
         channel_id = request_data.get("channel", "console")
-        sender_id = request_data.get("user_id", "default")
+        claimed_id = request_data.get("user_id", "") or ""
         session_id = request_data.get("session_id", "default")
         input_data = request_data.get("input", [])
         content_parts = []
@@ -172,6 +179,19 @@ def _extract_session_and_payload(request_data: Union[AgentRequest, dict]):
                 )
                 if isinstance(content_part.get("metadata"), dict):
                     message_metadata = content_part["metadata"]
+
+    # M1 shadow mode: the verified identity wins over any client claim.
+    if authenticated_user:
+        if claimed_id and claimed_id not in (authenticated_user, "default"):
+            logger.warning(
+                "Ignoring client-claimed user_id %r in console chat; "
+                "using authenticated user %r",
+                claimed_id,
+                authenticated_user,
+            )
+        sender_id = authenticated_user
+    else:
+        sender_id = claimed_id or "default"
 
     meta: dict = {
         "session_id": session_id,
@@ -284,7 +304,10 @@ async def post_console_chat(
             detail="Channel Console not found",
         )
     try:
-        native_payload = _extract_session_and_payload(request_data)
+        native_payload = _extract_session_and_payload(
+            request_data,
+            authenticated_user=getattr(request.state, "user", None),
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     session_id = console_channel.resolve_session_id(

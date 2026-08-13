@@ -7,13 +7,16 @@ variable ``QWENPAW_AUTH_ENABLED`` is set to a truthy value (``true``,
 registration flow rather than environment variables, so that agents
 running inside the process cannot read plaintext passwords.
 
-Single-user design: only one account can be registered.  If the user
-forgets their password, delete ``auth.json`` from ``SECRET_DIR`` and
-restart the service to re-register.
+Multi-user design (M1 milestone): accounts live in ``users.json`` under
+``SECRET_DIR`` (see :mod:`qwenpaw.app.users.store`) with argon2id password
+hashing.  The public registration endpoint only creates the *first*
+account (the bootstrap admin); further accounts are created by admins.
+A legacy single-user record in ``auth.json`` is imported automatically on
+first use, and its salted-SHA256 hash is upgraded to argon2id on the next
+successful login.
 
-Uses only Python stdlib (hashlib, hmac, secrets) to avoid adding new
-dependencies.  The password is stored as a salted SHA-256 hash in
-``auth.json`` under ``SECRET_DIR``.
+``auth.json`` retains the JWT signing secret and the token revocation
+list.  Legacy plaintext values are transparently re-encrypted.
 """
 from __future__ import annotations
 
@@ -93,15 +96,19 @@ def _prepare_secret_parent(path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Password hashing (salted SHA-256, no external deps)
+# Password hashing (legacy salted SHA-256 helpers)
 # ---------------------------------------------------------------------------
+#
+# New hashes are argon2id and live in the user store; these helpers remain
+# only so plugins/integrations importing them keep working.  The legacy
+# verification path itself is implemented inside ``users.store``.
 
 
 def _hash_password(
     password: str,
     salt: Optional[str] = None,
 ) -> tuple[str, str]:
-    """Hash *password* with *salt*.  Returns ``(hash_hex, salt_hex)``."""
+    """Legacy salted-SHA256 hash.  Returns ``(hash_hex, salt_hex)``."""
     if salt is None:
         salt = secrets.token_hex(16)
     h = hashlib.sha256((salt + password).encode("utf-8")).hexdigest()
@@ -109,7 +116,7 @@ def _hash_password(
 
 
 def verify_password(password: str, stored_hash: str, salt: str) -> bool:
-    """Verify *password* against a stored hash."""
+    """Verify *password* against a legacy salted-SHA256 hash."""
     h, _ = _hash_password(password, salt)
     return hmac.compare_digest(h, stored_hash)
 
@@ -173,7 +180,9 @@ def create_token(username: str, expiry_seconds: Optional[int] = None) -> str:
 def verify_token(token: str) -> Optional[str]:
     """Verify *token*, return username if valid, ``None`` otherwise.
 
-    Also checks if the token has been revoked (appears in the revocation list).
+    Also checks if the token has been revoked (appears in the revocation
+    list) and rejects tokens whose user no longer exists or is disabled
+    (fail closed when the user store is unreadable).
     """
     import base64
 
@@ -199,7 +208,14 @@ def verify_token(token: str) -> Optional[str]:
         if jti and _is_token_revoked(jti):
             return None
 
-        return payload.get("sub")
+        username = payload.get("sub")
+        # M1: reject tokens for unknown or disabled users so an account
+        # suspension takes effect immediately.
+        _ensure_users_migrated()
+        if not username or not _get_user_store().is_active(username):
+            return None
+
+        return username
     except (json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
         logger.debug("Token verification failed: %s", exc)
         return None
@@ -345,14 +361,50 @@ def is_auth_enabled() -> bool:
     return env_flag in ("true", "1", "yes")
 
 
-def has_registered_users() -> bool:
-    """Return ``True`` if a user has been registered."""
+# ---------------------------------------------------------------------------
+# Multi-user store bridge (M1)
+# ---------------------------------------------------------------------------
+
+_user_store: Optional["UserStore"] = None
+
+
+def _get_user_store() -> "UserStore":
+    """Return the process-wide user store (lazy singleton)."""
+    global _user_store  # noqa: PLW0603
+    if _user_store is None:
+        from .users.store import UserStore
+
+        _user_store = UserStore()
+    return _user_store
+
+
+def _ensure_users_migrated() -> None:
+    """Import the legacy single-user record from ``auth.json`` once.
+
+    The imported account keeps its salted-SHA256 hash (upgraded on next
+    login) and becomes the first admin.  No-op once ``users.json`` holds
+    any account.
+    """
+    store = _get_user_store()
+    if store.has_users():
+        return
     data = _load_auth_data()
-    return bool(data.get("user"))
+    if data.get("_auth_load_error"):
+        return
+    legacy = data.get("user")
+    if not legacy:
+        return
+    store.import_legacy_user(legacy)
+
+
+def has_registered_users() -> bool:
+    """Return ``True`` if at least one user account exists."""
+    _ensure_users_migrated()
+    return _get_user_store().has_users()
 
 
 # ---------------------------------------------------------------------------
-# Registration (single-user)
+# Registration (first user only; admins create further accounts)
 # ---------------------------------------------------------------------------
 
 
@@ -361,35 +413,30 @@ def register_user(
     password: str,
     expiry_seconds: Optional[int] = None,
 ) -> Optional[str]:
-    """Register the single user account.
+    """Register the FIRST user account (the bootstrap admin).
 
     Args:
         username: The username to register.
         password: The password to register.
         expiry_seconds: Custom token expiry time in seconds.
 
-    Returns a token on success, ``None`` if a user already exists.
+    Returns a token on success, ``None`` if any user already exists.
+    Additional accounts are created by admins — never through the public
+    registration endpoint.
     """
-    data = _load_auth_data()
-
-    # Only one user allowed
-    if data.get("user"):
+    _ensure_users_migrated()
+    store = _get_user_store()
+    if store.has_users():
         return None
 
-    pw_hash, salt = _hash_password(password)
-    data["user"] = {
-        "username": username,
-        "password_hash": pw_hash,
-        "password_salt": salt,
-    }
+    from .users.models import ROLE_ADMIN
 
-    # Ensure jwt_secret exists
-    if not data.get("jwt_secret"):
-        data["jwt_secret"] = secrets.token_hex(32)
+    record = store.create_user(username, password, role=ROLE_ADMIN)
+    if record is None:
+        return None
 
-    _save_auth_data(data)
-    logger.info("User '%s' registered", username)
-    return create_token(username, expiry_seconds)
+    logger.info("First user '%s' registered as admin", record.username)
+    return create_token(record.username, expiry_seconds)
 
 
 def auto_register_from_env() -> None:
@@ -425,47 +472,54 @@ def auto_register_from_env() -> None:
 
 
 def update_credentials(
+    username: str,
     current_password: str,
     new_username: Optional[str] = None,
     new_password: Optional[str] = None,
     expiry_seconds: Optional[int] = None,
 ) -> Optional[str]:
-    """Update the registered user's username and/or password.
+    """Update the caller's password.  Returns a new token on success.
 
-    Requires the current password for verification.  Returns a new
-    token on success (because the username may have changed), or
-    ``None`` if verification fails.
+    ``username`` identifies the authenticated caller (taken from the
+    verified token by the caller).  Requires the current password for
+    verification.  Renaming is rejected: usernames anchor data ownership
+    across sessions, memory and history (M1).  Changing the password
+    rotates the JWT secret, invalidating all existing sessions.
 
     Args:
+        username: The authenticated caller's username.
         current_password: The current password for verification.
-        new_username: The new username (optional).
+        new_username: Rejected when different from ``username``.
         new_password: The new password (optional).
         expiry_seconds: Custom token expiry time in seconds.
     """
-    data = _load_auth_data()
-    user = data.get("user")
-    if not user:
+    _ensure_users_migrated()
+    store = _get_user_store()
+    if store.verify_password(username, current_password) is None:
         return None
 
-    stored_hash = user.get("password_hash", "")
-    stored_salt = user.get("password_salt", "")
-    if not verify_password(current_password, stored_hash, stored_salt):
+    if (
+        new_username
+        and new_username.strip()
+        and new_username.strip() != username
+    ):
+        logger.warning(
+            "Rejected username change for '%s': usernames are immutable "
+            "identity anchors in multi-user mode",
+            username,
+        )
         return None
-
-    if new_username and new_username.strip():
-        user["username"] = new_username.strip()
 
     if new_password:
-        pw_hash, salt = _hash_password(new_password)
-        user["password_hash"] = pw_hash
-        user["password_salt"] = salt
+        if not store.update_password(username, new_password):
+            return None
         # Rotate JWT secret to invalidate all existing sessions
+        data = _load_auth_data()
         data["jwt_secret"] = secrets.token_hex(32)
+        _save_auth_data(data)
 
-    data["user"] = user
-    _save_auth_data(data)
-    logger.info("Credentials updated for user '%s'", user["username"])
-    return create_token(user["username"], expiry_seconds)
+    logger.info("Credentials updated for user '%s'", username)
+    return create_token(username, expiry_seconds)
 
 
 # ---------------------------------------------------------------------------
@@ -480,26 +534,18 @@ def authenticate(
 ) -> Optional[str]:
     """Authenticate *username* / *password*.  Returns a token if valid.
 
+    Disabled accounts and unreadable user store both fail closed.
+
     Args:
         username: The username to authenticate.
         password: The password to verify.
         expiry_seconds: Custom token expiry time in seconds.
     """
-    data = _load_auth_data()
-    user = data.get("user")
-    if not user:
+    _ensure_users_migrated()
+    record = _get_user_store().verify_password(username, password)
+    if record is None:
         return None
-    if user.get("username") != username:
-        return None
-    stored_hash = user.get("password_hash", "")
-    stored_salt = user.get("password_salt", "")
-    if (
-        stored_hash
-        and stored_salt
-        and verify_password(password, stored_hash, stored_salt)
-    ):
-        return create_token(username, expiry_seconds)
-    return None
+    return create_token(record.username, expiry_seconds)
 
 
 def revoke_token(token: str) -> bool:
@@ -710,7 +756,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 media_type="application/json",
             )
 
+        # Expose the authenticated identity on both the request state (the
+        # authoritative channel for HTTP handlers) and the request-scoped
+        # context var (for downstream code without request access).
         request.state.user = user
+        from .agent_context import set_current_user_id
+
+        set_current_user_id(user)
         return await call_next(request)
 
     @staticmethod
