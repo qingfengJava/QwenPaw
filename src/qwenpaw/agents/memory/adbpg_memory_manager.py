@@ -48,6 +48,21 @@ class ADBPGMemoryManager(BaseMemoryManager):
         self._persisted_msg_ids: set[str] = set()
         self._pending_add_tasks: set[asyncio.Task[None]] = set()
 
+    def _current_effective_user_id(self) -> str:
+        """Resolve the user dimension for one memory call (M1).
+
+        The request-scoped trusted identity wins; without one (automation
+        contexts, single-user deployments) the configured ``shared``
+        fallback applies unchanged.
+        """
+        try:
+            from ...app.agent_context import get_current_user_id
+
+            owner = get_current_user_id()
+        except Exception:  # pylint: disable=broad-except
+            owner = None
+        return owner or self._effective_user_id
+
     # ------------------------------------------------------------------
     # Abstract methods (required)
     # ------------------------------------------------------------------
@@ -283,7 +298,7 @@ class ADBPGMemoryManager(BaseMemoryManager):
             try:
                 results = await self._client.search_memory(
                     query=query,
-                    user_id=self._effective_user_id,
+                    user_id=self._current_effective_user_id(),
                     agent_id=self._effective_agent_id,
                     limit=max_results,
                 )
@@ -366,7 +381,7 @@ class ADBPGMemoryManager(BaseMemoryManager):
         if self._client is None:
             return
         agent_id = self._effective_agent_id
-        user_id = self._effective_user_id
+        user_id = self._current_effective_user_id()
         run_id = self._effective_run_id
         client = self._client
 

@@ -99,11 +99,16 @@ class MemoryMiddleware(MiddlewareBase):
         if turn_marker and turn_marker != turn_state.get("searched_turn"):
             turn_state["searched_turn"] = turn_marker
             try:
+                # M1: always pass the trusted request identity so memory
+                # retrieval can never roam into another user's vault.
+                from ..app.agent_context import get_current_user_id
+
                 result = await self._memory_manager.auto_memory_search(
                     query_msg,
                     agent_name=agent.name,
                     session_id=agent.state.session_id,
                     user_turn_id=turn_marker,
+                    user_id=get_current_user_id(),
                 )
             except Exception:
                 logger.exception(

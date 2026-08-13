@@ -817,9 +817,27 @@ class AgentBuilder:
     @staticmethod
     def _get_memory_manager(ctx: Any) -> Any:
         workspace = getattr(ctx, "workspace", None)
-        if workspace is not None:
-            return getattr(workspace, "memory_manager", None)
-        return None
+        if workspace is None:
+            return None
+        manager = getattr(workspace, "memory_manager", None)
+        if manager is None:
+            return None
+        # M1: hand the agent a per-user memory view when the backend
+        # supports it, so retrieval/writes stay inside the caller's vault.
+        # ``ctx.request`` is already normalized — its user_id is the
+        # trusted identity (authenticated user or bound channel owner).
+        owner = getattr(getattr(ctx, "request", None), "user_id", None)
+        user_view = getattr(manager, "user_view", None)
+        if owner and callable(user_view):
+            try:
+                return user_view(owner)
+            except Exception:  # pylint: disable=broad-except
+                _logger.warning(
+                    "memory user_view(%r) failed; using shared manager",
+                    owner,
+                    exc_info=True,
+                )
+        return manager
 
     @staticmethod
     def _build_context_config(agent_config: Any) -> Any:

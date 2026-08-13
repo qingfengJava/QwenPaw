@@ -65,7 +65,7 @@ MAX_INBOX_BODY_CHARS = 4000
 _REME_SESSION_ID_HASH_PREFIX = "qpsid_sha256_"
 
 
-def _to_reme_session_id(session_id: str) -> str:
+def _to_reme_session_id(session_id: str, owner_id: str = "") -> str:
     """Return a fixed-length, cross-platform ReMe storage identifier.
 
     ReMe uses the value as a filename component. Hashing the exact UTF-8 bytes
@@ -73,12 +73,17 @@ def _to_reme_session_id(session_id: str) -> str:
     default macOS filesystems, while leaving a stable budget for directories
     and ReMe's filename suffixes.
 
+    M1: when ``owner_id`` is given the hash input is ``owner:session`` so
+    per-user vaults never collide even if two accounts reuse one raw
+    session id.  Without an owner the legacy hash is preserved verbatim.
+
     Legacy dialog files are intentionally not migrated: upgraded sessions
     start a new hashed dialog, leaving old JSONL files untouched and orphaned.
     Previously extracted long-term memories may remain available through the
     existing memory store or index.
     """
-    digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+    key = f"{owner_id}:{session_id}" if owner_id else session_id
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
     return f"{_REME_SESSION_ID_HASH_PREFIX}{digest}"
 
 
@@ -99,9 +104,22 @@ class ReMeLightMemoryManager(BaseMemoryManager):
     ReMe jobs.
     """
 
-    def __init__(self, working_dir: str, agent_id: str):
+    def __init__(
+        self,
+        working_dir: str,
+        agent_id: str,
+        owner_id: str | None = None,
+    ):
         super().__init__(working_dir=working_dir, agent_id=agent_id)
         self._reme: "ReMe | None" = None
+        # M1: set only on per-user vault managers (``owner_id`` is the
+        # owning account); the shared workspace-root instance keeps None
+        # and doubles as the legacy read-only fallback vault.
+        self._owner_id = owner_id
+        self._user_managers: dict[str, "ReMeLightMemoryManager"] = {}
+        self._user_managers_lock = asyncio.Lock()
+        # Guards lazy start of a per-user manager from its first data op.
+        self._start_lock = asyncio.Lock()
         self._reindex_lock = asyncio.Lock()
         self._lifecycle_writer_lock = asyncio.Lock()
         self._lifecycle_condition = asyncio.Condition()
@@ -146,6 +164,55 @@ class ReMeLightMemoryManager(BaseMemoryManager):
         except Exception as exc:
             logger.warning("ReMe import failed; memory disabled: %s", exc)
 
+    # ------------------------------------------------------------------
+    # Per-user vaults (M1)
+    # ------------------------------------------------------------------
+
+    def _user_vault_dir(self, owner_id: str) -> str:
+        """Return the vault directory for one owning account."""
+        from ...app.chats.session import sanitize_filename
+
+        safe = sanitize_filename(owner_id)
+        if safe in {".", ".."} or not safe:
+            raise ValueError(f"invalid owner_id for vault: {owner_id!r}")
+        return os.path.join(self.working_dir, "users", safe)
+
+    def _get_user_manager_sync(
+        self,
+        owner_id: str,
+    ) -> "ReMeLightMemoryManager":
+        """Return the cached per-user manager, constructing it if needed.
+
+        Construction is cheap (the ReMe app object is built but not
+        started); startup happens lazily in :meth:`_ensure_user_manager`
+        on the first data operation.
+        """
+        manager = self._user_managers.get(owner_id)
+        if manager is None:
+            manager = ReMeLightMemoryManager(
+                working_dir=self._user_vault_dir(owner_id),
+                agent_id=self.agent_id,
+                owner_id=owner_id,
+            )
+            self._user_managers[owner_id] = manager
+        return manager
+
+    async def _ensure_user_manager(
+        self,
+        owner_id: str,
+    ) -> "ReMeLightMemoryManager":
+        """Return the per-user manager with its ReMe app started."""
+        async with self._user_managers_lock:
+            manager = self._get_user_manager_sync(owner_id)
+            reme = getattr(manager, "_reme", None)
+            if reme is not None and not getattr(reme, "is_started", False):
+                await manager.start()
+            return manager
+
+    def user_view(self, owner_id: str) -> "UserMemoryView":
+        """Return the per-user memory facade for one owning account (M1)."""
+        return UserMemoryView(self, owner_id)
+
     async def start(self) -> None:
         """Start the embedded ReMe application."""
         if self._reme is None:
@@ -164,8 +231,22 @@ class ReMeLightMemoryManager(BaseMemoryManager):
 
     async def close(self) -> bool:
         """Close ReMe and clean up background summary worker state."""
+        # Close per-user vaults first (they own independent ReMe apps and
+        # summary workers); only then quiesce the shared legacy vault.
+        user_managers = list(getattr(self, "_user_managers", {}).values())
+        self._user_managers.clear()
+        clean = True
+        for manager in user_managers:
+            try:
+                clean = bool(await manager.close()) and clean
+            except Exception:  # pylint: disable=broad-except
+                logger.exception(
+                    "Failed to close per-user memory vault (owner=%s)",
+                    manager._owner_id,  # pylint: disable=protected-access
+                )
+                clean = False
         async with self._exclusive_reme_lifecycle("close"):
-            return await self._close_reme_unlocked()
+            return bool(await self._close_reme_unlocked()) and clean
 
     async def _close_reme_unlocked(self) -> bool:
         """Close ReMe after the caller has quiesced all ReMe jobs."""
@@ -408,6 +489,21 @@ class ReMeLightMemoryManager(BaseMemoryManager):
             The job response, or ``None`` when ReMe is not started -- and,
             unless ``raise_on_error`` is set, also when the job raised.
         """
+        # ``getattr`` defaults keep ``__new__``-constructed test doubles
+        # (which bypass ``__init__``) working.
+        if getattr(self, "_owner_id", None) and (
+            self._reme is None or not getattr(self._reme, "is_started", False)
+        ):
+            # Per-user managers start lazily on their first data operation
+            # so the shared workspace instance never pays for vaults that
+            # are never touched.
+            async with self._start_lock:
+                if self._reme is not None and not getattr(
+                    self._reme,
+                    "is_started",
+                    False,
+                ):
+                    await self.start()
         if lifecycle_locked:
             return await self._run_reme_job_unlocked(
                 name,
@@ -631,6 +727,22 @@ class ReMeLightMemoryManager(BaseMemoryManager):
         if not query:
             return _tool_chunk("Error: query cannot be empty", ok=False)
 
+        owner = self._route_owner({})
+        if owner:
+            return await self.user_view(owner).memory_search(
+                query,
+                max_results=max_results,
+                min_score=min_score,
+            )
+        return await self._memory_search_impl(query, max_results, min_score)
+
+    async def _memory_search_impl(
+        self,
+        query: str,
+        max_results: int = 5,
+        min_score: float = 0,
+    ) -> ToolChunk:
+        """Run the search against this manager's own vault."""
         reranker_config = await self._get_reranker_config()
         cap = max(1, max_results)
 
@@ -1045,12 +1157,34 @@ class ReMeLightMemoryManager(BaseMemoryManager):
             logger.warning("[rerank] unexpected error", exc_info=True)
             return None
 
+    def _route_owner(self, kwargs: dict) -> str | None:
+        """Resolve the owning account for one data call (M1).
+
+        Priority: explicit ``user_id`` kwarg (popped) → request-scoped
+        identity context.  Per-user managers (``_owner_id`` set) never
+        re-route — they ARE the routed target.
+        """
+        if getattr(self, "_owner_id", None):
+            return None
+        owner = kwargs.pop("user_id", None) or None
+        if not owner:
+            try:
+                from ...app.agent_context import get_current_user_id
+
+                owner = get_current_user_id()
+            except Exception:  # pylint: disable=broad-except
+                owner = None
+        return owner or None
+
     async def summarize(
         self,
         messages: list[Msg],
         **kwargs: Any,
     ) -> str:
         """Persist conversation messages through ReMe auto-memory."""
+        owner = self._route_owner(kwargs)
+        if owner:
+            return await self.user_view(owner).summarize(messages, **kwargs)
         if not messages:
             return ""
 
@@ -1068,7 +1202,10 @@ class ReMeLightMemoryManager(BaseMemoryManager):
             "auto_memory",
             needs_llm=True,
             messages=[message.model_dump(mode="json") for message in messages],
-            session_id=_to_reme_session_id(session_id),
+            session_id=_to_reme_session_id(
+                session_id,
+                getattr(self, "_owner_id", None) or "",
+            ),
             memory_hint=str(kwargs.get("memory_hint") or ""),
         )
         if response is None:
@@ -1082,8 +1219,20 @@ class ReMeLightMemoryManager(BaseMemoryManager):
         **kwargs: Any,
     ) -> dict | None:
         """Auto-search memory and expose it as a completed tool interaction."""
-        del agent_name
-        del kwargs
+        owner = self._route_owner(kwargs)
+        if owner:
+            return await self.user_view(owner).auto_memory_search(
+                messages,
+                agent_name=agent_name,
+                **kwargs,
+            )
+        return await self._auto_memory_search_impl(messages)
+
+    async def _auto_memory_search_impl(
+        self,
+        messages: list[Msg] | Msg,
+    ) -> dict | None:
+        """Search this manager's own vault (no owner routing)."""
         agent_config = await load_agent_config_async(self.agent_id)
         memory_cfg = agent_config.running.reme_light_memory_config
         if not memory_cfg.auto_memory_search_config.enabled:
@@ -1142,6 +1291,10 @@ class ReMeLightMemoryManager(BaseMemoryManager):
         **kwargs: Any,
     ) -> None:
         """Auto-extract memory for a prepared reply batch."""
+        owner = self._route_owner(kwargs)
+        if owner:
+            await self.user_view(owner).auto_memory(all_messages, **kwargs)
+            return
         if not all_messages:
             return
         all_messages = self._messages_without_auto_memory_search(all_messages)
@@ -1254,3 +1407,154 @@ class ReMeLightMemoryManager(BaseMemoryManager):
     def is_reindexing(self) -> bool:
         """Whether an explicit index rebuild is active."""
         return self._reindex_lock.locked()
+
+
+class UserMemoryView:
+    """Per-user memory facade bound to one owning account (M1).
+
+    The workspace keeps a single shared :class:`ReMeLightMemoryManager`
+    whose vault is the workspace root — that instance now serves as the
+    *legacy* vault (pre-M1 data, read-only fallback).  Every data
+    operation on this view is routed to the owner's vault under
+    ``<workspace>/users/<owner>/``:
+
+    - searches query the owner vault first and fall back to the legacy
+      vault only when it has no hits, so pre-upgrade memories stay
+      reachable without ever leaking across accounts;
+    - writes (``summarize`` / ``auto_memory``) go only to the owner
+      vault, with the ReMe session hash keyed by ``owner:session``.
+
+    Configuration, prompts, cron declarations and lifecycle remain with
+    the shared manager; anything not overridden here delegates to it.
+    """
+
+    enabled = True
+
+    def __init__(
+        self,
+        shared: ReMeLightMemoryManager,
+        owner_id: str,
+    ) -> None:
+        self._shared = shared
+        self.owner_id = owner_id
+        self.working_dir = shared.working_dir
+        self.agent_id = shared.agent_id
+
+    def __getattr__(self, name: str) -> Any:
+        # Only called for attributes not found normally, so nothing
+        # defined on the view itself can be shadowed by the delegate.
+        return getattr(self._shared, name)
+
+    # -- lifecycle ------------------------------------------------------
+
+    async def start(self) -> None:
+        """No-op: vault startup is lazy (first data op) or shared."""
+
+    async def close(self) -> bool:
+        """No-op: per-user vaults close with the shared manager."""
+        return True
+
+    # -- helpers ---------------------------------------------------------
+
+    async def _user_manager(self) -> ReMeLightMemoryManager:
+        return await self._shared._ensure_user_manager(self.owner_id)
+
+    @staticmethod
+    def _chunk_text(chunk: ToolChunk) -> str:
+        for block in getattr(chunk, "content", None) or []:
+            text = getattr(block, "text", None)
+            if text:
+                return str(text)
+        return ""
+
+    # -- data operations (owner vault; legacy fallback for reads) --------
+
+    async def memory_search(
+        self,
+        query: str,
+        max_results: int = 5,
+        min_score: float = 0,
+    ) -> ToolChunk:
+        """Search the owner's vault, falling back to the legacy vault."""
+        um = await self._user_manager()
+        chunk = await um._memory_search_impl(query, max_results, min_score)
+        text = self._chunk_text(chunk)
+        if text and text != NO_MEMORY_RESULTS:
+            return chunk
+        legacy = await self._shared._memory_search_impl(
+            query,
+            max_results,
+            min_score,
+        )
+        legacy_text = self._chunk_text(legacy)
+        if legacy_text and legacy_text != NO_MEMORY_RESULTS:
+            return legacy
+        return chunk
+
+    async def auto_memory_search(
+        self,
+        messages: list[Msg] | Msg,
+        agent_name: str = "",
+        **kwargs: Any,
+    ) -> dict | None:
+        """Auto-search the owner's vault, then the legacy vault."""
+        kwargs.pop("user_id", None)
+        um = await self._user_manager()
+        result = await um._auto_memory_search_impl(messages)
+        if result is not None:
+            return result
+        return await self._shared._auto_memory_search_impl(messages)
+
+    async def summarize(self, messages: list[Msg], **kwargs: Any) -> str:
+        """Persist messages into the owner's vault (never the legacy one)."""
+        kwargs.pop("user_id", None)
+        um = await self._user_manager()
+        return await um.summarize(messages, **kwargs)
+
+    async def auto_memory(
+        self,
+        all_messages: list[Msg],
+        **kwargs: Any,
+    ) -> None:
+        kwargs.pop("user_id", None)
+        um = await self._user_manager()
+        await um.auto_memory(all_messages, **kwargs)
+
+    def add_summarize_task(self, messages: list[Msg], **kwargs: Any) -> None:
+        kwargs.pop("user_id", None)
+        um = self._shared._get_user_manager_sync(self.owner_id)
+        um.add_summarize_task(messages, **kwargs)
+
+    async def dream(self, **kwargs: Any) -> None:
+        um = await self._user_manager()
+        await um.dream(**kwargs)
+
+    async def graph_snapshot(self) -> Any | None:
+        um = await self._user_manager()
+        return await um.graph_snapshot()
+
+    async def rebuild_index(self) -> Any | None:
+        um = await self._user_manager()
+        return await um.rebuild_index()
+
+    def get_auto_memory_turn_state(self, session_id: str) -> dict[str, Any]:
+        um = self._shared._get_user_manager_sync(self.owner_id)
+        return um.get_auto_memory_turn_state(session_id)
+
+    def list_summarize_status(self) -> list[dict]:
+        um = self._shared._get_user_manager_sync(self.owner_id)
+        return um.list_summarize_status()
+
+    # -- agent wiring ------------------------------------------------------
+
+    def list_memory_tools(self) -> list:
+        """Expose the view-bound search tool so calls stay owner-scoped."""
+        if not self._shared.get_memory_config().memory_search_enabled:
+            return []
+        return [self.memory_search]
+
+    def build_middlewares(self) -> list:
+        """Middlewares bound to this view, not the shared manager."""
+        from ..middlewares import MemoryMiddleware
+
+        return [MemoryMiddleware(memory_manager=self)]
