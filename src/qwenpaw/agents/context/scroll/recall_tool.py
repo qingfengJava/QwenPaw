@@ -800,6 +800,7 @@ def make_recall_history(
     owner_id: str | None = None,
     loop_guard: RecallLoopGuard | None = None,
     page_max_bytes: int = DEFAULT_MAX_BYTES,
+    history_dsn: str | None = None,
 ):
     """Build a ``recall_history`` tool bound to one session's history.
 
@@ -809,12 +810,32 @@ def make_recall_history(
     setup identical to the REPL's and leaks no connection across calls.
 
     ``owner_id`` (M1) scopes every query to the owning account's rows.
+    ``history_dsn`` (M2) switches the read path to PostgreSQL
+    (:class:`PgMemorySpace`); the db path is then ignored.
     """
+
+    _pg_space: Any = None
 
     def _open_ms() -> Any:
         # Imported lazily (not at module top) for symmetry with the sandboxed
         # cell, which imports memoryspace by bare name — and so a broken
         # memoryspace degrades this tool, not the whole scroll import chain.
+        if history_dsn:
+            # PgMemorySpace owns an engine + loop thread: reuse one instance
+            # across ops, refreshing its per-query memoization each time.
+            nonlocal _pg_space
+            from .pg_memoryspace import PgMemorySpace
+
+            if _pg_space is None:
+                _pg_space = PgMemorySpace(
+                    dsn=history_dsn,
+                    session_id=session_id,
+                    agent_id=agent_id,
+                    owner_id=owner_id,
+                )
+            else:
+                _pg_space.refresh()
+            return _pg_space
         from .memoryspace import MemorySpace
 
         return MemorySpace(
@@ -896,7 +917,10 @@ def make_recall_history(
                     cursor,
                 )
         finally:
-            ms.close()
+            # The pg read path reuses one engine-backed instance across ops;
+            # only the per-call SQLite MemorySpace is closed here.
+            if not history_dsn:
+                ms.close()
         if not rows:
             _parse_cursor(
                 cursor,

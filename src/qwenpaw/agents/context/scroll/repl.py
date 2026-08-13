@@ -94,6 +94,7 @@ def make_recall_history_python(
     scratch_root: str,
     timeout_s: int = 300,
     allow_unsandboxed: bool = False,
+    history_dsn: str | None = None,
 ):
     """Build a ``recall_history_python`` tool bound to one session's history.
 
@@ -118,25 +119,47 @@ def make_recall_history_python(
     def _build_cell(source: str) -> Path:
         # sqlite3.connect won't create missing parent dirs, so make the
         # scratch DB's holding dir before MemorySpace opens it.
-        preamble = (
-            "import sys\n"
-            f"sys.path.insert(0, {_PKG_DIR!r})\n"
-            "from pathlib import Path\n"
-            "from memoryspace import MemorySpace\n"
-            f"Path({scratch_db!r}).parent.mkdir(parents=True, exist_ok=True)\n"
-            "ms = MemorySpace(\n"
-            f"    history_db_path={history_db_path!r},\n"
-            f"    session_id={session_id!r},\n"
-            f"    agent_id={agent_id!r},\n"
-            f"    owner_id={owner_id!r},\n"
-            f"    scratch_db_path={scratch_db!r},\n"
-            ")\n"
-            # Safety net: ``ms`` is meant to be used directly, but models often
-            # reflexively ``import ms``. Registering the instance as a module
-            # makes that import bind ``ms`` to this same object instead of
-            # raising ModuleNotFoundError.
-            "sys.modules['ms'] = ms\n"
-        )
+        if history_dsn:
+            # M2 pg read path: the cell's ``ms`` is a PgMemorySpace — the
+            # structured recall methods work identically; free-form SQL is
+            # unavailable (owner enforcement cannot be proven inside
+            # arbitrary SQL on a shared database). Full package import: the
+            # module uses intra-package relative imports, so the bare-name
+            # sys.path trick used for memoryspace does not apply.
+            preamble = (
+                "import sys\n"
+                "from qwenpaw.agents.context.scroll.pg_memoryspace import (\n"
+                "    PgMemorySpace,\n"
+                ")\n"
+                "ms = PgMemorySpace(\n"
+                f"    dsn={history_dsn!r},\n"
+                f"    session_id={session_id!r},\n"
+                f"    agent_id={agent_id!r},\n"
+                f"    owner_id={owner_id!r},\n"
+                ")\n"
+                "sys.modules['ms'] = ms\n"
+            )
+        else:
+            preamble = (
+                "import sys\n"
+                f"sys.path.insert(0, {_PKG_DIR!r})\n"
+                "from pathlib import Path\n"
+                "from memoryspace import MemorySpace\n"
+                f"Path({scratch_db!r}).parent.mkdir("
+                "parents=True, exist_ok=True)\n"
+                "ms = MemorySpace(\n"
+                f"    history_db_path={history_db_path!r},\n"
+                f"    session_id={session_id!r},\n"
+                f"    agent_id={agent_id!r},\n"
+                f"    owner_id={owner_id!r},\n"
+                f"    scratch_db_path={scratch_db!r},\n"
+                ")\n"
+                # Safety net: ``ms`` is meant to be used directly, but models
+                # often reflexively ``import ms``. Registering the instance as
+                # a module makes that import bind ``ms`` to this same object
+                # instead of raising ModuleNotFoundError.
+                "sys.modules['ms'] = ms\n"
+            )
         cells_dir.mkdir(parents=True, exist_ok=True)
         cell = cells_dir / f"cell_{uuid.uuid4().hex}.py"
         cell.write_text(preamble + "\n" + (source or ""), encoding="utf-8")

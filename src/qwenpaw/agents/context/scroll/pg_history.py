@@ -13,14 +13,13 @@ is no local file to quarantine).
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
-import threading
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional
 
+from ....db.async_bridge import AsyncLoopThread
 from ..types import LogEntry
 from .base_history import METADATA_UNSET, BaseHistoryStore
 
@@ -42,34 +41,6 @@ def _json_text(value: Any) -> str | None:
     if value is None:
         return None
     return json.dumps(value, ensure_ascii=False)
-
-
-class _AsyncLoop:
-    """A daemon-thread event loop running the store's async operations."""
-
-    def __init__(self) -> None:
-        self._loop = asyncio.new_event_loop()
-        self._thread = threading.Thread(
-            target=self._loop.run_forever,
-            name="qwenpaw-pg-history",
-            daemon=True,
-        )
-        self._thread.start()
-        self._closed = False
-
-    def run(self, coro):
-        """Run ``coro`` on the loop thread and block for its result."""
-        if self._closed:
-            raise RuntimeError("PgHistoryStore is closed")
-        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
-        return future.result()
-
-    def close(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        self._loop.call_soon_threadsafe(self._loop.stop)
-        self._thread.join(timeout=5)
 
 
 class PgHistoryStore(BaseHistoryStore):
@@ -96,7 +67,7 @@ class PgHistoryStore(BaseHistoryStore):
         self.write_failures = 0
         self.quarantined_to = None
         self._closed = False
-        self._loop = _AsyncLoop()
+        self._loop = AsyncLoopThread(thread_name="qwenpaw-pg-history")
         self._engine = self._loop.run(self._create_engine())
 
     async def _create_engine(self) -> "AsyncEngine":
@@ -139,7 +110,7 @@ class PgHistoryStore(BaseHistoryStore):
         try:
             return self._loop.run(coro)
         except Exception:
-            self._closed = self._closed or self._loop._closed
+            self._closed = self._closed or self._loop._closed  # noqa: SLF001
             raise
 
     # -- async primitives ---------------------------------------------------

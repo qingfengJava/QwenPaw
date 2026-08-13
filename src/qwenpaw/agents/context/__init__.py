@@ -190,6 +190,15 @@ def build_scroll_components(
         history = build_history_store(db_path)
         recall_loop_guard = RecallLoopGuard()
         scratch_root = str(Path(workspace_dir) / ".scroll")
+        # M2: with the pg backend the recall read path switches to
+        # PostgreSQL; dual mode keeps reading the SQLite primary.
+        from ...app.chats.factory import STORAGE_BACKEND_PG, get_storage_backend
+
+        history_dsn = None
+        if get_storage_backend() == STORAGE_BACKEND_PG:
+            from ...db.engine import get_pg_dsn
+
+            history_dsn = get_pg_dsn()
 
         manager = ScrollContextManager(
             history=history,
@@ -212,6 +221,7 @@ def build_scroll_components(
             scratch_root=scratch_root,
             timeout_s=sc.repl_timeout_s,
             allow_unsandboxed=scroll_unsandboxed_allowed(sc),
+            history_dsn=history_dsn,
         )
         # Structured front door for the common recall ops (expand / search /
         # recall_tool): in-process bound queries, no sandbox, no approval —
@@ -224,6 +234,7 @@ def build_scroll_components(
             owner_id=owner_id,
             loop_guard=recall_loop_guard,
             page_max_bytes=trc.pruning_recent_msg_max_bytes,
+            history_dsn=history_dsn,
         )
         return ScrollComponents(
             context_manager=manager,
