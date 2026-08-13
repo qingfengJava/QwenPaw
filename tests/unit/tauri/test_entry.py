@@ -60,9 +60,17 @@ def test_install_certifi_env_sets_bundle_paths(monkeypatch, tmp_path):
 
     entry._install_certifi_env()
 
-    assert os.environ["SSL_CERT_FILE"] == str(cert_file)
-    assert os.environ["REQUESTS_CA_BUNDLE"] == str(cert_file)
-    assert os.environ["CURL_CA_BUNDLE"] == str(cert_file)
+    try:
+        assert os.environ["SSL_CERT_FILE"] == str(cert_file)
+        assert os.environ["REQUESTS_CA_BUNDLE"] == str(cert_file)
+        assert os.environ["CURL_CA_BUNDLE"] == str(cert_file)
+    finally:
+        # ``_install_certifi_env`` writes os.environ directly (setdefault),
+        # which monkeypatch does not track.  Drop the bogus bundle paths so
+        # later tests — and the app-server subprocesses they spawn — do not
+        # inherit an invalid SSL_CERT_FILE pointing at this tmp_path.
+        for name in ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"):
+            os.environ.pop(name, None)
 
 
 def test_run_click_command_wraps_click_exception(capsys):
