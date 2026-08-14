@@ -16,6 +16,8 @@ import type {
   SkillView,
 } from "../api/modules";
 import { buildAgentRequest, streamChat } from "../lib/stream";
+import { useAuthStore } from "../stores/auth";
+import { applyEvent, userItem, type TimelineItem } from "../chat/protocol";
 
 type View = "experts" | "teams" | "skills" | "connectors";
 
@@ -62,24 +64,21 @@ export default function ExpertsPage() {
     setBusy(true);
     setReply("");
     try {
-      const chat = await chatApi.create(prompt.slice(0, 20));
+      const username = useAuthStore.getState().username;
+      const chat = await chatApi.create(prompt.slice(0, 20) || "专家对话", username);
+      // Stream over the console plane with the agent header; merge events
+      // with the shared protocol reducer and surface assistant text.
+      let timeline: TimelineItem[] = [userItem(prompt)];
       await streamChat(
         "/console/chat",
-        buildAgentRequest(prompt, chat.id),
-        (raw: string) => {
-          try {
-            const evt = JSON.parse(raw);
-            const delta =
-              evt?.choices?.[0]?.delta?.content ??
-              evt?.delta ??
-              evt?.content ??
-              (typeof evt?.text === "string" ? evt.text : "");
-            if (delta) {
-              setReply((prev) => prev + delta);
-            }
-          } catch {
-            /* keepalive */
-          }
+        buildAgentRequest(prompt, chat.session_id),
+        (raw) => {
+          timeline = applyEvent(timeline, raw);
+          const text = timeline
+            .filter((it): it is Extract<TimelineItem, { kind: "assistant" }> => it.kind === "assistant")
+            .map((it) => it.text)
+            .join("\n\n");
+          setReply(text);
         },
         { "X-Agent-Id": agentId },
       );

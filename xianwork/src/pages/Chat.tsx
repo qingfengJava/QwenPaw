@@ -1,189 +1,228 @@
 /**
- * Chat — personal assistant conversations over the console SSE plane.
- * Extension design: chat list rail + bubble stream + the shared
- * PromptInput (detail variant) docked at the bottom. Streaming logic
- * preserved from the scaffold (helpers now in lib/stream.ts).
+ * Chat — full parity with the backend chat page: session drawer (console
+ * channel scope), streaming timeline with markdown / reasoning / tool cards,
+ * stop control and real kickoff sending from the Home launcher.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import PromptInput from "../components/PromptInput";
+import Modal from "../components/Modal";
+import SessionDrawer from "../components/chat/SessionDrawer";
+import TimelineList from "../components/chat/TimelineList";
 import { chatApi } from "../api/modules";
 import type { ChatSpecView } from "../api/modules";
-import { buildAgentRequest, streamChat } from "../lib/stream";
-
-interface Bubble {
-  role: "user" | "assistant";
-  text: string;
-}
+import { useAuthStore } from "../stores/auth";
+import { useToast } from "../components/Toast";
+import { useChatStream } from "../chat/useChatStream";
+import { historyToTimeline } from "../chat/protocol";
 
 export default function ChatPage() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const activeId = params.get("chat") ?? "";
   const kickoff = params.get("kickoff") ?? "";
+  const username = useAuthStore((s) => s.username);
+  const toast = useToast();
 
   const [chats, setChats] = useState<ChatSpecView[]>([]);
-  const [bubbles, setBubbles] = useState<Bubble[]>([]);
   const [input, setInput] = useState("");
-  const [streaming, setStreaming] = useState(false);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const [pendingDelete, setPendingDelete] = useState<ChatSpecView | null>(null);
+  const { items, streaming, send, stop, reset } = useChatStream();
+  const kickoffRef = useRef("");
+  const historyLoadedRef = useRef("");
+
+  const activeChat = useMemo(
+    () => chats.find((c) => c.id === activeId) ?? null,
+    [chats, activeId],
+  );
 
   const loadChats = useCallback(async () => {
     try {
-      setChats(await chatApi.list());
+      setChats(await chatApi.list(username));
     } catch {
       setChats([]);
     }
-  }, []);
+  }, [username]);
 
+  // Initial list load; auto-select the most recent chat when none is active.
   useEffect(() => {
-    loadChats();
+    void loadChats().then(() => {
+      // Populated after the state settles in the next render tick.
+    });
   }, [loadChats]);
 
   useEffect(() => {
-    if (kickoff && activeId) {
-      setBubbles([{ role: "user", text: kickoff }]);
+    if (!activeId && chats.length > 0) {
+      const latest = [...chats].sort(
+        (a, b) =>
+          (new Date(b.updated_at ?? 0).getTime() || 0) -
+          (new Date(a.updated_at ?? 0).getTime() || 0),
+      )[0];
+      navigate(`/chat?chat=${latest.id}`, { replace: true });
     }
-  }, [kickoff, activeId]);
+  }, [activeId, chats, navigate]);
 
+  // Load history when switching chats (once per chat id). Kickoff sending
+  // is chained AFTER the history reset — a parallel send used to race the
+  // reset, which wiped the timeline mid-stream and aborted the fetch.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [bubbles]);
-
-  const send = async (text: string) => {
-    const value = text.trim();
-    if (!value || streaming) return;
-    setBubbles((prev) => [...prev, { role: "user", text: value }]);
-    setStreaming(true);
-    setBubbles((prev) => [...prev, { role: "assistant", text: "" }]);
-    try {
-      await streamChat(
-        "/console/chat",
-        buildAgentRequest(value, activeId || "default"),
-        (raw: string) => {
-          try {
-            const evt = JSON.parse(raw);
-            const delta =
-              evt?.choices?.[0]?.delta?.content ??
-              evt?.delta ??
-              evt?.content ??
-              (typeof evt?.text === "string" ? evt.text : "");
-            if (delta) {
-              setBubbles((prev) => {
-                const copy = [...prev];
-                const last = copy[copy.length - 1];
-                if (last && last.role === "assistant") {
-                  copy[copy.length - 1] = { ...last, text: last.text + delta };
-                }
-                return copy;
-              });
-            }
-          } catch {
-            /* non-JSON keepalive/comment lines */
-          }
-        },
-      );
-    } catch (err) {
-      setBubbles((prev) => [
-        ...prev.slice(0, -1),
-        { role: "assistant", text: `（连接中断：${String(err)}）` },
-      ]);
-    } finally {
-      setStreaming(false);
-      loadChats();
+    if (!activeChat || historyLoadedRef.current === activeChat.id) {
+      return;
     }
+    historyLoadedRef.current = activeChat.id;
+    kickoffRef.current = kickoff;
+    void chatApi
+      .history(activeChat.id)
+      .then((h) => {
+        reset(historyToTimeline(h));
+        window.setTimeout(() => void loadChats(), 0);
+        const text = kickoffRef.current;
+        if (text) {
+          kickoffRef.current = "";
+          void send(text, activeChat);
+        }
+      })
+      .catch(() => {
+        reset([]);
+        const text = kickoffRef.current;
+        if (text) {
+          kickoffRef.current = "";
+          void send(text, activeChat);
+        }
+      });
+    if (kickoff) {
+      navigate(`/chat?chat=${activeChat.id}`, { replace: true });
+    }
+  }, [activeChat, kickoff, navigate, reset, loadChats, send]);
+
+  const handleCreate = async () => {
+    try {
+      const chat = await chatApi.create("新对话", username);
+      await loadChats();
+      navigate(`/chat?chat=${chat.id}`);
+    } catch {
+      toast.error("创建会话失败");
+    }
+  };
+
+  const handleSelect = (chat: ChatSpecView) => {
+    if (chat.id !== activeId) {
+      navigate(`/chat?chat=${chat.id}`);
+    }
+  };
+
+  const handleRename = async (chat: ChatSpecView, name: string) => {
+    try {
+      await chatApi.rename(chat.id, name);
+      setChats((prev) => prev.map((c) => (c.id === chat.id ? { ...c, name } : c)));
+    } catch {
+      toast.error("重命名失败");
+    }
+  };
+
+  const handleTogglePin = async (chat: ChatSpecView) => {
+    try {
+      await chatApi.togglePin(chat.id, !chat.pinned);
+      setChats((prev) => prev.map((c) => (c.id === chat.id ? { ...c, pinned: !c.pinned } : c)));
+    } catch {
+      toast.error("操作失败");
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!pendingDelete) {
+      return;
+    }
+    const target = pendingDelete;
+    setPendingDelete(null);
+    try {
+      await chatApi.remove(target.id);
+      const rest = chats.filter((c) => c.id !== target.id);
+      setChats(rest);
+      if (target.id === activeId) {
+        reset([]);
+        historyLoadedRef.current = "";
+        if (rest.length > 0) {
+          navigate(`/chat?chat=${rest[0].id}`);
+        } else {
+          navigate("/chat");
+        }
+      }
+      toast.success("会话已删除");
+    } catch {
+      toast.error("删除失败");
+    }
+  };
+
+  const handleSend = (value: string) => {
+    if (!activeChat) {
+      void handleCreate().then(() => {
+        // Next render wires the new chat; queue the text into kickoff.
+        kickoffRef.current = value;
+      });
+      return;
+    }
+    setInput("");
+    void send(value, activeChat);
   };
 
   return (
     <div className="view active" style={{ flexDirection: "row" }}>
-      {/* chat list rail */}
-      <div
-        style={{
-          width: 240,
-          borderRight: "1px solid var(--border-light)",
-          padding: 14,
-          overflowY: "auto",
-          flexShrink: 0,
-        }}
-      >
-        <div
-          style={{
-            fontWeight: 600,
-            fontSize: 12,
-            color: "var(--text-muted)",
-            marginBottom: 10,
-            padding: "0 4px",
-          }}
-        >
-          任务会话
-        </div>
-        {chats.map((chat) => (
-          <div
-            key={chat.id}
-            className={`nav-item${chat.id === activeId ? " active" : ""}`}
-            onClick={() => navigate(`/chat?chat=${chat.id}`)}
-          >
-            <div className="nav-item-left">
-              <span>{chat.name}</span>
-            </div>
-          </div>
-        ))}
-      </div>
+      <SessionDrawer
+        chats={chats}
+        activeId={activeId}
+        onSelect={handleSelect}
+        onCreate={() => void handleCreate()}
+        onRename={(chat, name) => void handleRename(chat, name)}
+        onTogglePin={(chat) => void handleTogglePin(chat)}
+        onDelete={(chat) => setPendingDelete(chat)}
+      />
 
-      {/* conversation */}
-      <div
-        style={{
-          flexGrow: 1,
-          display: "flex",
-          flexDirection: "column",
-          position: "relative",
-          minWidth: 0,
-        }}
-      >
-        <div className="chat-scroll">
-          <div style={{ maxWidth: 820, width: "100%", margin: "0 auto" }}>
-            {bubbles.length === 0 && (
-              <div className="blank-state" style={{ marginTop: 80 }}>
-                <i
-                  className="fa-regular fa-comment-dots"
-                  style={{ fontSize: 26, marginBottom: 10 }}
-                />
-                <div>和你的个人助手聊点什么吧</div>
-              </div>
+      <div className="chat-main">
+        <div className="chat-main-header">
+          <div className="chat-main-title">
+            {activeChat?.name || "新对话"}
+            {streaming && (
+              <span className="chat-main-live">
+                <i className="fa-solid fa-spinner fa-spin" /> 回复中
+              </span>
             )}
-            {bubbles.map((bubble, index) => (
-              <div
-                key={index}
-                className={`chat-message ${bubble.role}`}
-              >
-                {bubble.role === "assistant" && (
-                  <div className="chat-sender">XianWork 助理</div>
-                )}
-                <div
-                  className="chat-bubble"
-                  style={{ maxWidth: "78%" }}
-                >
-                  {bubble.text ||
-                    (streaming && index === bubbles.length - 1 ? "▍" : "")}
-                </div>
-              </div>
-            ))}
-            <div ref={bottomRef} />
           </div>
         </div>
+
+        <TimelineList items={items} streaming={streaming} />
 
         <div className="fixed-bottom-input">
           <PromptInput
             variant="detail"
-            placeholder="发送消息给个人助手…"
+            placeholder={activeChat ? "发送消息…" : "新建会话并发送…"}
             value={input}
             onChange={setInput}
-            onSend={(value) => void send(value)}
+            onSend={handleSend}
+            onStop={activeChat ? () => void stop(activeChat) : undefined}
             busy={streaming}
-            contextTags={[{ label: "本地任务" }]}
+            contextTags={[{ label: "个人助手" }]}
           />
         </div>
       </div>
+
+      <Modal
+        open={pendingDelete !== null}
+        title="删除会话"
+        onClose={() => setPendingDelete(null)}
+      >
+        <div className="modal-body-text">
+          确定删除会话「{pendingDelete?.name}」吗？聊天记录将无法恢复。
+        </div>
+        <div className="modal-actions">
+          <button type="button" className="btn-ghost" onClick={() => setPendingDelete(null)}>
+            取消
+          </button>
+          <button type="button" className="btn-danger" onClick={() => void handleDelete()}>
+            删除
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 }

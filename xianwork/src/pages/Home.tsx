@@ -8,7 +8,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import PromptInput from "../components/PromptInput";
 import { chatApi } from "../api/modules";
-import { buildAgentRequest, streamChat } from "../lib/stream";
+import { useAuthStore } from "../stores/auth";
 
 const CATEGORIES = [
   { label: "日常办公", icon: "fa-solid fa-mug-hot" },
@@ -28,6 +28,7 @@ const ACTIONS = [
 
 export default function HomePage() {
   const navigate = useNavigate();
+  const username = useAuthStore((s) => s.username);
   const [category, setCategory] = useState(CATEGORIES[0].label);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -36,14 +37,10 @@ export default function HomePage() {
     if (busy) return;
     setBusy(true);
     try {
-      const chat = await chatApi.create(value.slice(0, 24));
-      // Fire the first turn in the background; the Chat page reconnects
-      // to the running stream via its session id.
-      streamChat(
-        "/console/chat",
-        { ...buildAgentRequest(value, chat.id), reconnect: false },
-        () => undefined,
-      ).catch(() => undefined);
+      // Create the chat, then hand the text to the Chat page as kickoff —
+      // it performs the real streamed send once history is loaded. No
+      // background pre-send (that desynced the visible conversation).
+      const chat = await chatApi.create(value.slice(0, 24) || "新对话", username);
       navigate(`/chat?chat=${chat.id}&kickoff=${encodeURIComponent(value)}`);
     } catch (err) {
       console.error(err);

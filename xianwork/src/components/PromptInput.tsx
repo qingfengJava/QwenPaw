@@ -24,6 +24,8 @@ export interface PromptInputProps {
   value: string;
   onChange: (value: string) => void;
   onSend: (value: string) => void;
+  /** When provided, the send button becomes a stop button while busy. */
+  onStop?: () => void;
   disabled?: boolean;
   busy?: boolean;
   contextTags?: ContextTag[];
@@ -35,6 +37,7 @@ export default function PromptInput({
   value,
   onChange,
   onSend,
+  onStop,
   disabled = false,
   busy = false,
   contextTags = [],
@@ -55,7 +58,11 @@ export default function PromptInput({
   };
 
   const handleSend = () => {
-    if (!hasText || disabled || busy) {
+    if (busy) {
+      onStop?.();
+      return;
+    }
+    if (!hasText || disabled) {
       return;
     }
     onSend(value.trim());
@@ -69,7 +76,7 @@ export default function PromptInput({
         style={variant === "detail" ? { minHeight: 24, height: 24 } : undefined}
         placeholder={placeholder}
         value={value}
-        disabled={disabled || busy}
+        disabled={disabled}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
         onChange={(e) => handleInput(e.target.value)}
@@ -112,15 +119,15 @@ export default function PromptInput({
             type="button"
             className={`send-btn-circle${hasText || busy ? " active" : ""}`}
             onClick={handleSend}
-            disabled={disabled || busy}
-            aria-label="发送"
-            title={busy ? "生成中…" : "发送"}
+            disabled={busy && !onStop ? true : disabled}
+            aria-label={busy ? "停止" : "发送"}
+            title={busy ? "停止生成" : "发送"}
             style={{
-              cursor: hasText && !busy && !disabled ? "pointer" : "default",
+              cursor: busy || (hasText && !disabled) ? "pointer" : "default",
             }}
           >
             {busy ? (
-              <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 12 }} />
+              <i className="fa-solid fa-stop" style={{ fontSize: 11 }} />
             ) : (
               <i
                 className="fa-solid fa-paper-plane"

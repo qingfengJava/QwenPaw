@@ -58,7 +58,7 @@ export default function MainLayout() {
       .then((list) => setProjects(list.filter((p) => !p.template_tag).slice(0, 6)))
       .catch(() => setProjects([]));
     chatApi
-      .list()
+      .list(username)
       .then((list) => setChats(list.slice(0, 5)))
       .catch(() => setChats([]));
   }, [token, navigate]);
@@ -68,7 +68,12 @@ export default function MainLayout() {
       {/* Sidebar (prototype L986-1078) */}
       <div className="sidebar">
         <div className="sidebar-header">
-          <div className="logo-area">
+          <div
+            className="logo-area"
+            style={{ cursor: "pointer" }}
+            onClick={() => navigate("/")}
+            title="回到首页"
+          >
             <div className="logo-title">
               XianWork
               <span className="logo-version">{APP_VERSION}</span>

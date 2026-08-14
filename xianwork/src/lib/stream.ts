@@ -10,6 +10,7 @@ export async function streamChat(
   body: unknown,
   onEvent: (raw: string) => void,
   extraHeaders?: Record<string, string>,
+  signal?: AbortSignal,
 ): Promise<void> {
   const res = await fetch(`/api${path}`, {
     method: "POST",
@@ -18,6 +19,7 @@ export async function streamChat(
       ...authHeaders(extraHeaders),
     } as Record<string, string>,
     body: JSON.stringify(body),
+    signal,
   });
   if (!res.ok || !res.body) {
     throw new Error(`chat failed: ${res.status}`);

@@ -334,19 +334,42 @@ export interface ChatSpecView {
   status: string;
   updated_at: string;
   pinned: boolean;
+  session_id: string;
+  channel?: string;
+  user_id?: string;
+  created_at?: string | null;
 }
 
 export const chatApi = {
-  list: () => request<ChatSpecView[]>("/chats?archived=false"),
-  create: (name = "New Chat") =>
+  /** Console-channel chats of one user — same scope the backend chat page sees. */
+  list: (userId: string) =>
+    request<ChatSpecView[]>(
+      `/chats?channel=console${userId ? `&user_id=${encodeURIComponent(userId)}` : ""}&archived=false`,
+    ),
+  create: (name: string, userId: string) =>
     request<ChatSpecView>("/chats", {
       method: "POST",
       body: JSON.stringify({
         name,
-        session_id: `console:${Date.now()}`,
-        user_id: "local",
+        channel: "console",
+        session_id: `console:${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`,
+        user_id: userId,
       }),
     }),
-  history: (chatId: string) =>
-    request<{ messages: unknown[] }>(`/chats/${enc(chatId)}/history`),
+  /** GET /chats/{id} returns `{ messages, status }` (no /history suffix). */
+  history: (chatId: string) => request<{ messages: unknown[]; status?: string }>(`/chats/${enc(chatId)}`),
+  rename: (chatId: string, name: string) =>
+    request<ChatSpecView>(`/chats/${enc(chatId)}`, {
+      method: "PUT",
+      body: JSON.stringify({ name }),
+    }),
+  togglePin: (chatId: string, pinned: boolean) =>
+    request<ChatSpecView>(`/chats/${enc(chatId)}`, {
+      method: "PUT",
+      body: JSON.stringify({ pinned }),
+    }),
+  remove: (chatId: string) => request<{ success: boolean }>(`/chats/${enc(chatId)}`, { method: "DELETE" }),
+  /** Ask the backend to cancel the running turn for this chat. */
+  stop: (chatId: string) =>
+    request<void>(`/console/chat/stop?chat_id=${encodeURIComponent(chatId)}`, { method: "POST" }),
 };

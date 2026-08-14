@@ -29,6 +29,7 @@ import type {
   Task,
 } from "../api/modules";
 import { buildAgentRequest, streamChat } from "../lib/stream";
+import { applyEvent, userItem, type TimelineItem } from "../chat/protocol";
 import { subscribeFeed } from "../lib/feedStream";
 import type { FeedStreamHandle } from "../lib/feedStream";
 
@@ -206,23 +207,21 @@ export function useProjectDetail(
       setStreaming(true);
       setAiReply("");
       try {
+        // Merge events with the shared console protocol reducer and surface
+        // assistant text (the project plane emits the same event shapes).
+        let timeline: TimelineItem[] = [userItem(text)];
         await streamChat(
           `/xian/projects/${projectId}/chat`,
           buildAgentRequest(text, "default"),
           (raw) => {
-            try {
-              const evt = JSON.parse(raw);
-              const delta =
-                evt?.choices?.[0]?.delta?.content ??
-                evt?.delta ??
-                evt?.content ??
-                (typeof evt?.text === "string" ? evt.text : "");
-              if (delta) {
-                setAiReply((prev) => prev + delta);
-              }
-            } catch {
-              /* keepalive */
-            }
+            timeline = applyEvent(timeline, raw);
+            const reply = timeline
+              .filter(
+                (it): it is Extract<TimelineItem, { kind: "assistant" }> => it.kind === "assistant",
+              )
+              .map((it) => it.text)
+              .join("\n\n");
+            setAiReply(reply);
           },
         );
         load();
