@@ -1,13 +1,15 @@
 /**
  * Chat — personal assistant conversations over the console SSE plane.
- * The left column lists the caller's chats (owner-isolated M1); the
- * main area streams assistant replies incrementally.
+ * Extension design: chat list rail + bubble stream + the shared
+ * PromptInput (detail variant) docked at the bottom. Streaming logic
+ * preserved from the scaffold (helpers now in lib/stream.ts).
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import PromptInput from "../components/PromptInput";
 import { chatApi } from "../api/modules";
 import type { ChatSpecView } from "../api/modules";
-import { buildAgentRequest, streamChat } from "./Home";
+import { buildAgentRequest, streamChat } from "../lib/stream";
 
 interface Bubble {
   role: "user" | "assistant";
@@ -15,6 +17,7 @@ interface Bubble {
 }
 
 export default function ChatPage() {
+  const navigate = useNavigate();
   const [params] = useSearchParams();
   const activeId = params.get("chat") ?? "";
   const kickoff = params.get("kickoff") ?? "";
@@ -50,7 +53,6 @@ export default function ChatPage() {
   const send = async (text: string) => {
     const value = text.trim();
     if (!value || streaming) return;
-    setInput("");
     setBubbles((prev) => [...prev, { role: "user", text: value }]);
     setStreaming(true);
     setBubbles((prev) => [...prev, { role: "assistant", text: "" }]);
@@ -58,7 +60,7 @@ export default function ChatPage() {
       await streamChat(
         "/console/chat",
         buildAgentRequest(value, activeId || "default"),
-        (raw) => {
+        (raw: string) => {
           try {
             const evt = JSON.parse(raw);
             const delta =
@@ -93,10 +95,11 @@ export default function ChatPage() {
   };
 
   return (
-    <div style={{ display: "flex", height: "100%" }}>
+    <div className="view active" style={{ flexDirection: "row" }}>
+      {/* chat list rail */}
       <div
         style={{
-          width: 260,
+          width: 240,
           borderRight: "1px solid var(--border-light)",
           padding: 14,
           overflowY: "auto",
@@ -106,9 +109,10 @@ export default function ChatPage() {
         <div
           style={{
             fontWeight: 600,
-            fontSize: 13,
+            fontSize: 12,
             color: "var(--text-muted)",
             marginBottom: 10,
+            padding: "0 4px",
           }}
         >
           任务会话
@@ -116,118 +120,68 @@ export default function ChatPage() {
         {chats.map((chat) => (
           <div
             key={chat.id}
-            onClick={() =>
-              window.location.assign(
-                `/xianwork/chat?chat=${chat.id}`,
-              )
-            }
-            style={{
-              padding: "9px 10px",
-              borderRadius: 8,
-              cursor: "pointer",
-              fontSize: 13,
-              marginBottom: 2,
-              background:
-                chat.id === activeId ? "var(--bg-sidebar-active)" : "transparent",
-            }}
+            className={`nav-item${chat.id === activeId ? " active" : ""}`}
+            onClick={() => navigate(`/chat?chat=${chat.id}`)}
           >
-            {chat.name}
+            <div className="nav-item-left">
+              <span>{chat.name}</span>
+            </div>
           </div>
         ))}
       </div>
 
+      {/* conversation */}
       <div
         style={{
           flexGrow: 1,
           display: "flex",
           flexDirection: "column",
-          padding: "24px 28px",
-          overflowY: "auto",
+          position: "relative",
+          minWidth: 0,
         }}
       >
-        <div style={{ maxWidth: 820, width: "100%", margin: "0 auto" }}>
-          {bubbles.length === 0 && (
-            <div
-              style={{
-                textAlign: "center",
-                color: "var(--text-muted)",
-                marginTop: 120,
-              }}
-            >
-              和你的个人助手聊点什么吧
-            </div>
-          )}
-          {bubbles.map((bubble, index) => (
-            <div
-              key={index}
-              style={{
-                display: "flex",
-                justifyContent:
-                  bubble.role === "user" ? "flex-end" : "flex-start",
-                marginBottom: 14,
-              }}
-            >
-              <div
-                style={{
-                  maxWidth: "78%",
-                  padding: "10px 14px",
-                  borderRadius: 12,
-                  background:
-                    bubble.role === "user" ? "#3b6ef6" : "#f4f4f5",
-                  color: bubble.role === "user" ? "#fff" : "inherit",
-                  whiteSpace: "pre-wrap",
-                  lineHeight: 1.6,
-                  fontSize: 14,
-                }}
-              >
-                {bubble.text ||
-                  (streaming && index === bubbles.length - 1
-                    ? "▍"
-                    : "")}
+        <div className="chat-scroll">
+          <div style={{ maxWidth: 820, width: "100%", margin: "0 auto" }}>
+            {bubbles.length === 0 && (
+              <div className="blank-state" style={{ marginTop: 80 }}>
+                <i
+                  className="fa-regular fa-comment-dots"
+                  style={{ fontSize: 26, marginBottom: 10 }}
+                />
+                <div>和你的个人助手聊点什么吧</div>
               </div>
-            </div>
-          ))}
-          <div ref={bottomRef} />
+            )}
+            {bubbles.map((bubble, index) => (
+              <div
+                key={index}
+                className={`chat-message ${bubble.role}`}
+              >
+                {bubble.role === "assistant" && (
+                  <div className="chat-sender">XianWork 助理</div>
+                )}
+                <div
+                  className="chat-bubble"
+                  style={{ maxWidth: "78%" }}
+                >
+                  {bubble.text ||
+                    (streaming && index === bubbles.length - 1 ? "▍" : "")}
+                </div>
+              </div>
+            ))}
+            <div ref={bottomRef} />
+          </div>
         </div>
 
-        <div style={{ flexGrow: 1 }} />
-
-        <div className="xian-input-bar" style={{ margin: "0 auto", maxWidth: 820 }}>
-          <textarea
+        <div className="fixed-bottom-input">
+          <PromptInput
+            variant="detail"
             placeholder="发送消息给个人助手…"
             value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                send(input);
-              }
-            }}
+            onChange={setInput}
+            onSend={(value) => void send(value)}
+            busy={streaming}
+            contextTags={[{ label: "本地任务" }]}
           />
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "flex-end",
-              marginTop: 8,
-            }}
-          >
-            <button
-              type="button"
-              onClick={() => send(input)}
-              disabled={streaming || !input.trim()}
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: "50%",
-                border: "none",
-                background: input.trim() ? "#2b2d31" : "#d1d1d6",
-                color: "#fff",
-                cursor: input.trim() ? "pointer" : "default",
-              }}
-            >
-              ➤
-            </button>
-          </div>
         </div>
       </div>
     </div>

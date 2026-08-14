@@ -20,6 +20,7 @@ export interface Project {
   department_id: string | null;
   ai_binding: AIBinding;
   template_tag: string;
+  instructions: string;
   created_by: string;
   member_role: string;
   created_at?: string | null;
@@ -109,6 +110,7 @@ export const projectApi = {
   create: (body: {
     name: string;
     description?: string;
+    instructions?: string;
     ai_binding?: AIBinding;
   }) =>
     request<Project>("/xian/projects", {
@@ -117,7 +119,9 @@ export const projectApi = {
     }),
   update: (
     id: string,
-    body: Partial<Pick<Project, "name" | "description" | "status">> & {
+    body: Partial<
+      Pick<Project, "name" | "description" | "status" | "instructions">
+    > & {
       ai_binding?: AIBinding;
     },
   ) =>
@@ -133,6 +137,11 @@ export const projectApi = {
     request<void>(`/xian/projects/${enc(id)}/members`, {
       method: "POST",
       body: JSON.stringify({ username, role }),
+    }),
+  updateMemberRole: (id: string, username: string, role: string) =>
+    request<void>(`/xian/projects/${enc(id)}/members/${enc(username)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ role }),
     }),
   removeMember: (id: string, username: string) =>
     request<void>(
@@ -161,7 +170,12 @@ export const taskApi = {
     request<Task[]>(`/xian/projects/${enc(projectId)}/tasks`),
   create: (
     projectId: string,
-    body: { title: string; description?: string; assignee?: string },
+    body: {
+      title: string;
+      description?: string;
+      assignee?: string;
+      status?: Task["status"];
+    },
   ) =>
     request<Task>(`/xian/projects/${enc(projectId)}/tasks`, {
       method: "POST",
@@ -189,6 +203,125 @@ export const taskApi = {
 export const expertApi = {
   list: () => request<Expert[]>("/xian/experts"),
   listTeams: () => request<ExpertTeam[]>("/xian/experts/teams"),
+};
+
+// ---------------------------------------------------------------------------
+// collaboration extras (directory / resources / bindings / automations)
+// ---------------------------------------------------------------------------
+
+export interface DirectoryUser {
+  username: string;
+  display_name: string;
+  department_id: string | null;
+  department_name: string;
+  role: string;
+  is_self: boolean;
+}
+
+export interface DepartmentNode {
+  id: string;
+  parent_id: string | null;
+  name: string;
+  path: string;
+  description: string;
+  children: DepartmentNode[];
+}
+
+export interface SkillView {
+  name: string;
+  description: string;
+  version: string;
+  enabled: boolean;
+}
+
+export interface ConnectorView {
+  client_key: string;
+  display_name: string;
+  transport: string;
+  enabled: boolean;
+  tool_count: number;
+}
+
+export interface ProjectBinding {
+  id: string;
+  project_id: string;
+  kind: "connector" | "skill";
+  ref_id: string;
+  enabled: boolean;
+  config: Record<string, unknown>;
+}
+
+export interface ProjectAutomation {
+  id: string;
+  project_id: string;
+  name: string;
+  schedule: string;
+  prompt: string;
+  enabled: boolean;
+  cron_job_id: string | null;
+  last_run_at: string | null;
+  next_run_at?: string | null;
+}
+
+export const directoryApi = {
+  users: (q = "", department = "") =>
+    request<DirectoryUser[]>(
+      `/xian/directory/users?q=${encodeURIComponent(q)}` +
+        (department ? `&department=${encodeURIComponent(department)}` : ""),
+    ),
+  departments: () => request<DepartmentNode[]>("/xian/directory/departments"),
+};
+
+export const resourceApi = {
+  skills: () => request<SkillView[]>("/xian/resources/skills"),
+  connectors: () => request<ConnectorView[]>("/xian/resources/connectors"),
+};
+
+export const bindingApi = {
+  list: (projectId: string) =>
+    request<ProjectBinding[]>(`/xian/projects/${enc(projectId)}/bindings`),
+  add: (
+    projectId: string,
+    body: { kind: "connector" | "skill"; ref_id: string; enabled?: boolean },
+  ) =>
+    request<ProjectBinding>(`/xian/projects/${enc(projectId)}/bindings`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  remove: (projectId: string, bindingId: string) =>
+    request<void>(
+      `/xian/projects/${enc(projectId)}/bindings/${enc(bindingId)}`,
+      { method: "DELETE" },
+    ),
+};
+
+export const automationApi = {
+  list: (projectId: string) =>
+    request<ProjectAutomation[]>(
+      `/xian/projects/${enc(projectId)}/automations`,
+    ),
+  create: (
+    projectId: string,
+    body: {
+      name: string;
+      schedule: string;
+      prompt?: string;
+      enabled?: boolean;
+      timezone?: string;
+    },
+  ) =>
+    request<ProjectAutomation>(
+      `/xian/projects/${enc(projectId)}/automations`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
+    ),
+  remove: (projectId: string, automationId: string) =>
+    request<void>(
+      `/xian/projects/${enc(projectId)}/automations/${enc(automationId)}`,
+      { method: "DELETE" },
+    ),
 };
 
 // ---------------------------------------------------------------------------

@@ -1,82 +1,39 @@
 /**
- * Home — WorkBuddy-style task launcher: category chips + the big AI
- * input. Sending creates a personal-assistant chat and jumps to it.
+ * Home — prototype home view (L1084-1140): top points bar, 32px title,
+ * category tabs, action chips, and the shared PromptInput launcher.
+ * Sending creates a personal-assistant chat and jumps to it (logic
+ * preserved from the scaffold; stream helpers moved to lib/stream.ts).
  */
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import PromptInput from "../components/PromptInput";
 import { chatApi } from "../api/modules";
-import { authHeaders } from "../api/request";
+import { buildAgentRequest, streamChat } from "../lib/stream";
 
-const CATEGORIES = ["日常办公", "代码开发", "设计创意"];
-const ACTIONS = [
-  "文档处理",
-  "数据分析及可视化",
-  "深度研究",
-  "个人工作台",
-  "幻灯片",
+const CATEGORIES = [
+  { label: "日常办公", icon: "fa-solid fa-mug-hot" },
+  { label: "代码开发", icon: "fa-solid fa-code" },
+  { label: "设计创意", icon: "fa-solid fa-palette" },
 ];
 
-/** Stream one console-chat turn (SSE) — shared with the Chat page. */
-export async function streamChat(
-  path: string,
-  body: unknown,
-  onEvent: (raw: string) => void,
-  extraHeaders?: Record<string, string>,
-): Promise<void> {
-  const res = await fetch(`/api${path}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...authHeaders(extraHeaders),
-    } as Record<string, string>,
-    body: JSON.stringify(body),
-  });
-  if (!res.ok || !res.body) {
-    throw new Error(`chat failed: ${res.status}`);
-  }
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const parts = buffer.split("\n\n");
-    buffer = parts.pop() ?? "";
-    for (const part of parts) {
-      for (const line of part.split("\n")) {
-        if (line.startsWith("data:")) {
-          onEvent(line.slice(5).trim());
-        }
-      }
-    }
-  }
-}
-
-export function buildAgentRequest(text: string, sessionId: string) {
-  return {
-    channel: "console",
-    user_id: "local",
-    session_id: sessionId,
-    input: [
-      {
-        role: "user",
-        content: [{ type: "text", text }],
-      },
-    ],
-  };
-}
+const ACTIONS = [
+  { label: "文档处理", icon: "fa-regular fa-file-word" },
+  { label: "金融服务", icon: "fa-solid fa-briefcase" },
+  { label: "数据分析及可视化", icon: "fa-solid fa-chart-pie" },
+  { label: "个人工作台", icon: "fa-solid fa-table-cells-large" },
+  { label: "幻灯片", icon: "fa-solid fa-desktop" },
+  { label: "深度研究", icon: "fa-solid fa-magnifying-glass-chart" },
+  { label: "视频生成", icon: "fa-solid fa-video" },
+];
 
 export default function HomePage() {
   const navigate = useNavigate();
-  const [category, setCategory] = useState(CATEGORIES[0]);
+  const [category, setCategory] = useState(CATEGORIES[0].label);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  const handleSend = async () => {
-    const value = text.trim();
-    if (!value || busy) return;
+  const handleSend = async (value: string) => {
+    if (busy) return;
     setBusy(true);
     try {
       const chat = await chatApi.create(value.slice(0, 24));
@@ -95,90 +52,65 @@ export default function HomePage() {
   };
 
   return (
-    <div
-      style={{
-        flexGrow: 1,
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "0 40px 80px",
-      }}
-    >
-      <h1 style={{ fontSize: 30, fontWeight: 700, marginBottom: 22 }}>
-        XianWork，我帮你
-      </h1>
-
-      <div className="xian-chip-row" style={{ maxWidth: 640 }}>
-        {CATEGORIES.map((item) => (
-          <button
-            key={item}
-            type="button"
-            className={`xian-chip${category === item ? " active" : ""}`}
-            onClick={() => setCategory(item)}
-          >
-            {item}
-          </button>
-        ))}
-      </div>
-
-      <div className="xian-chip-row" style={{ maxWidth: 760 }}>
-        {ACTIONS.map((item) => (
-          <button
-            key={item}
-            type="button"
-            className="xian-chip"
-            onClick={() => {
-              setText(`${item}：`);
-              inputRef.current?.focus();
-            }}
-          >
-            {item}
-          </button>
-        ))}
-      </div>
-
-      <div className="xian-input-bar">
-        <textarea
-          ref={inputRef}
-          placeholder="今天帮你做些什么？（@ 引用会话文件，/ 调用技能与指令）"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              handleSend();
-            }
-          }}
-        />
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "flex-end",
-            marginTop: 10,
-            gap: 12,
-          }}
+    <div className="view active home-view">
+      <div className="home-top-bar">
+        <button
+          type="button"
+          className="points-btn"
+          title="做任务赢积分好礼"
         >
-          <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
-            个人助手 · 默认权限
-          </span>
-          <button
-            type="button"
-            onClick={handleSend}
-            disabled={busy || !text.trim()}
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: "50%",
-              border: "none",
-              cursor: text.trim() ? "pointer" : "default",
-              background: text.trim() ? "#2b2d31" : "#d1d1d6",
-              color: "#fff",
-            }}
-          >
-            ➤
-          </button>
+          <i className="fa-solid fa-gift" style={{ color: "#10a37f" }} />
+          做任务赢积分好礼{" "}
+          <i
+            className="fa-solid fa-chevron-right"
+            style={{ fontSize: 10, marginLeft: 2 }}
+          />
+        </button>
+      </div>
+
+      <div className="home-center-content">
+        <h1 className="main-title">XianWork, 我帮你</h1>
+
+        <div className="category-tabs">
+          {CATEGORIES.map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              className={`category-tab${category === item.label ? " active" : ""}`}
+              onClick={() => setCategory(item.label)}
+            >
+              <i className={item.icon} style={{ marginRight: 6 }} />
+              {item.label}
+            </button>
+          ))}
         </div>
+
+        <div className="action-chips">
+          {ACTIONS.map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              className="action-chip"
+              onClick={() => setText(`${item.label}：`)}
+            >
+              <i className={item.icon} />
+              {item.label}
+            </button>
+          ))}
+        </div>
+
+        <PromptInput
+          variant="home"
+          placeholder="今天帮你做些什么？ @ 引用对话文件，/ 调用技能与指令"
+          value={text}
+          onChange={setText}
+          onSend={(value) => void handleSend(value)}
+          busy={busy}
+          contextTags={[
+            { icon: "fa-regular fa-folder", label: "XianWork" },
+            { icon: "fa-solid fa-shield-halved", label: "默认权限" },
+          ]}
+        />
       </div>
     </div>
   );

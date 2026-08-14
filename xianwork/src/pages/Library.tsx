@@ -1,10 +1,10 @@
 /**
- * Library — org/project knowledge & files entry. The first release
- * surfaces the file tree via the existing /api/files plane and KB via
- * /api/kb; full dual-scope browsing is a follow-up.
+ * Library — org/project knowledge & files entry via the /api/files plane.
+ * Extension design: PageShell + list-row cards (no antd Table).
  */
 import { useCallback, useEffect, useState } from "react";
-import { message, Table, Tag } from "antd";
+import PageShell from "../components/PageShell";
+import { useToast } from "../components/Toast";
 import { request } from "../api/request";
 
 interface FileEntry {
@@ -15,7 +15,21 @@ interface FileEntry {
   modified?: string;
 }
 
+function formatSize(size?: number): string {
+  if (size == null) {
+    return "—";
+  }
+  if (size < 1024) {
+    return `${size} B`;
+  }
+  if (size < 1024 * 1024) {
+    return `${(size / 1024).toFixed(1)} KB`;
+  }
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+
 export default function LibraryPage() {
+  const toast = useToast();
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -27,46 +41,61 @@ export default function LibraryPage() {
       );
       setFiles(Array.isArray(data) ? data : (data.files ?? []));
     } catch (err) {
-      message.error(`加载资料库失败：${String(err)}`);
+      toast.error(`加载资料库失败：${String(err)}`);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [toast]);
 
   useEffect(() => {
     load();
   }, [load]);
 
   return (
-    <div className="xian-page">
-      <div className="xian-page-title">资料库</div>
-      <div className="xian-page-sub">
-        团队资料与知识库（组织 / 项目两级，权限随成员角色）
-      </div>
-      <Table<FileEntry>
-        rowKey="path"
-        loading={loading}
-        dataSource={files}
-        pagination={{ pageSize: 20 }}
-        columns={[
-          {
-            title: "名称",
-            dataIndex: "name",
-            render: (name: string, row) =>
-              row.is_dir ? `📁 ${name}` : `📄 ${name}`,
-          },
-          {
-            title: "类型",
-            dataIndex: "is_dir",
-            render: (v: boolean) => <Tag>{v ? "目录" : "文件"}</Tag>,
-          },
-          {
-            title: "修改时间",
-            dataIndex: "modified",
-            render: (v: string) => v?.slice(0, 19)?.replace("T", " ") || "—",
-          },
-        ]}
-      />
+    <div className="view active">
+      <PageShell
+        title="资料库"
+        subtitle="团队资料与知识库（组织 / 项目两级，权限随成员角色）"
+      >
+        {loading && <div className="blank-state">加载中…</div>}
+        {!loading && files.length === 0 && (
+          <div className="blank-state">
+            <i
+              className="fa-regular fa-folder-open"
+              style={{ fontSize: 26, marginBottom: 10 }}
+            />
+            <div>资料库还是空的，上传的第一份团队资料将出现在这里</div>
+          </div>
+        )}
+        {files.map((file) => (
+          <div key={file.path} className="list-row-card">
+            <div className="list-row-main">
+              <div
+                className="card-icon"
+                style={{ width: 36, height: 36, fontSize: 14, marginBottom: 0 }}
+              >
+                <i
+                  className={
+                    file.is_dir ? "fa-solid fa-folder" : "fa-regular fa-file-lines"
+                  }
+                />
+              </div>
+              <div>
+                <div className="list-row-title">{file.name}</div>
+                <div className="list-row-desc">{file.path}</div>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <span className="task-status">
+                {file.is_dir ? "目录" : formatSize(file.size)}
+              </span>
+              <span className="task-time">
+                {file.modified?.slice(0, 16)?.replace("T", " ") ?? ""}
+              </span>
+            </div>
+          </div>
+        ))}
+      </PageShell>
     </div>
   );
 }
