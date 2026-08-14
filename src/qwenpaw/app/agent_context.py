@@ -111,6 +111,12 @@ async def get_agent_for_request(
             detail=f"Agent '{target_agent_id}' is disabled",
         )
 
+    # XianWork enterprise: when RBAC enforcement is on and the caller
+    # targets a published expert (via X-Agent-Id or the agent-scoped
+    # router), verify the agent ACL so a forged header cannot reach an
+    # unpublished/ unauthorized expert. Absent ACL = unrestricted.
+    _enforce_expert_acl(request, target_agent_id)
+
     # Get MultiAgentManager
     if not hasattr(request.app.state, "multi_agent_manager"):
         raise HTTPException(
@@ -138,6 +144,53 @@ async def get_agent_for_request(
             status_code=500,
             detail=f"Failed to get agent: {str(e)}",
         ) from e
+
+
+def _enforce_expert_acl(request: Request, agent_id: str) -> None:
+    """Reject forged expert access when RBAC enforcement is active.
+
+    Only agents published by the XianWork expert plane carry the
+    ``expert_``/``team_`` prefix; everything else keeps the existing
+    behavior. The check mirrors ``rbac.store.agent_allowed`` semantics
+    (absent grant = unrestricted) and is a no-op while
+    ``QWENPAW_RBAC_ENFORCE`` is off (gray rollout).
+    """
+    if not agent_id.startswith(("expert_", "team_")):
+        return
+    try:
+        from .rbac.deps import rbac_enforcement_enabled
+
+        if not rbac_enforcement_enabled():
+            return
+        username = getattr(request.state, "user", None) or ""
+        if not username:
+            # No authenticated identity under enforce: fail closed.
+            raise HTTPException(
+                status_code=403,
+                detail="RBAC: no authenticated identity",
+            )
+        from .rbac.store import get_rbac_store
+        from .users.store import get_user_store
+
+        user = get_user_store().get_user(username)
+        flat_role = user.role if user is not None else ""
+        if not get_rbac_store().agent_allowed(
+            username,
+            agent_id,
+            flat_role=flat_role,
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail=f"No access to expert '{agent_id}'",
+            )
+    except HTTPException:
+        raise
+    except Exception:  # pylint: disable=broad-except
+        # ACL infrastructure failure must not take down agent resolution;
+        # log and allow (enforcement stays a gray-rollout backstop).
+        logger.warning(
+            "expert ACL check errored for %s", agent_id, exc_info=True
+        )
 
 
 def get_agent_project_dir(workspace: "Workspace") -> Path:

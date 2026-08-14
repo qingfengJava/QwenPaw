@@ -173,6 +173,33 @@ class UserStore:
                 return user
         return None
 
+    def org_id_for_user(self, username: str) -> str:
+        """Tenant (org) of one account; ``default`` for unknown users.
+
+        Called from ``AuthMiddleware`` on every authenticated request;
+        the store's mtime cache keeps this cheap.
+        """
+        user = self.get_user(username)
+        return user.org_id if user is not None else "default"
+
+    def set_org_id(self, username: str, org_id: str) -> bool:
+        """Move an account to another organization (tenant)."""
+        org_id = org_id.strip() or "default"
+        with self._lock:
+            data = self._load()
+            if self._load_error:
+                return False
+            user = next(
+                (u for u in data.users if u.username == username),
+                None,
+            )
+            if user is None:
+                return False
+            user.org_id = org_id
+            self._save(data)
+        logger.info("User '%s' moved to org '%s'", username, org_id)
+        return True
+
     def list_users(self) -> list[UserRecord]:
         return list(self._load().users)
 
@@ -197,6 +224,7 @@ class UserStore:
         *,
         role: str = ROLE_EMPLOYEE,
         display_name: str = "",
+        org_id: str = "default",
     ) -> Optional[UserRecord]:
         """Create a user. The very first account is always an admin."""
         username = username.strip()
@@ -220,6 +248,7 @@ class UserStore:
                 password_algo=PASSWORD_ALGO_ARGON2,
                 role=effective_role,
                 display_name=display_name.strip(),
+                org_id=org_id.strip() or "default",
             )
             data.users.append(record)
             self._save(data)

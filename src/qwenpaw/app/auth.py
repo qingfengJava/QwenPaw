@@ -761,6 +761,19 @@ class AuthMiddleware(BaseHTTPMiddleware):
         from .agent_context import set_current_user_id
 
         set_current_user_id(user)
+
+        # XianWork enterprise: resolve the account's organization so the
+        # PG repositories can scope every query to the right tenant. The
+        # user store's mtime cache keeps this lookup cheap.
+        try:
+            from .users.store import get_user_store
+
+            request.state.org_id = get_user_store().org_id_for_user(user)
+            from .enterprise import set_current_org_id
+
+            set_current_org_id(request.state.org_id)
+        except Exception:  # pylint: disable=broad-except
+            logger.debug("org resolution failed for %s", user, exc_info=True)
         return await call_next(request)
 
     @staticmethod

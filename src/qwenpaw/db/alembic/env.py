@@ -11,6 +11,7 @@ from alembic import context
 
 from qwenpaw.db.base import Base
 from qwenpaw.db import models  # noqa: F401  (register tables on metadata)
+from qwenpaw.db import models_enterprise  # noqa: F401  (enterprise tables)
 
 target_metadata = Base.metadata
 

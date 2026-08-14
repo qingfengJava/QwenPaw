@@ -81,6 +81,9 @@ class ChatRow(TenantMixin, Base):
         default="chat",
         server_default="chat",
     )
+    # XianWork enterprise: project this chat belongs to (nullable — personal
+    # chats carry no project). Written by the projects service only.
+    project_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     meta: Mapped[dict[str, Any]] = mapped_column(
         JSONB,
         nullable=False,
@@ -99,6 +102,13 @@ class ChatRow(TenantMixin, Base):
     __table_args__ = (
         PrimaryKeyConstraint("tenant_id", "id", name="pk_chats"),
         Index("ix_chats_owner", "tenant_id", "owner_id"),
+        Index(
+            "ix_chats_owner_updated",
+            "tenant_id",
+            "owner_id",
+            "updated_at",
+        ),
+        Index("ix_chats_project", "tenant_id", "project_id"),
         Index(
             "ix_chats_session",
             "tenant_id",

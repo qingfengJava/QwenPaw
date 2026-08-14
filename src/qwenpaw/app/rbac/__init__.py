@@ -12,6 +12,9 @@ Public surface:
 from .deps import RBAC_ENFORCE_ENV, rbac_enforcement_enabled, require_perm
 from .models import (
     PERM_ADMIN_AUDIT,
+    PERM_ADMIN_EXPERTS,
+    PERM_ADMIN_KB,
+    PERM_ADMIN_ORGS,
     PERM_ADMIN_QUOTAS,
     PERM_ADMIN_ROLES,
     PERM_ADMIN_USERS,
@@ -22,6 +25,8 @@ from .models import (
     PERM_KB_WRITE,
     PERM_MODEL_INVOKE,
     PERM_MODEL_MANAGE,
+    PERM_PROJECT_MANAGE,
+    PERM_PROJECT_USE,
     ROLE_EMPLOYEE,
     ROLE_PLATFORM_ADMIN,
     ROLE_TEAM_LEAD,
@@ -35,6 +40,9 @@ from .store import RbacStore, get_rbac_store, reset_rbac_store
 __all__ = [
     "RBAC_ENFORCE_ENV",
     "PERM_ADMIN_AUDIT",
+    "PERM_ADMIN_EXPERTS",
+    "PERM_ADMIN_KB",
+    "PERM_ADMIN_ORGS",
     "PERM_ADMIN_QUOTAS",
     "PERM_ADMIN_ROLES",
     "PERM_ADMIN_USERS",
@@ -45,6 +53,8 @@ __all__ = [
     "PERM_KB_WRITE",
     "PERM_MODEL_INVOKE",
     "PERM_MODEL_MANAGE",
+    "PERM_PROJECT_MANAGE",
+    "PERM_PROJECT_USE",
     "ROLE_EMPLOYEE",
     "ROLE_PLATFORM_ADMIN",
     "ROLE_TEAM_LEAD",

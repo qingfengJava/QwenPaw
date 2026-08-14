@@ -33,6 +33,12 @@ PERM_ADMIN_AUDIT = "admin:audit"
 PERM_ADMIN_QUOTAS = "admin:quotas"
 PERM_ADMIN_KB = "admin:kb"
 
+# XianWork enterprise permissions (org / project / expert publishing).
+PERM_ADMIN_ORGS = "admin:orgs"
+PERM_ADMIN_EXPERTS = "admin:experts"
+PERM_PROJECT_USE = "project:use"
+PERM_PROJECT_MANAGE = "project:manage"
+
 #: Wildcard permission held by platform admins.
 PERM_ALL = "*"
 
@@ -60,11 +66,14 @@ BUILTIN_ROLE_PERMISSIONS: Dict[str, List[str]] = {
         PERM_KB_READ,
         PERM_KB_WRITE,
         PERM_MODEL_INVOKE,
+        PERM_PROJECT_USE,
+        PERM_PROJECT_MANAGE,
     ],
     ROLE_EMPLOYEE: [
         PERM_AGENT_USE,
         PERM_KB_READ,
         PERM_MODEL_INVOKE,
+        PERM_PROJECT_USE,
     ],
 }
 

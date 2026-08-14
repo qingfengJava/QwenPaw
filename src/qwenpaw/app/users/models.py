@@ -33,6 +33,10 @@ class UserRecord(BaseModel):
     role: str = ROLE_EMPLOYEE
     display_name: str = ""
     disabled: bool = False
+    # XianWork enterprise: tenant (organization) this account belongs to.
+    # Department membership lives in the PG ``department_members`` table;
+    # users.json stays a flat, fast account store for the auth path.
+    org_id: str = "default"
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
     )
