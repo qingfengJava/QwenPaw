@@ -1,17 +1,22 @@
 /**
  * Chat — full parity with the backend chat page: session drawer (console
- * channel scope), streaming timeline with markdown / reasoning / tool cards,
- * stop control and real kickoff sending from the Home launcher.
+ * channel scope), model selector in the header, streaming timeline with
+ * markdown / reasoning / tool cards, and the complete composer (attachments,
+ * speech, slash commands, mode / approval / agent selectors, char counter).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import PromptInput from "../components/PromptInput";
 import Modal from "../components/Modal";
 import SessionDrawer from "../components/chat/SessionDrawer";
 import TimelineList from "../components/chat/TimelineList";
+import ModelSelector from "../components/chat/ModelSelector";
+import ChatComposer, {
+  type PendingAttachment,
+} from "../components/chat/ChatComposer";
 import { chatApi } from "../api/modules";
 import type { ChatSpecView } from "../api/modules";
 import { useAuthStore } from "../stores/auth";
+import { useChatPrefs } from "../stores/chatPrefs";
 import { useToast } from "../components/Toast";
 import { useChatStream } from "../chat/useChatStream";
 import { historyToTimeline } from "../chat/protocol";
@@ -22,10 +27,12 @@ export default function ChatPage() {
   const activeId = params.get("chat") ?? "";
   const kickoff = params.get("kickoff") ?? "";
   const username = useAuthStore((s) => s.username);
+  const selectedAgent = useChatPrefs((s) => s.selectedAgent);
   const toast = useToast();
 
   const [chats, setChats] = useState<ChatSpecView[]>([]);
   const [input, setInput] = useState("");
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [pendingDelete, setPendingDelete] = useState<ChatSpecView | null>(null);
   const { items, streaming, send, stop, reset } = useChatStream();
   const kickoffRef = useRef("");
@@ -154,7 +161,12 @@ export default function ChatPage() {
     }
   };
 
-  const handleSend = (value: string) => {
+  const handleSend = (value: string, pending: PendingAttachment[]) => {
+    const doSend = (target: ChatSpecView) => {
+      setInput("");
+      setAttachments([]);
+      void send(value, target, pending);
+    };
     if (!activeChat) {
       void handleCreate().then(() => {
         // Next render wires the new chat; queue the text into kickoff.
@@ -162,9 +174,35 @@ export default function ChatPage() {
       });
       return;
     }
-    setInput("");
-    void send(value, activeChat);
+    doSend(activeChat);
   };
+
+  // Regenerate: replay the last user question after its assistant turn.
+  const lastAssistantKey = useMemo(() => {
+    for (let i = items.length - 1; i >= 0; i--) {
+      if (items[i].kind === "assistant") return items[i].key;
+    }
+    return undefined;
+  }, [items]);
+
+  const handleRegenerate = useCallback(() => {
+    if (!activeChat || streaming) return;
+    const lastUser = [...items].reverse().find((it) => it.kind === "user");
+    if (lastUser && lastUser.kind === "user") {
+      void send(lastUser.text, activeChat);
+    }
+  }, [activeChat, items, streaming, send]);
+
+  // Latest context ratio feeds the composer ring (0 when no turn yet).
+  const contextRatio = useMemo(() => {
+    for (let i = items.length - 1; i >= 0; i--) {
+      const it = items[i];
+      if (it.kind === "usage" && it.usage.context_usage_ratio != null) {
+        return it.usage.context_usage_ratio;
+      }
+    }
+    return 0;
+  }, [items]);
 
   return (
     <div className="view active" style={{ flexDirection: "row" }}>
@@ -188,20 +226,32 @@ export default function ChatPage() {
               </span>
             )}
           </div>
+          <ModelSelector agentId={selectedAgent} />
         </div>
 
-        <TimelineList items={items} streaming={streaming} />
+        <TimelineList
+          items={items}
+          streaming={streaming}
+          onCopy={(text) => {
+            void navigator.clipboard.writeText(text).then(() =>
+              toast.success("已复制"),
+            );
+          }}
+          onRegenerate={() => handleRegenerate()}
+          regenerateKey={lastAssistantKey}
+        />
 
         <div className="fixed-bottom-input">
-          <PromptInput
-            variant="detail"
-            placeholder={activeChat ? "发送消息…" : "新建会话并发送…"}
+          <ChatComposer
             value={input}
             onChange={setInput}
             onSend={handleSend}
             onStop={activeChat ? () => void stop(activeChat) : undefined}
             busy={streaming}
-            contextTags={[{ label: "个人助手" }]}
+            disabled={!activeChat}
+            contextRatio={contextRatio}
+            attachments={attachments}
+            onAttachmentsChange={setAttachments}
           />
         </div>
       </div>

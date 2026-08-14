@@ -2,10 +2,11 @@
  * TimelineList — renders the chat timeline: user bubbles on the right,
  * assistant markdown full-width on the left, collapsible reasoning panels,
  * tool cards and per-turn usage footers. Auto-follows the stream only when
- * the user is already near the bottom (backend chat parity).
+ * the user is already near the bottom (backend chat parity). Assistant
+ * turns carry copy / regenerate actions like the console action group.
  */
-import { useEffect, useRef } from "react";
-import type { TimelineItem } from "../../chat/protocol";
+import { useEffect, useRef, useState } from "react";
+import type { TimelineItem, UserAttachment } from "../../chat/protocol";
 import MarkdownView from "./MarkdownView";
 import ReasoningBlock from "./ReasoningBlock";
 import ToolCallCard from "./ToolCallCard";
@@ -16,8 +17,64 @@ function formatTokens(n?: number): string {
   return String(n);
 }
 
+function AttachmentChips({ attachments }: { attachments: UserAttachment[] }) {
+  return (
+    <div className="user-attachments">
+      {attachments.map((a) =>
+        a.type.startsWith("image/") ? (
+          <img
+            key={a.url + a.name}
+            className="user-attachment-image"
+            src={a.url.startsWith("http") ? a.url : `/api/files/preview/${a.url.replace(/^\/+/, "")}`}
+            alt={a.name}
+          />
+        ) : (
+          <span key={a.url + a.name} className="user-attachment-file">
+            <i className="fa-solid fa-file-lines" /> {a.name}
+          </span>
+        ),
+      )}
+    </div>
+  );
+}
+
+function AssistantActions({
+  text,
+  onCopy,
+  onRegenerate,
+}: {
+  text: string;
+  onCopy: (text: string) => void;
+  onRegenerate?: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="assistant-actions">
+      <button
+        type="button"
+        title="复制"
+        onClick={() => {
+          onCopy(text);
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1500);
+        }}
+      >
+        <i className={`fa-${copied ? "solid fa-check" : "regular fa-copy"}`} />
+        {copied ? "已复制" : "复制"}
+      </button>
+      {onRegenerate && (
+        <button type="button" title="重新生成" onClick={onRegenerate}>
+          <i className="fa-solid fa-rotate-right" /> 重新生成
+        </button>
+      )}
+    </div>
+  );
+}
+
 function UsageFooter({ usage }: { usage: NonNullable<Extract<TimelineItem, { kind: "usage" }>["usage"]> }) {
-  const ratio = usage.context_usage_ratio ?? 0;
+  // Backend ratios can exceed 1 when estimated tokens overshoot the window;
+  // clamp the display like the console ring does.
+  const ratio = Math.min(1, Math.max(0, usage.context_usage_ratio ?? 0));
   return (
     <div className="usage-footer">
       <span>
@@ -37,9 +94,20 @@ function UsageFooter({ usage }: { usage: NonNullable<Extract<TimelineItem, { kin
 interface TimelineListProps {
   items: TimelineItem[];
   streaming: boolean;
+  onCopy?: (text: string) => void;
+  /** Provided only for the last assistant turn (regenerate support). */
+  onRegenerate?: () => void;
+  /** Key of the assistant item that supports regeneration. */
+  regenerateKey?: string;
 }
 
-export default function TimelineList({ items, streaming }: TimelineListProps) {
+export default function TimelineList({
+  items,
+  streaming,
+  onCopy,
+  onRegenerate,
+  regenerateKey,
+}: TimelineListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
 
@@ -65,7 +133,12 @@ export default function TimelineList({ items, streaming }: TimelineListProps) {
             case "user":
               return (
                 <div key={item.key} className="chat-row user">
-                  <div className="chat-bubble user">{item.text}</div>
+                  <div className="chat-bubble user">
+                    {item.attachments && item.attachments.length > 0 && (
+                      <AttachmentChips attachments={item.attachments} />
+                    )}
+                    {item.text}
+                  </div>
                 </div>
               );
             case "reasoning":
@@ -100,6 +173,17 @@ export default function TimelineList({ items, streaming }: TimelineListProps) {
                           {formatTokens(item.usage.output_tokens)} tokens
                         </span>
                       </div>
+                    )}
+                    {!streaming && onCopy && (
+                      <AssistantActions
+                        text={item.text}
+                        onCopy={onCopy}
+                        onRegenerate={
+                          onRegenerate && regenerateKey === item.key
+                            ? onRegenerate
+                            : undefined
+                        }
+                      />
                     )}
                   </div>
                 </div>

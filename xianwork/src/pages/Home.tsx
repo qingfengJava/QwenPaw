@@ -7,6 +7,9 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import PromptInput from "../components/PromptInput";
+import AgentSelector from "../components/chat/AgentSelector";
+import ApprovalSelector from "../components/chat/ApprovalSelector";
+import LoopModeSelector from "../components/chat/LoopModeSelector";
 import { chatApi } from "../api/modules";
 import { useAuthStore } from "../stores/auth";
 
@@ -103,11 +106,15 @@ export default function HomePage() {
           onChange={setText}
           onSend={(value) => void handleSend(value)}
           busy={busy}
-          contextTags={[
-            { icon: "fa-regular fa-folder", label: "XianWork" },
-            { icon: "fa-solid fa-shield-halved", label: "默认权限" },
-          ]}
         />
+
+        {/* Real chat prefs — same store the Chat composer uses, so choices
+            made here carry into the conversation after navigation. */}
+        <div className="home-chat-prefs">
+          <LoopModeSelector />
+          <ApprovalSelector />
+          <AgentSelector />
+        </div>
       </div>
     </div>
   );

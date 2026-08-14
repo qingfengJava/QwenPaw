@@ -1,7 +1,7 @@
 /**
  * XianWork API surface: Xian routes + reused console/auth/chats routes.
  */
-import { request } from "./request";
+import { authHeaders, request } from "./request";
 
 // ---------------------------------------------------------------------------
 // shared types
@@ -372,4 +372,95 @@ export const chatApi = {
   /** Ask the backend to cancel the running turn for this chat. */
   stop: (chatId: string) =>
     request<void>(`/console/chat/stop?chat_id=${encodeURIComponent(chatId)}`, { method: "POST" }),
+  /** Upload one attachment (image/file) to the console plane. */
+  upload: async (file: File): Promise<{ url: string }> => {
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await fetch("/api/console/upload", {
+      method: "POST",
+      headers: authHeaders() as Record<string, string>,
+      body: formData,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`上传失败: ${res.status} ${text.slice(0, 120)}`);
+    }
+    return res.json();
+  },
+};
+
+/* ------------------------------------------------------------------
+ * Provider / model plane — mirrors the backend ModelSelector contract.
+ * ------------------------------------------------------------------ */
+
+export interface ModelInfo {
+  id: string;
+  name: string;
+  supports_multimodal?: boolean | null;
+  supports_image?: boolean | null;
+  supports_video?: boolean | null;
+  is_free?: boolean;
+  max_input_length?: number;
+}
+
+export interface ProviderInfo {
+  id: string;
+  name: string;
+  models: ModelInfo[];
+  extra_models?: ModelInfo[];
+  is_custom?: boolean;
+  is_local?: boolean;
+  require_api_key?: boolean;
+  api_key?: string;
+  base_url?: string;
+  is_free_tier?: boolean;
+  supports_oauth?: boolean;
+  oauth_connected?: boolean;
+}
+
+export interface ActiveModelsInfo {
+  active_llm?: { provider_id: string; model: string };
+  effective_max_input_length?: number | null;
+}
+
+export const providerApi = {
+  list: () => request<ProviderInfo[]>("/models"),
+  active: (agentId: string) =>
+    request<ActiveModelsInfo>(
+      `/models/active?scope=effective${agentId ? `&agent_id=${encodeURIComponent(agentId)}` : ""}`,
+    ),
+  /** Switch the active LLM for one agent (same slot API the console uses). */
+  setActive: (providerId: string, model: string, agentId: string) =>
+    request<ActiveModelsInfo>("/models/active", {
+      method: "PUT",
+      body: JSON.stringify({
+        provider_id: providerId,
+        model,
+        scope: "agent",
+        agent_id: agentId,
+      }),
+    }),
+};
+
+export interface AgentSummary {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+}
+
+export const agentApi = {
+  list: () => request<{ agents: AgentSummary[] }>("/agents"),
+};
+
+export interface LoopModeInfo {
+  id: string;
+  name: string;
+  slash_command: string;
+  description: string;
+  source: "builtin" | "custom" | "plugin";
+}
+
+export const loopApi = {
+  list: () => request<LoopModeInfo[]>("/loops"),
 };

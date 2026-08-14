@@ -38,7 +38,12 @@ export interface TurnUsage {
 }
 
 export type TimelineItem =
-  | { kind: "user"; key: string; text: string }
+  | {
+      kind: "user";
+      key: string;
+      text: string;
+      attachments?: UserAttachment[];
+    }
   | { kind: "reasoning"; key: string; text: string; done: boolean }
   | {
       kind: "assistant";
@@ -76,6 +81,10 @@ interface WireContent {
   status?: string | null;
   msg_id?: string | null;
   text?: string;
+  image_url?: string;
+  video_url?: string;
+  file_url?: string;
+  file_name?: string;
   data?: {
     call_id?: string;
     name?: string;
@@ -107,6 +116,37 @@ function messageText(msg: WireMessage): string {
 
 function messageUsage(msg: WireMessage) {
   return msg.usage ?? null;
+}
+
+/**
+ * Extract non-text content blocks (image/file/video/audio) of a user
+ * message into display attachments. Wire URLs are stored names; the UI
+ * resolves them through /files/preview.
+ */
+function userAttachments(msg: WireMessage): UserAttachment[] | undefined {
+  const found: UserAttachment[] = [];
+  for (const block of msg.content ?? []) {
+    if (!block.type || block.type === "text" || block.type === "data") {
+      continue;
+    }
+    const audioData =
+      block.type === "audio"
+        ? String((block as unknown as { data?: string }).data ?? "")
+        : "";
+    const url =
+      block.image_url ||
+      block.video_url ||
+      block.file_url ||
+      audioData ||
+      "";
+    if (!url) continue;
+    found.push({
+      name: block.file_name || url.replace(/^\/+/, "").split("/").pop() || "附件",
+      type: block.type === "image" ? "image/*" : "application/octet-stream",
+      url,
+    });
+  }
+  return found.length > 0 ? found : undefined;
 }
 
 /**
@@ -304,9 +344,24 @@ function mergeDataContent(items: TimelineItem[], evt: WireContent): TimelineItem
   ];
 }
 
+/** Display model for attachments on a user bubble (send + history). */
+export interface UserAttachment {
+  name: string;
+  type: string;
+  url: string;
+}
+
 /** Build a user timeline entry (used on send). */
-export function userItem(text: string): TimelineItem {
-  return { kind: "user", key: nextKey("u"), text };
+export function userItem(
+  text: string,
+  attachments?: UserAttachment[],
+): TimelineItem {
+  return {
+    kind: "user",
+    key: nextKey("u"),
+    text,
+    ...(attachments && attachments.length > 0 ? { attachments } : {}),
+  };
 }
 
 /**
@@ -324,7 +379,12 @@ export function historyToTimeline(history: { messages?: unknown[] } | null | und
       continue;
     }
     if (msg.type === "message" && msg.role === "user") {
-      items.push({ kind: "user", key: msg.id || nextKey("hu"), text: messageText(msg) });
+      items.push({
+        kind: "user",
+        key: msg.id || nextKey("hu"),
+        text: messageText(msg),
+        attachments: userAttachments(msg),
+      });
       continue;
     }
     if (msg.type === "reasoning") {
