@@ -9,7 +9,7 @@ import sys
 import time
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -368,6 +368,21 @@ async def lifespan(  # pylint: disable=too-many-statements,too-many-branches
 
     async def _background_startup():  # pylint: disable=too-many-statements
         try:
+            # ---- Enterprise schema (XianWork) ----
+            # Idempotent no-op without QWENPAW_PG_DSN; until it succeeds the
+            # /api/xian plane reports 503 "initializing" instead of raw SQL
+            # errors (see qwenpaw.app.enterprise.bootstrap_enterprise).
+            try:
+                from .enterprise import bootstrap_enterprise
+
+                await bootstrap_enterprise()
+            except Exception:
+                logger.error(
+                    "Enterprise bootstrap did not complete; enterprise "
+                    "APIs stay unavailable (503) this run.",
+                    exc_info=True,
+                )
+
             # ---- Plugin System (phase 1: channel plugins) ----
             # Load channel-type plugins *before* agents start so that
             # ChannelManager discovers them via get_channel_registry()
@@ -744,6 +759,44 @@ _CONSOLE_INDEX = (
 )
 logger.info(f"STATIC_DIR: {_CONSOLE_STATIC_DIR}")
 
+# ---------------------------------------------------------------------------
+# XianWork user frontend (enterprise): served under /xianwork.
+# ---------------------------------------------------------------------------
+
+_XIANWORK_STATIC_ENV = "QWENPAW_XIANWORK_STATIC_DIR"
+
+
+def _resolve_xianwork_static_dir() -> Optional[str]:
+    """Locate the XianWork SPA dist (env → package → repo → cwd).
+
+    Returns ``None`` when no build exists: mounting is then skipped so
+    zero-config deployments behave exactly as before.
+    """
+    from ..constant import EnvVarLoader
+
+    static_dir = EnvVarLoader.get_str(_XIANWORK_STATIC_ENV)
+    if static_dir:
+        return static_dir
+    pkg_dir = Path(__file__).resolve().parent.parent
+    for candidate in (
+        pkg_dir / "xianwork",
+        pkg_dir.parent.parent / "xianwork" / "dist",
+        Path(os.getcwd()) / "xianwork" / "dist",
+    ):
+        if candidate.is_dir() and (candidate / "index.html").exists():
+            return str(candidate)
+    return None
+
+
+_XIANWORK_STATIC_DIR = _resolve_xianwork_static_dir()
+_XIANWORK_INDEX = (
+    Path(_XIANWORK_STATIC_DIR) / "index.html"
+    if _XIANWORK_STATIC_DIR
+    else None
+)
+if _XIANWORK_STATIC_DIR:
+    logger.info(f"XIANWORK_STATIC_DIR: {_XIANWORK_STATIC_DIR}")
+
 # The SPA entry (index.html) must never be cached: it references content-hashed
 # JS/CSS bundles, so a stale cached index.html would keep pointing the WebView
 # at old asset hashes after a rebuild (see desktop dev cache issue). The hashed
@@ -897,29 +950,75 @@ if os.path.isdir(_CONSOLE_STATIC_DIR):
     def _console_spa_alias(full_path: str = ""):
         _ = full_path
         return _serve_console_index()
+else:
 
-    # SPA fallback: catch-all route for frontend routing
-    # Must be registered AFTER all API routes to avoid conflicts
-    @app.get(
-        "/{full_path:path}",
-        name="qwenpaw_console_spa_catchall",
-    )
-    def _console_spa(full_path: str):
-        # Prevent catching common system/special paths
-        if full_path in ("docs", "redoc", "openapi.json"):
-            raise HTTPException(status_code=404, detail="Not Found")
-        # Skip API routes (should already be matched due to registration order)
-        if full_path.startswith("api/") or full_path == "api":
-            raise HTTPException(status_code=404, detail="Not Found")
+    def _serve_console_index():
+        # No console build: the catch-all has nothing to serve.
+        raise HTTPException(status_code=404, detail="Not Found")
 
-        # Serve static files from the console build directory (e.g. logo SVGs,
-        # favicons, images placed in public/).  Only serve regular files whose
-        # path does not escape the console directory.
+
+# XianWork SPA: the dedicated ``/xianwork/{path}`` routes are registered
+# BEFORE the console catch-all so they are never swallowed by it; mounting
+# is skipped entirely when no XianWork build exists (zero-config parity).
+if _XIANWORK_STATIC_DIR and os.path.isdir(_XIANWORK_STATIC_DIR):
+    _xian_path = Path(_XIANWORK_STATIC_DIR)
+
+    def _serve_xianwork_index():
+        if _XIANWORK_INDEX and _XIANWORK_INDEX.exists():
+            return FileResponse(
+                _XIANWORK_INDEX,
+                headers=_INDEX_NO_CACHE_HEADERS,
+            )
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    _xian_assets = _xian_path / "assets"
+    if _xian_assets.is_dir():
+        app.mount(
+            "/xianwork/assets",
+            StaticFiles(directory=str(_xian_assets)),
+            name="xianwork-assets",
+        )
+
+    @app.get("/xianwork", name="xianwork_root")
+    @app.get("/xianwork/", name="xianwork_root_slash")
+    @app.get("/xianwork/{full_path:path}", name="xianwork_spa")
+    def _xianwork_spa(full_path: str = ""):
+        # Serve real static files (favicon, images) from dist; map
+        # everything else to the SPA entry for client-side routing.
         if full_path and ".." not in full_path:
-            # Security: Reject absolute paths to prevent path traversal bypass
             if not Path(full_path).is_absolute():
-                static_file = _console_path / full_path
+                static_file = _xian_path / full_path
                 if static_file.is_file():
                     return FileResponse(static_file)
+        return _serve_xianwork_index()
 
-        return _serve_console_index()
+
+# Console SPA fallback: catch-all route for frontend routing.
+# Registered LAST (after the API routes, console aliases, and the XianWork
+# sub-path routes) so nothing previously registered can be shadowed.
+@app.get(
+    "/{full_path:path}",
+    name="qwenpaw_console_spa_catchall",
+)
+def _console_spa(full_path: str):
+    # Prevent catching common system/special paths
+    if full_path in ("docs", "redoc", "openapi.json"):
+        raise HTTPException(status_code=404, detail="Not Found")
+    # Skip API routes (should already be matched due to registration order)
+    if full_path.startswith("api/") or full_path == "api":
+        raise HTTPException(status_code=404, detail="Not Found")
+    # An unbuilt /xianwork path must 404 rather than serve the console SPA.
+    if full_path == "xianwork" or full_path.startswith("xianwork/"):
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    # Serve static files from the console build directory (e.g. logo SVGs,
+    # favicons, images placed in public/).  Only serve regular files whose
+    # path does not escape the console directory.
+    if full_path and ".." not in full_path:
+        # Security: Reject absolute paths to prevent path traversal bypass
+        if not Path(full_path).is_absolute():
+            static_file = Path(_CONSOLE_STATIC_DIR) / full_path
+            if static_file.is_file():
+                return FileResponse(static_file)
+
+    return _serve_console_index()

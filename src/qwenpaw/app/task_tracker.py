@@ -64,6 +64,23 @@ class TaskTracker:
             return "idle"
         return "running"
 
+    async def get_status_many(self, run_keys: list[str]) -> dict[str, str]:
+        """Snapshot statuses for many runs under one lock acquisition.
+
+        Fixes the list-chats N+1: callers previously issued one
+        ``get_status`` await per chat, each contending for the same lock.
+        """
+        async with self._lock:
+            states = {key: self._runs.get(key) for key in run_keys}
+        return {
+            key: (
+                "running"
+                if state is not None and not state.task.done()
+                else "idle"
+            )
+            for key, state in states.items()
+        }
+
     async def get_global_status(self) -> dict:
         """Get global agent status summary.
 

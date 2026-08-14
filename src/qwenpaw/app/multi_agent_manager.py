@@ -8,7 +8,7 @@ including lazy loading, lifecycle management, and hot reloading.
 import asyncio
 import logging
 import time
-from typing import Callable, Dict, Set
+from typing import Callable, Dict, Optional, Set
 
 from qwenpaw.exceptions import (
     ConfigurationException,
@@ -29,6 +29,11 @@ logger = logging.getLogger(__name__)
 
 _OLD_WORKSPACE_TASK_WAIT_SECONDS = 60.0
 _OLD_WORKSPACE_TASK_MAX_WAIT_ROUNDS = 24 * 60
+
+# XianWork enterprise idle-workspace budget (LRU + TTL eviction).
+_MAX_LOADED_WORKSPACES = 32
+_WORKSPACE_IDLE_TTL_S = 30 * 60
+_IDLE_RECLAIM_INTERVAL_S = 5 * 60
 
 
 class MultiAgentManager:
@@ -54,6 +59,10 @@ class MultiAgentManager:
             CUSTOM_AGENT_STARTUP_CONCURRENCY,
         )
         self._cleanup_tasks: Set[asyncio.Task] = set()
+        # XianWork enterprise: LRU bookkeeping + idle reclaimer so a
+        # growing catalog of published experts cannot exhaust memory.
+        self._last_used: Dict[str, float] = {}
+        self._idle_reclaimer_task: Optional[asyncio.Task] = None
         logger.debug("MultiAgentManager initialized")
 
     def _create_workspace(
@@ -70,6 +79,89 @@ class MultiAgentManager:
     def get_loaded_agent(self, agent_id: str) -> Workspace | None:
         """Return an already loaded workspace without starting it."""
         return self.agents.get(agent_id)
+
+    def _touch(self, agent_id: str) -> None:
+        """Record usage for the idle reclaimer (LRU timestamp)."""
+        self._last_used[agent_id] = time.monotonic()
+        self._ensure_idle_reclaimer()
+
+    def _ensure_idle_reclaimer(self) -> None:
+        """Lazily start the background idle-reclamation loop."""
+        if self._idle_reclaimer_task is not None:
+            return
+        try:
+            self._idle_reclaimer_task = asyncio.get_running_loop().create_task(
+                self._idle_reclaim_loop(),
+            )
+            self._cleanup_tasks.add(self._idle_reclaimer_task)
+        except RuntimeError:
+            # No running loop (unit tests constructing the manager
+            # synchronously); the next touch retries.
+            pass
+
+    async def _idle_reclaim_loop(self) -> None:
+        """Evict idle workspaces beyond the LRU/TTL budget.
+
+        Workspaces are re-created lazily on demand, so eviction only
+        costs a warm-up. Agents with active tasks are never evicted.
+        """
+        while True:
+            await asyncio.sleep(_IDLE_RECLAIM_INTERVAL_S)
+            try:
+                await self._reclaim_idle_workspaces()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # pylint: disable=broad-except
+                logger.debug("idle reclaim pass failed", exc_info=True)
+
+    async def _reclaim_idle_workspaces(self) -> None:
+        """One eviction pass (max_loaded LRU + idle TTL)."""
+        now = time.monotonic()
+        # Never evict the active agent or the default workspace.
+        protected = set()
+        try:
+            from ..config.config import load_config
+
+            cfg = load_config()
+            protected.add(cfg.agents.active_agent or "default")
+        except Exception:  # pylint: disable=broad-except
+            protected.add("default")
+        loaded = list(self.agents.keys())
+        # LRU pass: evict beyond max_loaded, least recently used first.
+        overflow = sorted(
+            (a for a in loaded if a not in protected),
+            key=lambda a: self._last_used.get(a, 0.0),
+        )
+        excess = max(0, len(loaded) - _MAX_LOADED_WORKSPACES)
+        candidates = []
+        if excess:
+            candidates.extend(overflow[:excess])
+        # TTL pass: evict anything idle beyond the TTL.
+        candidates.extend(
+            a
+            for a in overflow
+            if a not in candidates
+            and (now - self._last_used.get(a, 0.0)) > _WORKSPACE_IDLE_TTL_S
+        )
+        for agent_id in candidates:
+            workspace = self.agents.get(agent_id)
+            if workspace is None or agent_id in protected:
+                continue
+            tracker = getattr(workspace, "task_tracker", None)
+            if tracker is not None and hasattr(
+                tracker, "has_active_tasks"
+            ):
+                try:
+                    if tracker.has_active_tasks():
+                        continue
+                except Exception:  # pylint: disable=broad-except
+                    continue
+            logger.info(
+                "Idle workspace evicted (LRU/TTL): %s",
+                agent_id,
+            )
+            await self.stop_agent(agent_id)
+            self._last_used.pop(agent_id, None)
 
     async def get_agent(self, agent_id: str) -> Workspace:
         """Get agent workspace by ID (lazy loading with dedup).
@@ -95,6 +187,7 @@ class MultiAgentManager:
         # Fast path: already loaded (no lock)
         if agent_id in self.agents:
             self._agent_startup_statuses[agent_id] = AgentStartupStatus.RUNNING
+            self._touch(agent_id)
             logger.debug(f"Returning cached agent: {agent_id}")
             return self.agents[agent_id]
 

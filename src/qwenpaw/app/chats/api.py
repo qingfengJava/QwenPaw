@@ -174,11 +174,11 @@ async def list_chats(
         archived=archived,
     )
     tracker = workspace.task_tracker
-    result = []
-    for spec in chats:
-        status = await tracker.get_status(spec.id)
-        result.append(spec.model_copy(update={"status": status}))
-    return result
+    statuses = await tracker.get_status_many([spec.id for spec in chats])
+    return [
+        spec.model_copy(update={"status": statuses.get(spec.id, "idle")})
+        for spec in chats
+    ]
 
 
 @router.post("", response_model=ChatSpec)

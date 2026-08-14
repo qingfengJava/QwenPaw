@@ -34,6 +34,7 @@ class UserView(BaseModel):
     display_name: str = ""
     disabled: bool = False
     created_at: str = ""
+    org_id: str = "default"
     rbac_roles: List[str] = Field(default_factory=list)
     teams: List[str] = Field(default_factory=list)
 
@@ -43,12 +44,14 @@ class CreateUserBody(BaseModel):
     password: str
     role: str = "employee"
     display_name: str = ""
+    org_id: str = "default"
 
 
 class UpdateUserBody(BaseModel):
     disabled: Optional[bool] = None
     role: Optional[str] = None
     display_name: Optional[str] = None
+    org_id: Optional[str] = None
 
 
 class PasswordBody(BaseModel):
@@ -73,6 +76,7 @@ def _view(username: str) -> UserView:
         display_name=user.display_name,
         disabled=user.disabled,
         created_at=user.created_at.isoformat(),
+        org_id=user.org_id,
         rbac_roles=rbac.roles_for_user(user.username, user.role),
         teams=rbac.teams_for_user(user.username),
     )
@@ -98,6 +102,7 @@ async def create_user(body: CreateUserBody) -> UserView:
         body.password,
         role=body.role,
         display_name=body.display_name,
+        org_id=body.org_id,
     )
     if record is None:
         raise HTTPException(
@@ -156,6 +161,12 @@ async def update_user(
             raise HTTPException(
                 status_code=400,
                 detail="display_name update failed",
+            )
+    if body.org_id is not None:
+        if not store.set_org_id(username, body.org_id):
+            raise HTTPException(
+                status_code=400,
+                detail="org_id update failed",
             )
     return _view(username)
 

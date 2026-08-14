@@ -65,6 +65,25 @@ class TokenRecordingModelWrapper(ChatModelBase):
         # Fire-and-forget: synchronous put_nowait, ~100 ns, no await needed.
         get_token_usage_manager().enqueue(event)
 
+        # XianWork enterprise: mirror the event into the PG metering
+        # table (tenant/user/project/agent dimensions) when PostgreSQL
+        # is configured; a no-op otherwise.
+        try:
+            from .pg_sink import build_usage_event, get_pg_usage_sink
+
+            sink = get_pg_usage_sink()
+            if sink is not None:
+                row = build_usage_event(
+                    provider_id=self._provider_id,
+                    model_name=self.model,
+                    prompt_tokens=pt,
+                    completion_tokens=ct,
+                )
+                if row is not None:
+                    sink.enqueue(row)
+        except Exception:  # pylint: disable=broad-except
+            logger.debug("pg usage sink skipped", exc_info=True)
+
         # M4: feed per-subject day-window token quotas (no-op when no
         # quota rules are configured).
         try:
