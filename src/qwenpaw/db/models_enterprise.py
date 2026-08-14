@@ -23,6 +23,7 @@ from typing import Any, Optional
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     DateTime,
     Index,
     Integer,
@@ -162,6 +163,12 @@ class ProjectRow(TenantMixin, TimestampMixin, Base):
         server_default="{}",
     )
     template_tag: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    instructions: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="",
+        server_default="",
+    )
     created_by: Mapped[str] = mapped_column(Text, nullable=False)
 
     __table_args__ = (
@@ -435,6 +442,87 @@ class PublishedExpertRow(TenantMixin, Base):
             "expert_id",
             "version",
             name="pk_published_experts",
+        ),
+    )
+
+
+class ProjectBindingRow(TenantMixin, TimestampMixin, Base):
+    """Binding of one external resource (connector / skill) to a project.
+
+    ``kind`` is one of ``connector`` / ``skill``; ``ref_id`` names the
+    resource inside its console-plane registry (MCP client key / skill
+    name). The registry stays authoritative — this table only records
+    which resources the project's AI may use.
+    """
+
+    __tablename__ = "project_bindings"
+
+    id: Mapped[str] = mapped_column(String(64), nullable=False)
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    ref_id: Mapped[str] = mapped_column(Text, nullable=False)
+    enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default=text("true"),
+    )
+    config: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default="{}",
+    )
+
+    __table_args__ = (
+        PrimaryKeyConstraint("tenant_id", "id", name="pk_project_bindings"),
+        Index(
+            "ux_project_bindings",
+            "tenant_id",
+            "project_id",
+            "kind",
+            "ref_id",
+            unique=True,
+        ),
+    )
+
+
+class ProjectAutomationRow(TenantMixin, TimestampMixin, Base):
+    """One scheduled automation inside a project.
+
+    The authoritative schedule lives in the project agent's cron manager
+    (``cron_job_id``); this row projects it onto the project plane and
+    records the human-facing name/prompt for the right config panel.
+    """
+
+    __tablename__ = "project_automations"
+
+    id: Mapped[str] = mapped_column(String(64), nullable=False)
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    schedule: Mapped[str] = mapped_column(Text, nullable=False)
+    prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default=text("true"),
+    )
+    cron_job_id: Mapped[Optional[str]] = mapped_column(
+        String(64),
+        nullable=True,
+    )
+    last_run_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    __table_args__ = (
+        PrimaryKeyConstraint("tenant_id", "id", name="pk_project_automations"),
+        Index(
+            "ix_project_automations_project",
+            "tenant_id",
+            "project_id",
         ),
     )
 

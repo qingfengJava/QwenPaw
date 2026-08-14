@@ -42,6 +42,7 @@ class ProjectRecord(BaseModel):
     status: str = "active"
     ai_binding: AIBinding = Field(default_factory=AIBinding)
     template_tag: str = ""
+    instructions: str = ""
     created_by: str = ""
     member_role: str = ""  # requesting user's role ("" = not a member)
     created_at: Optional[datetime] = None
@@ -93,6 +94,7 @@ class ProjectCreateBody(BaseModel):
     description: str = ""
     department_id: Optional[str] = None
     template_tag: str = ""
+    instructions: str = ""
     ai_binding: Optional[AIBinding] = None
 
 
@@ -101,6 +103,7 @@ class ProjectUpdateBody(BaseModel):
     description: Optional[str] = None
     status: Optional[str] = None
     department_id: Optional[str] = None
+    instructions: Optional[str] = None
     ai_binding: Optional[AIBinding] = None
 
 

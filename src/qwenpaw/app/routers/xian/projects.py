@@ -96,6 +96,7 @@ async def create_project(
         description=body.description,
         department_id=body.department_id,
         template_tag=body.template_tag,
+        instructions=body.instructions,
         ai_binding=body.ai_binding,
     )
 
@@ -123,6 +124,7 @@ async def update_project(
         description=body.description,
         status=body.status,
         department_id=body.department_id,
+        instructions=body.instructions,
         ai_binding=body.ai_binding,
     )
     if record is None:

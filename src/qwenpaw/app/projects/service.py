@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 _PROJECT_COLS = (
     "id, department_id, name, description, status, ai_binding, "
-    "template_tag, created_by, created_at, updated_at"
+    "template_tag, instructions, created_by, created_at, updated_at"
 )
 _TASK_COLS = (
     "id, project_id, title, description, status, assignee, creator, "
@@ -77,6 +77,7 @@ def _row_to_project(row, member_role: str = "") -> ProjectRecord:
             ref_id=binding.get("ref_id", ""),
         ),
         template_tag=row.template_tag or "",
+        instructions=(row.instructions or "") if hasattr(row, "instructions") else "",
         created_by=row.created_by,
         member_role=member_role,
         created_at=row.created_at,
@@ -125,6 +126,7 @@ class ProjectService:
         description: str = "",
         department_id: Optional[str] = None,
         template_tag: str = "",
+        instructions: str = "",
         ai_binding: Optional[AIBinding] = None,
     ) -> ProjectRecord:
         tid = current_tenant_id()
@@ -136,8 +138,9 @@ class ProjectService:
                 text(
                     "INSERT INTO projects (tenant_id, id, department_id, "
                     "name, description, ai_binding, template_tag, "
-                    "created_by) VALUES (:tid, :id, :dept, :name, :desc, "
-                    "CAST(:binding AS JSONB), :tag, :creator) RETURNING "
+                    "instructions, created_by) VALUES (:tid, :id, :dept, "
+                    ":name, :desc, CAST(:binding AS JSONB), :tag, "
+                    ":instructions, :creator) RETURNING "
                     + _PROJECT_COLS
                 ),
                 {
@@ -148,6 +151,7 @@ class ProjectService:
                     "desc": description,
                     "binding": json.dumps(binding),
                     "tag": template_tag,
+                    "instructions": instructions,
                     "creator": created_by,
                 },
             )
@@ -186,7 +190,8 @@ class ProjectService:
             result = await conn.execute(
                 text(
                     "SELECT p.id, p.department_id, p.name, p.description, "
-                    "p.status, p.ai_binding, p.template_tag, p.created_by, "
+                    "p.status, p.ai_binding, p.template_tag, "
+                    "p.instructions, p.created_by, "
                     "p.created_at, p.updated_at, m.role AS member_role "
                     "FROM projects p "
                     "LEFT JOIN project_members m "
@@ -271,6 +276,9 @@ class ProjectService:
         if fields.get("department_id") is not None:
             sets.append("department_id = :dept")
             params["dept"] = fields["department_id"]
+        if fields.get("instructions") is not None:
+            sets.append("instructions = :instructions")
+            params["instructions"] = fields["instructions"]
         if fields.get("ai_binding") is not None:
             sets.append("ai_binding = CAST(:binding AS JSONB)")
             params["binding"] = json.dumps(
