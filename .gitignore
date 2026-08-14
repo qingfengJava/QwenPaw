@@ -151,3 +151,6 @@ docs-site/
 
 # Local review notes
 docs/reviews/
+
+# Qoder IDE session plan caches (rules under .qoder/rules stay tracked)
+.qoder/plans/
