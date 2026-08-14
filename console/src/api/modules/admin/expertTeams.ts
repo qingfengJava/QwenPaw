@@ -1,0 +1,85 @@
+/**
+ * admin/expertTeams.ts — `/admin/expert-teams` client (XianWork Phase 3).
+ */
+import { request } from "../../request";
+import type { ExpertRecord } from "./experts";
+
+export interface TeamMember {
+  expert_id: string;
+  role_hint: string;
+  seq: number;
+}
+
+export interface ExpertTeamRecord {
+  id: string;
+  name: string;
+  description: string;
+  mode: "router" | "pipeline";
+  router_prompt: string;
+  status: "draft" | "published" | "archived";
+  version: number;
+  members: TeamMember[];
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface TeamMemberBody {
+  expert_id: string;
+  role_hint?: string;
+  seq?: number;
+}
+
+export interface ExpertTeamCreateBody {
+  name: string;
+  description?: string;
+  mode?: string;
+  router_prompt?: string;
+  members?: TeamMemberBody[];
+}
+
+export interface ExpertTeamUpdateBody {
+  name?: string;
+  description?: string;
+  mode?: string;
+  router_prompt?: string;
+  members?: TeamMemberBody[];
+}
+
+const enc = encodeURIComponent;
+
+export const adminExpertTeamsApi = {
+  list: (status?: string) =>
+    request<ExpertTeamRecord[]>(
+      `/admin/expert-teams${status ? `?status=${enc(status)}` : ""}`,
+    ),
+
+  get: (teamId: string) =>
+    request<ExpertTeamRecord>(`/admin/expert-teams/${enc(teamId)}`),
+
+  create: (body: ExpertTeamCreateBody) =>
+    request<ExpertTeamRecord>("/admin/expert-teams", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  update: (teamId: string, body: ExpertTeamUpdateBody) =>
+    request<ExpertTeamRecord>(`/admin/expert-teams/${enc(teamId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  remove: (teamId: string) =>
+    request<void>(`/admin/expert-teams/${enc(teamId)}`, { method: "DELETE" }),
+
+  publish: (teamId: string) =>
+    request<ExpertTeamRecord>(`/admin/expert-teams/${enc(teamId)}/publish`, {
+      method: "POST",
+    }),
+
+  archive: (teamId: string) =>
+    request<ExpertTeamRecord>(`/admin/expert-teams/${enc(teamId)}/archive`, {
+      method: "POST",
+    }),
+};
+
+export type { ExpertRecord };

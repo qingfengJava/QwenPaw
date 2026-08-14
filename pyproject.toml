@@ -87,9 +87,11 @@ packages = { find = { where = ["src"] } }
 include-package-data = true
 
 [tool.setuptools.package-data]
-# Dockerfile copies console build output to src/qwenpaw/console/ (no dist subdir).
+# Dockerfile copies console build output to src/qwenpaw/console/ (no dist subdir)
+# and the XianWork SPA build output to src/qwenpaw/xianwork/.
 "qwenpaw" = [
     "console/**",
+    "xianwork/**",
     "agents/md_files/**",
     "agents/skills/**",
     "agents/context/visual_compression/assets/atlas-gray.ts",

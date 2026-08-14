@@ -1,0 +1,408 @@
+/* XianWork global styles — WorkBuddy-inspired light theme. */
+:root {
+  --bg-body: #ffffff;
+  --bg-sidebar: #f7f7f8;
+  --bg-sidebar-hover: #ececf1;
+  --bg-sidebar-active: #e5e5e9;
+  --text-primary: #1e1e20;
+  --text-secondary: #5e5e66;
+  --text-muted: #8e8e96;
+  --border-light: #eaeaec;
+  --border-medium: #d9d9df;
+  --accent: #3b6ef6;
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.05),
+    0 2px 4px -1px rgba(0, 0, 0, 0.03);
+  --sidebar-width: 264px;
+  --radius: 12px;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-family:
+    "Inter",
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    "PingFang SC",
+    "Microsoft YaHei",
+    sans-serif;
+  color: var(--text-primary);
+  background: var(--bg-body);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.xian-app {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ── Sidebar ─────────────────────────────────────────────────────── */
+.xian-sidebar {
+  width: var(--sidebar-width);
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--border-light);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+.xian-sidebar-header {
+  padding: 18px 18px 12px;
+}
+
+.xian-logo {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.xian-logo-title {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+}
+
+.xian-logo-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.xian-new-task {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--bg-sidebar-active);
+  border-radius: 10px;
+  padding: 11px 16px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  width: 100%;
+  font-size: 14px;
+  transition: background 0.2s;
+}
+
+.xian-new-task:hover {
+  background: #dcdce1;
+}
+
+.xian-nav {
+  list-style: none;
+  padding: 4px 12px;
+  flex-grow: 1;
+  overflow-y: auto;
+}
+
+.xian-nav-section {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 18px 8px 6px;
+}
+
+.xian-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  margin-bottom: 2px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: all 0.15s;
+}
+
+.xian-nav-item:hover {
+  background: var(--bg-sidebar-hover);
+  color: var(--text-primary);
+}
+
+.xian-nav-item.active {
+  background: var(--bg-sidebar-active);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.xian-sidebar-footer {
+  padding: 14px 18px;
+  border-top: 1px solid var(--border-light);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.xian-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.xian-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+/* ── Main / cards / inputs ───────────────────────────────────────── */
+.xian-main {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-body);
+}
+
+.xian-page {
+  flex-grow: 1;
+  overflow-y: auto;
+  padding: 28px 36px;
+}
+
+.xian-page-title {
+  font-size: 22px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.xian-page-sub {
+  color: var(--text-secondary);
+  margin-bottom: 24px;
+}
+
+.xian-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 18px;
+}
+
+.xian-card {
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+  padding: 18px;
+  background: #fff;
+  cursor: pointer;
+  transition: all 0.18s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+}
+
+.xian-card:hover {
+  box-shadow: var(--shadow-md);
+  border-color: var(--border-medium);
+}
+
+.xian-card-title {
+  font-weight: 600;
+  font-size: 15px;
+  margin-bottom: 6px;
+}
+
+.xian-card-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.xian-input-bar {
+  width: 100%;
+  max-width: 780px;
+  background: #fff;
+  border: 1px solid var(--border-medium);
+  border-radius: 16px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+  padding: 14px 18px;
+}
+
+.xian-input-bar textarea {
+  width: 100%;
+  border: none;
+  outline: none;
+  resize: none;
+  min-height: 28px;
+  max-height: 180px;
+  font-size: 15px;
+  font-family: inherit;
+  line-height: 1.5;
+}
+
+.xian-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+  margin-bottom: 28px;
+}
+
+.xian-chip {
+  padding: 9px 16px;
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  background: #fff;
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.18s;
+}
+
+.xian-chip:hover {
+  border-color: var(--border-medium);
+  color: var(--text-primary);
+}
+
+.xian-chip.active {
+  background: #2b2d31;
+  color: #fff;
+  border-color: #2b2d31;
+}
+
+/* ── Kanban ──────────────────────────────────────────────────────── */
+.xian-kanban {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  overflow-x: auto;
+  padding-bottom: 16px;
+}
+
+.xian-kanban-col {
+  min-width: 264px;
+  width: 264px;
+  background: #f8fafc;
+  border-radius: 10px;
+  padding: 12px;
+  flex-shrink: 0;
+}
+
+.xian-kanban-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 12px;
+  padding: 0 4px;
+}
+
+.xian-task-card {
+  background: #fff;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 10px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+}
+
+.xian-task-title {
+  font-size: 13px;
+  margin-bottom: 10px;
+  line-height: 1.4;
+}
+
+.xian-task-title.done {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+
+.xian-task-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 6px;
+}
+
+.dot-gray { background: #cbd5e1; }
+.dot-blue { background: #3b82f6; }
+.dot-orange { background: #f59e0b; }
+.dot-green { background: #10b981; }
+
+/* ── Feed ────────────────────────────────────────────────────────── */
+.xian-feed-item {
+  display: flex;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.xian-feed-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #64748b;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.xian-feed-box {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: #334155;
+  margin-top: 6px;
+}
+
+/* ── Side panel (project config) ─────────────────────────────────── */
+.xian-side-panel {
+  width: 300px;
+  border-left: 1px solid var(--border-light);
+  background: #fcfcfc;
+  padding: 18px;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.xian-config-block {
+  background: #fff;
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  padding: 14px;
+  margin-bottom: 10px;
+}
+
+.xian-config-title {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.xian-config-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}

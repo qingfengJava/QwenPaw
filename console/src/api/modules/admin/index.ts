@@ -19,3 +19,18 @@ export { adminAuditApi } from "./audit";
 export type { AuditQuery } from "./audit";
 export { adminKbApi } from "./kb";
 export type { KbBody, IngestBody, IngestResult } from "./kb";
+export { adminOrgsApi } from "./orgs";
+export type { OrgRecord, DepartmentTree } from "./orgs";
+export { adminExpertsApi } from "./experts";
+export type {
+  ExpertRecord,
+  ExpertCreateBody,
+  ExpertUpdateBody,
+} from "./experts";
+export { adminExpertTeamsApi } from "./expertTeams";
+export type {
+  ExpertTeamRecord,
+  TeamMember,
+  ExpertTeamCreateBody,
+  ExpertTeamUpdateBody,
+} from "./expertTeams";

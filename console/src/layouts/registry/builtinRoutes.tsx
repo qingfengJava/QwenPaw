@@ -72,6 +72,15 @@ const AdminAuditPage = lazyImportWithRetry("../../pages/Admin/Audit.tsx");
 const AdminKnowledgePage = lazyImportWithRetry(
   "../../pages/Admin/Knowledge.tsx",
 );
+const AdminOrganizationPage = lazyImportWithRetry(
+  "../../pages/Admin/Organization.tsx",
+);
+const AdminExpertsPage = lazyImportWithRetry(
+  "../../pages/Admin/Experts.tsx",
+);
+const AdminExpertTeamsPage = lazyImportWithRetry(
+  "../../pages/Admin/ExpertTeams.tsx",
+);
 
 /**
  * "/" always lands on the canonical Chat workspace.
@@ -182,6 +191,21 @@ export const BUILTIN_ROUTES: Route[] = [
     id: "core.admin-knowledge",
     path: "/admin/knowledge",
     component: withRequireAdmin(AdminKnowledgePage),
+  },
+  {
+    id: "core.admin-organization",
+    path: "/admin/organization",
+    component: withRequireAdmin(AdminOrganizationPage),
+  },
+  {
+    id: "core.admin-experts",
+    path: "/admin/experts",
+    component: withRequireAdmin(AdminExpertsPage),
+  },
+  {
+    id: "core.admin-expert-teams",
+    path: "/admin/expert-teams",
+    component: withRequireAdmin(AdminExpertTeamsPage),
   },
 ];
 

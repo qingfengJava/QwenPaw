@@ -420,6 +420,36 @@ export const BUILTIN_MENU: MenuItem[] = [
     order: 80,
     visible: adminOnly,
   },
+  {
+    id: "core.admin-organization",
+    location: "primary.settings",
+    parentId: "core.admin-group",
+    label: navLabel("nav.adminOrg", "Organization"),
+    icon: UsersRound,
+    route: "core.admin-organization",
+    order: 90,
+    visible: adminOnly,
+  },
+  {
+    id: "core.admin-experts",
+    location: "primary.settings",
+    parentId: "core.admin-group",
+    label: navLabel("nav.adminExperts", "Experts"),
+    icon: Bot,
+    route: "core.admin-experts",
+    order: 100,
+    visible: adminOnly,
+  },
+  {
+    id: "core.admin-expert-teams",
+    location: "primary.settings",
+    parentId: "core.admin-group",
+    label: navLabel("nav.adminExpertTeams", "Expert Teams"),
+    icon: UsersRound,
+    route: "core.admin-expert-teams",
+    order: 110,
+    visible: adminOnly,
+  },
 ];
 
 // Self-register at module load. main.tsx imports this file as a side-effect.
