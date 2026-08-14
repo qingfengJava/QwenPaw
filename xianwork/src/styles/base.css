@@ -1,0 +1,49 @@
+/*
+ * Base reset + app shell — prototype L38-53 (body) and L224-242
+ * (main-content / view switching).
+ */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-main);
+  color: var(--text-primary);
+  background-color: var(--bg-body);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------------- Main Content Area (prototype L224-242) ---------------- */
+.main-content {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  background-color: var(--bg-body);
+  min-width: 0;
+}
+
+.view {
+  display: none;
+  width: 100%;
+  height: 100%;
+  flex-direction: column;
+}
+
+.view.active {
+  display: flex;
+}
+
+/* Utility classes (prototype L979-980) */
+.hidden {
+  display: none !important;
+}

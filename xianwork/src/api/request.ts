@@ -1,7 +1,8 @@
 /**
  * Minimal fetch wrapper for the QwenPaw API (same-origin by default).
  * Mirrors the console `request.ts` contract: bearer token, JSON bodies,
- * 401 → redirect to the XianWork login.
+ * 401 → dispatch `xian:unauth` (App.tsx navigates to /login; no absolute
+ * location writes so Tauri/ exe packaging stays protocol-safe).
  */
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "";
 
@@ -41,7 +42,7 @@ export async function request<T>(
   const res = await fetch(`${API_BASE}/api${path}`, { ...init, headers });
   if (res.status === 401) {
     clearToken();
-    window.location.href = "/xianwork/login";
+    window.dispatchEvent(new CustomEvent("xian:unauth"));
     throw new ApiError(401, "Not authenticated");
   }
   if (!res.ok) {
