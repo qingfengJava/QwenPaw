@@ -2,13 +2,16 @@
  * LoopModeSelector — backend-parity execution-mode picker. Non-default modes
  * are applied as a "/{slash_command}" message prefix (the backend loop
  * contract), so the trigger shows the blue-pill look from the console
- * composer when a persistent mode is selected.
+ * composer when a persistent mode is selected. Names/descriptions resolve
+ * through the console i18n chain (builtin zh table → plugin zh → raw).
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { loopApi, type LoopModeInfo } from "../../api/modules";
 import {
   DEFAULT_LOOP_MODE,
   getSelectedLoopMode,
+  resolveLoopModeDescription,
+  resolveLoopModeName,
   useChatPrefs,
 } from "../../stores/chatPrefs";
 
@@ -82,8 +85,10 @@ export default function LoopModeSelector() {
       >
         <i className={modeIcon(mode)} />
         <span className="loop-option-copy">
-          <span className="loop-option-name">{mode.name}</span>
-          <span className="loop-option-desc">{mode.description}</span>
+          <span className="loop-option-name">{resolveLoopModeName(mode)}</span>
+          <span className="loop-option-desc">
+            {resolveLoopModeDescription(mode)}
+          </span>
         </span>
         {isActive && <i className="fa-solid fa-circle-check ms-check" />}
       </button>
@@ -105,7 +110,7 @@ export default function LoopModeSelector() {
         ) : (
           <i className={modeIcon(selected)} />
         )}
-        <span>{isDefault ? "默认" : selected.name}</span>
+        <span>{resolveLoopModeName(selected)}</span>
         <i className="fa-solid fa-chevron-down ms-caret" />
       </button>
 
@@ -113,18 +118,18 @@ export default function LoopModeSelector() {
         <div className="loop-panel">
           <div className="loop-panel-header">
             <div>
-              <div className="loop-panel-title">执行模式</div>
+              <div className="loop-panel-title">Loop 模式</div>
               <div className="loop-panel-hint">
-                选择后，下一条消息将以模式指令开头
+                选择智能体接下来的工作方式
               </div>
             </div>
           </div>
           {groups.builtin.length > 0 && (
-            <div className="loop-group-label">内置模式</div>
+            <div className="loop-group-label">内置</div>
           )}
           {groups.builtin.map(renderOption)}
           {groups.extended.length > 0 && (
-            <div className="loop-group-label">扩展模式</div>
+            <div className="loop-group-label">自定义与插件</div>
           )}
           {groups.extended.map(renderOption)}
         </div>

@@ -25,11 +25,57 @@ export const APPROVAL_META: Record<
 
 export const DEFAULT_LOOP_MODE: LoopModeInfo = {
   id: "default",
-  name: "默认",
+  name: "default",
   slash_command: "",
-  description: "标准守护式代理循环。",
+  description: "The standard guarded agent loop.",
   source: "builtin",
 };
+
+/**
+ * Built-in mode names/descriptions mirror the console zh.json "loop.modes"
+ * table — the backend /loops payload returns raw English ids, the console
+ * localizes builtins client-side (resolveLoopModeName contract).
+ */
+const BUILTIN_LOOP_I18N: Record<
+  string,
+  { name: string; description: string }
+> = {
+  default: {
+    name: "默认",
+    description: "标准的受控智能体 Loop。",
+  },
+  goal: {
+    name: "目标",
+    description: "持续推进一个具体且可验证的目标。",
+  },
+  mission: {
+    name: "任务",
+    description: "运行结构化、可持续的多步骤任务。",
+  },
+};
+
+function pickLocalized(
+  map: Record<string, string> | null | undefined,
+): string {
+  if (!map) return "";
+  return map["zh-CN"] || map["zh"] || "";
+}
+
+/** Console-parity name resolution: builtin i18n table → plugin zh → raw name. */
+export function resolveLoopModeName(mode: LoopModeInfo): string {
+  if (mode.source === "builtin") {
+    return BUILTIN_LOOP_I18N[mode.id]?.name ?? mode.name;
+  }
+  return pickLocalized(mode.name_i18n) || mode.name;
+}
+
+/** Console-parity description: builtin table → plugin zh → raw description. */
+export function resolveLoopModeDescription(mode: LoopModeInfo): string {
+  if (mode.source === "builtin") {
+    return BUILTIN_LOOP_I18N[mode.id]?.description ?? mode.description;
+  }
+  return pickLocalized(mode.description_i18n) || mode.description;
+}
 
 interface ChatPrefsState {
   selectedAgent: string;

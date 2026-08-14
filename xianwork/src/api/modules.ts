@@ -459,6 +459,9 @@ export interface LoopModeInfo {
   slash_command: string;
   description: string;
   source: "builtin" | "custom" | "plugin";
+  /** Plugin-owned display names keyed by locale (e.g. zh-CN), console parity. */
+  name_i18n?: Record<string, string> | null;
+  description_i18n?: Record<string, string> | null;
 }
 
 export const loopApi = {

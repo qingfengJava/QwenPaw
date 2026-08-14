@@ -1,17 +1,19 @@
 /**
  * Home — prototype home view (L1084-1140): top points bar, 32px title,
- * category tabs, action chips, and the shared PromptInput launcher.
- * Sending creates a personal-assistant chat and jumps to it (logic
- * preserved from the scaffold; stream helpers moved to lib/stream.ts).
+ * category tabs, action chips, and the full ChatComposer launcher. Sending
+ * creates a personal-assistant chat, hands text + attachments to the Chat
+ * page via kickoff params + sessionStorage, and jumps to it.
  */
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import PromptInput from "../components/PromptInput";
-import AgentSelector from "../components/chat/AgentSelector";
-import ApprovalSelector from "../components/chat/ApprovalSelector";
-import LoopModeSelector from "../components/chat/LoopModeSelector";
+import ChatComposer, {
+  type PendingAttachment,
+} from "../components/chat/ChatComposer";
 import { chatApi } from "../api/modules";
 import { useAuthStore } from "../stores/auth";
+
+/** SessionStorage bridge for kickoff attachments (cleared by Chat on read). */
+export const KICKOFF_ATTACHMENTS_KEY = "xianwork_kickoff_attachments";
 
 const CATEGORIES = [
   { label: "日常办公", icon: "fa-solid fa-mug-hot" },
@@ -35,16 +37,29 @@ export default function HomePage() {
   const [category, setCategory] = useState(CATEGORIES[0].label);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
 
-  const handleSend = async (value: string) => {
+  const handleSend = async (value: string, pending: PendingAttachment[]) => {
     if (busy) return;
+    if (!value.trim() && pending.length === 0) return;
     setBusy(true);
     try {
-      // Create the chat, then hand the text to the Chat page as kickoff —
-      // it performs the real streamed send once history is loaded. No
-      // background pre-send (that desynced the visible conversation).
+      // Create the chat, then hand text + attachments to the Chat page as
+      // kickoff — it performs the real streamed send once history loads.
       const chat = await chatApi.create(value.slice(0, 24) || "新对话", username);
-      navigate(`/chat?chat=${chat.id}&kickoff=${encodeURIComponent(value)}`);
+      if (pending.length > 0) {
+        try {
+          sessionStorage.setItem(
+            KICKOFF_ATTACHMENTS_KEY,
+            JSON.stringify(pending),
+          );
+        } catch {
+          // non-fatal: kickoff text still goes through
+        }
+      }
+      navigate(
+        `/chat?chat=${chat.id}&kickoff=${encodeURIComponent(value)}`,
+      );
     } catch (err) {
       console.error(err);
       setBusy(false);
@@ -99,22 +114,15 @@ export default function HomePage() {
           ))}
         </div>
 
-        <PromptInput
-          variant="home"
-          placeholder="今天帮你做些什么？ @ 引用对话文件，/ 调用技能与指令"
+        <ChatComposer
           value={text}
           onChange={setText}
-          onSend={(value) => void handleSend(value)}
+          onSend={(value, pending) => void handleSend(value, pending)}
           busy={busy}
+          attachments={attachments}
+          onAttachmentsChange={setAttachments}
+          placeholder="今天帮你做些什么？ @ 引用对话文件，/ 调用技能与指令"
         />
-
-        {/* Real chat prefs — same store the Chat composer uses, so choices
-            made here carry into the conversation after navigation. */}
-        <div className="home-chat-prefs">
-          <LoopModeSelector />
-          <ApprovalSelector />
-          <AgentSelector />
-        </div>
       </div>
     </div>
   );

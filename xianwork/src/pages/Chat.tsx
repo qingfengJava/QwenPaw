@@ -13,6 +13,7 @@ import ModelSelector from "../components/chat/ModelSelector";
 import ChatComposer, {
   type PendingAttachment,
 } from "../components/chat/ChatComposer";
+import { KICKOFF_ATTACHMENTS_KEY } from "./Home";
 import { chatApi } from "../api/modules";
 import type { ChatSpecView } from "../api/modules";
 import { useAuthStore } from "../stores/auth";
@@ -36,6 +37,7 @@ export default function ChatPage() {
   const [pendingDelete, setPendingDelete] = useState<ChatSpecView | null>(null);
   const { items, streaming, send, stop, reset } = useChatStream();
   const kickoffRef = useRef("");
+  const kickoffAttachmentsRef = useRef<PendingAttachment[]>([]);
   const historyLoadedRef = useRef("");
 
   const activeChat = useMemo(
@@ -78,23 +80,49 @@ export default function ChatPage() {
     }
     historyLoadedRef.current = activeChat.id;
     kickoffRef.current = kickoff;
+    // Home hands attachments over through sessionStorage; consume once.
+    let kickoffAttachments: PendingAttachment[] = [];
+    try {
+      const raw = sessionStorage.getItem(KICKOFF_ATTACHMENTS_KEY);
+      if (raw) {
+        kickoffAttachments = JSON.parse(raw) as PendingAttachment[];
+        sessionStorage.removeItem(KICKOFF_ATTACHMENTS_KEY);
+      }
+    } catch {
+      sessionStorage.removeItem(KICKOFF_ATTACHMENTS_KEY);
+    }
+    kickoffAttachmentsRef.current = kickoffAttachments;
     void chatApi
       .history(activeChat.id)
       .then((h) => {
         reset(historyToTimeline(h));
         window.setTimeout(() => void loadChats(), 0);
         const text = kickoffRef.current;
-        if (text) {
+        if (text || kickoffAttachmentsRef.current.length > 0) {
           kickoffRef.current = "";
-          void send(text, activeChat);
+          void send(
+            text,
+            activeChat,
+            kickoffAttachmentsRef.current.length > 0
+              ? kickoffAttachmentsRef.current
+              : undefined,
+          );
+          kickoffAttachmentsRef.current = [];
         }
       })
       .catch(() => {
         reset([]);
         const text = kickoffRef.current;
-        if (text) {
+        if (text || kickoffAttachmentsRef.current.length > 0) {
           kickoffRef.current = "";
-          void send(text, activeChat);
+          void send(
+            text,
+            activeChat,
+            kickoffAttachmentsRef.current.length > 0
+              ? kickoffAttachmentsRef.current
+              : undefined,
+          );
+          kickoffAttachmentsRef.current = [];
         }
       });
     if (kickoff) {

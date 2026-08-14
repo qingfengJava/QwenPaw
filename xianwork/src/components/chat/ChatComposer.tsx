@@ -13,13 +13,16 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
-import { chatApi } from "../../api/modules";
+import { chatApi, loopApi, type LoopModeInfo } from "../../api/modules";
 import { useToast } from "../Toast";
 import AgentSelector from "./AgentSelector";
 import ApprovalSelector from "./ApprovalSelector";
 import ContextRing from "./ContextRing";
 import LoopModeSelector from "./LoopModeSelector";
-import { useChatPrefs } from "../../stores/chatPrefs";
+import {
+  resolveLoopModeDescription,
+  useChatPrefs,
+} from "../../stores/chatPrefs";
 
 export const MAX_INPUT_LENGTH = 10000;
 
@@ -65,6 +68,8 @@ export default function ChatComposer({
   contextRatio,
   attachments,
   onAttachmentsChange,
+  placeholder,
+  disclaimer = "懂你所需，伴你左右",
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -77,6 +82,9 @@ export default function ChatComposer({
   contextRatio?: number;
   attachments: PendingAttachment[];
   onAttachmentsChange: (next: PendingAttachment[]) => void;
+  /** Home uses its own launcher placeholder; Chat keeps the backend one. */
+  placeholder?: string;
+  disclaimer?: string;
 }) {
   const toast = useToast();
   const loopModes = useChatPrefs((s) => s.loopModes);
@@ -86,6 +94,25 @@ export default function ChatComposer({
   const [listening, setListening] = useState(false);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const [slashIndex, setSlashIndex] = useState(0);
+  /** Command that was just applied/filled — hide the palette for it until the
+   * first token changes (Tab/Enter/click fill would otherwise re-match). */
+  const slashDismissedRef = useRef<string | null>(null);
+
+  // Preload the loop catalog on mount so cold-start slash input shows the
+  // full /goal /mission list without opening the mode selector first.
+  useEffect(() => {
+    if (loopModes.length > 1) return;
+    loopApi
+      .list()
+      .then((modes) => {
+        if (Array.isArray(modes) && modes.length > 0) {
+          useChatPrefs.getState().setLoopModes(modes);
+        }
+      })
+      .catch(() => {
+        // default-only catalog remains functional
+      });
+  }, [loopModes.length]);
 
   const hasText = value.trim().length > 0;
 
@@ -96,9 +123,9 @@ export default function ChatComposer({
     const typed = first.slice(1).toLowerCase();
     const fromModes = loopModes
       .filter((m) => m.slash_command && m.slash_command.startsWith(typed))
-      .map((m) => ({
+      .map((m: LoopModeInfo) => ({
         command: `/${m.slash_command}`,
-        description: m.description,
+        description: resolveLoopModeDescription(m),
       }));
     const fixed = [
       { command: "/approve", description: "审批通过当前待确认的工具调用" },
@@ -107,7 +134,11 @@ export default function ChatComposer({
     return [...fromModes, ...fixed];
   }, [value, loopModes]);
 
-  const slashOpen = !busy && slashSuggestions.length > 0 && value.trimStart().startsWith("/");
+  const slashOpen =
+    !busy &&
+    slashSuggestions.length > 0 &&
+    value.trimStart().startsWith("/") &&
+    (value.trimStart().split(/\s/, 1)[0] ?? "") !== slashDismissedRef.current;
 
   useEffect(() => {
     setSlashIndex(0);
@@ -115,6 +146,7 @@ export default function ChatComposer({
 
   const applySuggestion = (command: string) => {
     const rest = value.trimStart().split(/\s/).slice(1).join(" ");
+    slashDismissedRef.current = command;
     onChange(`${command}${rest ? ` ${rest}` : " "}`);
     textRef.current?.focus();
   };
@@ -123,6 +155,10 @@ export default function ChatComposer({
   const handleInput = (next: string) => {
     if (next.length > MAX_INPUT_LENGTH) {
       next = next.slice(0, MAX_INPUT_LENGTH);
+    }
+    const nextToken = next.trimStart().split(/\s/, 1)[0] ?? "";
+    if (nextToken !== slashDismissedRef.current) {
+      slashDismissedRef.current = null;
     }
     onChange(next);
     const el = textRef.current;
@@ -219,6 +255,13 @@ export default function ChatComposer({
   ]);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (slashOpen && e.key === "Escape") {
+      // Drop the half-typed command token — closes the palette (hint promise).
+      e.preventDefault();
+      const rest = value.trimStart().split(/\s/).slice(1).join(" ");
+      handleInput(rest);
+      return;
+    }
     if (slashOpen && ["ArrowDown", "ArrowUp"].includes(e.key)) {
       e.preventDefault();
       setSlashIndex((i) => {
@@ -298,7 +341,10 @@ export default function ChatComposer({
       <textarea
         ref={textRef}
         className="composer-textarea"
-        placeholder={'↑↓ 浏览消息 · "/" 快捷指令（审批时 "/approve" 或 "/deny"）'}
+        placeholder={
+          placeholder ??
+          '↑↓ 浏览消息 · "/" 快捷指令（审批时 "/approve" 或 "/deny"）'
+        }
         value={value}
         disabled={disabled}
         rows={1}
@@ -358,7 +404,7 @@ export default function ChatComposer({
         </div>
       </div>
 
-      <div className="composer-disclaimer">懂你所需，伴你左右</div>
+      <div className="composer-disclaimer">{disclaimer}</div>
     </div>
   );
 }

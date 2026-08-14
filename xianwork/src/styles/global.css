@@ -1788,7 +1788,10 @@ textarea.main-input::placeholder {
   border-radius: 16px;
   box-shadow: var(--shadow-input, 0 2px 12px rgba(0,0,0,0.08));
   padding: 12px 14px 8px;
+  width: 100%;
+  max-width: 800px;
 }
+.home-view .chat-composer { margin-bottom: 20px; }
 .chat-composer:focus-within {
   border-color: rgba(16,163,127,0.55);
   box-shadow: 0 0 0 3px rgba(16,163,127,0.1);
