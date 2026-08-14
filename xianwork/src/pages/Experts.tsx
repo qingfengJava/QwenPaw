@@ -195,7 +195,7 @@ export default function ExpertsPage() {
                 template
                 icon="fa-solid fa-plug"
                 title={connector.display_name}
-                desc={`${connector.transport || "MCP"} · ${connector.tool_count} 个工具${connector.enabled ? "" : " · 已停用"}`}
+                desc={`${connector.transport || "MCP"}${connector.enabled ? "" : " · 已停用"}${connector.description ? ` · ${connector.description}` : ""}`}
               />
             ))}
             {connectors.length === 0 && (

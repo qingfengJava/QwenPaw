@@ -237,9 +237,9 @@ export interface SkillView {
 export interface ConnectorView {
   client_key: string;
   display_name: string;
+  description: string;
   transport: string;
   enabled: boolean;
-  tool_count: number;
 }
 
 export interface ProjectBinding {

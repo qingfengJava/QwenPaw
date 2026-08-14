@@ -95,6 +95,6 @@ async def list_directory_departments(request: Request) -> List[dict]:
     """Department tree (id/name/parent/member count) for filter picks."""
     from ...orgs.service import get_org_service
 
-    await require_enterprise_engine()
+    require_enterprise_engine()
     tree = await get_org_service().department_tree()
     return [node.model_dump() for node in tree]

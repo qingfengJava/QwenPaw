@@ -56,11 +56,11 @@ async def list_connectors(request: Request) -> List[dict]:
     ).list_clients()
     return [
         {
-            "client_key": info.client_key,
-            "display_name": getattr(info, "display_name", "") or info.client_key,
-            "transport": getattr(info, "transport", ""),
-            "enabled": getattr(info, "enabled", True),
-            "tool_count": len(getattr(info, "tools", []) or []),
+            "client_key": info.key,
+            "display_name": info.name or info.key,
+            "description": info.description,
+            "transport": info.transport,
+            "enabled": info.enabled,
         }
         for info in clients
     ]
