@@ -59,7 +59,7 @@ export default function MainLayout() {
       .catch(() => setProjects([]));
     chatApi
       .list(username)
-      .then((list) => setChats(list.slice(0, 5)))
+      .then((list) => setChats(list))
       .catch(() => setChats([]));
   }, [token, navigate]);
 

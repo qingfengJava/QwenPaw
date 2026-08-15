@@ -17,7 +17,6 @@ export const KICKOFF_ATTACHMENTS_KEY = "xianwork_kickoff_attachments";
 
 const CATEGORIES = [
   { label: "日常办公", icon: "fa-solid fa-mug-hot" },
-  { label: "代码开发", icon: "fa-solid fa-code" },
   { label: "设计创意", icon: "fa-solid fa-palette" },
 ];
 

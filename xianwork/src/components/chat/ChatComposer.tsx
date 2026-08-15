@@ -2,8 +2,8 @@
  * ChatComposer — the full backend-parity chat input: attachment picker with
  * preview chips (POST /console/upload), browser speech input, slash-command
  * suggestions, execution-mode / approval / agent selectors, context ring,
- * 10000-char counter with live display, stop-aware send button and the
- * backend disclaimer line. Visual layout mirrors the console Sender.
+ * 10000-char counter with live display, stop-aware send button. The
+ * disclaimer line renders BELOW the card (console SDK parity).
  */
 import {
   useCallback,
@@ -14,6 +14,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import { chatApi, loopApi, type LoopModeInfo } from "../../api/modules";
+import type { TurnUsage } from "../../chat/protocol";
 import { useToast } from "../Toast";
 import AgentSelector from "./AgentSelector";
 import ApprovalSelector from "./ApprovalSelector";
@@ -65,7 +66,9 @@ export default function ChatComposer({
   onStop,
   busy,
   disabled,
-  contextRatio,
+  usage,
+  onCompact,
+  onNewChat,
   attachments,
   onAttachmentsChange,
   placeholder,
@@ -78,8 +81,12 @@ export default function ChatComposer({
   onStop?: () => void;
   busy?: boolean;
   disabled?: boolean;
-  /** 0..1 from the last turn_usage context ratio. */
-  contextRatio?: number;
+  /** Full TurnUsage snapshot from the latest turn (context ring). */
+  usage?: TurnUsage | null;
+  /** Context-ring popover "压缩" entry (submits /compact). */
+  onCompact?: () => void;
+  /** Context-ring popover "new chat" entry. */
+  onNewChat?: () => void;
   attachments: PendingAttachment[];
   onAttachmentsChange: (next: PendingAttachment[]) => void;
   /** Home uses its own launcher placeholder; Chat keeps the backend one. */
@@ -286,125 +293,127 @@ export default function ChatComposer({
   };
 
   return (
-    <div className="chat-composer" data-busy={busy ? "true" : undefined}>
-      {slashOpen && (
-        <div className="slash-suggestions">
-          {slashSuggestions.map((s, i) => (
-            <button
-              type="button"
-              key={s.command}
-              className={`slash-item${i === slashIndex ? " active" : ""}`}
-              onMouseEnter={() => setSlashIndex(i)}
-              onClick={() => applySuggestion(s.command)}
-            >
-              <span className="slash-command">{s.command}</span>
-              <span className="slash-desc">{s.description}</span>
-            </button>
-          ))}
-          <div className="slash-hint">↑↓ 选择 · Tab/Enter 填充 · Esc 关闭</div>
-        </div>
-      )}
-
-      {(attachments.length > 0 || uploading > 0) && (
-        <div className="composer-attachments">
-          {attachments.map((a) => (
-            <div key={a.uid} className="attachment-chip">
-              {a.type.startsWith("image/") ? (
-                <img src={a.previewUrl} alt={a.name} />
-              ) : (
-                <i className="fa-solid fa-file-lines" />
-              )}
-              <span className="attachment-name" title={a.name}>
-                {a.name}
-              </span>
+    <>
+      <div className="chat-composer" data-busy={busy ? "true" : undefined}>
+        {slashOpen && (
+          <div className="slash-suggestions">
+            {slashSuggestions.map((s, i) => (
               <button
                 type="button"
-                className="attachment-remove"
-                aria-label={`移除 ${a.name}`}
-                onClick={() =>
-                  onAttachmentsChange(attachments.filter((x) => x.uid !== a.uid))
-                }
+                key={s.command}
+                className={`slash-item${i === slashIndex ? " active" : ""}`}
+                onMouseEnter={() => setSlashIndex(i)}
+                onClick={() => applySuggestion(s.command)}
               >
-                <i className="fa-solid fa-xmark" />
+                <span className="slash-command">{s.command}</span>
+                <span className="slash-desc">{s.description}</span>
               </button>
-            </div>
-          ))}
-          {uploading > 0 && (
-            <div className="attachment-chip uploading">
-              <i className="fa-solid fa-spinner fa-spin" />
-              <span>上传中…（{uploading}）</span>
-            </div>
-          )}
-        </div>
-      )}
+            ))}
+            <div className="slash-hint">↑↓ 选择 · Tab/Enter 填充 · Esc 关闭</div>
+          </div>
+        )}
 
-      <textarea
-        ref={textRef}
-        className="composer-textarea"
-        placeholder={
-          placeholder ??
-          '↑↓ 浏览消息 · "/" 快捷指令（审批时 "/approve" 或 "/deny"）'
-        }
-        value={value}
-        disabled={disabled}
-        rows={1}
-        onChange={(e) => handleInput(e.target.value)}
-        onKeyDown={handleKeyDown}
-      />
+        {(attachments.length > 0 || uploading > 0) && (
+          <div className="composer-attachments">
+            {attachments.map((a) => (
+              <div key={a.uid} className="attachment-chip">
+                {a.type.startsWith("image/") ? (
+                  <img src={a.previewUrl} alt={a.name} />
+                ) : (
+                  <i className="fa-solid fa-file-lines" />
+                )}
+                <span className="attachment-name" title={a.name}>
+                  {a.name}
+                </span>
+                <button
+                  type="button"
+                  className="attachment-remove"
+                  aria-label={`移除 ${a.name}`}
+                  onClick={() =>
+                    onAttachmentsChange(attachments.filter((x) => x.uid !== a.uid))
+                  }
+                >
+                  <i className="fa-solid fa-xmark" />
+                </button>
+              </div>
+            ))}
+            {uploading > 0 && (
+              <div className="attachment-chip uploading">
+                <i className="fa-solid fa-spinner fa-spin" />
+                <span>上传中…（{uploading}）</span>
+              </div>
+            )}
+          </div>
+        )}
 
-      <div className="composer-toolbar">
-        <div className="composer-left">
-          <button
-            type="button"
-            className={`composer-icon-btn${listening ? " listening" : ""}`}
-            onClick={toggleSpeech}
-            title={listening ? "停止语音输入" : "语音输入"}
-            aria-label="语音输入"
-          >
-            <i className="fa-solid fa-microphone" />
-          </button>
-          <button
-            type="button"
-            className="composer-icon-btn"
-            onClick={() => fileRef.current?.click()}
-            title="添加附件"
-            aria-label="添加附件"
-          >
-            <i className="fa-solid fa-paperclip" />
-          </button>
-          <input
-            ref={fileRef}
-            type="file"
-            multiple
-            hidden
-            onChange={(e) => void handleFiles(e.target.files)}
-          />
-          <LoopModeSelector />
-        </div>
+        <textarea
+          ref={textRef}
+          className="composer-textarea"
+          placeholder={
+            placeholder ??
+            '↑↓ 浏览消息 · "/" 快捷指令（审批时 "/approve" 或 "/deny"）'
+          }
+          value={value}
+          disabled={disabled}
+          rows={1}
+          onChange={(e) => handleInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+        />
 
-        <div className="composer-right">
-          <ContextRing ratio={contextRatio ?? 0} />
-          <AgentSelector />
-          <ApprovalSelector />
-          <span
-            className={`composer-counter${value.length >= MAX_INPUT_LENGTH ? " max" : ""}`}
-          >
-            {value.length}/{MAX_INPUT_LENGTH}
-          </span>
-          <button
-            type="button"
-            className={`composer-send${busy || hasText || attachments.length > 0 ? " active" : ""}`}
-            onClick={doSend}
-            disabled={busy && !onStop ? true : disabled}
-            aria-label={busy ? "停止生成" : "发送"}
-            title={busy ? "停止生成" : "发送"}
-          >
-            <i className={busy ? "fa-solid fa-stop" : "fa-solid fa-arrow-up"} />
-          </button>
+        <div className="composer-toolbar">
+          <div className="composer-left">
+            <button
+              type="button"
+              className={`composer-icon-btn${listening ? " listening" : ""}`}
+              onClick={toggleSpeech}
+              title={listening ? "停止语音输入" : "语音输入"}
+              aria-label="语音输入"
+            >
+              <i className="fa-solid fa-microphone" />
+            </button>
+            <button
+              type="button"
+              className="composer-icon-btn"
+              onClick={() => fileRef.current?.click()}
+              title="添加附件"
+              aria-label="添加附件"
+            >
+              <i className="fa-solid fa-paperclip" />
+            </button>
+            <input
+              ref={fileRef}
+              type="file"
+              multiple
+              hidden
+              onChange={(e) => void handleFiles(e.target.files)}
+            />
+            <LoopModeSelector />
+          </div>
+
+          <div className="composer-right">
+            <ContextRing usage={usage} onCompact={onCompact} onNewChat={onNewChat} />
+            <AgentSelector />
+            <ApprovalSelector />
+            <span
+              className={`composer-counter${value.length >= MAX_INPUT_LENGTH ? " max" : ""}`}
+            >
+              {value.length}/{MAX_INPUT_LENGTH}
+            </span>
+            <button
+              type="button"
+              className={`composer-send${busy || hasText || attachments.length > 0 ? " active" : ""}`}
+              onClick={doSend}
+              disabled={busy && !onStop ? true : disabled}
+              aria-label={busy ? "停止生成" : "发送"}
+              title={busy ? "停止生成" : "发送"}
+            >
+              <i className={busy ? "fa-solid fa-stop" : "fa-solid fa-arrow-up"} />
+            </button>
+          </div>
         </div>
       </div>
 
       <div className="composer-disclaimer">{disclaimer}</div>
-    </div>
+    </>
   );
 }

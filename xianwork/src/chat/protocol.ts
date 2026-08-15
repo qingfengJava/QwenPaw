@@ -33,24 +33,32 @@ export interface TurnUsage {
   completion_tokens?: number;
   total_tokens?: number;
   context_size?: number;
+  max_input_length?: number;
   estimated_tokens?: number;
   context_usage_ratio?: number;
 }
 
+/**
+ * All timeline variants carry `at` (ms epoch, stamped at creation) so the UI
+ * can render an HH:MM:SS footer like the console chat does. History payloads
+ * have no timestamps on the wire, so replayed items use the load time.
+ */
 export type TimelineItem =
   | {
       kind: "user";
       key: string;
       text: string;
       attachments?: UserAttachment[];
+      at?: number;
     }
-  | { kind: "reasoning"; key: string; text: string; done: boolean }
+  | { kind: "reasoning"; key: string; text: string; done: boolean; at?: number }
   | {
       kind: "assistant";
       key: string;
       text: string;
       done: boolean;
       usage?: { input_tokens?: number; output_tokens?: number } | null;
+      at?: number;
     }
   | {
       kind: "tool";
@@ -60,6 +68,7 @@ export type TimelineItem =
       args: string;
       output: string;
       status: ToolStatus;
+      at?: number;
     }
   | { kind: "usage"; key: string; usage: TurnUsage }
   | { kind: "error"; key: string; text: string };
@@ -202,7 +211,13 @@ export function applyEvent(items: TimelineItem[], payload: unknown): TimelineIte
       }
       return [
         ...items,
-        { kind: "reasoning", key: evt.id, text: messageText(evt), done: evt.status === "completed" },
+        {
+          kind: "reasoning",
+          key: evt.id,
+          text: messageText(evt),
+          done: evt.status === "completed",
+          at: Date.now(),
+        },
       ];
     }
     if (evt.type === "message") {
@@ -225,6 +240,7 @@ export function applyEvent(items: TimelineItem[], payload: unknown): TimelineIte
           text: messageText(evt),
           done: evt.status === "completed",
           usage: messageUsage(evt),
+          at: Date.now(),
         },
       ];
     }
@@ -309,6 +325,7 @@ function mergeDataContent(items: TimelineItem[], evt: WireContent): TimelineItem
         args: data.arguments,
         output: "",
         status: evt.status === "completed" ? "completed" : "running",
+        at: Date.now(),
       },
     ];
   }
@@ -340,6 +357,7 @@ function mergeDataContent(items: TimelineItem[], evt: WireContent): TimelineItem
       args: "",
       output,
       status: "completed",
+      at: Date.now(),
     },
   ];
 }
@@ -360,6 +378,7 @@ export function userItem(
     kind: "user",
     key: nextKey("u"),
     text,
+    at: Date.now(),
     ...(attachments && attachments.length > 0 ? { attachments } : {}),
   };
 }
@@ -373,6 +392,9 @@ export function historyToTimeline(history: { messages?: unknown[] } | null | und
   const messages = (history?.messages ?? []) as WireMessage[];
   const items: TimelineItem[] = [];
   const toolIndex = new Map<string, number>();
+  // No wire timestamps on history — stamp the load moment once so every
+  // replayed item can still render a time footer.
+  const loadedAt = Date.now();
 
   for (const msg of messages) {
     if (!msg || typeof msg !== "object") {
@@ -384,6 +406,7 @@ export function historyToTimeline(history: { messages?: unknown[] } | null | und
         key: msg.id || nextKey("hu"),
         text: messageText(msg),
         attachments: userAttachments(msg),
+        at: loadedAt,
       });
       continue;
     }
@@ -393,6 +416,7 @@ export function historyToTimeline(history: { messages?: unknown[] } | null | und
         key: msg.id || nextKey("hr"),
         text: messageText(msg),
         done: msg.status === "completed",
+        at: loadedAt,
       });
       continue;
     }
@@ -403,6 +427,7 @@ export function historyToTimeline(history: { messages?: unknown[] } | null | und
         text: messageText(msg),
         done: msg.status === "completed",
         usage: messageUsage(msg),
+        at: loadedAt,
       });
       continue;
     }
@@ -424,6 +449,7 @@ export function historyToTimeline(history: { messages?: unknown[] } | null | und
               args: data.arguments,
               output: "",
               status: msg.status === "completed" ? "completed" : "running",
+              at: loadedAt,
             });
           } else {
             const it = items[existing] as Extract<TimelineItem, { kind: "tool" }>;
@@ -441,6 +467,7 @@ export function historyToTimeline(history: { messages?: unknown[] } | null | und
               args: "",
               output,
               status: "completed",
+              at: loadedAt,
             });
           } else {
             const it = items[existing] as Extract<TimelineItem, { kind: "tool" }>;

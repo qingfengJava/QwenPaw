@@ -254,7 +254,7 @@ class TaskRow(TenantMixin, TimestampMixin, Base):
     )
 
 
-class FeedEventRow(TenantMixin, Base):
+class FeedEventRow(TenantMixin, TimestampMixin, Base):
     """One append-only activity event in a project feed.
 
     ``kind`` is one of ``task_created`` / ``task_status`` / ``comment`` /
@@ -386,7 +386,7 @@ class ExpertTeamRow(TenantMixin, TimestampMixin, Base):
     )
 
 
-class ExpertTeamMemberRow(TenantMixin, Base):
+class ExpertTeamMemberRow(TenantMixin, TimestampMixin, Base):
     """Ordered membership of one expert inside one expert team."""
 
     __tablename__ = "expert_team_members"
@@ -417,7 +417,7 @@ class ExpertTeamMemberRow(TenantMixin, Base):
     )
 
 
-class PublishedExpertRow(TenantMixin, Base):
+class PublishedExpertRow(TenantMixin, TimestampMixin, Base):
     """Immutable published snapshot of one expert version.
 
     The user-facing API always reads the newest snapshot for an expert;
@@ -527,7 +527,7 @@ class ProjectAutomationRow(TenantMixin, TimestampMixin, Base):
     )
 
 
-class TokenUsageEventRow(TenantMixin, Base):
+class TokenUsageEventRow(TenantMixin, TimestampMixin, Base):
     """One metered LLM token usage event (enterprise dimensions).
 
     Append-only; aggregates replace the file-era single-file usage log for

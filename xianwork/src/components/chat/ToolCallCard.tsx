@@ -1,29 +1,12 @@
 /**
- * ToolCallCard — generic tool invocation card covering the backend's 30+
- * specialized cards with one expandable shape: icon + localized verb +
- * running/completed state + collapsible arguments & output. Specialized
- * cards can be layered in later iterations without touching call sites.
+ * ToolCallCard — console ToolCall Accordion parity: an "执行 {tool}" step
+ * header styled exactly like the Thinking pill (collapsed = outlined pill,
+ * expanded = bordered card). The run state lives in the chained step-icon
+ * slot — spinner while running, green check on success, red cross on error —
+ * and the Input / Output blocks render as bordered cards with grey bars
+ * (operate-card-tool-call-block parity).
  */
 import { useState } from "react";
-
-const TOOL_META: Record<string, { icon: string; label: string }> = {
-  execute_shell_command: { icon: "fa-terminal", label: "执行命令" },
-  shell_command: { icon: "fa-terminal", label: "执行命令" },
-  read_file: { icon: "fa-file-lines", label: "读取文件" },
-  write_file: { icon: "fa-file-pen", label: "写入文件" },
-  edit_file: { icon: "fa-pen-to-square", label: "编辑文件" },
-  glob_search: { icon: "fa-magnifying-glass", label: "搜索文件名" },
-  grep_search: { icon: "fa-magnifying-glass-plus", label: "搜索内容" },
-  browser_use: { icon: "fa-globe", label: "浏览网页" },
-  web_search: { icon: "fa-globe", label: "联网搜索" },
-  memory_search: { icon: "fa-brain", label: "检索记忆" },
-  send_file: { icon: "fa-paper-plane", label: "发送文件" },
-  view_image: { icon: "fa-image", label: "查看图片" },
-  get_current_time: { icon: "fa-clock", label: "获取时间" },
-  list_agents: { icon: "fa-users", label: "列出 Agent" },
-  chat_with_agent: { icon: "fa-comments", label: "咨询专家" },
-  token_usage: { icon: "fa-coins", label: "用量统计" },
-};
 
 function prettyJson(value: string): string {
   try {
@@ -38,43 +21,58 @@ export interface ToolCallCardProps {
   args: string;
   output: string;
   status: "running" | "completed" | "error";
+  /** Step-chain flags — hide the upstream / downstream connector stub. */
+  stepFirst?: boolean;
+  stepLast?: boolean;
 }
 
-export default function ToolCallCard({ name, args, output, status }: ToolCallCardProps) {
-  const meta = TOOL_META[name] ?? { icon: "fa-screwdriver-wrench", label: name };
+export default function ToolCallCard({
+  name,
+  args,
+  output,
+  status,
+  stepFirst,
+  stepLast,
+}: ToolCallCardProps) {
   const hasDetail = Boolean(args || output);
   const [open, setOpen] = useState(false);
-
+  const classes = [
+    "tool-card",
+    open ? "open" : "",
+    stepFirst ? "step-first" : "",
+    stepLast ? "step-last" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
   return (
-    <div className={`tool-card status-${status}`}>
+    <div className={classes}>
       <button
         type="button"
         className="tool-card-header"
         onClick={() => hasDetail && setOpen((v) => !v)}
         disabled={!hasDetail}
       >
-        <span className="tool-card-icon">
-          <i className={`fa-solid ${meta.icon}`} />
+        <span className="step-icon">
+          {status === "running" && <i className="fa-solid fa-spinner fa-spin step-icon-loading" />}
+          {status === "completed" && <i className="fa-solid fa-circle-check step-icon-success" />}
+          {status === "error" && <i className="fa-solid fa-circle-xmark step-icon-error" />}
         </span>
-        <span className="tool-card-label">{meta.label}</span>
-        {status === "running" && <i className="fa-solid fa-spinner fa-spin tool-card-state" />}
-        {status === "completed" && <i className="fa-solid fa-check tool-card-state ok" />}
-        {status === "error" && <i className="fa-solid fa-xmark tool-card-state bad" />}
-        {hasDetail && <i className={`fa-solid fa-chevron-${open ? "up" : "down"} tool-card-caret`} />}
+        <span className="tool-card-label">执行 {name}</span>
+        {hasDetail && <i className={`fa-solid fa-chevron-${open ? "up" : "down"} step-caret`} />}
       </button>
       {open && (
         <div className="tool-card-detail">
           {args && (
-            <>
-              <div className="tool-card-section">参数</div>
+            <div className="tool-card-block">
+              <div className="tool-card-block-head">参数</div>
               <pre className="tool-card-pre">{prettyJson(args)}</pre>
-            </>
+            </div>
           )}
           {output && (
-            <>
-              <div className="tool-card-section">结果</div>
+            <div className="tool-card-block">
+              <div className="tool-card-block-head">结果</div>
               <pre className="tool-card-pre">{output}</pre>
-            </>
+            </div>
           )}
         </div>
       )}
