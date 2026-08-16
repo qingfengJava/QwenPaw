@@ -97,7 +97,7 @@ describe("ChatListItem 悬停操作组", () => {
     ).toBe(true);
   });
 
-  it("批量模式不渲染操作组，改为复选框", () => {
+  it("批量模式不渲染操作组，改为复选框 + 标题同排显示", () => {
     const handlers = {
       onRenamingChange: vi.fn(),
       onToggleCheck: vi.fn(),
@@ -124,5 +124,7 @@ describe("ChatListItem 悬停操作组", () => {
     expect(
       (screen.getByRole("checkbox") as HTMLInputElement).checked,
     ).toBe(true);
+    // 批量模式下会话标题仍然显示（截图问题 3：只剩复选框无法辨认选了谁）
+    expect(screen.getByText("任务一")).toBeTruthy();
   });
 });

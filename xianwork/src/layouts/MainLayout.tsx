@@ -48,9 +48,14 @@ const PAGE_PRELOADS: Record<string, () => Promise<unknown>> = {
   "/more": () => import("../pages/More"),
 };
 
-function navActive(item: NavItem, path: string): boolean {
+/** 助理 nav highlights only on the bare /chat landing — opening a
+ * session (`?chat=`) is a task action, not an 助理 menu selection. */
+function navActive(item: NavItem, path: string, search: string): boolean {
   if (item.match) {
     return item.match.some((prefix) => path.startsWith(prefix));
+  }
+  if (item.to === "/chat" && new URLSearchParams(search).has("chat")) {
+    return false;
   }
   return path === item.to || path.startsWith(`${item.to}/`);
 }
@@ -104,7 +109,11 @@ export default function MainLayout() {
               <NavLink
                 to={item.to}
                 className={() =>
-                  `nav-item${navActive(item, location.pathname) ? " active" : ""}`
+                  `nav-item${
+                    navActive(item, location.pathname, location.search)
+                      ? " active"
+                      : ""
+                  }`
                 }
                 onMouseEnter={() => PAGE_PRELOADS[item.to]?.()}
               >

@@ -326,15 +326,15 @@ export default function SidebarChatTree() {
             !batchMode && allChats.length > 0 ? (
               <button
                 type="button"
-                className="sidebar-select-btn"
+                className="sidebar-icon-btn"
                 onClick={() => {
                   setBatchMode(true);
                   setCheckedIds(new Set());
                 }}
                 title="批量选择任务"
+                aria-label="批量选择任务"
               >
                 <i className="fa-regular fa-square-check" />
-                选择
               </button>
             ) : undefined
           }
@@ -372,12 +372,12 @@ export default function SidebarChatTree() {
           extra={
             <button
               type="button"
-              className="sidebar-add-workspace"
+              className="sidebar-icon-btn"
               onClick={() => setCreateDialogOpen(true)}
               title="新建空间"
+              aria-label="新建空间"
             >
               <i className="fa-solid fa-plus" />
-              新建空间
             </button>
           }
         >
@@ -426,7 +426,7 @@ export default function SidebarChatTree() {
             ))}
             {workspaces.length === 0 && (
               <li className="workspace-empty">
-                还没有空间，点击右上「新建空间」注册一个磁盘目录
+                还没有空间，点击空间标题右侧 + 注册一个磁盘目录
               </li>
             )}
           </ul>

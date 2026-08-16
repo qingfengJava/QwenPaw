@@ -3,8 +3,9 @@
  *
  * Highlights the active chat (bold via `.active`) with a relative
  * timestamp, opens the context menu on right-click AND on the hover
- * ellipsis button (competitor shot: `...` / archive / pin), and renders a
- * checkbox while batch mode is on (disabled for running chats).
+ * ellipsis button (competitor shot: `...` / archive / flag-pin), and
+ * prepends a checkbox while batch mode is on (disabled for running
+ * chats — the title stays visible next to it).
  * Renaming swaps the title for an inline input committed on Enter/blur
  * — controlled through `renaming` so the context menu can trigger it.
  */
@@ -107,7 +108,7 @@ export default function ChatListItem({
         }}
       >
         <div className="nav-item-left">
-          {batchMode ? (
+          {batchMode && !renaming && (
             <input
               type="checkbox"
               className="chat-check"
@@ -118,7 +119,8 @@ export default function ChatListItem({
               onChange={(e) => onToggleCheck(chat.id, e.target.checked)}
               aria-label={`选择 ${chat.name || "任务"}`}
             />
-          ) : renaming ? (
+          )}
+          {renaming ? (
             <input
               ref={inputRef}
               className="chat-rename-input"
@@ -140,7 +142,7 @@ export default function ChatListItem({
             <>
               {pinned && (
                 <i
-                  className="fa-solid fa-thumbtack chat-pinned-icon"
+                  className="fa-solid fa-flag chat-pinned-icon"
                   title="已置顶"
                 />
               )}
@@ -201,7 +203,7 @@ export default function ChatListItem({
                 }}
               >
                 <i
-                  className={`fa-${pinned ? "solid" : "regular"} fa-thumbtack`}
+                  className={`fa-${pinned ? "solid" : "regular"} fa-flag`}
                 />
               </button>
             </div>

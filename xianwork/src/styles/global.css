@@ -2496,25 +2496,26 @@ textarea.main-input::placeholder {
   color: var(--text-secondary);
 }
 
-.sidebar-add-workspace {
+/* Icon-only ghost button on section header rows (批量选择 / 新建空间) */
+.sidebar-icon-btn {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  background: none;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
   border: none;
+  border-radius: 5px;
   padding: 0;
-  font: inherit;
+  background: none;
   font-size: 12px;
   color: var(--text-muted);
   cursor: pointer;
+  transition: all 0.15s;
 }
 
-.sidebar-add-workspace:hover {
+.sidebar-icon-btn:hover {
   color: var(--accent-color);
-}
-
-.sidebar-add-workspace i {
-  font-size: 10px;
+  background: var(--bg-sidebar-active, rgba(0, 0, 0, 0.05));
 }
 
 .sidebar-chat-list,
@@ -2643,28 +2644,6 @@ textarea.main-input::placeholder {
 .chat-pinned-icon {
   font-size: 10px;
   color: var(--accent-color);
-}
-
-/* ----「选择」batch-mode entry on the task section header ---- */
-.sidebar-select-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  background: none;
-  border: none;
-  padding: 0;
-  font: inherit;
-  font-size: 12px;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-
-.sidebar-select-btn:hover {
-  color: var(--accent-color);
-}
-
-.sidebar-select-btn i {
-  font-size: 12px;
 }
 
 /* ---- batch bar (multi-select strip, competitor shot 3) ---- */
