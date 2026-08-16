@@ -5,9 +5,28 @@
     <link rel="icon" type="image/png" href="/xianwork/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>XianWork</title>
+    <!-- Boot skeleton: visible until React mounts (the top Suspense
+         fallback is null by design — first paint must never flash blank).
+         Inline attributes only: a <style> block trips the html-inline-proxy
+         id bug on non-ASCII project paths (Vite 6). -->
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div
+        style="
+          height: 100vh;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-family: Inter, -apple-system, 'Segoe UI', 'PingFang SC',
+            'Microsoft YaHei', sans-serif;
+          font-size: 14px;
+          color: #8a929a;
+        "
+      >
+        XianWork 加载中…
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

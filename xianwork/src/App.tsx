@@ -6,6 +6,12 @@
  * - Tauri mode (`vite build --mode tauri`): HashRouter over a relative
  *   base, matching the console packaging path (see console/src-tauri).
  * - All pages are lazy-loaded; the vendor chunk hydrates first.
+ *
+ * Flicker fix: the top-level Suspense renders null (the boot skeleton in
+ * index.html covers the very first paint); MainLayout owns a nested
+ * Suspense for the content area only, so the sidebar never unmounts on
+ * route switches. Frequently used chunks are idle-prefetched here and
+ * on nav hover (MainLayout).
  */
 import { lazy, Suspense, useEffect } from "react";
 import {
@@ -46,6 +52,27 @@ function UnauthListener() {
   return null;
 }
 
+/** Idle-prefetch the hottest page chunks so first clicks rarely suspend. */
+function useIdlePrefetch() {
+  useEffect(() => {
+    const prefetch = () => {
+      void import("./pages/Home");
+      void import("./pages/Chat");
+      void import("./pages/Projects");
+    };
+    const w = window as Window & {
+      requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
+    };
+    if (typeof w.requestIdleCallback === "function") {
+      const id = w.requestIdleCallback(prefetch, { timeout: 2000 });
+      return () => w.cancelIdleCallback?.(id);
+    }
+    const timer = window.setTimeout(prefetch, 1500);
+    return () => window.clearTimeout(timer);
+  }, []);
+}
+
 function Router({ children }: { children: React.ReactNode }) {
   if (IS_TAURI) {
     return <HashRouter basename={getBasename()}>{children}</HashRouter>;
@@ -54,10 +81,13 @@ function Router({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
+  useIdlePrefetch();
   return (
     <Router>
       <UnauthListener />
-      <Suspense fallback={<div className="loading-state">加载中…</div>}>
+      {/* null fallback: the boot skeleton in index.html covers the first
+       * paint; each layout/page owns its nested Suspense boundaries. */}
+      <Suspense fallback={null}>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route element={<MainLayout />}>

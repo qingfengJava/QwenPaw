@@ -94,6 +94,12 @@ interface WireContent {
   video_url?: string;
   file_url?: string;
   file_name?: string;
+  /** Uploaded media blocks (type "data") carry their payload here. */
+  source?: {
+    url?: string;
+    type?: string;
+    media_type?: string;
+  };
   data?: {
     call_id?: string;
     name?: string;
@@ -123,19 +129,82 @@ function messageText(msg: WireMessage): string {
     .join("");
 }
 
+/** Detect loop-mode-injected prompts and extract original user text.
+ * Mission/Goal modes replace the user message with a multi-line prompt
+ * (``Starting Mission Mode: ...``) that embeds the original text in a
+ * ``> quoted`` line. The prompt is model-facing context; the transcript
+ * should show only what the user typed. */
+function stripLoopModePrompt(text: string): string {
+  if (!text.startsWith("Starting ") || !text.includes(" Mode:")) return text;
+  const match = text.match(/^>\s*(.+)$/m);
+  return match ? match[1].trim() : text;
+}
+
 function messageUsage(msg: WireMessage) {
   return msg.usage ?? null;
 }
 
+/** Console parity: turn a stored/local media path into a browsable URL. */
+export function toDisplayUrl(url: string | undefined): string {
+  if (!url) return "";
+  if (url.startsWith("http://") || url.startsWith("https://")) return url;
+  if (url.startsWith("/api/files/preview/")) return url;
+  if (url.startsWith("/api/console/media/")) return url;
+
+  const base = import.meta.env.VITE_API_BASE_URL ?? "";
+  const token =
+    typeof localStorage === "undefined"
+      ? ""
+      : localStorage.getItem("xian_token") ?? "";
+  const withToken = (u: string) =>
+    token ? `${u}?token=${encodeURIComponent(token)}` : u;
+
+  // Files uploaded via /console/upload carry the "{32hex}_{name}" stored
+  // name. Recall them through the PG-backed media endpoint: the bytes
+  // live in the media_files table (written at upload time), so preview
+  // survives local media/ cleanup and never leaks absolute paths.
+  const storedName = url.split(/[\\/]/).pop() ?? "";
+  if (/^[0-9a-f]{32}_/.test(storedName)) {
+    return withToken(
+      `${base}/api/console/media/${encodeURIComponent(storedName)}`,
+    );
+  }
+
+  const withoutScheme = url.startsWith("file://")
+    ? url.slice("file://".length)
+    : url;
+  const cleaned = withoutScheme.replace(/^\/+/, "");
+  return withToken(`${base}/api/files/preview/${cleaned}`);
+}
+
+/** Strip the "{uuid-hex}_" prefix the upload endpoint prepends to names. */
+function storedNameToDisplay(name: string): string {
+  return name.replace(/^[0-9a-f]{32}_/, "");
+}
+
 /**
  * Extract non-text content blocks (image/file/video/audio) of a user
- * message into display attachments. Wire URLs are stored names; the UI
- * resolves them through /files/preview.
+ * message into display attachments. URLs are normalized before render,
+ * matching the Console session adapter.
  */
 function userAttachments(msg: WireMessage): UserAttachment[] | undefined {
   const found: UserAttachment[] = [];
   for (const block of msg.content ?? []) {
-    if (!block.type || block.type === "text" || block.type === "data") {
+    // Uploads are persisted server-side as "data" blocks wrapping a
+    // file:// URL in source.url (see console media collector parity).
+    if (block.type === "data") {
+      const sourceUrl = block.source?.url ?? "";
+      if (!sourceUrl) {
+        continue;
+      }
+      found.push({
+        name: storedNameToDisplay(sourceUrl.split(/[\\/]/).pop() || "附件"),
+        type: block.source?.media_type || "application/octet-stream",
+        url: toDisplayUrl(sourceUrl),
+      });
+      continue;
+    }
+    if (!block.type || block.type === "text") {
       continue;
     }
     const audioData =
@@ -150,9 +219,9 @@ function userAttachments(msg: WireMessage): UserAttachment[] | undefined {
       "";
     if (!url) continue;
     found.push({
-      name: block.file_name || url.replace(/^\/+/, "").split("/").pop() || "附件",
+      name: block.file_name || url.split(/[\\/]/).pop() || "附件",
       type: block.type === "image" ? "image/*" : "application/octet-stream",
-      url,
+      url: toDisplayUrl(url),
     });
   }
   return found.length > 0 ? found : undefined;
@@ -404,7 +473,7 @@ export function historyToTimeline(history: { messages?: unknown[] } | null | und
       items.push({
         kind: "user",
         key: msg.id || nextKey("hu"),
-        text: messageText(msg),
+        text: stripLoopModePrompt(messageText(msg)),
         attachments: userAttachments(msg),
         at: loadedAt,
       });

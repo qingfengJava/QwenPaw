@@ -338,6 +338,8 @@ export interface ChatSpecView {
   channel?: string;
   user_id?: string;
   created_at?: string | null;
+  /** Full spec dump from the workspace grouping endpoint (path binding). */
+  meta?: Record<string, unknown> | null;
 }
 
 export const chatApi = {
@@ -369,13 +371,44 @@ export const chatApi = {
       body: JSON.stringify({ pinned }),
     }),
   remove: (chatId: string) => request<{ success: boolean }>(`/chats/${enc(chatId)}`, { method: "DELETE" }),
+  /** Batch delete (backend takes a bare JSON array of ids). */
+  batchRemove: (chatIds: string[]) =>
+    request<{ deleted: boolean }>("/chats/batch-delete", {
+      method: "POST",
+      body: JSON.stringify(chatIds),
+    }),
+  /** Batch archive (running chats are skipped server-side). */
+  batchArchive: (chatIds: string[]) =>
+    request<{ succeeded: string[]; failed: { chat_id: string; reason: string }[] }>(
+      "/chats/actions/batch-archive",
+      {
+        method: "POST",
+        body: JSON.stringify({ chat_ids: chatIds }),
+      },
+    ),
   /** Ask the backend to cancel the running turn for this chat. */
   stop: (chatId: string) =>
     request<void>(`/console/chat/stop?chat_id=${encodeURIComponent(chatId)}`, { method: "POST" }),
-  /** Upload one attachment (image/file) to the console plane. */
-  upload: async (file: File): Promise<{ url: string }> => {
+  /** Upload one attachment (image/file) to the console plane.
+   *
+   * With `chatId` the backend stores the file under the chat's effective
+   * project directory (`{project_dir}/media/`), next to agent-generated
+   * files; `url` is then an absolute `file://` URI. Without it the legacy
+   * channel media_dir behavior (bare stored name) is unchanged. */
+  upload: async (
+    file: File,
+    chatId?: string,
+  ): Promise<{
+    url: string;
+    stored_name?: string;
+    file_name?: string;
+    size?: number;
+  }> => {
     const formData = new FormData();
     formData.append("file", file);
+    if (chatId) {
+      formData.append("chat_id", chatId);
+    }
     const res = await fetch("/api/console/upload", {
       method: "POST",
       headers: authHeaders() as Record<string, string>,
@@ -466,4 +499,87 @@ export interface LoopModeInfo {
 
 export const loopApi = {
   list: () => request<LoopModeInfo[]>("/loops"),
+};
+
+// ---------------------------------------------------------------------------
+// workspaces (XianWork plane; path binding via chats.meta.runtime_context)
+// ---------------------------------------------------------------------------
+
+export interface WorkspaceView {
+  id: string;
+  name: string;
+  dir_path: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+  chats_count?: number;
+  /** Only present with includeChats=true (server-side grouping). */
+  chats?: ChatSpecView[];
+}
+
+export interface WorkspaceListResult {
+  workspaces: WorkspaceView[];
+  unbound_chats: ChatSpecView[];
+}
+
+export const workspaceApi = {
+  /** One call returns workspaces + server-grouped chats (frontend never
+   *  compares paths — Windows case/separator pitfalls stay server-side). */
+  list: (includeChats = false) =>
+    request<WorkspaceListResult>(
+      `/xian/workspaces${includeChats ? "?include_chats=true" : ""}`,
+    ),
+  /** Register a disk directory; `create` mkdirs it first when missing. */
+  create: (body: { name: string; dir_path: string; create?: boolean }) =>
+    request<WorkspaceView>("/xian/workspaces", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  /** Rename only — the on-disk directory is never touched. */
+  update: (id: string, name: string) =>
+    request<WorkspaceView>(`/xian/workspaces/${enc(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+    }),
+  /** Deletes the registry row and unbinds its chats; disk stays intact. */
+  remove: (id: string) =>
+    request<{ deleted: boolean; unbound_chats: number }>(
+      `/xian/workspaces/${enc(id)}`,
+      { method: "DELETE" },
+    ),
+  /** Batch bind chats (effective from the next turn; running → 409). */
+  bindChats: (id: string, chatIds: string[]) =>
+    request<{ bound: number }>(`/xian/workspaces/${enc(id)}/chats`, {
+      method: "PUT",
+      body: JSON.stringify({ chat_ids: chatIds }),
+    }),
+  /** Clear one chat's directory override (falls back to agent default). */
+  unbindChat: (id: string, chatId: string) =>
+    request<{ unbound: boolean }>(
+      `/xian/workspaces/${enc(id)}/chats/${enc(chatId)}`,
+      { method: "DELETE" },
+    ),
+  /** Open the folder in the host explorer; remote deployments 409. */
+  openFolder: (id: string) =>
+    request<{ opened: boolean; path: string }>(
+      `/xian/workspaces/${enc(id)}/open-folder`,
+      { method: "POST" },
+    ),
+};
+
+// ---------------------------------------------------------------------------
+// filesystem browsing (reuses the console project-directory browse API)
+// ---------------------------------------------------------------------------
+
+export interface BrowseDirsResult {
+  current: string;
+  parent: string | null;
+  dirs: { name: string; path: string }[];
+}
+
+export const fsApi = {
+  /** List subdirectories of one server path; "/" on Windows lists drives. */
+  browseDirs: (path: string) =>
+    request<BrowseDirsResult>(
+      `/workspace/project-directory/browse-dirs?path=${encodeURIComponent(path)}`,
+    ),
 };

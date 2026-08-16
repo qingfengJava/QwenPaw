@@ -11,9 +11,10 @@ import {
   useMemo,
   useRef,
   useState,
+  type ClipboardEvent,
   type KeyboardEvent,
 } from "react";
-import { chatApi, loopApi, type LoopModeInfo } from "../../api/modules";
+import { chatApi, loopApi, providerApi, type LoopModeInfo } from "../../api/modules";
 import type { TurnUsage } from "../../chat/protocol";
 import { useToast } from "../Toast";
 import AgentSelector from "./AgentSelector";
@@ -95,6 +96,7 @@ export default function ChatComposer({
 }) {
   const toast = useToast();
   const loopModes = useChatPrefs((s) => s.loopModes);
+  const selectedAgent = useChatPrefs((s) => s.selectedAgent);
   const textRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(0);
@@ -104,6 +106,50 @@ export default function ChatComposer({
   /** Command that was just applied/filled — hide the palette for it until the
    * first token changes (Tab/Enter/click fill would otherwise re-match). */
   const slashDismissedRef = useRef<string | null>(null);
+
+  // Multimodal capability of the active model (console useMultimodalCapabilities
+  // parity). Kept in a ref — the caps only gate upload-time warnings, so they
+  // never need to re-render the composer.
+  const multimodalRef = useRef({
+    supportsMultimodal: false,
+    supportsImage: false,
+    supportsVideo: false,
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [providers, active] = await Promise.all([
+          providerApi.list(),
+          providerApi.active(selectedAgent),
+        ]);
+        if (cancelled) {
+          return;
+        }
+        const providerId = active?.active_llm?.provider_id;
+        const modelId = active?.active_llm?.model;
+        const provider = providerId
+          ? providers.find((p) => p.id === providerId)
+          : undefined;
+        const model = provider
+          ? [...(provider.models ?? []), ...(provider.extra_models ?? [])].find(
+              (m) => m.id === modelId,
+            )
+          : undefined;
+        multimodalRef.current = {
+          supportsMultimodal: model?.supports_multimodal ?? false,
+          supportsImage: model?.supports_image ?? false,
+          supportsVideo: model?.supports_video ?? false,
+        };
+      } catch {
+        // Keep the conservative defaults — the upload path still warns.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedAgent]);
 
   // Preload the loop catalog on mount so cold-start slash input shows the
   // full /goal /mission list without opening the mode selector first.
@@ -176,15 +222,34 @@ export default function ChatComposer({
   };
 
   // ---- attachments ----
-  const handleFiles = async (files: FileList | null) => {
+  // Console handleFileUpload parity: warn (never block) when the active model
+  // lacks multimodal support, or supports images only.
+  const warnMultimodal = (file: File) => {
+    const caps = multimodalRef.current;
+    if (!caps.supportsMultimodal) {
+      toast.warning("当前模型未检测到多模态能力，图片或视频可能无法被正确处理");
+    } else if (
+      caps.supportsImage &&
+      !caps.supportsVideo &&
+      !file.type.startsWith("image/")
+    ) {
+      toast.warning("当前模型仅检测到图片支持，视频等非图片文件可能无法被正确处理");
+    }
+  };
+
+  const handleFiles = async (files: FileList | File[] | null) => {
     if (!files || files.length === 0) return;
     for (const file of Array.from(files)) {
+      warnMultimodal(file);
       setUploading((n) => n + 1);
       try {
         const res = await chatApi.upload(file);
-        const preview = res.url.startsWith("http")
-          ? res.url
-          : `/api/files/preview/${res.url.replace(/^\/+/, "")}`;
+        // Preview the in-memory file directly: the upload endpoint returns a
+        // bare stored name (no directory), which the backend preview route
+        // cannot resolve — only the absolute path stored server-side in the
+        // persisted message can be previewed, and that arrives on history
+        // reload. A blob URL works instantly and needs no auth token.
+        const preview = URL.createObjectURL(file);
         onAttachmentsChange([
           ...attachments,
           {
@@ -203,6 +268,23 @@ export default function ChatComposer({
       }
     }
     if (fileRef.current) fileRef.current.value = "";
+  };
+
+  // Console parity: pasting an image auto-uploads it as an attachment instead
+  // of (failing to) insert it into the textarea as text.
+  const handlePaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const files: File[] = [];
+    for (const item of Array.from(items)) {
+      if (item.kind === "file" && item.type.startsWith("image/")) {
+        const file = item.getAsFile();
+        if (file) files.push(file);
+      }
+    }
+    if (files.length === 0) return;
+    e.preventDefault();
+    void handleFiles(files);
   };
 
   // ---- speech ----
@@ -357,6 +439,7 @@ export default function ChatComposer({
           disabled={disabled}
           rows={1}
           onChange={(e) => handleInput(e.target.value)}
+          onPaste={handlePaste}
           onKeyDown={handleKeyDown}
         />
 

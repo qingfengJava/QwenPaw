@@ -1,17 +1,20 @@
 -- ============================================================
 -- 变更说明: XianWork 企业数字员工平台 prod 环境全量 schema 快照
 --           （0001_initial + 0002_enterprise + 0003_xian_extras
---            + 0004_table_timestamps）
+--            + 0004_table_timestamps + 0005_media_files
+--            + 0006_xian_workspaces）
 --           覆盖：M2 存储三表（chats / session_states / history_entries，
 --           含 tsv 生成列与 owner 隔离 RLS）、12 张企业表、
 --           project_bindings / project_automations、
 --           projects.instructions、chats.project_id、
---           全部业务表的 created_at / updated_at 时间戳规范
--- 变更时间: 2026-08-15
+--           全部业务表的 created_at / updated_at 时间戳规范、
+--           media_files 上传附件持久化表、
+--           xian_workspaces 用户工作空间登记表
+-- 变更时间: 2026-08-16
 -- 变更人:   清风
 -- 适用环境: prod（PostgreSQL 14+，上线时整文件执行一次即可）
--- 对应迁移: alembic head = 0004_table_timestamps
--- 快照同步: 与 changelog/20260814/01+02+03 增量内容一致（本文件为全量形态）
+-- 对应迁移: alembic head = 0006_xian_workspaces
+-- 快照同步: 与 changelog/20260814/01+02+03+04 及 changelog/20260816/01+02 增量内容一致（本文件为全量形态）
 -- 执行方式: psql 单事务执行；全部语句幂等（IF NOT EXISTS），可重复执行；
 --           本文件不含任何 DROP / TRUNCATE / DELETE 语句
 -- ============================================================
@@ -574,15 +577,95 @@ CREATE INDEX IF NOT EXISTS ix_project_automations_project
     ON project_automations (tenant_id, project_id);
 
 -- ------------------------------------------------------------
--- 7. Alembic 版本标记（head）
+-- 7. 媒体文件表（0005_media_files）
+-- ------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS media_files (
+    tenant_id   VARCHAR(64) NOT NULL DEFAULT 'default',
+    stored_name VARCHAR(255) NOT NULL,
+    file_name   TEXT NOT NULL,
+    media_type  TEXT NOT NULL DEFAULT 'application/octet-stream',
+    size        BIGINT NOT NULL DEFAULT 0,
+    data        BYTEA NOT NULL,
+    created_at  TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+    CONSTRAINT pk_media_files PRIMARY KEY (tenant_id, stored_name)
+);
+
+COMMENT ON TABLE media_files IS 'console 聊天上传媒体文件表（POST /api/console/upload 双写入库，回显端点优先读取）';
+COMMENT ON COLUMN media_files.tenant_id IS '租户标识（多租户预留，单租户部署恒为 default）';
+COMMENT ON COLUMN media_files.stored_name IS '存储名（{32位hex}_{原始安全文件名}，与 tenant_id 组成联合主键，同时是本地 media/ 目录下的文件名）';
+COMMENT ON COLUMN media_files.file_name IS '原始文件名（展示用，已做安全清洗）';
+COMMENT ON COLUMN media_files.media_type IS 'MIME 类型: image/png、application/pdf 等（缺省 application/octet-stream）';
+COMMENT ON COLUMN media_files.size IS '文件字节数';
+COMMENT ON COLUMN media_files.data IS '文件内容二进制（BYTEA）';
+COMMENT ON COLUMN media_files.created_at IS '创建时间（DB 自动维护，UTC）';
+COMMENT ON COLUMN media_files.updated_at IS '更新时间（DB 自动维护，UTC）';
+
+-- ------------------------------------------------------------
+-- 8. XianWork 工作空间登记表（0006_xian_workspaces）
+-- ------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS xian_workspaces (
+    tenant_id  VARCHAR(64) NOT NULL DEFAULT 'default',
+    id         VARCHAR(64) NOT NULL,
+    owner_id   TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    dir_path   TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+    CONSTRAINT pk_xian_workspaces PRIMARY KEY (tenant_id, id)
+);
+
+COMMENT ON TABLE xian_workspaces IS 'XianWork 用户工作空间登记表（空间=用户注册的磁盘目录容器；绑定关系存于 chats.meta.runtime_context.project_dir，本表不存会话外键）';
+COMMENT ON COLUMN xian_workspaces.tenant_id IS '租户标识（多租户预留，单租户部署恒为 default）';
+COMMENT ON COLUMN xian_workspaces.id IS '工作空间 ID（业务侧生成 UUID，与 tenant_id 组成联合主键）';
+COMMENT ON COLUMN xian_workspaces.owner_id IS '归属账号（xian 面 username，RLS owner_isolation 隔离键）';
+COMMENT ON COLUMN xian_workspaces.name IS '工作空间显示名（侧边栏空间区文件夹标题）';
+COMMENT ON COLUMN xian_workspaces.dir_path IS '工作空间磁盘目录绝对路径（服务端 expanduser().resolve() 规范化后落库；会话 project_dir 与本列匹配即视为已绑定）';
+COMMENT ON COLUMN xian_workspaces.created_at IS '创建时间（DB 自动维护，UTC）';
+COMMENT ON COLUMN xian_workspaces.updated_at IS '更新时间（DB 自动维护，UTC）';
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_xian_workspaces_owner_dir
+    ON xian_workspaces (tenant_id, owner_id, dir_path);
+
+CREATE INDEX IF NOT EXISTS ix_xian_workspaces_owner
+    ON xian_workspaces (tenant_id, owner_id);
+
+ALTER TABLE xian_workspaces ENABLE ROW LEVEL SECURITY;
+ALTER TABLE xian_workspaces FORCE ROW LEVEL SECURITY;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies
+        WHERE schemaname = 'public' AND tablename = 'xian_workspaces' AND policyname = 'owner_isolation'
+    ) THEN
+        EXECUTE format(
+            'CREATE POLICY owner_isolation ON %I AS PERMISSIVE FOR ALL USING (%s) WITH CHECK (%s)',
+            'xian_workspaces',
+            'current_setting(''app.current_owner'', true) IS NULL ' ||
+            'OR current_setting(''app.current_owner'', true) = '''' ' ||
+            'OR owner_id IS NULL ' ||
+            'OR owner_id = current_setting(''app.current_owner'', true)',
+            'current_setting(''app.current_owner'', true) IS NULL ' ||
+            'OR current_setting(''app.current_owner'', true) = '''' ' ||
+            'OR owner_id IS NULL ' ||
+            'OR owner_id = current_setting(''app.current_owner'', true)'
+        );
+    END IF;
+END $$;
+
+-- ------------------------------------------------------------
+-- 9. Alembic 版本标记（head）
 -- ------------------------------------------------------------
 
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM alembic_version) THEN
-        UPDATE alembic_version SET version_num = '0004_table_timestamps';
+        UPDATE alembic_version SET version_num = '0006_xian_workspaces';
     ELSE
-        INSERT INTO alembic_version (version_num) VALUES ('0004_table_timestamps');
+        INSERT INTO alembic_version (version_num) VALUES ('0006_xian_workspaces');
     END IF;
 END $$;
 

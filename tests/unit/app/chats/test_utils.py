@@ -135,6 +135,59 @@ def test_clean_display_text_keeps_plain_text():
     assert clean_display_text("hello world", "user") == "hello world"
 
 
+def test_clean_display_text_hides_uploaded_file_path_hint():
+    text = (
+        "用户上传文件，已经下载到 "
+        "C:\\Users\\Administrator\\.copaw\\workspaces\\default\\media\\image.png"
+    )
+
+    assert clean_display_text(text, "user") == ""
+
+
+def test_clean_display_text_keeps_upload_wording_from_assistant():
+    text = "用户上传文件，已经下载到 C:\\safe\\example.png"
+
+    assert clean_display_text(text, "assistant") == text
+
+
+def test_msg_to_message_hides_path_hint_but_preserves_image():
+    image_path = "C:/Users/Administrator/.copaw/workspaces/default/media/image.png"
+    msg = Msg(
+        name="user",
+        role="user",
+        content=[
+            {"type": "text", "text": "分析一下图片内容"},
+            {
+                "type": "data",
+                "source": {
+                    "type": "url",
+                    "url": f"file:///{image_path}",
+                    "media_type": "image/png",
+                },
+            },
+            {
+                "type": "text",
+                "text": f"用户上传文件，已经下载到 {image_path}",
+            },
+        ],
+    )
+
+    [message] = agentscope_msg_to_message(msg)
+    rendered = "".join(
+        content.text
+        for content in message.content
+        if content.type == "text"
+    )
+    images = [
+        content.image_url
+        for content in message.content
+        if content.type == "image"
+    ]
+
+    assert rendered == "分析一下图片内容"
+    assert images == [image_path]
+
+
 def test_clean_display_text_strips_both_skill_and_headline():
     text = "/run<skill name='x'>body</skill>\n<!-- ⟦ h ⟧ -->"
     out = clean_display_text(text, "user")

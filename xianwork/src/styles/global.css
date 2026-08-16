@@ -249,7 +249,7 @@
   align-items: center;
   justify-content: center;
   padding: 0 40px 100px; /* Leave space for bottom input */
-  max-width: 900px;
+  max-width: 1060px;
   margin: 0 auto;
   width: 100%;
 }
@@ -322,7 +322,7 @@
 /* Input Container (prototype L342-477) — shared by Home & Project Detail */
 .input-wrapper {
   width: 100%;
-  max-width: 800px;
+  max-width: 960px;
   background: white;
   border: 1px solid var(--border-medium);
   border-radius: 16px;
@@ -341,7 +341,7 @@
   left: 50%;
   transform: translateX(-50%);
   width: calc(100% - 60px);
-  max-width: 800px;
+  max-width: 960px;
   z-index: 5;
 }
 
@@ -727,7 +727,7 @@ textarea.main-input::placeholder {
 .chat-input-dock {
   flex-shrink: 0;
   width: 100%;
-  max-width: 840px;
+  max-width: 1000px;
   margin: 0 auto;
   padding: 8px 20px 12px;
 }
@@ -1022,6 +1022,10 @@ textarea.main-input::placeholder {
   background: #b91c1c;
 }
 
+.toast-item.warning {
+  background: #b45309;
+}
+
 .toast-item.success {
   background: var(--accent-color);
 }
@@ -1093,7 +1097,7 @@ textarea.main-input::placeholder {
 }
 
 .chat-timeline {
-  max-width: 820px;
+  max-width: 960px;
   width: 100%;
   margin: 0 auto;
   padding: 24px 20px 32px;
@@ -1112,9 +1116,10 @@ textarea.main-input::placeholder {
   background: var(--accent-color);
   color: #fff;
   border-radius: 16px 16px 4px 16px;
-  padding: 10px 16px;
+  padding: 12px 18px;
   font-size: 14.5px;
   line-height: 1.6;
+  width: fit-content;
   max-width: 78%;
   white-space: pre-wrap;
   word-break: break-word;
@@ -1146,6 +1151,8 @@ textarea.main-input::placeholder {
   font-size: 14.5px;
   line-height: 1.7;
   color: var(--text-primary, #1f2328);
+  overflow: hidden;
+  overflow-wrap: anywhere;
 }
 
 .chat-cursor {
@@ -1217,6 +1224,7 @@ textarea.main-input::placeholder {
   padding: 1px 6px;
   font-size: 13px;
   font-family: "SF Mono", Consolas, monospace;
+  overflow-wrap: anywhere;
 }
 
 .md-code-block {
@@ -1224,7 +1232,9 @@ textarea.main-input::placeholder {
   border: 1px solid var(--border-light, #e8e9eb);
   border-radius: 10px;
   overflow: hidden;
+  overflow-x: auto;
   background: #fafafa;
+  max-width: 100%;
 }
 
 .md-code-bar {
@@ -1929,7 +1939,6 @@ textarea.main-input::placeholder {
   box-shadow: var(--shadow-input, 0 2px 12px rgba(0,0,0,0.08));
   padding: 12px 14px 8px;
   width: 100%;
-  max-width: 800px;
 }
 .home-view .chat-composer { margin-bottom: 0; }
 .chat-composer:focus-within {
@@ -2164,17 +2173,12 @@ textarea.main-input::placeholder {
   font-size: 11.5px;
 }
 
-/* assistant actions (copy / regenerate) — hover-reveal only on devices
-   with a real hover pointer; touch devices keep them always visible. */
+/* assistant actions (copy / regenerate) — always visible on all devices
+   (console index.module.less parity: bubble-footer opacity: 1). */
 .assistant-actions {
   display: flex;
   gap: 4px;
   margin-top: 6px;
-  transition: opacity 0.15s;
-}
-@media (hover: hover) {
-  .assistant-actions { opacity: 0; }
-  .chat-row.assistant:hover .assistant-actions { opacity: 1; }
 }
 .assistant-actions button {
   display: inline-flex;
@@ -2209,6 +2213,7 @@ textarea.main-input::placeholder {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
+  width: 100%;
   max-width: 100%;
   min-width: 0;
 }
@@ -2462,4 +2467,667 @@ textarea.main-input::placeholder {
   .chat-anchor-directory {
     width: min(300px, calc(100vw - 120px));
   }
+}
+
+/* ================================================================
+ * Sidebar task/workspace tree (XianWork 任务/空间机制)
+ * ================================================================ */
+
+.sidebar-section .nav-section-header {
+  margin: 20px 0 4px;
+}
+
+.sidebar-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  flex: 1;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.sidebar-section-title:hover {
+  color: var(--text-secondary);
+}
+
+.sidebar-add-workspace {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.sidebar-add-workspace:hover {
+  color: var(--accent-color);
+}
+
+.sidebar-add-workspace i {
+  font-size: 10px;
+}
+
+.sidebar-chat-list,
+.sidebar-workspace-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sidebar-workspace-group {
+  list-style: none;
+}
+
+.workspace-row {
+  padding-left: 6px;
+}
+
+.workspace-chevron {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.workspace-folder-icon {
+  color: #64748b;
+}
+
+.workspace-chat-list {
+  list-style: none;
+  margin: 0;
+  padding-left: 22px;
+}
+
+.workspace-empty {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Inline rename editor (chat rows + workspace folder rows) */
+.chat-rename-input {
+  width: 100%;
+  min-width: 0;
+  padding: 3px 8px;
+  border: 1px solid var(--accent-color);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+  background: white;
+}
+
+.chat-check {
+  flex-shrink: 0;
+  accent-color: var(--accent-color);
+}
+
+.chat-running-icon {
+  font-size: 11px;
+  color: var(--accent-color);
+}
+
+/* ---- chat row hover actions: `...` / archive / pin (competitor shot 2) ---- */
+.nav-item.chat-row {
+  position: relative;
+}
+
+/* Timestamp makes way for the action strip while hovering a normal row
+   (batch rows keep the timestamp — no action strip is rendered there). */
+.chat-row:hover:has(.chat-item-actions) .nav-item-right {
+  visibility: hidden;
+}
+
+.chat-item-actions {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.chat-row:hover .chat-item-actions,
+.chat-row:focus-within .chat-item-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.chat-item-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0;
+}
+
+.chat-item-action-btn i {
+  font-size: 12px;
+}
+
+.chat-item-action-btn:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--text-primary);
+}
+
+.chat-item-action-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.chat-item-action-btn.pinned,
+.chat-item-action-btn.pinned:hover:not(:disabled) {
+  color: var(--accent-color);
+}
+
+/* Leading pin badge on the row title (survives mouse-out). */
+.chat-pinned-icon {
+  font-size: 10px;
+  color: var(--accent-color);
+}
+
+/* ----「选择」batch-mode entry on the task section header ---- */
+.sidebar-select-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.sidebar-select-btn:hover {
+  color: var(--accent-color);
+}
+
+.sidebar-select-btn i {
+  font-size: 12px;
+}
+
+/* ---- batch bar (multi-select strip, competitor shot 3) ---- */
+.batch-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 8px 0 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-medium);
+  border-radius: 8px;
+  background: var(--bg-sidebar-hover, #f7f7f9);
+}
+
+.batch-bar-select-all {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.batch-bar-select-all input {
+  accent-color: var(--accent-color);
+}
+
+.batch-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.batch-btn {
+  border: none;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  background: #e5e5e9;
+  color: var(--text-primary);
+}
+
+.batch-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.batch-btn-archive:hover:not(:disabled) {
+  background: #dcdce1;
+}
+
+.batch-btn-delete {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.batch-btn-delete:hover:not(:disabled) {
+  background: #fecaca;
+}
+
+.batch-btn-exit {
+  padding: 4px 7px;
+}
+
+/* ---- anchored context menu (chat six-entry + workspace) ---- */
+.context-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 180px;
+  padding: 4px;
+  background: white;
+  border: 1px solid var(--border-medium);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border: none;
+  background: none;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.context-menu-item i {
+  width: 14px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.context-menu-item:hover:not(:disabled) {
+  background: #f5f5f7;
+}
+
+.context-menu-item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.context-menu-item.danger {
+  color: #dc2626;
+}
+
+.context-menu-item.danger i {
+  color: #dc2626;
+}
+
+.context-menu-item.danger:hover:not(:disabled) {
+  background: #fee2e2;
+}
+
+/* ================================================================
+ * Workspace dialogs / dir browser / open-folder fallback
+ * ================================================================ */
+
+.icon-btn {
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 14px;
+  padding: 4px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.icon-btn:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: #f1f1f4;
+}
+
+.icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.modal-error {
+  margin-top: 10px;
+  font-size: 13px;
+  color: #dc2626;
+}
+
+.modal-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.form-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.dialog-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.dialog-check input {
+  accent-color: var(--accent-color);
+}
+
+.btn-danger {
+  background: #dc2626;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.btn-danger:hover {
+  background: #b91c1c;
+}
+
+.workspace-dir-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.workspace-dir-row input {
+  flex: 1;
+}
+
+/* Directory browser (browse-dirs API) */
+.dir-browser {
+  border: 1px solid var(--border-medium);
+  border-radius: 8px;
+  margin: 4px 0 12px;
+  overflow: hidden;
+}
+
+.dir-browser-path {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #fafafa;
+  border-bottom: 1px solid var(--border-light);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.dir-browser-current {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dir-browser-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px;
+  font-size: 12px;
+  color: #dc2626;
+}
+
+.dir-browser-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.dir-browser-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border: none;
+  background: none;
+  padding: 7px 8px;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.dir-browser-item i {
+  width: 14px;
+  color: var(--text-muted);
+}
+
+.dir-browser-item:hover {
+  background: #f5f5f7;
+}
+
+.dir-browser-parent {
+  color: var(--text-secondary);
+}
+
+.dir-browser-empty {
+  padding: 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.dir-browser-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border-light);
+}
+
+/* Picker modal (保存到工作空间) */
+.picker-path-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.picker-path-row input {
+  flex: 1;
+  background: #fafafa;
+}
+
+.picker-recent-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.picker-recent-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  background: white;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.picker-recent-item:hover {
+  border-color: var(--text-muted);
+}
+
+.picker-recent-item.selected {
+  border-color: var(--accent-color);
+  background: rgba(13, 140, 109, 0.05);
+}
+
+.picker-recent-item i {
+  color: #64748b;
+  flex-shrink: 0;
+}
+
+.picker-recent-name {
+  font-weight: 500;
+  flex-shrink: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.picker-recent-path {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.picker-inherit {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.picker-inherit:hover {
+  color: var(--text-secondary);
+}
+
+.picker-inherit.on {
+  color: var(--accent-color);
+  font-weight: 600;
+}
+
+/* Open-folder fallback modal */
+.open-folder-hint {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 10px;
+}
+
+.open-folder-path-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.open-folder-path {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  background: #fafafa;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  font-size: 12px;
+  word-break: break-all;
+  color: var(--text-primary);
+}
+
+.open-folder-browser .dir-browser {
+  margin: 0;
+}
+
+/* ---- page loading skeleton (flicker fix: equal-height placeholder,
+ *     only the main-content area suspends — sidebar stays mounted) ---- */
+.page-loading {
+  min-height: 60vh;
+  margin: 24px;
+  border-radius: 12px;
+  background: linear-gradient(100deg, #f6f6f8 40%, #efeff2 50%, #f6f6f8 60%);
+  background-size: 200% 100%;
+  animation: page-loading-shimmer 1.2s ease-in-out infinite;
+}
+
+@keyframes page-loading-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* ---- chat empty state (no ?chat= — the sidebar owns task selection) ---- */
+.chat-empty-state {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-align: center;
+  padding: 32px;
+}
+
+.chat-empty-state .chat-empty-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: #f4f4f6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.chat-empty-state h2 {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.chat-empty-state p {
+  font-size: 13.5px;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
 }

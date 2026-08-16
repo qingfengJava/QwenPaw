@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import mimetypes
+import os
 import re
 import time
 import uuid
@@ -15,13 +17,15 @@ from typing import Any, AsyncGenerator, Dict, Optional, Union
 from fastapi import (
     APIRouter,
     File,
+    Form,
     HTTPException,
     Query,
     Request,
+    Response,
     UploadFile,
 )
 from pydantic import BaseModel
-from starlette.responses import StreamingResponse
+from starlette.responses import FileResponse, StreamingResponse
 
 from qwenpaw.schemas import (
     AgentRequest,
@@ -31,6 +35,11 @@ from ...utils.logging import LOG_FILE_PATH, sanitize_log_value
 from ..agent_context import get_agent_for_request
 from ..approvals.display import approval_display_fields
 from ..chats.title_generator import generate_and_update_title
+from ..media_store import (
+    load_media_blob,
+    resolve_local_media_file,
+    save_media_blob,
+)
 from ..utils import check_upload_size
 
 
@@ -478,8 +487,28 @@ async def post_console_chat_stop(
 async def post_console_upload(
     request: Request,
     file: UploadFile = File(..., description="File to attach"),
+    chat_id: Optional[str] = Form(
+        None,
+        description=(
+            "Optional chat ID: store the file under the chat's effective "
+            "project directory in media/, next to agent-generated files"
+        ),
+    ),
 ) -> dict:
-    """Save to console channel media_dir."""
+    """Save to console channel media_dir (plus PG media_files copy).
+
+    With ``chat_id`` the file lands under the chat's *effective* project
+    directory (session workspace binding > agent project > workspace
+    fallback) in ``media/`` — the same directory the agent's tools use,
+    so uploaded media and agent-generated files share one workspace.
+
+    The response ``url`` switches to an absolute ``file://`` URI when
+    the landing directory differs from the channel default: the channel
+    upload-ref resolver skips absolute URIs (``"://" in text``), so the
+    URI flows untouched into DataBlocks/persisted history instead of
+    being re-resolved against the channel media_dir. Without
+    ``chat_id`` the legacy behavior (bare stored_name) is unchanged.
+    """
 
     workspace = await get_agent_for_request(request)
     console_channel = await workspace.channel_manager.get_channel("console")
@@ -488,7 +517,37 @@ async def post_console_upload(
             status_code=503,
             detail="Channel Console not found",
         )
+
     media_dir = console_channel.media_dir
+    if chat_id:
+        chat_manager = workspace.chat_manager
+        chat = (
+            await chat_manager.get_chat(chat_id) if chat_manager else None
+        )
+        if chat is None:
+            raise HTTPException(status_code=404, detail="Chat not found")
+        authenticated_user = getattr(request.state, "user", None)
+        if authenticated_user and chat.effective_owner != authenticated_user:
+            # 404 (never 403): foreign chats' existence stays hidden (M1).
+            raise HTTPException(status_code=404, detail="Chat not found")
+        from ...config.config import load_agent_config
+        from ...services.project_directory import (
+            resolve_effective_project_dir,
+            session_project_dir,
+        )
+
+        agent_config = await asyncio.to_thread(
+            load_agent_config,
+            workspace.agent_id,
+        )
+        project_dir, _project_source = await asyncio.to_thread(
+            resolve_effective_project_dir,
+            workspace.workspace_dir,
+            agent_config.project_dir,
+            session_project_dir(chat.meta),
+        )
+        media_dir = project_dir / "media"
+
     media_dir.mkdir(parents=True, exist_ok=True)
     data = await file.read()
     check_upload_size(data)
@@ -497,11 +556,72 @@ async def post_console_upload(
 
     path = (media_dir / stored_name).resolve()
     path.write_bytes(data)
+    # Durable copy in PostgreSQL: chat image recall (GET /console/media,
+    # history replay after refresh) then survives local media_dir
+    # cleanup and works across multi-host deployments. Best-effort:
+    # uploads still succeed when PG is not configured.
+    media_type = (
+        file.content_type
+        or mimetypes.guess_type(safe_name)[0]
+        or "application/octet-stream"
+    )
+    await save_media_blob(
+        stored_name=stored_name,
+        file_name=safe_name,
+        media_type=media_type,
+        data=data,
+    )
+    landing_is_channel_default = os.path.normcase(
+        str(media_dir.resolve()),
+    ) == os.path.normcase(str(console_channel.media_dir.resolve()))
     return {
-        "url": path,
+        "url": stored_name if landing_is_channel_default else path.as_uri(),
+        "stored_name": stored_name,
         "file_name": safe_name,
         "size": len(data),
     }
+
+
+@router.get(
+    "/media/{stored_name}",
+    summary="Recall an uploaded chat media file (PG first, local fallback)",
+)
+async def get_console_media(
+    stored_name: str,
+    request: Request,
+) -> Response:
+    """Return the bytes of an uploaded chat media file.
+
+    Lookup order: PostgreSQL ``media_files`` (durable copy written at
+    upload time) → workspace ``media_dir`` local file. Used by the chat
+    frontends to render image attachments from persisted history.
+    """
+    blob = await load_media_blob(stored_name)
+    if blob is not None:
+        data, media_type, file_name = blob
+        return Response(
+            content=data,
+            media_type=media_type or "application/octet-stream",
+            headers={
+                "Content-Disposition": f'inline; filename="{file_name}"',
+                "Cache-Control": "private, max-age=86400",
+            },
+        )
+
+    workspace = await get_agent_for_request(request)
+    console_channel = await workspace.channel_manager.get_channel("console")
+    if console_channel is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Channel Console not found",
+        )
+    local_path = resolve_local_media_file(
+        console_channel.media_dir,
+        stored_name,
+    )
+    if local_path is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    return FileResponse(local_path, filename=local_path.name)
 
 
 @router.get(

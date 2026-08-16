@@ -125,6 +125,7 @@ const MarkdownView = memo(function MarkdownView({ text }: MarkdownViewProps) {
                     borderRadius: "0 0 8px 8px",
                     fontSize: 13,
                     background: "#fafafa",
+                    overflowX: "auto",
                   }}
                 >
                   {raw}

@@ -11,7 +11,7 @@ import {
   useState,
 } from "react";
 
-type ToastKind = "info" | "success" | "error";
+type ToastKind = "info" | "success" | "error" | "warning";
 
 interface ToastItem {
   id: number;
@@ -23,6 +23,7 @@ interface ToastApi {
   info: (text: string) => void;
   success: (text: string) => void;
   error: (text: string) => void;
+  warning: (text: string) => void;
 }
 
 const ToastContext = createContext<ToastApi | null>(null);
@@ -53,6 +54,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       info: (text) => push("info", text),
       success: (text) => push("success", text),
       error: (text) => push("error", text),
+      warning: (text) => push("warning", text),
     }),
     [push],
   );

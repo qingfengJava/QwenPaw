@@ -46,7 +46,6 @@ from ..base import (
     OutgoingContentPart,
     ProcessHandler,
     VideoContent,
-    TextContent,
 )
 from ..utils import file_url_to_local_path
 
@@ -201,9 +200,31 @@ class ConsoleChannel(BaseChannel):
         self,
         content_parts: List[Any],
     ) -> List[Any]:
-        """Resolve Image/File/Audio/VideoContent."""
+        """Resolve bare upload filenames against the channel media_dir.
+
+        The /console/upload endpoint returns a bare stored name (no
+        directory, no scheme). Downstream consumers (session persistence
+        in HarnessSessionBridge, model message building, view_image
+        tool calls) treat scheme-less strings as absolute paths and
+        resolve them against the backend CWD, which points at the wrong
+        location. Rewrite every media part whose url is a bare name
+        that exists in media_dir into an absolute ``file://`` URL so the
+        whole chain (DataBlock, PG history, agent file lookup, frontend
+        preview) sees the real file location.
+        """
         if not self._media_dir:
             return content_parts
+
+        def resolve_url(url: Any) -> Any:
+            text = str(url or "")
+            if not text or "://" in text or text.startswith("data:"):
+                return url
+            if Path(text).is_absolute():
+                return url
+            candidate = (self._media_dir / text).resolve()
+            if candidate.is_file():
+                return candidate.as_uri()
+            return url
 
         def resolve_one(part: Any) -> Optional[OutgoingContentPart]:
             content_type = getattr(part, "type", None)
@@ -212,33 +233,32 @@ class ConsoleChannel(BaseChannel):
                 if url:
                     return ImageContent(
                         type=ContentType.IMAGE,
-                        image_url=url,
+                        image_url=resolve_url(url),
                     )
             elif content_type == ContentType.VIDEO:
                 url = getattr(part, "video_url", None)
                 if url:
                     return VideoContent(
                         type=ContentType.VIDEO,
-                        video_url=url,
+                        video_url=resolve_url(url),
                     )
             elif content_type == ContentType.AUDIO:
                 url = getattr(part, "data", None)
                 if url:
                     return AudioContent(
                         type=ContentType.AUDIO,
-                        data=url,
+                        data=resolve_url(url),
                     )
             elif content_type == ContentType.FILE:
                 url = getattr(part, "file_url", None)
                 if url:
+                    resolved = resolve_url(url)
                     return FileContent(
                         type=ContentType.FILE,
                         filename=getattr(part, "filename", None)
-                        or Path(url).name,
-                        file_url=url,
+                        or Path(str(url)).name,
+                        file_url=resolved,
                     )
-            elif content_type == ContentType.TEXT:
-                return TextContent(type=ContentType.TEXT, text=part.text)
             return part
 
         input_content_parts = []
@@ -367,6 +387,10 @@ class ConsoleChannel(BaseChannel):
                 payload.get("meta"),
             )
             content_parts = payload.get("content_parts") or []
+            # Resolve bare upload names against media_dir before the
+            # request reaches the agent (issue: images stored/persisted
+            # with a CWD-relative file:/// path the model cannot find).
+            content_parts = self._resolve_console_upload_refs(content_parts)
             should_process, merged = self._apply_no_text_debounce(
                 session_id,
                 content_parts,
@@ -382,6 +406,9 @@ class ConsoleChannel(BaseChannel):
                 contents = list(
                     getattr(request.input[0], "content", None) or [],
                 )
+                # Same media_dir resolution for callers that hand over a
+                # ready-made AgentRequest (tests, internal invocations).
+                contents = self._resolve_console_upload_refs(contents)
                 should_process, merged = self._apply_no_text_debounce(
                     session_id,
                     contents,

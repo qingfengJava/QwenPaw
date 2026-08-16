@@ -16,6 +16,7 @@ from .feed import router as xian_feed_router
 from .projects import router as xian_projects_router
 from .resources import router as xian_resources_router
 from .tasks import router as xian_tasks_router
+from .workspaces import router as xian_workspaces_router
 
 router = APIRouter(prefix="/xian")
 router.include_router(xian_projects_router)
@@ -26,5 +27,6 @@ router.include_router(xian_directory_router)
 router.include_router(xian_resources_router)
 router.include_router(xian_bindings_router)
 router.include_router(xian_automations_router)
+router.include_router(xian_workspaces_router)
 
 __all__ = ["router"]

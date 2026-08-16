@@ -43,7 +43,7 @@ function AttachmentChips({ attachments }: { attachments: UserAttachment[] }) {
           <img
             key={a.url + a.name}
             className="user-attachment-image"
-            src={a.url.startsWith("http") ? a.url : `/api/files/preview/${a.url.replace(/^\/+/, "")}`}
+            src={a.url}
             alt={a.name}
           />
         ) : (
@@ -103,7 +103,7 @@ function AssistantActions({
 function UsageFooter({ usage }: { usage: NonNullable<Extract<TimelineItem, { kind: "usage" }>["usage"]> }) {
   // Backend ratios can exceed 1 when estimated tokens overshoot the window;
   // clamp the display like the console ring does.
-  const ratio = Math.min(1, Math.max(0, usage.context_usage_ratio ?? 0));
+  const pct = Math.min(100, Math.max(0, usage.context_usage_ratio ?? 0));
   return (
     <div className="usage-footer">
       <span>
@@ -114,7 +114,7 @@ function UsageFooter({ usage }: { usage: NonNullable<Extract<TimelineItem, { kin
         {formatTokens(usage.completion_tokens)}
       </span>
       <span>
-        <i className="fa-solid fa-gauge-high" /> 上下文 {(ratio * 100).toFixed(0)}%
+        <i className="fa-solid fa-gauge-high" /> 上下文 {pct.toFixed(0)}%
       </span>
     </div>
   );
@@ -198,6 +198,12 @@ export default function TimelineList({
           const stepLast =
             STEP_KINDS.has(item.kind) &&
             (index === items.length - 1 || !STEP_KINDS.has(items[index + 1].kind));
+          // Intermediate assistant messages (followed by more reasoning/tool/assistant
+          // steps) are part of the thinking flow — only the final response gets the
+          // copy/timestamp footer (console Bubble.Footer parity).
+          const hasMoreSteps = items
+            .slice(index + 1)
+            .some((it) => it.kind === "reasoning" || it.kind === "tool" || it.kind === "assistant");
           switch (item.kind) {
             case "user":
               return (
@@ -266,10 +272,10 @@ export default function TimelineList({
                     <div className="chat-assistant-body">
                       {item.text ? (
                         <MarkdownView text={item.text} />
-                      ) : streaming ? (
+                      ) : streaming && !hasMoreSteps ? (
                         <span className="chat-cursor">▍</span>
                       ) : null}
-                      {streaming && item.text && <span className="chat-cursor">▍</span>}
+                      {streaming && item.text && !hasMoreSteps && <span className="chat-cursor">▍</span>}
                       {item.usage && (
                         <div className="usage-footer">
                           <span>
@@ -278,7 +284,7 @@ export default function TimelineList({
                           </span>
                         </div>
                       )}
-                      {!streaming && (
+                      {!streaming && item.text && !hasMoreSteps && (
                         <div className="assistant-foot">
                           {onCopy && (
                             <AssistantActions

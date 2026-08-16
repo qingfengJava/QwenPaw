@@ -133,6 +133,10 @@ test = [
     "hypothesis>=6.0.0",
     "respx>=0.22.0",
     "qoder-agent-sdk==1.0.9",
+    # tests/test_xian_workspaces.py: in-memory SQLite stand-in for the
+    # PostgreSQL engine (workspaces CRUD / grouping / upload tests).
+    "sqlalchemy[asyncio]>=2.0",
+    "aiosqlite>=0.20",
 ]
 dev = [
     "pre-commit>=4.2.0",

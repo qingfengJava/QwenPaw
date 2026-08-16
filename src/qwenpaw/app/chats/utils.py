@@ -499,15 +499,57 @@ def strip_injected_skill_block(text: str, role: str) -> str:
     return _INJECTED_SKILL_BLOCK_RE.sub("", text)
 
 
+_LOOP_MODE_PROMPT_RE = re.compile(
+    r"^Starting\s+\w+\s+Mode:.*?\n>\s*(.+?)\n",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def strip_loop_mode_prompt(text: str, role: str) -> str:
+    """Strip loop-mode-injected prompts from user messages.
+
+    Mission/Goal modes replace the user's message content with a multi-line
+    prompt (``Starting Mission Mode: ...``) that embeds the original text in a
+    ``> quoted`` line. The prompt is model-facing context; the transcript should
+    show only what the user typed.
+    """
+    if role != "user" or not text.startswith("Starting "):
+        return text
+    match = _LOOP_MODE_PROMPT_RE.match(text)
+    if match:
+        return match.group(1).strip()
+    return text
+
+
+_UPLOAD_PATH_HINT_RE = re.compile(
+    r"^(?:用户上传文件，已经下载到|User uploaded a file, downloaded to)\s+"
+    r"(?:[A-Za-z]:[\\/]|/).+$",
+    re.DOTALL,
+)
+
+
+def strip_upload_path_hint(text: str, role: str) -> str:
+    """Hide the model-only local path inserted after uploaded media."""
+    if role != "user":
+        return text
+    if _UPLOAD_PATH_HINT_RE.fullmatch(text.strip()):
+        return ""
+    return text
+
+
 def clean_display_text(text: str, role: str) -> str:
     """Hide model-facing artifacts from the transcript: the ``⟦ … ⟧``
-    headline fence and the injected ``<skill>`` block. The SSE stream already
-    strips the headline; the HTTP history path didn't, so it reappeared on
-    reload — do both here so every display path matches. Headline first: the
-    ``<skill>`` regex is ``$``-anchored, so a trailing headline would leave it
-    un-anchored.
+    headline fence, injected context blocks, and loop-mode prompts.
+    The SSE stream already strips the headline; the HTTP history path didn't,
+    so it reappeared on reload — do both here so every display path matches.
+    Headline first: the ``<skill>`` regex is ``$``-anchored, so a trailing
+    headline would leave it un-anchored.
     """
-    return strip_injected_skill_block(strip_headline(text) or "", role)
+    text = strip_headline(text) or ""
+    text = strip_injected_skill_block(text, role)
+    text = strip_loop_mode_prompt(text, role)
+    text = strip_upload_path_hint(text, role)
+    return text
 
 
 # pylint: disable=too-many-branches,too-many-statements, too-many-nested-blocks

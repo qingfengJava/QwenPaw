@@ -1,14 +1,18 @@
 /**
- * MainLayout — prototype sidebar (L986-1078) + main content area:
- * logo/version + header icons, new-task button, six nav items with Font
- * Awesome icons,「任务」/「空间」sections, user footer with bell/gear.
- * Token guard and project quick-list logic preserved from the scaffold.
+ * MainLayout — layout shell only: sidebar chrome (logo/version, header
+ * icons, new-task button, six nav items, user footer) + the routed
+ * content area. The task/workspace tree and its whole interaction state
+ * machine live in <SidebarChatTree />; the old projectApi quick-list is
+ * gone (collaboration projects ≠ disk workspaces).
+ *
+ * Flicker fix: the sidebar stays mounted; only the main content area
+ * suspends (equal-height skeleton) while a lazy page chunk loads. Nav
+ * hover prefetches the target chunk so first clicks rarely suspend.
  */
-import { useEffect, useState } from "react";
+import { Suspense, useEffect } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import Avatar from "../components/Avatar";
-import { chatApi, projectApi } from "../api/modules";
-import type { ChatSummary, Project } from "../api/modules";
+import SidebarChatTree from "../components/sidebar/SidebarChatTree";
 import { useAuthStore } from "../stores/auth";
 
 const APP_VERSION = "v0.1.0";
@@ -34,6 +38,16 @@ const NAV_ITEMS: NavItem[] = [
   { to: "/more", label: "更多", icon: "fa-solid fa-border-all" },
 ];
 
+/** Nav hover prefetch (dynamic import is idempotent — repeated hits noop). */
+const PAGE_PRELOADS: Record<string, () => Promise<unknown>> = {
+  "/chat": () => import("../pages/Chat"),
+  "/projects": () => import("../pages/Projects"),
+  "/experts": () => import("../pages/Experts"),
+  "/automation": () => import("../pages/Automation"),
+  "/library": () => import("../pages/Library"),
+  "/more": () => import("../pages/More"),
+};
+
 function navActive(item: NavItem, path: string): boolean {
   if (item.match) {
     return item.match.some((prefix) => path.startsWith(prefix));
@@ -45,22 +59,11 @@ export default function MainLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const { token, username, signOut } = useAuthStore();
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [chats, setChats] = useState<ChatSummary[]>([]);
 
   useEffect(() => {
     if (!token) {
       navigate("/login", { replace: true });
-      return;
     }
-    projectApi
-      .list()
-      .then((list) => setProjects(list.filter((p) => !p.template_tag).slice(0, 6)))
-      .catch(() => setProjects([]));
-    chatApi
-      .list(username)
-      .then((list) => setChats(list))
-      .catch(() => setChats([]));
   }, [token, navigate]);
 
   return (
@@ -103,6 +106,7 @@ export default function MainLayout() {
                 className={() =>
                   `nav-item${navActive(item, location.pathname) ? " active" : ""}`
                 }
+                onMouseEnter={() => PAGE_PRELOADS[item.to]?.()}
               >
                 <div className="nav-item-left">
                   <i className={item.icon} />
@@ -112,43 +116,8 @@ export default function MainLayout() {
             </li>
           ))}
 
-          <div className="nav-section-header">
-            <span>任务 ({chats.length})</span>
-            <i className="fa-solid fa-chevron-down" />
-          </div>
-          {chats.map((chat) => (
-            <li key={chat.id}>
-              <NavLink to={`/chat?chat=${chat.id}`} className="nav-item">
-                <div className="nav-item-left">
-                  <span>{chat.name || "新任务"}</span>
-                </div>
-                <div className="nav-item-right">
-                  {chat.updated_at?.slice(5, 10).replace("-", "/")}
-                </div>
-              </NavLink>
-            </li>
-          ))}
-
-          <div className="nav-section-header">
-            <span>空间 ({projects.length})</span>
-            <i className="fa-solid fa-chevron-down" />
-          </div>
-          {projects.map((project) => (
-            <li key={project.id}>
-              <NavLink
-                to={`/projects/${project.id}`}
-                className="nav-item"
-              >
-                <div className="nav-item-left">
-                  <i
-                    className="fa-regular fa-folder"
-                    style={{ color: "#64748b" }}
-                  />
-                  <span>{project.name}</span>
-                </div>
-              </NavLink>
-            </li>
-          ))}
+          {/* 任务 / 空间 tree + context menus + modals */}
+          <SidebarChatTree />
         </ul>
 
         <div className="sidebar-footer">
@@ -170,9 +139,12 @@ export default function MainLayout() {
         </div>
       </div>
 
-      {/* Main content */}
+      {/* Main content — only this area waits for lazy chunks; the sidebar
+       * stays mounted so route switches never flash the whole tree. */}
       <div className="main-content">
-        <Outlet />
+        <Suspense fallback={<div className="page-loading" />}>
+          <Outlet />
+        </Suspense>
       </div>
     </div>
   );

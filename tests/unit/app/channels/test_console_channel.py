@@ -309,3 +309,77 @@ class TestNoTextDebounce:
         )
         assert ok is True
         assert len(merged) == 1
+
+
+# ---------------------------------------------------------------------------
+# _resolve_console_upload_refs (bare upload name → media_dir file:// URL)
+# ---------------------------------------------------------------------------
+
+
+class TestResolveConsoleUploadRefs:
+    def test_bare_name_existing_file_resolves_to_file_uri(
+        self,
+        console_channel,
+        tmp_path,
+    ):
+        stored = "8a4c3219aed943bfae3a55ded71f4d89_image.png"
+        (tmp_path / stored).write_bytes(b"png")
+        parts = [
+            TextContent(text="分析一下图片"),
+            ImageContent(image_url=stored),
+        ]
+        resolved = console_channel._resolve_console_upload_refs(parts)
+        assert resolved[0] == parts[0]
+        assert resolved[1].image_url == (tmp_path / stored).resolve().as_uri()
+
+    def test_bare_name_missing_file_left_untouched(self, console_channel):
+        parts = [ImageContent(image_url="missing_file.png")]
+        resolved = console_channel._resolve_console_upload_refs(parts)
+        assert resolved[0].image_url == "missing_file.png"
+
+    def test_http_and_data_urls_untouched(self, console_channel):
+        parts = [
+            ImageContent(image_url="https://example.com/a.png"),
+            ImageContent(image_url="data:image/png;base64,AAAA"),
+        ]
+        resolved = console_channel._resolve_console_upload_refs(parts)
+        assert resolved[0].image_url == "https://example.com/a.png"
+        assert resolved[1].image_url == "data:image/png;base64,AAAA"
+
+    def test_absolute_path_untouched(self, console_channel):
+        parts = [ImageContent(image_url="C:/Users/x/media/a.png")]
+        resolved = console_channel._resolve_console_upload_refs(parts)
+        assert resolved[0].image_url == "C:/Users/x/media/a.png"
+
+    def test_file_url_untouched(self, console_channel):
+        parts = [ImageContent(image_url="file:///C:/Users/x/media/a.png")]
+        resolved = console_channel._resolve_console_upload_refs(parts)
+        assert resolved[0].image_url == "file:///C:/Users/x/media/a.png"
+
+    def test_file_content_keeps_filename(self, console_channel, tmp_path):
+        stored = "deadbeefdeadbeefdeadbeefdeadbeef_report.pdf"
+        (tmp_path / stored).write_bytes(b"pdf")
+        from qwenpaw.schemas import FileContent
+
+        parts = [
+            FileContent(
+                type=ContentType.FILE,
+                filename="report.pdf",
+                file_url=stored,
+            ),
+        ]
+        resolved = console_channel._resolve_console_upload_refs(parts)
+        assert resolved[0].filename == "report.pdf"
+        assert resolved[0].file_url == (tmp_path / stored).resolve().as_uri()
+
+    def test_text_part_passes_through(self, console_channel):
+        parts = [TextContent(text="hello")]
+        resolved = console_channel._resolve_console_upload_refs(parts)
+        assert len(resolved) == 1
+        assert resolved[0].text == "hello"
+
+    def test_no_media_dir_returns_parts(self, console_channel):
+        console_channel._media_dir = None
+        parts = [ImageContent(image_url="a.png")]
+        resolved = console_channel._resolve_console_upload_refs(parts)
+        assert resolved == parts

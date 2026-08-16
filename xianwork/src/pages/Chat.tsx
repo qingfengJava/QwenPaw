@@ -2,8 +2,12 @@
  * Chat — full parity with the backend chat page: model selector in the
  * header, streaming timeline with markdown / reasoning / tool cards, and
  * the complete composer (attachments, speech, slash commands, mode /
- * approval / agent selectors, char counter). The session list lives in
- * the sidebar task menu (MainLayout), not inside this page.
+ * approval / agent selectors, char counter).
+ *
+ * The session list lives in the sidebar tree (SidebarChatTree via the
+ * shared chats store); this page never auto-selects a chat. Without
+ * `?chat=` it renders an empty-state placeholder guiding users to the
+ * sidebar or a brand-new task.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -17,6 +21,7 @@ import { chatApi } from "../api/modules";
 import type { ChatSpecView } from "../api/modules";
 import { useAuthStore } from "../stores/auth";
 import { useChatPrefs } from "../stores/chatPrefs";
+import { useAllChats, useChatsStore } from "../stores/chats";
 import { useToast } from "../components/Toast";
 import { useChatStream } from "../chat/useChatStream";
 import { historyToTimeline, type TurnUsage } from "../chat/protocol";
@@ -61,7 +66,7 @@ export default function ChatPage() {
   const selectedAgent = useChatPrefs((s) => s.selectedAgent);
   const toast = useToast();
 
-  const [chats, setChats] = useState<ChatSpecView[]>([]);
+  const chatList = useAllChats();
   const [input, setInput] = useState("");
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   /** Last cached snapshot for the active chat (usage persistence above). */
@@ -72,35 +77,9 @@ export default function ChatPage() {
   const historyLoadedRef = useRef("");
 
   const activeChat = useMemo(
-    () => chats.find((c) => c.id === activeId) ?? null,
-    [chats, activeId],
+    () => chatList.find((c) => c.id === activeId) ?? null,
+    [chatList, activeId],
   );
-
-  const loadChats = useCallback(async () => {
-    try {
-      setChats(await chatApi.list(username));
-    } catch {
-      setChats([]);
-    }
-  }, [username]);
-
-  // Initial list load; auto-select the most recent chat when none is active.
-  useEffect(() => {
-    void loadChats().then(() => {
-      // Populated after the state settles in the next render tick.
-    });
-  }, [loadChats]);
-
-  useEffect(() => {
-    if (!activeId && chats.length > 0) {
-      const latest = [...chats].sort(
-        (a, b) =>
-          (new Date(b.updated_at ?? 0).getTime() || 0) -
-          (new Date(a.updated_at ?? 0).getTime() || 0),
-      )[0];
-      navigate(`/chat?chat=${latest.id}`, { replace: true });
-    }
-  }, [activeId, chats, navigate]);
 
   // Load history when switching chats (once per chat id). Kickoff sending
   // is chained AFTER the history reset — a parallel send used to race the
@@ -127,7 +106,7 @@ export default function ChatPage() {
       .history(activeChat.id)
       .then((h) => {
         reset(historyToTimeline(h));
-        window.setTimeout(() => void loadChats(), 0);
+        window.setTimeout(() => void useChatsStore.getState().reload(), 0);
         const text = kickoffRef.current;
         if (text || kickoffAttachmentsRef.current.length > 0) {
           kickoffRef.current = "";
@@ -159,7 +138,7 @@ export default function ChatPage() {
     if (kickoff) {
       navigate(`/chat?chat=${activeChat.id}`, { replace: true });
     }
-  }, [activeChat, kickoff, navigate, reset, loadChats, send]);
+  }, [activeChat, kickoff, navigate, reset, send]);
 
   // Latest turn usage from the live timeline (null before the first reply
   // of this mount — the cached snapshot covers that gap below).
@@ -203,7 +182,7 @@ export default function ChatPage() {
         context_size: contextSize,
         context_usage_ratio: 0,
       });
-      await loadChats();
+      await useChatsStore.getState().reload();
       navigate(`/chat?chat=${chat.id}`);
     } catch {
       toast.error("创建会话失败");
@@ -251,6 +230,30 @@ export default function ChatPage() {
       void send(lastUser.text, activeChat);
     }
   }, [activeChat, items, streaming, send]);
+
+  // No chat selected: the sidebar owns task selection; guide the user
+  // there instead of auto-jumping into an arbitrary latest session.
+  if (!activeId) {
+    return (
+      <div className="view active">
+        <div className="chat-empty-state">
+          <div className="chat-empty-icon">
+            <i className="fa-regular fa-comments" />
+          </div>
+          <h2>助理</h2>
+          <p>从左侧选择任务继续对话，或开始一个新任务</p>
+          <button
+            type="button"
+            className="btn-accent"
+            onClick={() => void handleCreate()}
+          >
+            <i className="fa-solid fa-plus" />
+            新建任务
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="view active">

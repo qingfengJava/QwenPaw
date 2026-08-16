@@ -7,7 +7,7 @@
  * slot — spinner while generating, green check when finished — and a
  * "Thinking..." title gets the soft-light shimmer sweep while streaming.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 interface ReasoningBlockProps {
   text: string;
@@ -18,7 +18,13 @@ interface ReasoningBlockProps {
 }
 
 export default function ReasoningBlock({ text, done, stepFirst, stepLast }: ReasoningBlockProps) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(!done);
+
+  // Console Thinking parity: auto-collapse when reasoning finishes
+  // (defaultOpen: loading ? defaultOpen : false).
+  useEffect(() => {
+    if (done) setOpen(false);
+  }, [done]);
   const classes = [
     "reasoning-block",
     open ? "open" : "",
@@ -38,7 +44,7 @@ export default function ReasoningBlock({ text, done, stepFirst, stepLast }: Reas
           )}
         </span>
         <span className={`reasoning-title${done ? "" : " reasoning-title-shimmer"}`}>
-          {done ? "Thinking" : "Thinking..."}
+          Thinking
         </span>
         <i className={`fa-solid fa-chevron-${open ? "up" : "down"} step-caret`} />
       </button>
