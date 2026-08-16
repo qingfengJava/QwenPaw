@@ -13,6 +13,7 @@ from .bindings import router as xian_bindings_router
 from .directory import router as xian_directory_router
 from .experts import router as xian_experts_router
 from .feed import router as xian_feed_router
+from .files import router as xian_files_router
 from .projects import router as xian_projects_router
 from .resources import router as xian_resources_router
 from .tasks import router as xian_tasks_router
@@ -28,5 +29,6 @@ router.include_router(xian_resources_router)
 router.include_router(xian_bindings_router)
 router.include_router(xian_automations_router)
 router.include_router(xian_workspaces_router)
+router.include_router(xian_files_router)
 
 __all__ = ["router"]

@@ -923,6 +923,13 @@ class QwenPawAgent(CodingModeMixin, Agent):
                     float(t),
                 )
 
+        # Agent 产出文件登记：write/edit/append 成功后把产物快照进
+        # media_files（source=agent_output），支撑会话文件列表与误删恢复。
+        # register 为字段合并语义，不影响上面注册的超时元数据。
+        from ..tool_calls.media_hooks import register_media_output_hooks
+
+        register_media_output_hooks(mgr.hooks)
+
     # ------------------------------------------------------------------
     # Stop Hook: loop continuation support
     # ------------------------------------------------------------------

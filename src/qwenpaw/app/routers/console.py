@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import mimetypes
@@ -518,6 +519,10 @@ async def post_console_upload(
             detail="Channel Console not found",
         )
 
+    # 会话登记元数据：带 chat_id 上传时关联到会话（含 agent 侧 session_id）
+    upload_chat_id: Optional[str] = None
+    upload_session_id: Optional[str] = None
+
     media_dir = console_channel.media_dir
     if chat_id:
         chat_manager = workspace.chat_manager
@@ -530,6 +535,9 @@ async def post_console_upload(
         if authenticated_user and chat.effective_owner != authenticated_user:
             # 404 (never 403): foreign chats' existence stays hidden (M1).
             raise HTTPException(status_code=404, detail="Chat not found")
+        # 记录会话关联键，供 media_files 登记与后续按会话查询/恢复
+        upload_chat_id = chat_id
+        upload_session_id = chat.session_id
         from ...config.config import load_agent_config
         from ...services.project_directory import (
             resolve_effective_project_dir,
@@ -559,7 +567,10 @@ async def post_console_upload(
     # Durable copy in PostgreSQL: chat image recall (GET /console/media,
     # history replay after refresh) then survives local media_dir
     # cleanup and works across multi-host deployments. Best-effort:
-    # uploads still succeed when PG is not configured.
+    # uploads still succeed when PG is not configured. The registry
+    # metadata (chat/session/owner, source, storage_type, storage_uri,
+    # sha256) makes every upload findable per conversation and
+    # restorable after accidental local deletion.
     media_type = (
         file.content_type
         or mimetypes.guess_type(safe_name)[0]
@@ -570,6 +581,13 @@ async def post_console_upload(
         file_name=safe_name,
         media_type=media_type,
         data=data,
+        chat_id=upload_chat_id,
+        session_id=upload_session_id,
+        owner_id=getattr(request.state, "user", None),
+        source="upload",
+        storage_type="db",
+        storage_uri=str(path),
+        sha256=hashlib.sha256(data).hexdigest(),
     )
     landing_is_channel_default = os.path.normcase(
         str(media_dir.resolve()),

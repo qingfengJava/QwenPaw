@@ -656,15 +656,41 @@ BEGIN
 END $$;
 
 -- ------------------------------------------------------------
--- 9. Alembic 版本标记（head）
+-- 9. media_files 会话文件登记扩展（changelog/20260816/03）
+-- ------------------------------------------------------------
+
+ALTER TABLE media_files ADD COLUMN IF NOT EXISTS chat_id VARCHAR(128);
+ALTER TABLE media_files ADD COLUMN IF NOT EXISTS session_id VARCHAR(255);
+ALTER TABLE media_files ADD COLUMN IF NOT EXISTS owner_id VARCHAR(128);
+ALTER TABLE media_files ADD COLUMN IF NOT EXISTS source VARCHAR(32) NOT NULL DEFAULT 'upload';
+ALTER TABLE media_files ADD COLUMN IF NOT EXISTS storage_type VARCHAR(16) NOT NULL DEFAULT 'db';
+ALTER TABLE media_files ADD COLUMN IF NOT EXISTS storage_uri TEXT;
+ALTER TABLE media_files ADD COLUMN IF NOT EXISTS sha256 VARCHAR(64);
+
+COMMENT ON COLUMN media_files.chat_id IS '关联会话 ID（console 面 chat_id；用户上传时必填，Agent 产出写入时可能为空、经 session_id 关联）';
+COMMENT ON COLUMN media_files.session_id IS '会话的 agent 侧 session_id（上传与 Agent 产出两条链路都能取到，是会话关联的可靠键）';
+COMMENT ON COLUMN media_files.owner_id IS '归属账号（上传链路取 request.state.user；Agent 产出可能为空，读取时经会话归属二次校验）';
+COMMENT ON COLUMN media_files.source IS '文件来源：upload=用户聊天上传；agent_output=Agent 任务过程中产出/输出';
+COMMENT ON COLUMN media_files.storage_type IS '存储方式：db=本地工作副本+PG 字节副本双写（可恢复）；local=仅本地登记；minio/oss=对象存储（预留）';
+COMMENT ON COLUMN media_files.storage_uri IS '存储定位：本地存储为绝对路径（服务端落库前 resolve）；对象存储为 minio://bucket/key 或 oss://bucket/key';
+COMMENT ON COLUMN media_files.sha256 IS '内容 SHA-256 指纹（Agent 产出以 sha256 前 16 位参与 stored_name 内容寻址去重，同内容不重复入库）';
+
+CREATE INDEX IF NOT EXISTS ix_media_files_chat
+    ON media_files (tenant_id, chat_id);
+
+CREATE INDEX IF NOT EXISTS ix_media_files_session
+    ON media_files (tenant_id, session_id);
+
+-- ------------------------------------------------------------
+-- 10. Alembic 版本标记（head）
 -- ------------------------------------------------------------
 
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM alembic_version) THEN
-        UPDATE alembic_version SET version_num = '0006_xian_workspaces';
+        UPDATE alembic_version SET version_num = '0007_media_registry';
     ELSE
-        INSERT INTO alembic_version (version_num) VALUES ('0006_xian_workspaces');
+        INSERT INTO alembic_version (version_num) VALUES ('0007_media_registry');
     END IF;
 END $$;
 
