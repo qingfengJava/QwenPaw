@@ -110,7 +110,6 @@ logs/
 AGENTS.md
 .claude
 openspec
-CLAUDE.md
 *.tmp
 
 # Build cache
@@ -154,3 +153,4 @@ docs/reviews/
 
 # Qoder IDE session plan caches (rules under .qoder/rules stay tracked)
 .qoder/plans/
+.mimosa
