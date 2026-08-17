@@ -11,10 +11,12 @@
  * stays a pure layout shell.
  */
 import { useEffect, useMemo, useState } from "react";
-import { useLocation } from "react-router-dom";
-import { workspaceApi } from "../../api/modules";
+import { useLocation, useNavigate } from "react-router-dom";
+import { chatApi, workspaceApi } from "../../api/modules";
 import type { ChatSpecView, WorkspaceView } from "../../api/modules";
 import { useAllChats, useChatsStore } from "../../stores/chats";
+import { useAuthStore } from "../../stores/auth";
+import { useChatPrefs } from "../../stores/chatPrefs";
 import { useSidebarGroups } from "./useSidebarGroups";
 import { useToast } from "../Toast";
 import Modal from "../Modal";
@@ -45,6 +47,8 @@ function errorMessage(err: unknown): string {
 export default function SidebarChatTree() {
   const toast = useToast();
   const location = useLocation();
+  const navigate = useNavigate();
+  const username = useAuthStore((s) => s.username);
   const activeChatId =
     new URLSearchParams(location.search).get("chat") ?? "";
 
@@ -245,6 +249,24 @@ export default function SidebarChatTree() {
 
   // --- workspace actions ------------------------------------------------------
 
+  // Forward-creation loop: a workspace exists so work can happen IN it —
+  // create the chat and bind it up-front (bindChats reloads the store).
+  const handleNewChatInWorkspace = async (ws: WorkspaceView) => {
+    try {
+      const chat = await chatApi.create("新任务", username);
+      // The pending launcher pick must not hijack this explicit action.
+      useChatPrefs.getState().setPendingWorkspace(null);
+      try {
+        await useChatsStore.getState().bindChats(ws.id, [chat.id]);
+      } catch {
+        toast.warning("任务已创建，但绑定空间失败");
+      }
+      navigate(`/chat?chat=${chat.id}`);
+    } catch {
+      toast.error("创建任务失败");
+    }
+  };
+
   const handleWsRenamed = async (workspaceId: string, name: string) => {
     try {
       await workspaceApi.update(workspaceId, name);
@@ -271,6 +293,12 @@ export default function SidebarChatTree() {
   };
 
   const wsMenuEntries = (ws: WorkspaceView): ContextMenuEntry[] => [
+    {
+      key: "new-chat",
+      label: "在此空间新建任务",
+      icon: "fa-solid fa-plus",
+      onClick: () => void handleNewChatInWorkspace(ws),
+    },
     {
       key: "open-folder",
       label: "打开文件夹",
@@ -389,6 +417,7 @@ export default function SidebarChatTree() {
                 }
                 onChatArchive={(chat) => void handleArchiveChat(chat)}
                 onChatTogglePin={(chat) => void handleTogglePin(chat)}
+                onNewChat={(ws) => void handleNewChatInWorkspace(ws)}
                 onWorkspaceContextMenu={(e, workspace) =>
                   setWsMenu({ anchor: anchorOf(e), ws: workspace })
                 }

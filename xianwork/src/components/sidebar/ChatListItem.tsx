@@ -146,7 +146,9 @@ export default function ChatListItem({
                   title="已置顶"
                 />
               )}
-              <span>{chat.name || "新任务"}</span>
+              <span title={chat.name || undefined}>
+                {chat.name || "新任务"}
+              </span>
             </>
           )}
           {running && !renaming && (

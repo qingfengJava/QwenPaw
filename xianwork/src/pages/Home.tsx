@@ -11,6 +11,7 @@ import ChatComposer, {
 } from "../components/chat/ChatComposer";
 import { chatApi } from "../api/modules";
 import { useAuthStore } from "../stores/auth";
+import { useChatsStore } from "../stores/chats";
 
 /** SessionStorage bridge for kickoff attachments (cleared by Chat on read). */
 export const KICKOFF_ATTACHMENTS_KEY = "xianwork_kickoff_attachments";
@@ -46,6 +47,10 @@ export default function HomePage() {
       // Create the chat, then hand text + attachments to the Chat page as
       // kickoff — it performs the real streamed send once history loads.
       const chat = await chatApi.create(value.slice(0, 24) || "新对话", username);
+      // Apply the launcher's workspace pick through the shared store
+      // helper (clear-first, best-effort — see applyPendingWorkspace).
+      await useChatsStore.getState().applyPendingWorkspace(chat.id);
+      await useChatsStore.getState().reload();
       if (pending.length > 0) {
         try {
           sessionStorage.setItem(

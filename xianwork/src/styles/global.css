@@ -2084,6 +2084,124 @@ textarea.main-input::placeholder {
   white-space: nowrap;
 }
 
+/* --- workspace selector (composer-embedded, loop-selector parity) --- */
+.ws-selector { position: relative; }
+.ws-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  font-size: 12px;
+  color: #5c5e66;
+  cursor: pointer;
+}
+.ws-trigger > i:first-child { color: #d9a441; font-size: 12px; }
+.ws-trigger:disabled { opacity: 0.55; cursor: not-allowed; }
+.ws-trigger.accent { color: #b0791d; background: rgba(217,164,65,0.10); }
+.ws-trigger.open { background: #f2f3f5; }
+.ws-panel {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 60;
+  width: 320px;
+  background: #fff;
+  border: 1px solid var(--border-light, #e5e6eb);
+  border-radius: 12px;
+  box-shadow: var(--shadow-dropdown, 0 8px 28px rgba(0,0,0,0.14));
+  padding: 6px;
+  max-height: 380px;
+  overflow-y: auto;
+}
+.ws-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 4px 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-light, #e5e6eb);
+  border-radius: 8px;
+  background: #fafbfc;
+}
+.ws-search > i { font-size: 11px; color: #9ca0ab; }
+.ws-search input {
+  flex: 1;
+  border: none;
+  background: none;
+  outline: none;
+  font-size: 12px;
+  color: var(--text-primary, #1f2328);
+}
+.ws-search input::placeholder { color: #9ca0ab; }
+.ws-group-label {
+  padding: 8px 10px 3px;
+  font-size: 10.5px;
+  color: #9ca0ab;
+  letter-spacing: 0.4px;
+}
+.ws-option {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  background: none;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+}
+.ws-option:hover { background: #f6f7f9; }
+.ws-option.active { background: rgba(59,110,246,0.08); }
+.ws-option > i:first-child { color: #d9a441; width: 15px; text-align: center; font-size: 13px; }
+.ws-option-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ws-option-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary, #1f2328);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ws-option-path {
+  font-size: 11px;
+  color: #9ca0ab;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ws-empty {
+  padding: 10px 10px 12px;
+  font-size: 11.5px;
+  color: #9ca0ab;
+  text-align: center;
+}
+.ws-divider {
+  height: 1px;
+  margin: 6px 6px;
+  background: var(--border-light, #e5e6eb);
+}
+.ws-action {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  background: none;
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: var(--text-primary, #1f2328);
+  cursor: pointer;
+  text-align: left;
+}
+.ws-action:hover { background: #f6f7f9; }
+.ws-action:disabled { opacity: 0.6; cursor: not-allowed; }
+.ws-action > i:first-child { color: #3b6ef6; width: 15px; text-align: center; }
+
 /* --- approval selector (blue-pill like backend) --- */
 .approval-selector { position: relative; }
 .approval-trigger {
@@ -2744,10 +2862,9 @@ textarea.main-input::placeholder {
 .sidebar-section-title {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  /* Compact header group: title sits next to the extra (+) and chevron
-     buttons instead of stretching across the whole row. */
+  gap: 4px;
+  /* Title + bare count stay glued left; the action group owns the
+     right edge (see .sidebar-section-actions). */
   flex: 0 0 auto;
   background: none;
   border: none;
@@ -2762,14 +2879,32 @@ textarea.main-input::placeholder {
   color: var(--text-secondary);
 }
 
-/* 任务/空间 header row: [标题 (n)] [+ extra] [▾] packed left. */
+/* 任务/空间 header row: `标题 n` left, [+ extra] [▾] packed at the
+   right edge — same rhythm as the workspace folder rows. */
 .sidebar-section-toggle {
-  justify-content: flex-start;
+  justify-content: space-between;
+}
+
+/* Bare count hugging the section title (matches .workspace-count). */
+.sidebar-section-count {
+  font-size: 12px;
+}
+
+.sidebar-section-actions {
+  display: flex;
+  align-items: center;
   gap: 2px;
 }
 
-.sidebar-section-chevron {
-  font-size: 10px;
+/* Scoped under .sidebar-section-toggle for specificity over the generic
+   .sidebar-icon-btn (22px box / 12px glyph defined later in the file) —
+   otherwise that rule wins the cascade and the arrow stays oversized.
+   16px hit target + 9px glyph = same visual weight as the workspace
+   folder-row chevron. */
+.sidebar-section-toggle .sidebar-section-chevron {
+  width: 16px;
+  height: 16px;
+  font-size: 9px;
 }
 
 /* Icon-only ghost button on section header rows (批量选择 / 新建空间) */
@@ -2809,13 +2944,64 @@ textarea.main-input::placeholder {
   padding-left: 6px;
 }
 
-.workspace-chevron {
-  font-size: 10px;
-  color: var(--text-muted);
+/* Workspace label reads one step smaller than chat rows — the folder
+   glyph already carries the visual weight. */
+.workspace-name {
+  font-size: 12.5px;
 }
 
+/* Bare count hugging the folder name — mirrors the section headers'
+   `标题 n` pattern so headers and folder rows share one rhythm. */
+.workspace-count {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-left: 4px;
+}
+
+/* Tail chevron pinned at the row end (after the hover + button);
+   one size smaller than before per user request. */
+.workspace-chevron {
+  font-size: 9px;
+  color: var(--text-muted);
+  margin-left: 4px;
+}
+
+/* Folder glyph is optically smaller than the generic 15px nav icons —
+   a folder reads bigger than a chevron at equal font-size, which made
+   the workspace rows feel oversized next to sibling nav items. */
 .workspace-folder-icon {
-  color: #64748b;
+  font-size: 13px;
+  color: #d9a441;
+}
+
+/* Hover-only quick action: create a new chat pre-bound to this
+   workspace (forward-creation loop). Fades in exactly like the
+   chat-row action strip; layout stays static (opacity only). */
+.ws-new-chat-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-left: 4px;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.workspace-row:hover .ws-new-chat-btn,
+.workspace-row:focus-within .ws-new-chat-btn {
+  opacity: 1;
+}
+
+.ws-new-chat-btn:hover {
+  background: rgba(59, 110, 246, 0.10);
+  color: #3b6ef6;
 }
 
 .workspace-chat-list {
@@ -2858,21 +3044,12 @@ textarea.main-input::placeholder {
   position: relative;
 }
 
-/* Rows that render the hover action strip reserve its width INSIDE the
-   title container, so the title ellipsizes before the icons — while the
-   timestamp (.nav-item-right) stays flush against the row's right edge
-   (no dead zone on the right). Hover swaps timestamp visibility for the
-   icon strip in the same slot. */
-.nav-item.chat-row:has(.chat-item-actions) .nav-item-left {
-  padding-right: 84px;
-}
-
-/* Timestamp makes way for the action strip while hovering a normal row
-   (batch rows keep the timestamp — no action strip is rendered there). */
-.chat-row:hover:has(.chat-item-actions) .nav-item-right {
-  visibility: hidden;
-}
-
+/* The action strip is a pure OVERLAY — no hover-time layout changes at
+   all. No width reserve on the title (a permanent 84px pad truncated
+   Chinese titles to ~5 chars) and no collapsing timestamp (it made the
+   row shift on hover). Instead the strip inherits the row's background
+   and masks whatever sits beneath it (timestamp / long titles), so the
+   title owns the full row width at rest AND stays perfectly still. */
 .chat-item-actions {
   position: absolute;
   right: 4px;
@@ -2884,6 +3061,9 @@ textarea.main-input::placeholder {
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.12s ease;
+  background: inherit;
+  padding: 2px 3px;
+  border-radius: 6px;
 }
 
 .chat-row:hover .chat-item-actions,

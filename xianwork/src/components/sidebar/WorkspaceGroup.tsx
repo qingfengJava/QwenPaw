@@ -22,6 +22,9 @@ export interface WorkspaceGroupProps {
   onChatOpenMenu: (chat: ChatSpecView, anchor: MenuAnchor) => void;
   onChatArchive: (chat: ChatSpecView) => void;
   onChatTogglePin: (chat: ChatSpecView) => void;
+  /** Hover + shortcut on the folder row: create a new chat pre-bound
+   *  to this workspace (the forward-creation loop). */
+  onNewChat: (workspace: WorkspaceView) => void;
   onWorkspaceContextMenu: (e: React.MouseEvent, workspace: WorkspaceView) => void;
   onRenamingChange: (chatId: string, renaming: boolean) => void;
   onRenamed: (chatId: string, name: string) => void;
@@ -42,6 +45,7 @@ export default function WorkspaceGroup({
   onChatOpenMenu,
   onChatArchive,
   onChatTogglePin,
+  onNewChat,
   onWorkspaceContextMenu,
   onRenamingChange,
   onRenamed,
@@ -76,9 +80,6 @@ export default function WorkspaceGroup({
         title={workspace.dir_path}
       >
         <div className="nav-item-left">
-          <i
-            className={`fa-solid fa-chevron-${collapsed ? "right" : "down"} workspace-chevron`}
-          />
           <i className="fa-regular fa-folder workspace-folder-icon" />
           {renamingWorkspace ? (
             <input
@@ -105,10 +106,34 @@ export default function WorkspaceGroup({
               aria-label="重命名空间"
             />
           ) : (
-            <span>{workspace.name}</span>
+            <span className="workspace-name">{workspace.name}</span>
+          )}
+          {/* Count hugs the folder name (not the row tail) so the right
+           * side is a pure action group: [+][▾] — mirroring the section
+           * headers above for a consistent visual rhythm. */}
+          {!renamingWorkspace && (
+            <span className="workspace-count">{chats.length}</span>
           )}
         </div>
-        <div className="nav-item-right">{chats.length}</div>
+        <div className="nav-item-right">
+          <button
+            type="button"
+            className="ws-new-chat-btn"
+            title="在此空间新建任务"
+            aria-label={`在 ${workspace.name} 新建任务`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onNewChat(workspace);
+            }}
+          >
+            <i className="fa-solid fa-plus" />
+          </button>
+          {/* Tail chevron: pinned last so the expand-state indicator
+           * never shifts when the hover + button fades in. */}
+          <i
+            className={`fa-solid fa-chevron-${collapsed ? "right" : "down"} workspace-chevron`}
+          />
+        </div>
       </div>
       {!collapsed && (
         <ul className="workspace-chat-list">

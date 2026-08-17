@@ -21,6 +21,7 @@ import AgentSelector from "./AgentSelector";
 import ApprovalSelector from "./ApprovalSelector";
 import ContextRing from "./ContextRing";
 import LoopModeSelector from "./LoopModeSelector";
+import WorkspaceSelector from "./WorkspaceSelector";
 import {
   resolveLoopModeDescription,
   useChatPrefs,
@@ -74,6 +75,8 @@ export default function ChatComposer({
   onAttachmentsChange,
   placeholder,
   disclaimer = "懂你所需，伴你左右",
+  chatId,
+  workspaceDisabled,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -93,6 +96,11 @@ export default function ChatComposer({
   /** Home uses its own launcher placeholder; Chat keeps the backend one. */
   placeholder?: string;
   disclaimer?: string;
+  /** Active chat id — set on the Chat page so workspace picks bind live;
+   *  omitted on Home where they park in chatPrefs.pendingWorkspaceId. */
+  chatId?: string;
+  /** Streaming guard for the workspace selector (rebind while running is 409). */
+  workspaceDisabled?: boolean;
 }) {
   const toast = useToast();
   const loopModes = useChatPrefs((s) => s.loopModes);
@@ -471,6 +479,7 @@ export default function ChatComposer({
               onChange={(e) => void handleFiles(e.target.files)}
             />
             <LoopModeSelector />
+            <WorkspaceSelector chatId={chatId} disabled={workspaceDisabled} />
           </div>
 
           <div className="composer-right">

@@ -15,6 +15,7 @@ import { useMemo } from "react";
 import { create } from "zustand";
 import { chatApi, workspaceApi } from "../api/modules";
 import type { ChatSpecView, WorkspaceView } from "../api/modules";
+import { useChatPrefs } from "./chatPrefs";
 
 /** Monotonic sequence: a stale in-flight reload is discarded. */
 let reloadSeq = 0;
@@ -49,6 +50,12 @@ interface ChatsState {
   }>;
   bindChats: (workspaceId: string, chatIds: string[]) => Promise<void>;
   unbindChat: (workspaceId: string, chatId: string) => Promise<void>;
+  /** Single consumption point for chatPrefs.pendingWorkspaceId: binds a
+   *  freshly created chat when the user picked a workspace before any chat
+   * existed (Home launcher / Chat empty-state). Every task-creation path
+   *  must run through this so a stale pick can never leak into a later
+   *  creation. Does NOT reload — callers own their reload ordering. */
+  applyPendingWorkspace: (chatId: string) => Promise<void>;
 }
 
 export const useChatsStore = create<ChatsState>()((set, get) => ({
@@ -117,6 +124,19 @@ export const useChatsStore = create<ChatsState>()((set, get) => ({
   unbindChat: async (workspaceId, chatId) => {
     await workspaceApi.unbindChat(workspaceId, chatId);
     await get().reload();
+  },
+
+  applyPendingWorkspace: async (chatId) => {
+    const pending = useChatPrefs.getState().pendingWorkspaceId;
+    if (!pending) return;
+    // Clear BEFORE binding: a failed bind must not leak the stale pick
+    // into the next creation (the chat just stays in the default area).
+    useChatPrefs.getState().setPendingWorkspace(null);
+    try {
+      await workspaceApi.bindChats(pending, [chatId]);
+    } catch {
+      // best-effort — never block the chat from opening
+    }
   },
 }));
 

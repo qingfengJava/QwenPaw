@@ -1,9 +1,10 @@
 /**
  * SidebarSection — collapsible container for the「任务」/「空间」areas.
  *
- * Compact header: `[标题 (n)] [+ extra] [▾]` left-aligned in one visual
- * group (the action button sits right after the count, per user request —
- * not pinned to the far right). Children render only while expanded.
+ * Header mirrors the workspace folder rows: `标题 n ····· [+ extra] [▾]`
+ * — bare count hugging the title on the left, the + and chevron packed
+ * at the right edge, so headers and folder rows share one rhythm.
+ * Children render only while expanded.
  */
 import type { ReactNode } from "react";
 
@@ -33,22 +34,23 @@ export default function SidebarSection({
           onClick={onToggle}
           aria-expanded={!collapsed}
         >
-          <span>
-            {title} ({count})
-          </span>
+          <span>{title}</span>
+          <span className="sidebar-section-count">{count}</span>
         </button>
-        {extra}
-        <button
-          type="button"
-          className="sidebar-icon-btn sidebar-section-chevron"
-          onClick={onToggle}
-          aria-expanded={!collapsed}
-          aria-label={collapsed ? "展开" : "折叠"}
-        >
-          <i
-            className={`fa-solid fa-chevron-${collapsed ? "right" : "down"}`}
-          />
-        </button>
+        <div className="sidebar-section-actions">
+          {extra}
+          <button
+            type="button"
+            className="sidebar-icon-btn sidebar-section-chevron"
+            onClick={onToggle}
+            aria-expanded={!collapsed}
+            aria-label={collapsed ? "展开" : "折叠"}
+          >
+            <i
+              className={`fa-solid fa-chevron-${collapsed ? "right" : "down"}`}
+            />
+          </button>
+        </div>
       </div>
       {!collapsed && children}
     </div>

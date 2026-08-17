@@ -182,6 +182,11 @@ export default function ChatPage() {
         context_size: contextSize,
         context_usage_ratio: 0,
       });
+      // Every creation path funnels through here (empty-state button,
+      // context-ring 新对话, send-without-chat fallback), so consuming the
+      // pending workspace pick HERE closes the loop for all of them — and
+      // clears a stale pick before it can leak into a later creation.
+      await useChatsStore.getState().applyPendingWorkspace(chat.id);
       await useChatsStore.getState().reload();
       navigate(`/chat?chat=${chat.id}`);
     } catch {
@@ -298,6 +303,8 @@ export default function ChatPage() {
             onNewChat={() => void handleCreate()}
             attachments={attachments}
             onAttachmentsChange={setAttachments}
+            chatId={activeChat?.id}
+            workspaceDisabled={streaming}
           />
         </div>
       </div>

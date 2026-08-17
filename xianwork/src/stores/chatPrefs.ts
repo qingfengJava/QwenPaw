@@ -82,10 +82,15 @@ interface ChatPrefsState {
   approvalLevel: ApprovalLevel;
   loopModeId: string;
   loopModes: LoopModeInfo[];
+  /** Workspace picked on the Home launcher (no chat exists yet). Home
+   *  consumes and clears it right after chat creation — deliberately
+   *  excluded from partialize so a stale pick never survives a reload. */
+  pendingWorkspaceId: string | null;
   setSelectedAgent: (agentId: string) => void;
   setApprovalLevel: (level: ApprovalLevel) => void;
   setLoopMode: (modeId: string) => void;
   setLoopModes: (modes: LoopModeInfo[]) => void;
+  setPendingWorkspace: (workspaceId: string | null) => void;
 }
 
 export const useChatPrefs = create<ChatPrefsState>()(
@@ -95,6 +100,7 @@ export const useChatPrefs = create<ChatPrefsState>()(
       approvalLevel: "AUTO",
       loopModeId: "default",
       loopModes: [DEFAULT_LOOP_MODE],
+      pendingWorkspaceId: null,
       setSelectedAgent: (agentId) => set({ selectedAgent: agentId }),
       setApprovalLevel: (approvalLevel) => set({ approvalLevel }),
       setLoopMode: (loopModeId) => set({ loopModeId }),
@@ -107,6 +113,8 @@ export const useChatPrefs = create<ChatPrefsState>()(
             : "default",
         }));
       },
+      setPendingWorkspace: (workspaceId) =>
+        set({ pendingWorkspaceId: workspaceId }),
     }),
     {
       name: "xianwork-chat-prefs",

@@ -39,5 +39,7 @@
   --shadow-input: 0 2px 12px rgba(0, 0, 0, 0.08);
 
   /* Layout */
-  --sidebar-width: 260px;
+  /* Widened from the prototype's 260px: with the hover-action reserve
+     released at rest, 280px keeps ~14 Chinese chars of task title visible. */
+  --sidebar-width: 280px;
 }

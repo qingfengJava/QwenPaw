@@ -15,6 +15,7 @@ import { useMemo, useState } from "react";
 import Modal from "../Modal";
 import { workspaceApi } from "../../api/modules";
 import type { WorkspaceView } from "../../api/modules";
+import { friendlyWorkspaceError } from "../../lib/workspaceErrors";
 import DirBrowser from "./DirBrowser";
 
 export interface WorkspacePickerModalProps {
@@ -127,16 +128,15 @@ export default function WorkspacePickerModal({
         reset();
         onApplied(`已创建空间「${ws.name}」并绑定任务`);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        if (/already registered|已注册/i.test(message)) {
-          setError("该目录已是注册空间（列表已刷新，请从最近项目中选择）");
-        } else {
-          setError(message);
-        }
+        // Same readable wording as the composer selector — a raw FastAPI
+        // detail ("Chat is currently in progress…") must never leak here.
+        setError(friendlyWorkspaceError(err, "保存到工作空间失败"));
         setSubmitting(false);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      // Covers the selectedWs bind and the inherit unbind loop: running
+      // chats reject with 409 and need the shared friendly wording too.
+      setError(friendlyWorkspaceError(err, "保存到工作空间失败"));
       setSubmitting(false);
     }
   };
