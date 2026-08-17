@@ -27,6 +27,7 @@ import MainLayout from "./layouts/MainLayout";
 const LoginPage = lazy(() => import("./pages/Login"));
 const HomePage = lazy(() => import("./pages/Home"));
 const ChatPage = lazy(() => import("./pages/Chat"));
+const ShareViewPage = lazy(() => import("./pages/ShareView"));
 const ProjectsPage = lazy(() => import("./pages/Projects"));
 const ProjectDetailPage = lazy(() => import("./pages/ProjectDetail"));
 const ExpertsPage = lazy(() => import("./pages/Experts"));
@@ -90,6 +91,9 @@ export default function App() {
       <Suspense fallback={null}>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
+          {/* Public read-only share page: token in the URL is the only
+           * credential — stays outside MainLayout (no login/sidebar). */}
+          <Route path="/share/:token" element={<ShareViewPage />} />
           <Route element={<MainLayout />}>
             <Route path="/" element={<HomePage />} />
             <Route path="/chat" element={<ChatPage />} />

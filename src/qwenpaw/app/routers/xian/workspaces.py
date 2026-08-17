@@ -124,6 +124,51 @@ class WorkspaceChatsBody(BaseModel):
     chat_ids: list[str] = Field(default_factory=list)
 
 
+@router.post(
+    "/pick-directory",
+    summary="Open the native OS directory picker (server-local desktop)",
+)
+async def pick_directory(request: Request) -> dict:
+    """弹出系统原生目录选择框（Windows 资源管理器 / macOS / Linux 桌面）.
+
+    为新建空间提供「像本地应用一样选目录」的体验：tkinter 对话框在
+    服务端桌面弹出（本产品是本机部署，服务端桌面即用户桌面），
+    选中返回绝对路径，取消返回 ``path=null``.
+
+    限制：远程/无头部署无桌面可用时返回 503，前端回退到内置目录
+    浏览器（盘符条 + 面包屑）。请求会阻塞到用户关闭对话框为止。
+    """
+
+    def _pick() -> str | None:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        # 每次新建 Tk 实例（线程内独立事件循环）；withdraw 隐藏主窗、
+        # topmost 保证对话框浮在浏览器窗口之上
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        try:
+            root.update_idletasks()
+            chosen = filedialog.askdirectory(
+                title="选择工作空间目录",
+                parent=root,
+            )
+            return chosen or None
+        finally:
+            root.destroy()
+
+    try:
+        path = await asyncio.to_thread(_pick)
+    except Exception as exc:  # TclError: no display / tkinter missing
+        logger.info("native dir picker unavailable: %r", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="Native directory picker unavailable on this deployment",
+        ) from exc
+    return {"path": path}
+
+
 @router.get("", summary="List workspaces with optional chat grouping")
 async def list_workspaces(
     request: Request,

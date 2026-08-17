@@ -75,6 +75,10 @@ _PUBLIC_PREFIXES: tuple[str, ...] = (
     "/logo.png",
     "/qwenpaw-symbol.svg",
     "/api/frontend_plugin/",
+    # XianWork share links are capability URLs: the unguessable token in
+    # the path IS the credential (creating shares stays authenticated
+    # under /api/xian/shares). Read-only GET view/download handlers only.
+    "/api/xian/shares/view/",
 )
 
 

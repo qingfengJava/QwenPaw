@@ -1,6 +1,9 @@
 /**
  * SidebarSection — collapsible container for the「任务」/「空间」areas.
- * Title + live count + chevron; children render only while expanded.
+ *
+ * Compact header: `[标题 (n)] [+ extra] [▾]` left-aligned in one visual
+ * group (the action button sits right after the count, per user request —
+ * not pinned to the far right). Children render only while expanded.
  */
 import type { ReactNode } from "react";
 
@@ -33,11 +36,19 @@ export default function SidebarSection({
           <span>
             {title} ({count})
           </span>
+        </button>
+        {extra}
+        <button
+          type="button"
+          className="sidebar-icon-btn sidebar-section-chevron"
+          onClick={onToggle}
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? "展开" : "折叠"}
+        >
           <i
             className={`fa-solid fa-chevron-${collapsed ? "right" : "down"}`}
           />
         </button>
-        {extra}
       </div>
       {!collapsed && children}
     </div>

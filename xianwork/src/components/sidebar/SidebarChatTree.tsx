@@ -17,7 +17,6 @@ import type { ChatSpecView, WorkspaceView } from "../../api/modules";
 import { useAllChats, useChatsStore } from "../../stores/chats";
 import { useSidebarGroups } from "./useSidebarGroups";
 import { useToast } from "../Toast";
-import { exportChatMarkdown } from "../../lib/shareTask";
 import Modal from "../Modal";
 import SidebarSection from "./SidebarSection";
 import ChatListItem from "./ChatListItem";
@@ -26,6 +25,7 @@ import BatchBar from "./BatchBar";
 import SessionContextMenu, { ContextMenu } from "./SessionContextMenu";
 import type { ContextMenuEntry } from "./SessionContextMenu";
 import OpenFolderModal from "./OpenFolderModal";
+import ShareModal from "./ShareModal";
 import WorkspaceDialog from "../workspace/WorkspaceDialog";
 import WorkspacePickerModal from "../workspace/WorkspacePickerModal";
 
@@ -95,6 +95,7 @@ export default function SidebarChatTree() {
     path: string;
     hint?: string;
   } | null>(null);
+  const [shareChat, setShareChat] = useState<ChatSpecView | null>(null);
 
   // Initial load (single source of truth — no per-surface refetching).
   useEffect(() => {
@@ -141,13 +142,8 @@ export default function SidebarChatTree() {
     }
   };
 
-  const handleShare = async (chat: ChatSpecView) => {
-    try {
-      const name = await exportChatMarkdown(chat);
-      toast.success(`已导出「${name}.md」`);
-    } catch {
-      toast.error("导出失败");
-    }
+  const handleShare = (chat: ChatSpecView) => {
+    setShareChat(chat);
   };
 
   const handleTogglePin = async (chat: ChatSpecView) => {
@@ -322,22 +318,6 @@ export default function SidebarChatTree() {
           count={unboundChats.length}
           collapsed={tasksCollapsed}
           onToggle={() => setTasksCollapsed((v) => !v)}
-          extra={
-            !batchMode && allChats.length > 0 ? (
-              <button
-                type="button"
-                className="sidebar-icon-btn"
-                onClick={() => {
-                  setBatchMode(true);
-                  setCheckedIds(new Set());
-                }}
-                title="批量选择任务"
-                aria-label="批量选择任务"
-              >
-                <i className="fa-regular fa-square-check" />
-              </button>
-            ) : undefined
-          }
         >
           <ul className="sidebar-chat-list">
             {unboundChats.map((chat) => (
@@ -426,7 +406,7 @@ export default function SidebarChatTree() {
             ))}
             {workspaces.length === 0 && (
               <li className="workspace-empty">
-                还没有空间，点击空间标题右侧 + 注册一个磁盘目录
+                还没有空间，点击空间标题旁的 + 注册一个磁盘目录
               </li>
             )}
           </ul>
@@ -449,7 +429,7 @@ export default function SidebarChatTree() {
         onSaveToWorkspace={() =>
           menuChat && setPickerChatIds([menuChat.id])
         }
-        onShare={() => menuChat && void handleShare(menuChat)}
+        onShare={() => menuChat && handleShare(menuChat)}
         onDelete={() => menuChat && setDeleteChat(menuChat)}
       />
 
@@ -488,6 +468,12 @@ export default function SidebarChatTree() {
         path={folderModal?.path ?? ""}
         hint={folderModal?.hint}
         onClose={() => setFolderModal(null)}
+      />
+
+      <ShareModal
+        open={shareChat !== null}
+        chat={shareChat}
+        onClose={() => setShareChat(null)}
       />
 
       <Modal

@@ -20,8 +20,8 @@ DSN = os.environ.get("QWENPAW_TEST_PG_DSN", "").strip()
 _TRUNCATE_SQL = (
     "TRUNCATE project_members, tasks, feed_events, projects, "
     "department_members, departments, orgs, expert_team_members, "
-    "published_experts, expert_teams, experts, token_usage_events "
-    "RESTART IDENTITY"
+    "expert_skills, published_experts, expert_teams, experts, "
+    "token_usage_events RESTART IDENTITY"
 )
 
 
@@ -261,3 +261,302 @@ def test_build_team_supervisor_spec_pipeline_mode():
     assert "未配置自定义路由提示词" in soul
     # Pipeline ordering (方案 → 执行) must appear in sequence.
     assert soul.index("架构师") < soul.index("工程师")
+
+
+def test_team_roster_renders_lead_badge_and_title():
+    """member_role=lead renders the 主理人 badge; titles show too."""
+    from qwenpaw.app.experts.models import (
+        ExpertRecord,
+        ExpertTeamRecord,
+        TeamMember,
+    )
+    from qwenpaw.app.experts.team_runtime import build_team_supervisor_spec
+
+    team = ExpertTeamRecord(
+        id="team_y",
+        name="交付专家团",
+        description="",
+        mode="router",
+        members=[
+            TeamMember(
+                expert_id="exp_a",
+                role_hint="方案",
+                member_role="lead",
+            ),
+            TeamMember(expert_id="exp_b", role_hint="执行"),
+        ],
+    )
+    members = [
+        ExpertRecord(id="exp_a", name="架构师", title="首席架构师"),
+        ExpertRecord(id="exp_b", name="工程师"),
+    ]
+    _, soul = build_team_supervisor_spec(
+        "team_team_y",
+        "/tmp/workspaces/team_y",
+        team,
+        members,
+    )
+    assert "主理人" in soul
+    assert "首席架构师" in soul
+
+
+# ---------------------------------------------------------------------------
+# publish-chain pure helpers (no PG)
+# ---------------------------------------------------------------------------
+
+
+def _make_expert_record():
+    from qwenpaw.app.experts.models import ExpertRecord
+
+    return ExpertRecord(
+        id="exp_z",
+        name="法务专家",
+        title="高级法务专家",
+        description="合同审查",
+        system_prompt="你是合同审查专家。",
+        tags=["合同", "风险"],
+        agent_spec={"language": "zh", "approval_level": "AUTO"},
+    )
+
+
+def test_expert_spec_never_contains_skills():
+    """Regression guard: AgentProfileConfig silently drops a skills key,
+    so the binding set must never enter the spec (it is materialized
+    into the workspace skills/ directory instead)."""
+    from pathlib import Path
+
+    from qwenpaw.app.experts.publish import _build_expert_spec
+
+    record = _make_expert_record()
+    spec = _build_expert_spec(record, "expert_exp_z", Path("/tmp/ws"))
+
+    assert "skills" not in spec
+    # And the assembled spec stays AgentProfileConfig-compatible.
+    _spec_config_cls()(**spec)
+    assert spec["id"] == "expert_exp_z"
+
+
+def test_expert_profile_md_renders_react_workflow():
+    """PROFILE.md carries the persona, the ReAct loop steps, and the
+    configured skill list."""
+    from qwenpaw.app.experts.publish import _expert_profile_md
+
+    record = _make_expert_record()
+    md = _expert_profile_md(record, ["contract-review", "web-search"])
+
+    assert "法务专家" in md
+    assert "你是合同审查专家。" in md
+    assert "高级法务专家" in md
+    for step in ("理解", "规划", "决策", "生成", "核验"):
+        assert step in md
+    assert "contract-review" in md and "web-search" in md
+
+    # Empty persona falls back to a title-derived default.
+    bare = record.model_copy(update={"system_prompt": ""})
+    md2 = _expert_profile_md(bare, [])
+    assert "法务专家" in md2
+    assert "未绑定技能" in md2
+
+
+def test_sync_workspace_skills_reconciles(tmp_path, monkeypatch):
+    """Diff sync: stale dirs removed, kept dirs untouched, missing ones
+    tolerated as warnings (never raise). The default-workspace fallback
+    stays silent because the requested name cannot exist anywhere."""
+    from qwenpaw.app.experts import publish as publish_mod
+
+    # Keep the fallback source out of the test: no default workspace.
+    monkeypatch.setattr(
+        publish_mod,
+        "_default_workspace_dir",
+        lambda: None,
+    )
+    skills_dir = tmp_path / "skills"
+    (skills_dir / "stale-skill").mkdir(parents=True)
+    (skills_dir / "kept-skill").mkdir()
+    (skills_dir / "kept-skill" / "SKILL.md").write_text("x", encoding="utf-8")
+
+    publish_mod._sync_workspace_skills(
+        tmp_path,
+        ["kept-skill", "zz-definitely-missing-skill"],
+    )
+
+    assert not (skills_dir / "stale-skill").exists()
+    assert (skills_dir / "kept-skill" / "SKILL.md").exists()
+    assert not (skills_dir / "zz-definitely-missing-skill").exists()
+
+
+# ---------------------------------------------------------------------------
+# catalog fields / market queries / skill bindings (PG required)
+# ---------------------------------------------------------------------------
+
+
+async def test_expert_catalog_fields_roundtrip(enterprise_env, store):
+    created = await store.create_expert(
+        name="合同专家",
+        description="合同审查与风险提示",
+        agent_spec={"language": "zh"},
+        owner_id="alice",
+        visibility="private",
+        title="高级法务专家",
+        category="business",
+        badge="特邀专家",
+        tags=["合同", "风险"],
+        system_prompt="你是合同审查专家。",
+        featured=True,
+    )
+    assert created.owner_id == "alice"
+    assert created.visibility == "private"
+    assert created.is_builtin is False
+    assert created.title == "高级法务专家"
+    assert created.category == "business"
+    assert created.badge == "特邀专家"
+    assert created.tags == ["合同", "风险"]
+    assert created.system_prompt == "你是合同审查专家。"
+    assert created.featured is True
+    assert created.usage_count == 0
+
+    updated = await store.update_expert(
+        created.id,
+        title="首席法务专家",
+        tags=["合同"],
+        visibility="org",
+    )
+    assert updated.title == "首席法务专家"
+    assert updated.tags == ["合同"]
+    assert updated.visibility == "org"
+
+
+def _mk_expert_kwargs(name: str, **overrides):
+    base = {
+        "name": name,
+        "description": f"{name} 的描述",
+        "agent_spec": {"language": "zh"},
+    }
+    base.update(overrides)
+    return base
+
+
+async def test_list_experts_filters_and_sorts(enterprise_env, store):
+    hot = await store.create_expert(
+        **_mk_expert_kwargs("热门专家", category="dev", title="开发")
+    )
+    new_one = await store.create_expert(
+        **_mk_expert_kwargs("新专家", category="writing")
+    )
+    private_one = await store.create_expert(
+        **_mk_expert_kwargs(
+            "私有权家",
+            owner_id="alice",
+            visibility="private",
+        )
+    )
+    await store.bump_usage(hot.id)
+    await store.bump_usage(hot.id)
+    await store.bump_usage(new_one.id)
+
+    # Keyword search hits name/description/title.
+    hits = await store.list_experts(q="开发")
+    assert {e.id for e in hits} == {hot.id}
+
+    # Category filter.
+    devs = await store.list_experts(category="dev")
+    assert {e.id for e in devs} == {hot.id}
+
+    # Hot sort: usage_count descending.
+    ranked = await store.list_experts(sort="hot")
+    assert ranked[0].id == hot.id
+
+    # New sort: created_at descending (latest insert first).
+    newest = await store.list_experts(sort="new")
+    assert newest[0].id == private_one.id
+
+    # Owner scope.
+    mine = await store.list_experts(owner="alice")
+    assert {e.id for e in mine} == {private_one.id}
+
+    # Visibility widening for the owner under a status filter.
+    visible = await store.list_experts(
+        status="published",
+        include_private_for="alice",
+    )
+    # Nothing published yet; the private draft is not surfaced by a
+    # published-status query even for its owner.
+    assert visible == []
+    assert {e.id for e in await store.list_experts()} >= {
+        hot.id,
+        new_one.id,
+        private_one.id,
+    }
+
+
+async def test_skill_bindings_replace_and_cap(enterprise_env, store):
+    from qwenpaw.app.experts.models import ExpertSkillBinding
+
+    expert = await store.create_expert(**_mk_expert_kwargs("带技能专家"))
+
+    await store.replace_skills(
+        expert.id,
+        [
+            ExpertSkillBinding(skill_name="b-skill", seq=1),
+            ExpertSkillBinding(skill_name="a-skill", seq=0),
+            ExpertSkillBinding(skill_name="a-skill", seq=2),  # dup
+        ],
+    )
+    bindings = await store.list_skills(expert.id)
+    assert [b.skill_name for b in bindings] == ["a-skill", "b-skill"]
+    assert await store.enabled_skill_names(expert.id) == [
+        "a-skill",
+        "b-skill",
+    ]
+
+    # Disabled bindings stay stored but leave the enabled set.
+    await store.replace_skills(
+        expert.id,
+        [
+            ExpertSkillBinding(skill_name="a-skill"),
+            ExpertSkillBinding(skill_name="off-skill", enabled=False),
+        ],
+    )
+    assert await store.enabled_skill_names(expert.id) == ["a-skill"]
+    assert len(await store.list_skills(expert.id)) == 2
+
+    # Cap: 12 requested → MAX_EXPERT_SKILLS (8) kept.
+    many = [ExpertSkillBinding(skill_name=f"s{i}") for i in range(12)]
+    capped = await store.replace_skills(expert.id, many)
+    assert len(capped) == 8
+
+    # Draft deletion clears the bindings with it.
+    assert await store.delete_expert(expert.id) is True
+    assert await store.list_skills(expert.id) == []
+
+
+async def test_bump_usage_atomic(enterprise_env, store):
+    expert = await store.create_expert(**_mk_expert_kwargs("计数专家"))
+    for expected in (1, 2, 3):
+        assert await store.bump_usage(expert.id) == expected
+    assert (await store.get_expert(expert.id)).usage_count == 3
+    # Missing experts report 0 instead of raising.
+    assert await store.bump_usage("exp_missing") == 0
+
+
+async def test_list_teams_returns_member_roles(enterprise_env, store):
+    from qwenpaw.app.experts.models import TeamMember
+
+    e1 = await store.create_expert(**_mk_expert_kwargs("写手"))
+    e2 = await store.create_expert(**_mk_expert_kwargs("审校"))
+    team = await store.create_team(name="内容团队")
+    await store.update_team(
+        team.id,
+        members=[
+            TeamMember(
+                expert_id=e1.id,
+                role_hint="执笔",
+                member_role="lead",
+            ),
+            TeamMember(expert_id=e2.id, role_hint="终审"),
+        ],
+    )
+    teams = await store.list_teams()
+    target = next(t for t in teams if t.id == team.id)
+    assert target.members[0].member_role == "lead"
+    assert target.members[1].member_role == "member"

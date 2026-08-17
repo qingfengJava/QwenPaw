@@ -123,6 +123,20 @@ async def bootstrap_enterprise() -> bool:
         await get_org_service().bootstrap_default_org()
         _schema_ready = True
         logger.info("Enterprise schema ready (orgs/projects/experts).")
+
+        # Seed the builtin experts (idempotent by fixed ids; failures
+        # never block startup — the market simply starts empty).
+        try:
+            from .experts.builtins import ensure_builtin_experts
+
+            installed = await ensure_builtin_experts()
+            if installed:
+                logger.info("Seeded %d builtin experts.", installed)
+        except Exception:  # pylint: disable=broad-except
+            logger.warning(
+                "builtin expert seeding skipped",
+                exc_info=True,
+            )
         return True
     except Exception:  # pylint: disable=broad-except
         logger.error(

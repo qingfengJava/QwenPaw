@@ -1,10 +1,12 @@
 /**
  * WorkspaceDialog — register a new workspace (「新建空间」).
  *
- * Name + absolute directory path (typed manually or picked through the
- * embedded DirBrowser). The optional "create missing directory" checkbox
- * maps to the backend `create=true` mkdir flag; without it the server
- * requires an existing directory.
+ * Name + absolute directory path. Directory input offers three paths:
+ * 1. 「选择目录…」 opens the native OS picker (server-local desktop,
+ *    Explorer-style — the primary UX); 2. typing manually; 3. the
+ *    embedded DirBrowser (drive strip + breadcrumbs) as fallback for
+ *    headless/remote deployments. The optional "create missing
+ *    directory" checkbox maps to the backend `create=true` mkdir flag.
  */
 import { useState } from "react";
 import Modal from "../Modal";
@@ -27,6 +29,7 @@ export default function WorkspaceDialog({
   const [dirPath, setDirPath] = useState("");
   const [createDir, setCreateDir] = useState(true);
   const [browsing, setBrowsing] = useState(false);
+  const [picking, setPicking] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -43,6 +46,29 @@ export default function WorkspaceDialog({
     if (submitting) return;
     reset();
     onClose();
+  };
+
+  // Native OS picker: request blocks until the desktop dialog closes.
+  const pickNative = async () => {
+    if (picking) return;
+    setPicking(true);
+    setError(null);
+    try {
+      const r = await workspaceApi.pickDirectory();
+      if (r.path) {
+        setDirPath(r.path);
+        setBrowsing(false);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(
+        /unavailable|503/i.test(message)
+          ? "当前部署不支持系统目录选择，请手动输入或使用浏览模式"
+          : message,
+      );
+    } finally {
+      setPicking(false);
+    }
   };
 
   const submit = async () => {
@@ -117,11 +143,23 @@ export default function WorkspaceDialog({
           />
           <button
             type="button"
+            className="btn-black"
+            disabled={picking}
+            onClick={() => void pickNative()}
+            title="打开系统目录选择窗口"
+          >
+            <i
+              className={picking ? "fa-solid fa-spinner fa-spin" : "fa-regular fa-folder-open"}
+            />
+            {picking ? "请在弹出窗口中选择…" : "选择目录…"}
+          </button>
+          <button
+            type="button"
             className="btn-plain"
             onClick={() => setBrowsing((v) => !v)}
           >
-            <i className="fa-regular fa-folder-open" />
-            {browsing ? "收起浏览" : "浏览…"}
+            <i className="fa-regular fa-folder-tree" />
+            {browsing ? "收起浏览" : "手动浏览"}
           </button>
         </div>
         <p className="form-hint">

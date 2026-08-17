@@ -300,6 +300,16 @@ class ExpertRow(TenantMixin, TimestampMixin, Base):
     (an ``AgentProfileConfig`` dump). ``status`` is one of ``draft`` /
     ``published`` / ``archived``; publishing bumps ``version`` and stores
     an immutable snapshot in ``published_experts``.
+
+    Catalog columns (marketplace plane): ``owner_id`` anchors custom
+    experts to their creator (NULL = admin/builtin) for the future
+    permission rollout; ``visibility`` is ``org`` / ``private``;
+    ``category`` / ``title`` / ``badge`` / ``tags`` drive the market
+    cards; ``system_prompt`` is materialized into the workspace
+    ``PROFILE.md`` at publish time; ``usage_count`` feeds the "hot"
+    sort. Skill bindings live in ``expert_skills`` (never inside
+    ``agent_spec`` — ``AgentProfileConfig`` has no skills field and
+    silently drops unknown keys).
     """
 
     __tablename__ = "experts"
@@ -331,10 +341,73 @@ class ExpertRow(TenantMixin, TimestampMixin, Base):
         default=1,
         server_default="1",
     )
+    owner_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    visibility: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="org",
+        server_default="org",
+    )
+    is_builtin: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+    )
+    title: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="",
+        server_default="",
+    )
+    category: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="general",
+        server_default="general",
+    )
+    badge: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="",
+        server_default="",
+    )
+    tags: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default="[]",
+    )
+    system_prompt: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="",
+        server_default="",
+    )
+    usage_count: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+    featured: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+    )
 
     __table_args__ = (
         PrimaryKeyConstraint("tenant_id", "id", name="pk_experts"),
         Index("ix_experts_status", "tenant_id", "status"),
+        Index(
+            "ix_experts_market",
+            "tenant_id",
+            "status",
+            "category",
+            text("updated_at DESC"),
+        ),
+        Index("ix_experts_owner", "tenant_id", "owner_id"),
     )
 
 
@@ -343,6 +416,8 @@ class ExpertTeamRow(TenantMixin, TimestampMixin, Base):
 
     ``mode`` is ``router`` (an LLM picks one member per turn) or
     ``pipeline`` (members execute in sequence, outputs chained).
+    ``orchestration`` is a reserved JSONB for the future runtime
+    orchestrator (parallel groups / DAG / per-member task templates).
     """
 
     __tablename__ = "expert_teams"
@@ -379,6 +454,25 @@ class ExpertTeamRow(TenantMixin, TimestampMixin, Base):
         default=1,
         server_default="1",
     )
+    owner_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    category: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="general",
+        server_default="general",
+    )
+    tags: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default="[]",
+    )
+    orchestration: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default="{}",
+    )
 
     __table_args__ = (
         PrimaryKeyConstraint("tenant_id", "id", name="pk_expert_teams"),
@@ -387,7 +481,11 @@ class ExpertTeamRow(TenantMixin, TimestampMixin, Base):
 
 
 class ExpertTeamMemberRow(TenantMixin, TimestampMixin, Base):
-    """Ordered membership of one expert inside one expert team."""
+    """Ordered membership of one expert inside one expert team.
+
+    ``member_role`` is ``lead`` (主理人， rendered with a badge) or
+    ``member``.
+    """
 
     __tablename__ = "expert_team_members"
 
@@ -398,6 +496,12 @@ class ExpertTeamMemberRow(TenantMixin, TimestampMixin, Base):
         nullable=False,
         default="",
         server_default="",
+    )
+    member_role: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="member",
+        server_default="member",
     )
     seq: Mapped[int] = mapped_column(
         Integer,
@@ -414,6 +518,44 @@ class ExpertTeamMemberRow(TenantMixin, TimestampMixin, Base):
             name="pk_expert_team_members",
         ),
         Index("ix_expert_team_members_expert", "tenant_id", "expert_id"),
+    )
+
+
+class ExpertSkillRow(TenantMixin, TimestampMixin, Base):
+    """Binding of one shared-registry skill to one expert.
+
+    ``skill_name`` references the console-plane skill registry (the
+    registry stays authoritative); publishing materializes the enabled
+    set into the expert workspace's ``skills/`` directory. ``seq`` keeps
+    a stable display/injection order and ``enabled`` supports toggling
+    a skill off without losing the binding.
+    """
+
+    __tablename__ = "expert_skills"
+
+    expert_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    skill_name: Mapped[str] = mapped_column(Text, nullable=False)
+    enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default=text("true"),
+    )
+    seq: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+
+    __table_args__ = (
+        PrimaryKeyConstraint(
+            "tenant_id",
+            "expert_id",
+            "skill_name",
+            name="pk_expert_skills",
+        ),
+        Index("ix_expert_skills_expert", "tenant_id", "expert_id"),
     )
 
 

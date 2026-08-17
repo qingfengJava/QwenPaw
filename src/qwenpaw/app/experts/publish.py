@@ -21,8 +21,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from ..enterprise import current_tenant_id
 from .models import (
@@ -103,15 +104,174 @@ def _write_agent_json(
     save_agent_config(agent_id, agent_config)
 
 
-def _init_workspace(workspace_dir: Path, language: str) -> None:
-    """Create the standard workspace skeleton (sessions/memory/...)."""
+def _init_workspace(
+    workspace_dir: Path,
+    language: str,
+    skill_names: Optional[List[str]] = None,
+) -> None:
+    """Create the standard workspace skeleton (sessions/memory/skills)."""
     from ..routers.agents import _initialize_agent_workspace
 
     _initialize_agent_workspace(
         workspace_dir,
-        skill_names=[],
+        skill_names=skill_names or [],
         language=language,
     )
+
+
+def _default_workspace_dir() -> Optional[Path]:
+    """The default agent workspace (shared skill source), if resolvable."""
+    from ...config.config import load_config
+
+    try:
+        ref = load_config().agents.profiles.get("default")
+        if ref and ref.workspace_dir:
+            return Path(ref.workspace_dir)
+    except Exception:  # pylint: disable=broad-except
+        logger.debug("default workspace resolution failed", exc_info=True)
+    return None
+
+
+def _sync_workspace_skills(
+    workspace_dir: Path,
+    desired: List[str],
+) -> None:
+    """Reconcile the workspace ``skills/`` directory with the bindings.
+
+    First publishes install skills through ``_init_workspace``; once
+    ``agent.json`` exists that initializer is skipped, so every publish
+    runs this diff instead: stale directories are removed and missing
+    ones are installed — from the shared pool first, falling back to a
+    plain copy from the default workspace (the catalog the xian plane
+    lists). Failures warn but never block publishing (same tolerance
+    as ``_install_initial_skills``).
+    """
+    from ...agents.skill_system.pool_service import SkillPoolService
+    from ...agents.skill_system.store import get_workspace_skills_dir
+
+    skills_dir = get_workspace_skills_dir(workspace_dir)
+    skills_dir.mkdir(parents=True, exist_ok=True)
+    existing = {
+        child.name for child in skills_dir.iterdir() if child.is_dir()
+    }
+    wanted = set(desired)
+
+    for stale in sorted(existing - wanted):
+        shutil.rmtree(skills_dir / stale, ignore_errors=True)
+        logger.info(
+            "removed stale skill %s from workspace %s",
+            stale,
+            workspace_dir.name,
+        )
+
+    default_skills: Optional[Path] = None
+    default_dir = _default_workspace_dir()
+    if default_dir is not None:
+        candidate = get_workspace_skills_dir(default_dir)
+        if candidate.is_dir():
+            default_skills = candidate
+
+    pool = SkillPoolService()
+    for name in sorted(wanted - existing):
+        result = pool.download_to_workspace(
+            skill_name=name,
+            workspace_dir=workspace_dir,
+            overwrite=False,
+        )
+        if result.get("success"):
+            continue
+        if default_skills is not None:
+            source = default_skills / name
+            if source.is_dir():
+                shutil.copytree(source, skills_dir / name)
+                logger.info(
+                    "copied skill %s from default workspace into %s",
+                    name,
+                    workspace_dir.name,
+                )
+                continue
+        logger.warning(
+            "skill %s unavailable for workspace %s (%s); "
+            "publishing continues without it",
+            name,
+            workspace_dir.name,
+            result.get("reason"),
+        )
+
+
+_PROFILE_TEMPLATE = """# {name}
+
+{title_line}
+
+## 角色设定
+
+{persona}
+
+## 工作方法（ReAct 循环）
+
+对每个任务严格遵循以下循环，直至产出达标：
+
+1. **理解**：复述任务目标与关键约束，识别歧义并向用户澄清；
+2. **规划**：拆解为可执行的步骤，明确每步的产出与所需工具/技能；
+3. **决策**：选择最合适的工具、技能或知识完成当前步骤；
+4. **生成**：产出该步骤结果；
+5. **核验**：对照目标检查结果，发现偏差则回到第 2 步重新规划并修正；
+6. 循环期间可调用工具、查阅技能手册、回填记忆中的关键信息。
+
+## 已配置技能
+
+{skill_list}
+
+> 技能位于工作区 ``skills/`` 目录，运行时按需渐进加载；使用技能能力前先阅读其 SKILL.md 说明。
+"""
+
+
+def _expert_profile_md(record, skill_names: List[str]) -> str:
+    """Render the expert persona card materialized as PROFILE.md."""
+    persona = (record.system_prompt or "").strip()
+    if not persona:
+        persona = (
+            f"你是「{record.name}」，一位专业的 {(record.title or '领域').strip()}。"
+            f"{record.description or ''}"
+        ).strip()
+    title_line = (
+        f"**职称**：{record.title}"
+        if record.title
+        else "**职称**：领域专家"
+    )
+    if record.description:
+        title_line += f"  \n**简介**：{record.description}"
+    if skill_names:
+        skill_list = "\n".join(f"- `{name}`" for name in skill_names)
+    else:
+        skill_list = "（未绑定技能，依赖通用能力）"
+    return _PROFILE_TEMPLATE.format(
+        name=record.name,
+        title_line=title_line,
+        persona=persona,
+        skill_list=skill_list,
+    )
+
+
+def _build_expert_spec(
+    record,
+    agent_id: str,
+    workspace_dir: Path,
+) -> dict:
+    """Assemble the workspace ``agent.json`` spec for one expert.
+
+    Skills are deliberately absent: ``AgentProfileConfig`` has no skills
+    field and silently drops unknown keys, so the binding set never
+    enters the spec — it is materialized into the workspace ``skills/``
+    directory instead (see ``_sync_workspace_skills``).
+    """
+    return {
+        **record.agent_spec,
+        "id": agent_id,
+        "name": record.name,
+        "description": record.description,
+        "workspace_dir": str(workspace_dir),
+    }
 
 
 async def publish_expert(
@@ -142,21 +302,29 @@ async def publish_expert(
     agent_id = expert_agent_id(expert_id)
     workspace_dir = _expert_workspace_dir(expert_id)
     language = str(record.agent_spec.get("language") or "zh")
+    # The enabled binding set is the materialization input: skills are
+    # NEVER written into ``spec`` (AgentProfileConfig has no skills
+    # field and silently drops unknown keys) — they live in the
+    # workspace ``skills/`` directory the runtime auto-discovers.
+    skill_names = await store.enabled_skill_names(expert_id)
 
-    spec = {
-        **record.agent_spec,
-        "id": agent_id,
-        "name": record.name,
-        "description": record.description,
-        "workspace_dir": str(workspace_dir),
-    }
+    spec = _build_expert_spec(record, agent_id, workspace_dir)
 
     def _materialize() -> None:
         workspace_dir.mkdir(parents=True, exist_ok=True)
         _register_agent_profile(agent_id, workspace_dir)
         if not (workspace_dir / "agent.json").exists():
-            _init_workspace(workspace_dir, language)
+            _init_workspace(workspace_dir, language, skill_names)
         _write_agent_json(agent_id, workspace_dir, spec)
+        # Re-publishes (agent.json exists) land here: reconcile the
+        # workspace skill set with the current bindings table.
+        _sync_workspace_skills(workspace_dir, skill_names)
+        # The persona card is refreshed on every publish (mirrors the
+        # team SOUL.md policy below).
+        (workspace_dir / "PROFILE.md").write_text(
+            _expert_profile_md(record, skill_names),
+            encoding="utf-8",
+        )
 
     await asyncio.to_thread(_materialize)
 

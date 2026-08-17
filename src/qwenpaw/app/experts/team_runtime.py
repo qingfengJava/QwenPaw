@@ -20,6 +20,7 @@ import logging
 from typing import Any, Dict, List, Protocol
 
 from .models import (
+    TEAM_MEMBER_ROLE_LEAD,
     TEAM_MODE_PIPELINE,
     TEAM_MODE_ROUTER,
     ExpertRecord,
@@ -74,6 +75,17 @@ class TeamOrchestrator(Protocol):
                 # router: lightweight LLM picks one member agent
                 # pipeline: chain member run_turns, outputs appended
                 ...
+
+    Concurrency notes for that implementation (verified against the
+    current runtime): there is no global lock — ``ConcurrencyGate`` is
+    a three-tier semaphore set (per-user=3 / per-tenant=50 /
+    global=200) and ``UnifiedQueueManager`` serializes only within one
+    session while cross-session turns run concurrently. So a runtime
+    orchestrator should give every member its own session_id and fan
+    out with ``asyncio.gather``; the real bound is the per-user=3
+    budget (a team turn owned by one user occupies one slot per
+    concurrent member call — plan for a team-parallelism budget or a
+    virtual ``team:{id}`` owner if wider fan-out is needed).
     """
 
     async def run_turn(
@@ -94,11 +106,17 @@ def _member_roster(
     lines = []
     for index, expert in enumerate(members, start=1):
         binding = by_id.get(expert.id)
-        hint = f"（{binding.role_hint}）" if binding and binding.role_hint else ""
+        labels = []
+        if binding and binding.member_role == TEAM_MEMBER_ROLE_LEAD:
+            labels.append("主理人")
+        if binding and binding.role_hint:
+            labels.append(binding.role_hint)
+        label = f"（{' · '.join(labels)}）" if labels else ""
+        title = f" · {expert.title}" if expert.title else ""
         description = (expert.description or "（无描述）").strip()
         lines.append(
-            f"{index}. **{expert.name}**{hint} — {description}\n"
-            f"   运行时标识：`{expert_agent_id(expert.id)}`",
+            f"{index}. **{expert.name}**{title}{label} — {description}\n"
+            f"   运行时标识：`{expert_agent_id(expert.id)}`"
         )
     return "\n".join(lines) if lines else "（暂无成员）"
 

@@ -1,7 +1,7 @@
 /**
  * XianWork API surface: Xian routes + reused console/auth/chats routes.
  */
-import { authHeaders, request } from "./request";
+import { ApiError, authHeaders, request } from "./request";
 
 // ---------------------------------------------------------------------------
 // shared types
@@ -57,6 +57,46 @@ export interface Expert {
   description: string;
   version: number;
   agent_id: string;
+  /** Catalog fields (market plane; additive — old fields unchanged). */
+  status?: string;
+  title?: string;
+  category?: string;
+  badge?: string;
+  tags?: string[];
+  owner_id?: string | null;
+  visibility?: string;
+  is_builtin?: boolean;
+  usage_count?: number;
+  featured?: boolean;
+  updated_at?: string | null;
+}
+
+export interface ExpertSkillBindingView {
+  expert_id: string;
+  skill_name: string;
+  enabled: boolean;
+  seq: number;
+}
+
+export interface ExpertDetail extends Expert {
+  system_prompt?: string;
+  skills?: ExpertSkillBindingView[];
+  teams?: { id: string; name: string; mode: string }[];
+}
+
+export interface ExpertCategory {
+  key: string;
+  label: string;
+  icon: string;
+}
+
+export interface ExpertTeamMemberView {
+  expert_id: string;
+  name: string;
+  title: string;
+  icon: string;
+  role_hint: string;
+  member_role: string;
 }
 
 export interface ExpertTeam {
@@ -67,6 +107,9 @@ export interface ExpertTeam {
   version: number;
   agent_id: string;
   member_count: number;
+  category?: string;
+  tags?: string[];
+  members?: ExpertTeamMemberView[];
 }
 
 export interface ChatSummary {
@@ -200,9 +243,89 @@ export const taskApi = {
     ),
 };
 
+export interface ExpertListParams {
+  category?: string;
+  q?: string;
+  sort?: "composite" | "hot" | "new";
+  scope?: "all" | "mine";
+}
+
+export interface ExpertCreatePayload {
+  name: string;
+  icon?: string;
+  description?: string;
+  title?: string;
+  category?: string;
+  badge?: string;
+  tags?: string[];
+  system_prompt?: string;
+  visibility?: "org" | "private";
+  skills?: { skill_name: string; enabled?: boolean; seq?: number }[];
+}
+
+export interface ExpertUpdatePayload {
+  name?: string;
+  icon?: string;
+  description?: string;
+  title?: string;
+  category?: string;
+  badge?: string;
+  tags?: string[];
+  system_prompt?: string;
+  visibility?: "org" | "private";
+}
+
+const expertQuery = (params: ExpertListParams) => {
+  const usp = new URLSearchParams();
+  if (params.category) usp.set("category", params.category);
+  if (params.q) usp.set("q", params.q);
+  if (params.sort) usp.set("sort", params.sort);
+  if (params.scope) usp.set("scope", params.scope);
+  const qs = usp.toString();
+  return qs ? `?${qs}` : "";
+};
+
 export const expertApi = {
-  list: () => request<Expert[]>("/xian/experts"),
-  listTeams: () => request<ExpertTeam[]>("/xian/experts/teams"),
+  /** Market list (published + visible) or the caller's own experts. */
+  list: (params: ExpertListParams = {}) =>
+    request<Expert[]>(`/xian/experts${expertQuery(params)}`),
+  /** My experts across every status (custom-expert management). */
+  mine: (params: Omit<ExpertListParams, "scope"> = {}) =>
+    request<Expert[]>(`/xian/experts${expertQuery({ ...params, scope: "mine" })}`),
+  detail: (id: string) =>
+    request<ExpertDetail>(`/xian/experts/${enc(id)}`),
+  categories: () => request<ExpertCategory[]>("/xian/experts/categories"),
+  listTeams: (category = "") =>
+    request<ExpertTeam[]>(
+      `/xian/experts/teams${category ? `?category=${encodeURIComponent(category)}` : ""}`,
+    ),
+  /** Summon counter — fire-and-forget from the market card. */
+  use: (id: string) =>
+    request<{ expert_id: string; agent_id: string; usage_count: number }>(
+      `/xian/experts/${enc(id)}/use`,
+      { method: "POST" },
+    ),
+  /** Create a personal expert (backend publishes it immediately). */
+  create: (body: ExpertCreatePayload) =>
+    request<ExpertDetail>("/xian/experts", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  update: (id: string, body: ExpertUpdatePayload) =>
+    request<ExpertDetail>(`/xian/experts/${enc(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  remove: (id: string) =>
+    request<void>(`/xian/experts/${enc(id)}`, { method: "DELETE" }),
+  setSkills: (
+    id: string,
+    skills: { skill_name: string; enabled?: boolean; seq?: number }[],
+  ) =>
+    request<ExpertDetail>(`/xian/experts/${enc(id)}/skills`, {
+      method: "PUT",
+      body: JSON.stringify({ skills }),
+    }),
 };
 
 // ---------------------------------------------------------------------------
@@ -423,6 +546,63 @@ export const chatApi = {
 };
 
 /* ------------------------------------------------------------------
+ * Share links — capability URLs minted by the backend (xian_shares).
+ * ------------------------------------------------------------------ */
+
+export interface ShareLink {
+  token: string;
+  /** Relative SPA path, e.g. `/xianwork/share/{token}`. */
+  url: string;
+}
+
+export interface ShareFileItem {
+  stored_name: string;
+  file_name: string | null;
+  media_type: string | null;
+  size: number | null;
+  source: string | null;
+  url: string;
+}
+
+export interface ShareView {
+  token: string;
+  chat: {
+    id: string;
+    name: string;
+    created_at: string;
+    updated_at: string;
+  };
+  shared_at: string;
+  messages: unknown[];
+  files: ShareFileItem[];
+}
+
+export const shareApi = {
+  /** POST /xian/shares — mint (or reuse) the share link for one chat. */
+  create: (chatId: string) =>
+    request<ShareLink>("/xian/shares", {
+      method: "POST",
+      body: JSON.stringify({ chat_id: chatId }),
+    }),
+  /** Public share view — plain fetch on purpose: the token IS the
+   * credential (usable in a logged-out browser), so no auth header and
+   * no 401 → login redirect handling. */
+  view: async (token: string): Promise<ShareView> => {
+    const res = await fetch(
+      `/api/xian/shares/view/${encodeURIComponent(token)}`,
+      { headers: { Accept: "application/json" } },
+    );
+    if (!res.ok) {
+      throw new ApiError(
+        res.status,
+        res.status === 404 ? "分享不存在或已失效" : "加载分享失败",
+      );
+    }
+    return (await res.json()) as ShareView;
+  },
+};
+
+/* ------------------------------------------------------------------
  * Provider / model plane — mirrors the backend ModelSelector contract.
  * ------------------------------------------------------------------ */
 
@@ -528,6 +708,12 @@ export const workspaceApi = {
     request<WorkspaceListResult>(
       `/xian/workspaces${includeChats ? "?include_chats=true" : ""}`,
     ),
+  /** Native OS directory picker (server-local desktop). `path` is null
+   *  when the user cancels; 503 on headless/remote deployments. */
+  pickDirectory: () =>
+    request<{ path: string | null }>("/xian/workspaces/pick-directory", {
+      method: "POST",
+    }),
   /** Register a disk directory; `create` mkdirs it first when missing. */
   create: (body: { name: string; dir_path: string; create?: boolean }) =>
     request<WorkspaceView>("/xian/workspaces", {

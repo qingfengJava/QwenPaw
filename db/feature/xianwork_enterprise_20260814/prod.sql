@@ -2,19 +2,21 @@
 -- 变更说明: XianWork 企业数字员工平台 prod 环境全量 schema 快照
 --           （0001_initial + 0002_enterprise + 0003_xian_extras
 --            + 0004_table_timestamps + 0005_media_files
---            + 0006_xian_workspaces）
+--            + 0006_xian_workspaces + 0007_media_registry
+--            + 0008_xian_shares）
 --           覆盖：M2 存储三表（chats / session_states / history_entries，
 --           含 tsv 生成列与 owner 隔离 RLS）、12 张企业表、
 --           project_bindings / project_automations、
 --           projects.instructions、chats.project_id、
 --           全部业务表的 created_at / updated_at 时间戳规范、
---           media_files 上传附件持久化表、
---           xian_workspaces 用户工作空间登记表
--- 变更时间: 2026-08-16
+--           media_files 上传附件持久化表（0007 会话文件登记扩展）、
+--           xian_workspaces 用户工作空间登记表、
+--           xian_shares 分享链接登记表（能力 URL）
+-- 变更时间: 2026-08-17
 -- 变更人:   清风
 -- 适用环境: prod（PostgreSQL 14+，上线时整文件执行一次即可）
--- 对应迁移: alembic head = 0006_xian_workspaces
--- 快照同步: 与 changelog/20260814/01+02+03+04 及 changelog/20260816/01+02 增量内容一致（本文件为全量形态）
+-- 对应迁移: alembic head = 0008_xian_shares
+-- 快照同步: 与 changelog/20260814/01+02+03+04 及 changelog/20260816/01+02+03 及 changelog/20260817/01 增量内容一致（本文件为全量形态）
 -- 执行方式: psql 单事务执行；全部语句幂等（IF NOT EXISTS），可重复执行；
 --           本文件不含任何 DROP / TRUNCATE / DELETE 语句
 -- ============================================================
@@ -683,15 +685,137 @@ CREATE INDEX IF NOT EXISTS ix_media_files_session
     ON media_files (tenant_id, session_id);
 
 -- ------------------------------------------------------------
--- 10. Alembic 版本标记（head）
+-- 10. XianWork 分享链接登记表（changelog/20260817/01）
+-- ------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS xian_shares (
+    tenant_id  VARCHAR(64) NOT NULL DEFAULT 'default',
+    token      VARCHAR(64) NOT NULL,
+    chat_id    VARCHAR(128) NOT NULL,
+    owner_id   VARCHAR(128) NOT NULL,
+    revoked    BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+    CONSTRAINT pk_xian_shares PRIMARY KEY (tenant_id, token)
+);
+
+COMMENT ON TABLE xian_shares IS 'XianWork 分享链接登记表（能力 URL：token 即凭据；同会话重复分享幂等复用，撤销置 revoked=true）';
+COMMENT ON COLUMN xian_shares.tenant_id IS '租户标识（多租户预留，单租户部署恒为 default）';
+COMMENT ON COLUMN xian_shares.token IS '分享令牌（secrets.token_urlsafe(18)，不可猜测；与 tenant_id 组成联合主键，公开视图端点唯一入参）';
+COMMENT ON COLUMN xian_shares.chat_id IS '被分享会话 ID（chats.id；会话删除后分享视图自然 404）';
+COMMENT ON COLUMN xian_shares.owner_id IS '铸造分享的账号（xian 面 username，RLS owner_isolation 隔离键）';
+COMMENT ON COLUMN xian_shares.revoked IS '是否已撤销（true 后公开端点一律 404；当前版本无撤销 UI，删除会话即等效失效）';
+COMMENT ON COLUMN xian_shares.created_at IS '创建时间（DB 自动维护，UTC）';
+COMMENT ON COLUMN xian_shares.updated_at IS '更新时间（DB 自动维护，UTC）';
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_xian_shares_chat
+    ON xian_shares (tenant_id, chat_id)
+    WHERE revoked = false;
+
+CREATE INDEX IF NOT EXISTS ix_xian_shares_owner
+    ON xian_shares (tenant_id, owner_id);
+
+ALTER TABLE xian_shares ENABLE ROW LEVEL SECURITY;
+ALTER TABLE xian_shares FORCE ROW LEVEL SECURITY;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies
+        WHERE schemaname = 'public' AND tablename = 'xian_shares' AND policyname = 'owner_isolation'
+    ) THEN
+        EXECUTE format(
+            'CREATE POLICY owner_isolation ON %I AS PERMISSIVE FOR ALL USING (%s) WITH CHECK (%s)',
+            'xian_shares',
+            'current_setting(''app.current_owner'', true) IS NULL ' ||
+            'OR current_setting(''app.current_owner'', true) = '''' ' ||
+            'OR owner_id IS NULL ' ||
+            'OR owner_id = current_setting(''app.current_owner'', true)',
+            'current_setting(''app.current_owner'', true) IS NULL ' ||
+            'OR current_setting(''app.current_owner'', true) = '''' ' ||
+            'OR owner_id IS NULL ' ||
+            'OR owner_id = current_setting(''app.current_owner'', true)'
+        );
+    END IF;
+END $$;
+
+-- ------------------------------------------------------------
+-- 11. 专家目录平面扩展（changelog/20260818/01，0009_expert_catalog）
+-- ------------------------------------------------------------
+
+ALTER TABLE experts ADD COLUMN IF NOT EXISTS owner_id TEXT;
+ALTER TABLE experts ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'org';
+ALTER TABLE experts ADD COLUMN IF NOT EXISTS is_builtin BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE experts ADD COLUMN IF NOT EXISTS title TEXT NOT NULL DEFAULT '';
+ALTER TABLE experts ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'general';
+ALTER TABLE experts ADD COLUMN IF NOT EXISTS badge TEXT NOT NULL DEFAULT '';
+ALTER TABLE experts ADD COLUMN IF NOT EXISTS tags JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE experts ADD COLUMN IF NOT EXISTS system_prompt TEXT NOT NULL DEFAULT '';
+ALTER TABLE experts ADD COLUMN IF NOT EXISTS usage_count BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE experts ADD COLUMN IF NOT EXISTS featured BOOLEAN NOT NULL DEFAULT FALSE;
+
+COMMENT ON COLUMN experts.owner_id IS '归属账号（自定义专家=创建者 username；NULL=管理员创建或内置专家；未来权限分配的锚点）';
+COMMENT ON COLUMN experts.visibility IS '可见范围：org=全员可见（叠加 RBAC grants）；private=仅 owner 可见；department/shared 为未来权限版本预留';
+COMMENT ON COLUMN experts.is_builtin IS '是否内置专家（随包 seed，固定 id builtin_*，幂等 upsert；不可被用户删除）';
+COMMENT ON COLUMN experts.title IS '职称（市场卡片副标题，如"高级开发工程师"）';
+COMMENT ON COLUMN experts.category IS '分类 slug（市场页分类 tab；字典见 EXPERT_CATEGORIES：general/research/writing/dev/data/business/office）';
+COMMENT ON COLUMN experts.badge IS '徽章文案（如"特邀专家"，空串=无徽章）';
+COMMENT ON COLUMN experts.tags IS '标签数组（JSONB 字符串数组，市场卡片能力标签行）';
+COMMENT ON COLUMN experts.system_prompt IS '领域人设提示词（发布时渲染进专家 workspace PROFILE.md，承载 ReAct 工作法与角色设定）';
+COMMENT ON COLUMN experts.usage_count IS '召唤计数（前端点击"召唤专家"时原子 +1，驱动"最热"排序；精确 token 计量走 token_usage_events 的 agent_id 维度）';
+COMMENT ON COLUMN experts.featured IS '是否精选（市场页精选场景区标记）';
+
+ALTER TABLE expert_teams ADD COLUMN IF NOT EXISTS owner_id TEXT;
+ALTER TABLE expert_teams ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'general';
+ALTER TABLE expert_teams ADD COLUMN IF NOT EXISTS tags JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE expert_teams ADD COLUMN IF NOT EXISTS orchestration JSONB NOT NULL DEFAULT '{}';
+ALTER TABLE expert_team_members ADD COLUMN IF NOT EXISTS member_role TEXT NOT NULL DEFAULT 'member';
+
+COMMENT ON COLUMN expert_teams.owner_id IS '归属账号（NULL=管理员创建）';
+COMMENT ON COLUMN expert_teams.category IS '分类 slug（与 experts.category 字典一致）';
+COMMENT ON COLUMN expert_teams.tags IS '标签数组（JSONB 字符串数组）';
+COMMENT ON COLUMN expert_teams.orchestration IS '运行时编排预留（JSONB：并行组/DAG/成员任务模板；由未来 RuntimeTeamOrchestrator 读取，当前发布链不消费）';
+COMMENT ON COLUMN expert_team_members.member_role IS '成员角色：lead=主理人（详情页徽标）/ member=普通成员';
+
+CREATE TABLE IF NOT EXISTS expert_skills (
+    tenant_id  VARCHAR(64) NOT NULL DEFAULT 'default',
+    expert_id  VARCHAR(64) NOT NULL,
+    skill_name TEXT NOT NULL,
+    enabled    BOOLEAN NOT NULL DEFAULT TRUE,
+    seq        INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+    CONSTRAINT pk_expert_skills PRIMARY KEY (tenant_id, expert_id, skill_name)
+);
+
+COMMENT ON TABLE expert_skills IS '专家技能绑定表（skill_name 引用共享技能注册表，注册表为权威；发布时 enabled 集合物化进专家 workspace skills/ 目录，运行时 Toolkit 渐进加载实现"使用专家自动加载技能"）';
+COMMENT ON COLUMN expert_skills.tenant_id IS '租户标识（多租户预留，单租户部署恒为 default）';
+COMMENT ON COLUMN expert_skills.expert_id IS '专家 ID（弱引用 experts.id；专家删除时级联清理由应用层负责）';
+COMMENT ON COLUMN expert_skills.skill_name IS '技能名（共享技能注册表内的目录名；注册表改名/卸载后此列为悬空引用，详情接口实时校验）';
+COMMENT ON COLUMN expert_skills.enabled IS '是否启用（停用保留绑定不注入；发布时仅物化 enabled=TRUE 的技能）';
+COMMENT ON COLUMN expert_skills.seq IS '展示/注入顺序（小值在前）';
+COMMENT ON COLUMN expert_skills.created_at IS '创建时间（DB 自动维护，UTC）';
+COMMENT ON COLUMN expert_skills.updated_at IS '更新时间（DB 自动维护，UTC）';
+
+CREATE INDEX IF NOT EXISTS ix_experts_market
+    ON experts (tenant_id, status, category, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS ix_experts_owner
+    ON experts (tenant_id, owner_id);
+
+CREATE INDEX IF NOT EXISTS ix_expert_skills_expert
+    ON expert_skills (tenant_id, expert_id);
+
+-- ------------------------------------------------------------
+-- 12. Alembic 版本标记（head）
 -- ------------------------------------------------------------
 
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM alembic_version) THEN
-        UPDATE alembic_version SET version_num = '0007_media_registry';
+        UPDATE alembic_version SET version_num = '0009_expert_catalog';
     ELSE
-        INSERT INTO alembic_version (version_num) VALUES ('0007_media_registry');
+        INSERT INTO alembic_version (version_num) VALUES ('0009_expert_catalog');
     END IF;
 END $$;
 
