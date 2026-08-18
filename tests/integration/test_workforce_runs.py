@@ -466,6 +466,28 @@ def test_bundle_versioning_and_minimal_projection():
     assert "node-b" not in projection
 
 
+def test_ensure_final_node_includes_integration_deps():
+    """自动补齐的 final 节点依赖纳入 integration 节点（防 final 先行）。"""
+    from qwenpaw.app.workforce.contracts import DagNode, DagPlan
+    from qwenpaw.app.workforce.planner import _ensure_final_node
+
+    # 仅含 integration 节点（无 task 节点）的 plan
+    plan = DagPlan(
+        nodes=[
+            DagNode(
+                node_key="integrate-1",
+                deps=[],
+                node_type="integration",
+                objective="汇总各分支产出",
+            )
+        ],
+        source="llm",
+    )
+    result = _ensure_final_node(plan)
+    final = next(n for n in result.nodes if n.node_type == "final")
+    assert final.deps == ["integrate-1"]
+
+
 # ---------------------------------------------------------------------------
 # 2. run_store lifecycle + events (PG required)
 # ---------------------------------------------------------------------------

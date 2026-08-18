@@ -145,8 +145,12 @@ def _ensure_final_node(plan: DagPlan) -> DagPlan:
     for node in plan.nodes:
         if node.node_type == NODE_TYPE_FINAL:
             return plan
-    # 以全部 task 节点为依赖补一个 final 节点（中央大脑自执行）
-    task_keys = [n.node_key for n in plan.nodes if n.node_type == NODE_TYPE_TASK]
+    # 以全部 task/integration 节点为依赖补一个 final 节点（中央大脑自执行）
+    task_keys = [
+        n.node_key
+        for n in plan.nodes
+        if n.node_type in (NODE_TYPE_TASK, NODE_TYPE_INTEGRATION)
+    ]
     plan.nodes.append(
         DagNode(
             node_key=_DEFAULT_FINAL_KEY,
