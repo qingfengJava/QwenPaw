@@ -25,6 +25,7 @@ htmlcov.zip
 htmlcov-integration/
 .integration_coverage/
 **/.creator-dev-runtime/
+.pytest_tmp/
 
 # cookbook
 cookbook/_build

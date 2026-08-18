@@ -44,7 +44,9 @@ async def enterprise_env(monkeypatch):
     try:
         yield
     finally:
-        engine_mod._engines.clear()
+        # dispose（而非仅清引用）：释放池内 asyncpg 连接，避免残留
+        # 连接绑死已关闭的事件循环（pytest-asyncio 每用例新 loop）
+        await engine_mod.dispose_engines()
         ent_mod._schema_ready = False
 
 
@@ -618,8 +620,9 @@ async def test_ensure_builtin_experts_and_teams_idempotent(
     from qwenpaw.app.experts import builtins as builtins_mod
 
     # workspace 物化重定向到临时目录（publish 链经 constant.WORKING_DIR
-    # 解析 experts 根目录，函数内延迟 import → patch 模块属性即生效）
-    monkeypatch.setattr(constant_mod, "WORKING_DIR", str(tmp_path))
+    # 解析 experts 根目录，函数内延迟 import → patch 模块属性即生效；
+    # 保持 Path 类型——publish 链中途 import 的模块会在导入期做 / 运算）
+    monkeypatch.setattr(constant_mod, "WORKING_DIR", tmp_path)
 
     installed = await builtins_mod.ensure_builtin_experts()
     assert installed == len(builtins_mod.BUILTIN_EXPERTS)

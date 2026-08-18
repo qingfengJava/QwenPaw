@@ -55,7 +55,9 @@ async def enterprise_env(monkeypatch):
     try:
         yield
     finally:
-        engine_mod._engines.clear()
+        # dispose（而非仅清引用）：释放池内 asyncpg 连接，避免残留
+        # 连接绑死已关闭的事件循环（pytest-asyncio 每用例新 loop）
+        await engine_mod.dispose_engines()
         ent_mod._schema_ready = False
 
 
@@ -487,7 +489,7 @@ async def test_run_store_lifecycle_and_event_bus(enterprise_env, run_store):
     assert run["status"] == "planning"
     assert run["goal"] == "设计一个登录页"
     # 订阅 run topic（事件序列断言）
-    from qwenpaw.enterprise import current_tenant_id
+    from qwenpaw.app.enterprise import current_tenant_id
 
     tid = current_tenant_id()
     topic = run_topic(tid, run["id"])
@@ -613,9 +615,9 @@ async def test_engine_repair_then_escalate(enterprise_env, run_store, monkeypatc
             repair=RepairContract(
                 original_task=contract.objective,
                 issues=["缺少细节"],
-                expected_change="补充细节",
+                expected_change=["补充细节"],
                 preserve=[],
-                acceptance="细节完整",
+                acceptance=["细节完整"],
                 attempt=repair_count + 1,
             ),
         )
@@ -629,7 +631,10 @@ async def test_engine_repair_then_escalate(enterprise_env, run_store, monkeypatc
         initiator_id="alice",
         policy=policy.model_dump(),
     )
-    await engine_mod.run_team_run(run["id"])
+    # 异常路径（EscalateSignal）必须经 _guarded_run 收敛为 escalated
+    # 终态——直接 await run_team_run 会把熔断信号裸抛给调用方。
+    task = engine_mod.start_run_background(run["id"])
+    await task
     final = await run_store.get_run(run["id"])
     # 熔断：max_repair_per_node=1 → 第二次 FAIL 升级人工
     assert final["status"] == "escalated"

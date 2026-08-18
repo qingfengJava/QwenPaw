@@ -396,12 +396,26 @@ async def _ensure_one_expert(spec: dict, manager=None) -> bool:
     """Idempotently seed and publish one builtin expert.
 
     Returns True when installed this run (False when already present).
-    Existing rows are never touched, so admin edits and archives
-    survive restarts.
+    Published or archived rows are never touched, so admin edits and
+    archives survive restarts; a leftover draft (a previously
+    interrupted install whose publish failed midway) is repaired by
+    finishing the publish, so builtin experts always converge to
+    published and team seeds never fail on unpublished members.
     """
     store = get_expert_store()
     existing: Optional[object] = await store.get_expert(spec["id"])
     if existing is not None:
+        if existing.status != "draft":
+            return False
+        # 补发布：上次安装中断残留的 draft（物化失败），收敛到 published
+        await publish_expert(
+            existing.id,
+            published_by="system",
+            manager=manager,
+        )
+        logger.info(
+            "repaired draft builtin expert %s (publish finished)", spec["id"]
+        )
         return False
 
     skills: List[ExpertSkillBinding] = [
@@ -471,7 +485,21 @@ async def ensure_builtin_teams(manager=None) -> int:
     installed = 0
     for spec in BUILTIN_TEAMS:
         try:
-            if await store.get_team(spec["id"]) is not None:
+            existing_team = await store.get_team(spec["id"])
+            if existing_team is not None:
+                if existing_team.status != "draft":
+                    continue
+                # 补发布：上次安装中断残留的 draft 团队（成员此时已由
+                # ensure_builtin_experts 收敛为 published），收敛到 published
+                await publish_expert_team(
+                    existing_team.id,
+                    published_by="system",
+                    manager=manager,
+                )
+                logger.info(
+                    "repaired draft builtin team %s (publish finished)",
+                    spec["id"],
+                )
                 continue
             # 成员专家先就位（幂等；缺失即装）
             member_specs = {

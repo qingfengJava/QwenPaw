@@ -54,7 +54,9 @@ async def enterprise_env(monkeypatch):
     try:
         yield {"mirror_calls": mirror_calls}
     finally:
-        engine_mod._engines.clear()
+        # dispose（而非仅清引用）：释放池内 asyncpg 连接，避免残留
+        # 连接绑死已关闭的事件循环（pytest-asyncio 每用例新 loop）
+        await engine_mod.dispose_engines()
         ent_mod._schema_ready = False
 
 

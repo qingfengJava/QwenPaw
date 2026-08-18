@@ -59,20 +59,27 @@ class InProcessEventBus:
 
     def __init__(self) -> None:
         self._seq = 0
-        self._lock = asyncio.Lock()
         self._subscribers: Dict[str, Set["_Subscription"]] = {}
         self._history: Dict[str, List[BusEvent]] = {}
 
     async def publish(self, topic: str, event: dict) -> None:
-        """Assign a sequence id and fan out to live subscribers."""
-        async with self._lock:
-            self._seq += 1
-            bus_event = BusEvent(seq=self._seq, topic=topic, data=event)
-            history = self._history.setdefault(topic, [])
-            history.append(bus_event)
-            if len(history) > _BUFFER_SIZE:
-                del history[: len(history) - _BUFFER_SIZE]
-            subscribers = list(self._subscribers.get(topic, ()))
+        """Assign a sequence id and fan out to live subscribers.
+
+        The critical section below is deliberately *synchronous-only*
+        (list/dict/set mutations, no ``await``), so it is atomic under
+        the single-threaded event loop by construction. An earlier
+        ``asyncio.Lock`` here bound itself to the first event loop that
+        ever published and then dead-locked every later loop reusing
+        this process-wide singleton (pytest-asyncio spins a fresh loop
+        per test) — locks must not outlive their loop.
+        """
+        self._seq += 1
+        bus_event = BusEvent(seq=self._seq, topic=topic, data=event)
+        history = self._history.setdefault(topic, [])
+        history.append(bus_event)
+        if len(history) > _BUFFER_SIZE:
+            del history[: len(history) - _BUFFER_SIZE]
+        subscribers = list(self._subscribers.get(topic, ()))
         for subscriber in subscribers:
             subscriber.push(bus_event)
 

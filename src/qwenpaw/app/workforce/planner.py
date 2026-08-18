@@ -30,6 +30,7 @@ from ..experts.models import (
     TEAM_MEMBER_ROLE_LEAD,
     expert_agent_id,
 )
+from . import bundle as bundle_mod
 from .contracts import (
     Clarification,
     ContextBundle,

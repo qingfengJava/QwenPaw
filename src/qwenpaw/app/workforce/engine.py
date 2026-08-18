@@ -231,6 +231,15 @@ async def run_team_run(run_id: str, started_at: Optional[float] = None) -> None:
         for item in results:
             if isinstance(item, asyncio.CancelledError):
                 raise item
+        # 其余节点执行异常不得静默：否则主循环会把同一 pending 节点
+        # 无限重新 gather（引擎空转烧 CPU、run 永不终态）。统一冒泡给
+        # _guarded_run 收敛为 failed 终态并留痕日志。
+        for item in results:
+            if isinstance(item, BaseException) and not isinstance(
+                item, (EscalateSignal, asyncio.CancelledError)
+            ):
+                logger.error("节点执行异常（run=%s）: %r", run_id, item)
+                raise item
     # ---- 汇总收尾（final 节点已在执行阶段完成，此处收束状态） ----
     await store.set_run_status(run_id, RUN_STATUS_AGGREGATING)
     final_summary, final_result = await _collect_final(store, run_id)
@@ -440,6 +449,14 @@ async def _execute_node(
         # FAIL：返工契约持久化 + 计数 + 事件，进入下一轮
         if verdict.verdict == VERDICT_FAIL and verdict.repair is not None:
             repair_count += 1
+            # 引擎层熔断（与 verifier 双保险相互独立）：达到返工上限不再
+            # 进入下一轮——防被替换/异常的验收器永远 FAIL 造成无限返工
+            # 循环（CPU 空转、run 永不终态）。
+            if repair_count > policy.max_repair_per_node:
+                raise EscalateSignal(
+                    f"节点 {node_key} 返工 {repair_count} 次仍 FAIL"
+                    f"（上限 {policy.max_repair_per_node}），引擎熔断升级人工"
+                )
             await store.add_repair_count(run_id)
             await store.update_node(
                 run_id,

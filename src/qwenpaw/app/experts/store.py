@@ -599,6 +599,7 @@ class ExpertStore:
                     "SELECT t.id, t.name, t.description, t.mode, "
                     "t.router_prompt, t.status, t.version, "
                     "t.owner_id, t.category, t.tags, t.orchestration, "
+                    "t.sample_tasks, t.showcase, "
                     "t.created_at, t.updated_at "
                     "FROM expert_teams t WHERE "
                     + " AND ".join(clauses)

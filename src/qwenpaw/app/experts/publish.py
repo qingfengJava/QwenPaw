@@ -63,7 +63,8 @@ def _register_agent_profile(
     workspace_dir: Path,
 ) -> None:
     """Add (or refresh) the root-config profile entry for one agent."""
-    from ...config.config import AgentProfileRef, load_config, save_config
+    from ...config.config import AgentProfileRef
+    from ...config.utils import load_config, save_config
 
     config = load_config()
     config.agents.profiles[agent_id] = AgentProfileRef(
@@ -81,7 +82,7 @@ def _register_agent_profile(
 
 def _unregister_agent_profile(agent_id: str) -> None:
     """Remove the root-config profile entry (archive path)."""
-    from ...config.config import load_config, save_config
+    from ...config.utils import load_config, save_config
 
     config = load_config()
     config.agents.profiles.pop(agent_id, None)
@@ -121,7 +122,7 @@ def _init_workspace(
 
 def _default_workspace_dir() -> Optional[Path]:
     """The default agent workspace (shared skill source), if resolvable."""
-    from ...config.config import load_config
+    from ...config.utils import load_config
 
     try:
         ref = load_config().agents.profiles.get("default")
