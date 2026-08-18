@@ -817,3 +817,25 @@ async def test_ensure_run_access_404_semantics():
     with pytest.raises(HTTPException) as not_member:
         await _ensure_run_access(run_proj, req("mallory"), FakeService())
     assert not_member.value.status_code == 404
+
+
+def _req(user: str):
+    """构造带已认证用户的伪 Request（路由函数直调测试用）。"""
+    return SimpleNamespace(state=SimpleNamespace(user=user))
+
+
+async def test_create_run_rejects_unpublished_team(enterprise_env, monkeypatch):
+    """draft 团队不可发起 run：与 admin 试运行通道一致返回 400。"""
+    from qwenpaw.app.routers.xian.workforce import RunCreateBody, create_run
+    from qwenpaw.app.workforce import engine as engine_mod
+
+    # 只测守卫本身：屏蔽后台引擎启动，避免误触真实规划链路
+    monkeypatch.setattr(engine_mod, "start_run_background", lambda run_id: None)
+    team, _lead, _member = await _seed_team()  # draft 团队
+    with pytest.raises(HTTPException) as exc:
+        await create_run(
+            RunCreateBody(team_id=team.id, goal="设计登录页"),
+            _req("alice"),
+        )
+    assert exc.value.status_code == 400
+    assert exc.value.detail == "Team is not published"

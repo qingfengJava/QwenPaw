@@ -159,6 +159,9 @@ async def create_run(
     team = await expert_store.get_team(body.team_id)
     if team is None:
         raise HTTPException(status_code=404, detail="Team not found")
+    # 未发布团队不可发起（与 admin 试运行通道同款校验）
+    if team.status != "published":
+        raise HTTPException(status_code=400, detail="Team is not published")
     # 项目归属校验（挂项目的 run：caller 必须是项目成员）
     if body.project_id:
         await _require_role(service, request, body.project_id, "")
