@@ -715,3 +715,179 @@ class TokenUsageEventRow(TenantMixin, TimestampMixin, Base):
         Index("ix_usage_user", "tenant_id", "user_id", "created_at"),
         Index("ix_usage_day_model", "tenant_id", "created_at", "model"),
     )
+
+
+class TeamRunRow(TenantMixin, TimestampMixin, Base):
+    """One workforce team-task execution (the L1 orchestration instance).
+
+    The workforce engine (``app/workforce``) drives this state machine:
+    planning → (awaiting_confirm) → running → verifying / repairing →
+    aggregating → done | failed | escalated | canceled | interrupted.
+    ``plan`` / ``policy`` / ``context_bundle`` are JSONB snapshots of the
+    corresponding pydantic contracts — low-churn, migration-free evolution
+    (same philosophy as ``agent_spec``).
+    """
+
+    __tablename__ = "team_runs"
+
+    id: Mapped[str] = mapped_column(String(64), nullable=False)
+    team_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    project_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    source_chat_id: Mapped[Optional[str]] = mapped_column(
+        String(128),
+        nullable=True,
+    )
+    initiator_id: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="planning",
+        server_default="planning",
+    )
+    goal: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    plan: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default="{}",
+    )
+    policy: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default="{}",
+    )
+    context_bundle: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default="{}",
+    )
+    context_version: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=1,
+        server_default="1",
+    )
+    summary: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    result: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default="{}",
+    )
+    clarification: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default="{}",
+    )
+    repair_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+    replan_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+    error: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    escalation_reason: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="",
+        server_default="",
+    )
+
+    __table_args__ = (
+        PrimaryKeyConstraint("tenant_id", "id", name="pk_team_runs"),
+        Index("ix_team_runs_team", "tenant_id", "team_id"),
+        Index("ix_team_runs_status", "tenant_id", "status"),
+        Index("ix_team_runs_project", "tenant_id", "project_id"),
+    )
+
+
+class TeamRunNodeRow(TenantMixin, TimestampMixin, Base):
+    """Per-DAG-node execution ledger inside one team run.
+
+    Each row carries the full contract lifecycle: ``contract`` (what the
+    central brain delegated), ``result`` (what the member expert returned),
+    ``repair`` (the latest RepairContract) and ``verdict`` (PASS / FAIL /
+    ESCALATE). ``attempt`` increments on every delegation (rework rounds
+    included) and doubles as the crash-resume cursor.
+    """
+
+    __tablename__ = "team_run_nodes"
+
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    node_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    assignee_expert_id: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default="",
+        server_default="",
+    )
+    assignee_user_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    node_type: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="task",
+        server_default="task",
+    )
+    status: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="pending",
+        server_default="pending",
+    )
+    contract: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default="{}",
+    )
+    result: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default="{}",
+    )
+    repair: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default="{}",
+    )
+    verdict: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    repair_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+    session_id: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    token_cost: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+    attempt: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+
+    __table_args__ = (
+        PrimaryKeyConstraint(
+            "tenant_id",
+            "run_id",
+            "node_key",
+            name="pk_team_run_nodes",
+        ),
+        Index("ix_team_run_nodes_run", "tenant_id", "run_id"),
+    )

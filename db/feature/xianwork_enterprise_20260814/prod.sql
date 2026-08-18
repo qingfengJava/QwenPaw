@@ -819,4 +819,101 @@ BEGIN
     END IF;
 END $$;
 
+-- ------------------------------------------------------------
+-- 13. Workforce 团队任务运行时（team_runs / team_run_nodes）
+--     两级 Harness：中央大脑 Plan-then-Execute + 子员工执行
+-- ------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS team_runs (
+    tenant_id         VARCHAR(64) NOT NULL DEFAULT 'default',
+    id                VARCHAR(64) NOT NULL,
+    team_id           VARCHAR(64) NOT NULL,
+    project_id        VARCHAR(64),
+    source_chat_id    VARCHAR(128),
+    initiator_id      TEXT NOT NULL,
+    status            TEXT NOT NULL DEFAULT 'planning',
+    goal              TEXT NOT NULL DEFAULT '',
+    plan              JSONB NOT NULL DEFAULT '{}',
+    policy            JSONB NOT NULL DEFAULT '{}',
+    context_bundle    JSONB NOT NULL DEFAULT '{}',
+    context_version   INTEGER NOT NULL DEFAULT 1,
+    summary           TEXT NOT NULL DEFAULT '',
+    result            JSONB NOT NULL DEFAULT '{}',
+    clarification     JSONB NOT NULL DEFAULT '{}',
+    repair_count      INTEGER NOT NULL DEFAULT 0,
+    replan_count      INTEGER NOT NULL DEFAULT 0,
+    error             TEXT NOT NULL DEFAULT '',
+    escalation_reason TEXT NOT NULL DEFAULT '',
+    created_at        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+    CONSTRAINT pk_team_runs PRIMARY KEY (tenant_id, id)
+);
+
+COMMENT ON TABLE team_runs IS 'Workforce 团队任务运行实例（两级 Harness：中央大脑 Plan-then-Execute 编排已发布专家团成员；状态机含熔断升级人工与断点续跑）';
+COMMENT ON COLUMN team_runs.status IS '状态: planning-规划中, awaiting_confirm-等待用户澄清, running-执行中, verifying-验收中, repairing-返工中, aggregating-汇总中, done-完成, failed-失败, escalated-熔断升级人工, canceled-已取消, interrupted-进程中断可续跑';
+COMMENT ON COLUMN team_runs.plan IS '任务图 DagPlan（nodes+deps+assignee；JSONB 快照，规划一次成型）';
+COMMENT ON COLUMN team_runs.policy IS '熔断策略 RunPolicy（max_repair_per_node/max_replan/max_total_seconds/max_total_tokens/parallelism；纯计数器）';
+COMMENT ON COLUMN team_runs.context_bundle IS '版本化上下文束 ContextBundle（global_ctx/task_ctx/execution_ctx；节点间与跨用户传递的唯一介质，禁止聊天记录透传）';
+COMMENT ON COLUMN team_runs.context_version IS '上下文版本号（单调递增；全局决策变更/澄清答复/移交时 +1，后续节点契约引用新版本）';
+COMMENT ON COLUMN team_runs.source_chat_id IS '来源会话 ID（可空；聊天升级入口创建时记录，完成后汇总卡片回推该会话）';
+COMMENT ON COLUMN team_runs.initiator_id IS '发起用户（权限主体；列表与详情按此过滤）';
+COMMENT ON COLUMN team_runs.project_id IS '关联项目 ID（可空；跨用户移交要求本列非空以校验 project_members 归属）';
+
+CREATE TABLE IF NOT EXISTS team_run_nodes (
+    tenant_id         VARCHAR(64) NOT NULL DEFAULT 'default',
+    run_id            VARCHAR(64) NOT NULL,
+    node_key          VARCHAR(128) NOT NULL,
+    assignee_expert_id VARCHAR(64) NOT NULL DEFAULT '',
+    assignee_user_id  TEXT,
+    node_type         TEXT NOT NULL DEFAULT 'task',
+    status            TEXT NOT NULL DEFAULT 'pending',
+    contract          JSONB NOT NULL DEFAULT '{}',
+    result            JSONB NOT NULL DEFAULT '{}',
+    repair            JSONB NOT NULL DEFAULT '{}',
+    verdict           TEXT NOT NULL DEFAULT '',
+    repair_count      INTEGER NOT NULL DEFAULT 0,
+    session_id        TEXT NOT NULL DEFAULT '',
+    token_cost        BIGINT NOT NULL DEFAULT 0,
+    attempt           INTEGER NOT NULL DEFAULT 0,
+    created_at        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+    CONSTRAINT pk_team_run_nodes PRIMARY KEY (tenant_id, run_id, node_key)
+);
+
+COMMENT ON TABLE team_run_nodes IS 'Workforce DAG 节点执行留痕（每节点：TaskContract 委派 → ResultContract 回传 → 中央验收 verdict → RepairContract 返工；attempt 支持断点续跑）';
+COMMENT ON COLUMN team_run_nodes.contract IS '任务契约 TaskContract（objective/global_context 快照/parent_decision/expected_output/quality_criteria 等）';
+COMMENT ON COLUMN team_run_nodes.result IS '结果契约 ResultContract（status/result/evidence/decisions/assumptions/confidence/needs_review）';
+COMMENT ON COLUMN team_run_nodes.repair IS '返工契约 RepairContract（issues/expected_change/preserve/acceptance；最近一次返工指令）';
+COMMENT ON COLUMN team_run_nodes.verdict IS '最近一次验收裁决: PASS-通过, FAIL-返工, ESCALATE-升级人工（空=未验收）';
+COMMENT ON COLUMN team_run_nodes.repair_count IS '本节点返工次数（超 RunPolicy.max_repair_per_node 即熔断）';
+COMMENT ON COLUMN team_run_nodes.session_id IS '成员专家的独立会话 ID（每节点独立 session，跨会话天然并发；返工轮复用以延续成员上下文）';
+COMMENT ON COLUMN team_run_nodes.token_cost IS '本节点累计 token 消耗（委派回执 usage 聚合）';
+COMMENT ON COLUMN team_run_nodes.attempt IS '执行轮次（0=未执行；每委派一次 +1，含返工轮；断点续跑时从最新 attempt 恢复）';
+COMMENT ON COLUMN team_run_nodes.assignee_user_id IS '跨用户移交预留：指派给目标用户的专家（NULL=团队内成员；移交要求 run.project_id 非空且目标用户为 project_members 成员）';
+
+CREATE INDEX IF NOT EXISTS ix_team_runs_team
+    ON team_runs (tenant_id, team_id);
+
+CREATE INDEX IF NOT EXISTS ix_team_runs_status
+    ON team_runs (tenant_id, status);
+
+CREATE INDEX IF NOT EXISTS ix_team_runs_project
+    ON team_runs (tenant_id, project_id);
+
+CREATE INDEX IF NOT EXISTS ix_team_run_nodes_run
+    ON team_run_nodes (tenant_id, run_id);
+
+-- ------------------------------------------------------------
+-- 14. Alembic 版本标记推进（0009 → 0010）
+-- ------------------------------------------------------------
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM alembic_version) THEN
+        UPDATE alembic_version SET version_num = '0010_workforce_team_runs';
+    ELSE
+        INSERT INTO alembic_version (version_num) VALUES ('0010_workforce_team_runs');
+    END IF;
+END $$;
+
 COMMIT;
