@@ -53,13 +53,19 @@ _ORDER_HOT = "usage_count DESC, updated_at DESC"
 _ORDER_NEW = "created_at DESC"
 
 
-def _row_to_expert(row) -> ExpertRecord:
+def _row_to_expert(row, *, card: bool = False) -> ExpertRecord:
+    """Map one experts row to ``ExpertRecord``.
+
+    ``card=True`` 用于卡片轻量查询（``_EXPERT_CARD_COLS``）：该投影
+    有意省略重列 agent_spec / system_prompt，此处不读 row（否则
+    NoSuchColumnError），直接给中性默认值。
+    """
     return ExpertRecord(
         id=row.id,
         name=row.name,
         icon=row.icon or "",
         description=row.description or "",
-        agent_spec=row.agent_spec or {},
+        agent_spec={} if card else (row.agent_spec or {}),
         status=row.status,
         version=row.version,
         owner_id=row.owner_id,
@@ -69,7 +75,7 @@ def _row_to_expert(row) -> ExpertRecord:
         category=row.category or "general",
         badge=row.badge or "",
         tags=list(row.tags or []),
-        system_prompt=row.system_prompt or "",
+        system_prompt="" if card else (row.system_prompt or ""),
         usage_count=row.usage_count or 0,
         featured=bool(row.featured),
         sample_tasks=list(row.sample_tasks or []),
@@ -271,7 +277,7 @@ class ExpertStore:
         )
         async with engine.connect() as conn:
             result = await conn.execute(text(sql), params)
-            return [_row_to_expert(r) for r in result]
+            return [_row_to_expert(r, card=True) for r in result]
 
     async def update_expert(
         self,
@@ -586,24 +592,21 @@ class ExpertStore:
     ) -> List[ExpertTeamRecord]:
         engine = require_enterprise_engine()
         async with engine.connect() as conn:
-            clauses = ["t.tenant_id = :tid"]
+            clauses = ["tenant_id = :tid"]
             params: dict = {"tid": current_tenant_id()}
             if status:
-                clauses.append("t.status = :status")
+                clauses.append("status = :status")
                 params["status"] = status
             if category:
-                clauses.append("t.category = :category")
+                clauses.append("category = :category")
                 params["category"] = category
+            # 列集直接引用 _TEAM_COLS 常量（单一来源），避免手写
+            # SELECT 与 mapper 漂移（20260818 PG 补验的教训）
             result = await conn.execute(
                 text(
-                    "SELECT t.id, t.name, t.description, t.mode, "
-                    "t.router_prompt, t.status, t.version, "
-                    "t.owner_id, t.category, t.tags, t.orchestration, "
-                    "t.sample_tasks, t.showcase, "
-                    "t.created_at, t.updated_at "
-                    "FROM expert_teams t WHERE "
+                    "SELECT " + _TEAM_COLS + " FROM expert_teams WHERE "
                     + " AND ".join(clauses)
-                    + " ORDER BY t.updated_at DESC"
+                    + " ORDER BY updated_at DESC"
                 ),
                 params,
             )

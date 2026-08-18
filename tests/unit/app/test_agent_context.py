@@ -143,8 +143,10 @@ class TestEnforceExpertAcl:
         )
         monkeypatch.setattr(
             "qwenpaw.app.rbac.store.get_rbac_store",
+            # stub 形参序与真实 RbacStore.agent_allowed 严格一致，
+            # 调用方参数错序会在此 TypeError 而非静默通过
             lambda: SimpleNamespace(
-                agent_allowed=lambda username, agent_id, flat_role="": False
+                agent_allowed=lambda username, flat_role="", agent_id="": False
             ),
         )
         with pytest.raises(HTTPException) as exc_info:
@@ -167,7 +169,7 @@ class TestEnforceExpertAcl:
         monkeypatch.setattr(
             "qwenpaw.app.rbac.store.get_rbac_store",
             lambda: SimpleNamespace(
-                agent_allowed=lambda username, agent_id, flat_role="": True
+                agent_allowed=lambda username, flat_role="", agent_id="": True
             ),
         )
         # Must not raise: granted access resolves to a no-op.

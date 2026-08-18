@@ -395,6 +395,28 @@ BUILTIN_TEAMS = (
 )
 
 
+async def _backfill_merch_columns(update, spec, existing) -> None:
+    """Backfill factory merch columns (sample_tasks/showcase) when empty.
+
+    Upgrade convergence: builtin rows seeded before the catalog revision
+    (changelog 20260818/03) carry empty lists because ``_ensure_one_*``
+    never touches existing rows. Backfill ONLY the still-empty columns
+    with factory defaults — admin-edited content is never overwritten.
+    """
+    fields: dict = {}
+    if spec.get("sample_tasks") and not existing.sample_tasks:
+        fields["sample_tasks"] = spec["sample_tasks"]
+    if spec.get("showcase") and not existing.showcase:
+        fields["showcase"] = spec["showcase"]
+    if fields:
+        await update(existing.id, **fields)
+        logger.info(
+            "backfilled builtin merch columns for %s (%s)",
+            existing.id,
+            sorted(fields),
+        )
+
+
 async def _ensure_one_expert(spec: dict, manager=None) -> bool:
     """Idempotently seed and publish one builtin expert.
 
@@ -409,6 +431,10 @@ async def _ensure_one_expert(spec: dict, manager=None) -> bool:
     existing: Optional[object] = await store.get_expert(spec["id"])
     if existing is not None:
         if existing.status != "draft":
+            # 升级收敛：出厂运营位仅在为空时回填（管理员编辑过的
+            # 内容不动），让 0011 之前安装的存量内置专家拿到
+            # sample_tasks / showcase 数据
+            await _backfill_merch_columns(store.update_expert, spec, existing)
             return False
         # 补发布：上次安装中断残留的 draft（物化失败），收敛到 published
         await publish_expert(
@@ -491,6 +517,11 @@ async def ensure_builtin_teams(manager=None) -> int:
             existing_team = await store.get_team(spec["id"])
             if existing_team is not None:
                 if existing_team.status != "draft":
+                    # 升级收敛：团队的出厂运营位同样空即回填（见
+                    # _ensure_one_expert 处的说明）
+                    await _backfill_merch_columns(
+                        store.update_team, spec, existing_team
+                    )
                     continue
                 # 补发布：上次安装中断残留的 draft 团队（成员此时已由
                 # ensure_builtin_experts 收敛为 published），收敛到 published

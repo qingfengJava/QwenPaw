@@ -178,8 +178,8 @@ def _enforce_expert_acl(request: Request, agent_id: str) -> None:
         flat_role = user.role if user is not None else ""
         if not get_rbac_store().agent_allowed(
             username,
-            agent_id,
             flat_role=flat_role,
+            agent_id=agent_id,
         ):
             raise HTTPException(
                 status_code=403,

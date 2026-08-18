@@ -73,8 +73,8 @@ def _agent_visible(username: str, agent_id: str) -> bool:
     try:
         return get_rbac_store().agent_allowed(
             username,
-            agent_id,
             flat_role=flat_role,
+            agent_id=agent_id,
         )
     except Exception:  # pylint: disable=broad-except
         logger.warning("expert ACL check failed for %s", agent_id)
