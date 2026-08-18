@@ -628,8 +628,8 @@ async def test_engine_repair_then_escalate(enterprise_env, run_store, monkeypatc
     team, lead, member = await _seed_team()
     policy = RunPolicy(max_repair_per_node=1, max_total_tokens=0)
     plan = _two_node_plan(lead.id, member.id)
-    # 永远 FAIL：第一次给返工契约（repair_count 0→1），第二次触发
-    # verifier 的超限双保险（repair_count >= max_repair_per_node → ESCALATE）
+    # 永远 FAIL：第一次给返工契约（repair_count 0→1），第二次 FAIL 推高
+    # 引擎侧计数超限熔断（repair_count 1→2 > max_repair_per_node → EscalateSignal）
     def always_fail(lead_id, contract, result, repair_count):
         return Verdict(
             VERDICT_FAIL,

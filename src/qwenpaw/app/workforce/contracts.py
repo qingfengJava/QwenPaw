@@ -187,8 +187,8 @@ class TaskContract(BaseModel):
 class ResultContract(BaseModel):
     """子员工结构化回传的执行结果（对齐用户架构方案第十九节）。
 
-    委派器要求成员专家按本 schema 输出 JSON；解析失败时一次格式化
-    重试，仍失败则降级为自由文本 + ``needs_review=True``，绝不阻塞链路。
+    委派器要求成员专家按本 schema 输出 JSON；解析顺序为 ```json 围栏
+    → 裸 JSON → 降级为自由文本 + ``needs_review=True``，绝不阻塞链路。
     """
 
     #: 对应的节点标识
