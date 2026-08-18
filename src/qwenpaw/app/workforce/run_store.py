@@ -188,7 +188,7 @@ class WorkforceRunStore:
         escalation_reason: str = "",
     ) -> bool:
         """流转 run 状态（终态附带原因字段，便于审计与前端展示）。"""
-        # 状态与可选原因一次更新（空串不覆盖已有值由调用方保证语义）
+        # 每次调用都会写入传入的 error/escalation_reason（含空串清空语义），调用方需自行保证语义
         return await self.update_run(
             run_id,
             status=status,

@@ -85,6 +85,7 @@ async def run_stats() -> Dict[str, Any]:
                     "count(*) FILTER (WHERE status IN "
                     "('running','planning','awaiting_confirm','verifying',"
                     "'repairing','aggregating')) AS active, "
+                    "count(*) FILTER (WHERE status = 'interrupted') AS interrupted, "
                     "count(*) FILTER (WHERE repair_count > 0) AS repaired_runs, "
                     "COALESCE(SUM(repair_count), 0) AS repair_total, "
                     "COALESCE(SUM(replan_count), 0) AS replan_total "
@@ -109,6 +110,7 @@ async def run_stats() -> Dict[str, Any]:
         "failed": int(runs_row.failed or 0),
         "escalated": int(runs_row.escalated or 0),
         "active": int(runs_row.active or 0),
+        "interrupted": int(runs_row.interrupted or 0),
         "repaired_runs": int(runs_row.repaired_runs or 0),
         "repair_total": int(runs_row.repair_total or 0),
         "replan_total": int(runs_row.replan_total or 0),

@@ -21,9 +21,6 @@ from .contracts import (
     ContextBundle,
     DagNode,
     ResultContract,
-    RESULT_STATUS_COMPLETED,
-    RESULT_STATUS_FAILED,
-    RESULT_STATUS_PARTIAL,
 )
 
 #: 上游结果摘要中 result_digest 的最大字符数（防上下文膨胀）
@@ -140,15 +137,3 @@ def upstream_summaries(
         for dep in node.deps
         if dep in bundle.execution_ctx
     }
-
-
-def is_result_actionable(result: ResultContract) -> bool:
-    """轻量可执行性预检（Evaluation Engine 的规则部分）。
-
-    FAILED 或 needs_review 的结果直接送验收器强裁（不直接进修复
-    循环），COMPLETED/PARTIAL 走常规验收。
-    """
-    # 失败与需复核状态一律标记为需强裁
-    return result.status in (RESULT_STATUS_COMPLETED, RESULT_STATUS_PARTIAL) and not (
-        result.status == RESULT_STATUS_FAILED or result.needs_review
-    )

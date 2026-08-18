@@ -822,22 +822,19 @@ async def test_ensure_run_access_404_semantics():
             # 只有 bob 是项目成员
             return {"id": project_id} if username == "bob" else None
 
-    def req(user):
-        return SimpleNamespace(state=SimpleNamespace(user=user))
-
     run_alice = {"initiator_id": "alice", "project_id": None}
     run_proj = {"initiator_id": "alice", "project_id": "prj_1"}
 
     # 发起人放行
-    await _ensure_run_access(run_alice, req("alice"), FakeService())
+    await _ensure_run_access(run_alice, _req("alice"), FakeService())
     # 项目成员放行（跨用户协同）
-    await _ensure_run_access(run_proj, req("bob"), FakeService())
+    await _ensure_run_access(run_proj, _req("bob"), FakeService())
     # 无关用户：无项目 → 404；有项目但非成员 → 404（不泄露存在性）
     with pytest.raises(HTTPException) as no_project:
-        await _ensure_run_access(run_alice, req("mallory"), FakeService())
+        await _ensure_run_access(run_alice, _req("mallory"), FakeService())
     assert no_project.value.status_code == 404
     with pytest.raises(HTTPException) as not_member:
-        await _ensure_run_access(run_proj, req("mallory"), FakeService())
+        await _ensure_run_access(run_proj, _req("mallory"), FakeService())
     assert not_member.value.status_code == 404
 
 

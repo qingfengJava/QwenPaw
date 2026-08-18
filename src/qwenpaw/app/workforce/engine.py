@@ -408,7 +408,6 @@ async def _execute_node(
             {"node_key": node_key, "status": result.status, "attempt": attempt},
         )
         # 验收：final 节点（中央大脑自执行）自验收通过，其余由 lead 裁决
-        await store.update_node(run_id, node_key, status=NODE_STATUS_VERIFYING)
         if expert_id:
             verdict = await verify(
                 lead_id,

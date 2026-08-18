@@ -7,7 +7,7 @@
 2. **LLM 裁决**：对照 TaskContract.quality_criteria（复验时叠加
    RepairContract.acceptance）输出结构化 verdict JSON；解析失败或
    无法裁决 → ESCALATE（升级人工，绝不误判 PASS）；
-3. **熔断双保险**：repair_count 已达上限 → 直接 ESCALATE（引擎层
+3. **熔断双保险**：repair_count 超上限 → 直接 ESCALATE（引擎层
    同样检查，本层兜底防绕过）。
 
 FAIL 时产出 RepairContract（issues / expected_change / preserve /
@@ -153,7 +153,7 @@ async def verify(
     """执行一次验收：规则预检 → LLM 裁决 → 结构化 Verdict。
 
     verifier_expert_id 通常是团队 lead 成员（中央大脑人格）；
-    repair_count 达上限直接 ESCALATE（熔断双保险）。
+    repair_count 超上限直接 ESCALATE（熔断双保险）。
     """
     # 熔断双保险：已超返工上限不再消耗 LLM（引擎层同样拦截）。
     # 边界对齐 engine：==max 时本轮结果仍须验收（FAIL 后由引擎计数超限熔断）
