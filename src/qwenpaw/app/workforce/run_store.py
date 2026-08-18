@@ -24,6 +24,8 @@ from sqlalchemy import text
 from ..enterprise import current_tenant_id, new_id, require_enterprise_engine
 from ..events.bus import feed_topic, get_event_bus, now_ms
 from .contracts import (
+    NODE_ACTIVE_STATUSES,
+    NODE_STATUS_PENDING,
     RUN_ACTIVE_STATUSES,
     RUN_STATUS_INTERRUPTED,
     DagPlan,
@@ -467,9 +469,32 @@ class WorkforceRunStore:
         单 worker 拓扑下进程重启必然丢失内存中的 asyncio 任务；
         本扫描保证：活跃 run 在持久层可见地进入 interrupted 态，
         用户可从 RunDetail 发起续跑（engine 从节点 attempt 恢复）。
+        同时把活跃 run 的中间态节点（delegated/verifying/...）回退
+        pending——否则主循环只统计 pending/done，中间态节点续跑时
+        被静默跳过，run 可带着缺失产出收敛。
         """
         engine = require_enterprise_engine()
         async with engine.begin() as conn:
+            # 中间态节点回退 pending（单 worker 拓扑：启动时刻无并发
+            # 引擎任务，重置安全；contract/session 保留供委派复用）。
+            # 必须先于 run 状态 UPDATE 执行：同事务内后一条语句能看到
+            # 前条的改动，若先改写 run 状态，下面 join 的
+            # r.status = ANY(:active) 将匹配不到任何行，重置静默失效。
+            await conn.execute(
+                text(
+                    "UPDATE team_run_nodes n SET status = :pending "
+                    "FROM team_runs r WHERE r.tenant_id = n.tenant_id "
+                    "AND r.id = n.run_id AND r.tenant_id = :tid "
+                    "AND r.status = ANY(:active) "
+                    "AND n.status = ANY(:node_active)"
+                ),
+                {
+                    "tid": current_tenant_id(),
+                    "active": list(RUN_ACTIVE_STATUSES),
+                    "node_active": list(NODE_ACTIVE_STATUSES),
+                    "pending": NODE_STATUS_PENDING,
+                },
+            )
             result = await conn.execute(
                 text(
                     "UPDATE team_runs SET status = :interrupted WHERE "

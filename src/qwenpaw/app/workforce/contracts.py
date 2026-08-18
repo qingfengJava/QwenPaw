@@ -91,6 +91,14 @@ NODE_STATUS_DONE = "done"
 #: 节点终态：失败
 NODE_STATUS_FAILED = "failed"
 
+#: 节点活跃态集合（启动恢复时需重置回 pending 的中间状态）
+NODE_ACTIVE_STATUSES = (
+    NODE_STATUS_DELEGATED,
+    NODE_STATUS_RUNNING,
+    NODE_STATUS_VERIFYING,
+    NODE_STATUS_REPAIRING,
+)
+
 #: 节点类型：普通任务节点
 NODE_TYPE_TASK = "task"
 #: 节点类型：返工节点（由 RepairContract 派生，附着在原节点 attempt 上）

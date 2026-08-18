@@ -746,6 +746,30 @@ async def test_engine_interrupted_resume(enterprise_env, run_store, monkeypatch)
     assert "最终汇总产出" in (final["summary"] or "")
 
 
+async def test_interrupted_resume_recovers_midflight_node(enterprise_env, run_store, monkeypatch):
+    """崩溃时节点卡在 delegated（无 result）：续跑后必须被重新执行并 done，
+    不得静默跳过导致 run 带缺失产出收敛。"""
+    from qwenpaw.app.workforce import engine as engine_mod
+
+    team, lead, member = await _seed_team()
+    _patch_llm_seams(monkeypatch, _two_node_plan(lead.id, member.id))
+    run = await run_store.create_run(team_id=team.id, goal="G", initiator_id="alice")
+    await run_store.save_plan(run["id"], _two_node_plan(lead.id, member.id))
+    # 模拟崩溃现场：task-1 委派中断（delegated、无结果），final 未开始
+    await run_store.update_node(
+        run["id"], "task-1", status="delegated",
+        contract={"task_id": "task-1", "objective": "产出方案"},
+    )
+    await run_store.set_run_status(run["id"], "running")
+    await run_store.mark_interrupted_runs()
+    # 续跑
+    await engine_mod.run_team_run(run["id"])
+    final = await run_store.get_run(run["id"])
+    nodes = {n["node_key"]: n for n in await run_store.list_nodes(run["id"])}
+    assert final["status"] == "done"
+    assert nodes["task-1"]["status"] == "done"
+
+
 async def test_mark_interrupted_runs_scan(enterprise_env, run_store):
     team, lead, member = await _seed_team()
     run = await run_store.create_run(
