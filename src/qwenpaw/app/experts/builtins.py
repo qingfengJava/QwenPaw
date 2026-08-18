@@ -38,6 +38,9 @@ def _skill_available(skill_name: str) -> bool:
         )
         return entry is not None
     except Exception:  # pylint: disable=broad-except
+        # 吞异常必须留痕：导入期错误若静默，内置专家会整体退化为
+        # 无技能形态且无人察觉（2026-08 PG 补验的同款教训）。
+        logger.debug("skill pool manifest unavailable", exc_info=True)
         return False
 
 

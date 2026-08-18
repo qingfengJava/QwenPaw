@@ -3,9 +3,13 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
+from fastapi import HTTPException
 
 from qwenpaw.app.agent_context import (
+    _enforce_expert_acl,
     resolve_trusted_user_id,
     set_current_user_id,
 )
@@ -76,3 +80,123 @@ class TestRuntimeNormalize:
     def test_claimed_user_kept_without_auth(self) -> None:
         req = Runtime._normalize({"session_id": "s1", "user_id": "bob"})
         assert req.user_id == "bob"
+
+
+class _StubUserStore:
+    """Minimal ``users.store`` stand-in: one known admin, no one else."""
+
+    def get_user(self, username: str):
+        if username == "alice":
+            return SimpleNamespace(role="admin")
+        return None
+
+
+class TestEnforceExpertAcl:
+    """Lock the expert ACL gate semantics.
+
+    Regression guard: ``HTTPException`` was undefined inside
+    ``_enforce_expert_acl``, so every enforce-mode rejection raised
+    ``NameError`` instead, was swallowed by the broad except and
+    degraded the fail-closed gate into a logged fail-open.
+    """
+
+    @staticmethod
+    def _request(username):
+        return SimpleNamespace(state=SimpleNamespace(user=username))
+
+    def test_non_expert_agent_short_circuits(self) -> None:
+        # Plain agents (no expert_/team_ prefix) never touch RBAC.
+        _enforce_expert_acl(self._request(None), "default")
+
+    def test_enforce_off_allows_expert_agents(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "qwenpaw.app.rbac.deps.rbac_enforcement_enabled",
+            lambda: False,
+        )
+        _enforce_expert_acl(self._request(None), "expert_builtin_researcher")
+
+    def test_enforce_on_without_identity_fails_closed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "qwenpaw.app.rbac.deps.rbac_enforcement_enabled",
+            lambda: True,
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            _enforce_expert_acl(
+                self._request(None), "expert_builtin_researcher"
+            )
+        assert exc_info.value.status_code == 403
+
+    def test_enforce_on_denied_agent_rejected(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "qwenpaw.app.rbac.deps.rbac_enforcement_enabled",
+            lambda: True,
+        )
+        monkeypatch.setattr(
+            "qwenpaw.app.users.store.get_user_store",
+            lambda: _StubUserStore(),
+        )
+        monkeypatch.setattr(
+            "qwenpaw.app.rbac.store.get_rbac_store",
+            lambda: SimpleNamespace(
+                agent_allowed=lambda username, agent_id, flat_role="": False
+            ),
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            _enforce_expert_acl(
+                self._request("alice"), "expert_builtin_researcher"
+            )
+        assert exc_info.value.status_code == 403
+
+    def test_enforce_on_allowed_agent_passes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "qwenpaw.app.rbac.deps.rbac_enforcement_enabled",
+            lambda: True,
+        )
+        monkeypatch.setattr(
+            "qwenpaw.app.users.store.get_user_store",
+            lambda: _StubUserStore(),
+        )
+        monkeypatch.setattr(
+            "qwenpaw.app.rbac.store.get_rbac_store",
+            lambda: SimpleNamespace(
+                agent_allowed=lambda username, agent_id, flat_role="": True
+            ),
+        )
+        # Must not raise: granted access resolves to a no-op.
+        _enforce_expert_acl(self._request("alice"), "expert_builtin_researcher")
+
+    def test_acl_infrastructure_failure_fails_open_with_warning(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        # Gray-rollout design: ACL infra errors log a warning and allow,
+        # so a broken store never takes down agent resolution.
+        monkeypatch.setattr(
+            "qwenpaw.app.rbac.deps.rbac_enforcement_enabled",
+            lambda: True,
+        )
+        monkeypatch.setattr(
+            "qwenpaw.app.users.store.get_user_store",
+            lambda: _StubUserStore(),
+        )
+
+        def _broken_store():
+            raise RuntimeError("rbac store unreadable")
+
+        monkeypatch.setattr(
+            "qwenpaw.app.rbac.store.get_rbac_store", _broken_store
+        )
+        with caplog.at_level("WARNING"):
+            _enforce_expert_acl(
+                self._request("alice"), "expert_builtin_researcher"
+            )
+        assert "expert ACL check errored" in caplog.text

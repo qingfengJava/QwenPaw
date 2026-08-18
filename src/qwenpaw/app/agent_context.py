@@ -158,6 +158,8 @@ def _enforce_expert_acl(request: Request, agent_id: str) -> None:
     if not agent_id.startswith(("expert_", "team_")):
         return
     try:
+        from fastapi import HTTPException
+
         from .rbac.deps import rbac_enforcement_enabled
 
         if not rbac_enforcement_enabled():

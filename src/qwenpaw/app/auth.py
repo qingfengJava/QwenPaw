@@ -29,7 +29,7 @@ import os
 import re
 import secrets
 import time
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -41,6 +41,9 @@ from ..security.secret_store import (
     encrypt_dict_fields,
     is_encrypted,
 )
+
+if TYPE_CHECKING:
+    from .users.store import UserStore
 
 logger = logging.getLogger(__name__)
 
