@@ -910,6 +910,109 @@ textarea.main-input::placeholder {
   flex-wrap: wrap;
 }
 
+/* ---------------- Expert operations: task rows & case cards ------------- */
+/* 详情页运营位：任务模板行（点击即以提示词召唤/发起 run）与使用案例卡
+ * （静态运营内容 + 团队「最近交付」真实投影共用同一卡片语言）。 */
+
+.expert-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.expert-task-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  background: white;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  text-align: left;
+}
+
+.expert-task-row:hover {
+  border-color: #2b2d31;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+}
+
+.expert-task-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary, #1f2328);
+  min-width: 0;
+}
+
+.expert-task-title i {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.expert-task-go {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.expert-task-row:hover .expert-task-go {
+  color: #2b2d31;
+  font-weight: 600;
+}
+
+.expert-case-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.expert-case-card {
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 10px 12px;
+}
+
+.expert-case-title {
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.expert-delivery-badge {
+  display: inline-block;
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+  padding: 1px 8px;
+  border-radius: 999px;
+  color: #1a7f5a;
+  background: #e6f5ef;
+}
+
+.expert-case-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin-top: 4px;
+}
+
+.expert-case-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 6px;
+}
+
 /* ---------------- Chat (助理) page — extension ---------------- */
 /* Scroll shell mirrors the console layout (.chatMessagesArea): the wrapper
  * is a flex child that may not grow past its share (min-height: 0), so the

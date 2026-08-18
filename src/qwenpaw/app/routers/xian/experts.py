@@ -101,6 +101,9 @@ def _expert_card(record: ExpertRecord) -> dict:
         "is_builtin": record.is_builtin,
         "usage_count": record.usage_count,
         "featured": record.featured,
+        # 运营位（详情页「专家帮你做」/「使用案例」数据源）
+        "sample_tasks": record.sample_tasks,
+        "showcase": record.showcase,
         "updated_at": record.updated_at.isoformat()
         if record.updated_at
         else None,
@@ -310,6 +313,9 @@ async def list_expert_teams(
                 "tags": team.tags,
                 "member_count": len(team.members),
                 "members": members,
+                # 运营位（详情页「任务示例」/「使用案例」数据源）
+                "sample_tasks": team.sample_tasks,
+                "showcase": team.showcase,
             }
         )
     return visible

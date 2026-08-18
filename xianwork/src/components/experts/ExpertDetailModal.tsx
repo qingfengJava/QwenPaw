@@ -1,6 +1,8 @@
 /**
  * ExpertDetailModal — expert detail view: persona card, bound skills,
- * parent teams, and the black 召唤专家 button (WorkBuddy layout).
+ * parent teams, the curated "专家帮你做" template rows (one click summons
+ * with the prompt as kickoff) and the static showcase cards, plus the
+ * black 召唤专家 button (WorkBuddy layout).
  * Loads lazily from /xian/experts/{id} while the modal is open.
  */
 import { useEffect, useState } from "react";
@@ -12,7 +14,8 @@ import { teamModeLabel } from "./TeamCard";
 export interface ExpertDetailModalProps {
   expertId: string | null;
   onClose: () => void;
-  onSummon: (expert: ExpertDetail) => void;
+  /** kickoff: 模板行点击时携带的完整任务提示词（覆盖默认开场白）。 */
+  onSummon: (expert: ExpertDetail, kickoff?: string) => void;
 }
 
 export default function ExpertDetailModal({
@@ -48,6 +51,8 @@ export default function ExpertDetailModal({
   }, [expertId]);
 
   const skills = (detail?.skills ?? []).filter((s) => s.enabled);
+  const tasks = detail?.sample_tasks ?? [];
+  const showcase = detail?.showcase ?? [];
 
   return (
     <Modal
@@ -94,6 +99,49 @@ export default function ExpertDetailModal({
             <h4>简介</h4>
             <p>{detail.description || "（无简介）"}</p>
           </div>
+          {tasks.length > 0 && (
+            <div className="expert-detail-section">
+              <h4>专家帮你做</h4>
+              <div className="expert-task-list">
+                {tasks.map((task) => (
+                  <button
+                    key={task.title}
+                    type="button"
+                    className="expert-task-row"
+                    onClick={() => onSummon(detail, task.prompt)}
+                  >
+                    <span className="expert-task-title">
+                      <i className="fa-solid fa-wand-magic-sparkles" />
+                      {task.title}
+                    </span>
+                    <span className="expert-task-go">立即召唤</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {showcase.length > 0 && (
+            <div className="expert-detail-section">
+              <h4>使用案例</h4>
+              <div className="expert-case-list">
+                {showcase.map((c) => (
+                  <div key={c.title} className="expert-case-card">
+                    <div className="expert-case-title">{c.title}</div>
+                    {c.desc && <div className="expert-case-desc">{c.desc}</div>}
+                    {(c.tags ?? []).length > 0 && (
+                      <div className="expert-tags">
+                        {(c.tags ?? []).map((tag) => (
+                          <span key={tag} className="expert-tag">
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           {detail.system_prompt ? (
             <div className="expert-detail-section">
               <h4>领域人设</h4>

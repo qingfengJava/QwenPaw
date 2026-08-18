@@ -12,6 +12,19 @@ export interface AIBinding {
   ref_id: string;
 }
 
+/** 运营位条目：任务模板（详情页点击即以 prompt 召唤/发起 run）。 */
+export interface ExpertSampleTask {
+  title: string;
+  prompt: string;
+}
+
+/** 运营位条目：静态使用案例（团队详情另叠加真实「最近交付」投影）。 */
+export interface ExpertShowcaseItem {
+  title: string;
+  desc: string;
+  tags?: string[];
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -68,6 +81,10 @@ export interface Expert {
   is_builtin?: boolean;
   usage_count?: number;
   featured?: boolean;
+  /** 详情页「专家帮你做」任务模板（管理端/内置出厂配置）。 */
+  sample_tasks?: ExpertSampleTask[];
+  /** 详情页「使用案例」静态运营位。 */
+  showcase?: ExpertShowcaseItem[];
   updated_at?: string | null;
 }
 
@@ -110,6 +127,10 @@ export interface ExpertTeam {
   category?: string;
   tags?: string[];
   members?: ExpertTeamMemberView[];
+  /** 详情页「任务示例」模板（点击即以 prompt 为 goal 发起 run）。 */
+  sample_tasks?: ExpertSampleTask[];
+  /** 详情页「使用案例」静态运营位。 */
+  showcase?: ExpertShowcaseItem[];
 }
 
 export interface ChatSummary {

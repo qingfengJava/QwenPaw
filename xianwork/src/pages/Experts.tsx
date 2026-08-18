@@ -168,14 +168,14 @@ export default function ExpertsPage() {
   );
 
   const summonExpert = useCallback(
-    (expert: { id: string; name: string; agent_id: string }) => {
+    (expert: { id: string; name: string; agent_id: string }, kickoff?: string) => {
       void expertApi.use(expert.id).catch(() => undefined);
       setDetailId(null);
       setDetailTeam(null);
       void summon(
         expert.agent_id,
         `专家对话 · ${expert.name}`,
-        KICKOFF_EXPERT,
+        kickoff || KICKOFF_EXPERT,
       );
     },
     [summon],
@@ -185,10 +185,11 @@ export default function ExpertsPage() {
    * 团队召唤：指定专家团直达团队模式（用户确认的四入口之一）——
    * POST workforce runs 创建后台任务并跳转 RunDetail（DAG 进度 /
    * 逐节点验收 / 熔断干预全可视）。默认 goal 进入规划器的澄清
-   * 链路（awaiting_confirm），用户在详情页作答后正式编排。
+   * 链路（awaiting_confirm），用户在详情页作答后正式编排；
+   * 模板行点击时以模板 prompt 作为 goal 直达。
    */
   const summonTeam = useCallback(
-    async (team: ExpertTeam) => {
+    async (team: ExpertTeam, kickoff?: string) => {
       if (summoning) {
         return;
       }
@@ -197,7 +198,9 @@ export default function ExpertsPage() {
       try {
         const run = await workforceApi.create({
           team_id: team.id,
-          goal: `请按${teamModeLabel(team.mode)}的方式协作处理我的请求。`,
+          goal:
+            kickoff ||
+            `请按${teamModeLabel(team.mode)}的方式协作处理我的请求。`,
         });
         toast.success(`已创建「${team.name}」专家团任务`);
         navigate(`/runs/${run.id}`);
