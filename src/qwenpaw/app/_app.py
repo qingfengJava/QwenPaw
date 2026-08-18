@@ -383,6 +383,21 @@ async def lifespan(  # pylint: disable=too-many-statements,too-many-branches
                     exc_info=True,
                 )
 
+            # ---- Workforce run recovery (XianWork team tasks) ----
+            # Mark still-active team runs as interrupted so users can
+            # resume them from RunDetail (engine resumes past done nodes).
+            # Best-effort: a failure must never block app startup.
+            try:
+                from .workforce.run_store import get_run_store
+
+                await get_run_store().mark_interrupted_runs()
+            except Exception:
+                logger.debug(
+                    "Workforce run recovery skipped (enterprise store "
+                    "unavailable or no active runs).",
+                    exc_info=True,
+                )
+
             # ---- Plugin System (phase 1: channel plugins) ----
             # Load channel-type plugins *before* agents start so that
             # ChannelManager discovers them via get_channel_registry()
