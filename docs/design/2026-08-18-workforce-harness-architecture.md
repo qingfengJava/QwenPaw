@@ -374,7 +374,62 @@ team_run_nodes（DAG 节点的执行与验收留痕）
 | 缺口 | 说明 | 预留 |
 | --- | --- | --- |
 | 多实例水平扩展 | RedisEventBus + PG SKIP LOCKED 节点认领 | bus 接口已对齐 |
-| DAG 可视化图形编辑器 | v1 用 JSON 模板 + 波次分层列表 | OrchestrationSpec schema 稳定 |
+| DAG 可视化图形编辑器 | v1 用 JSON 模板 + 波次分层列表 + WavePreview 预览 | OrchestrationSpec schema 稳定 |
 | 对象存储产物归档 | 团队产出文件挂 MinIO/OSS | media_files.storage_type 已预留 |
 | 非项目跨用户移交 | v1 限项目组内 | assignee_user_id 字段已预留 |
 | e2e Playwright | v1 以集成测试 + 手动演练准出 | e2e/ 基建已有 |
+| 真实交付"一键转 showcase"沉淀 | 数据双轨已打通，转化按钮随运营反馈迭代 | showcase JSONB 一等字段 |
+
+## 15. 内置专家体系（出厂默认 Agent）
+
+内置专家 = 固定 `builtin_*` id 幂等 seed + 发布链物化 + 市场可见。`builtins.py` 为唯一定义源（`BUILTIN_EXPERTS` 12 个 / `BUILTIN_TEAMS` 1 个），`enterprise.py` bootstrap 挂接（失败告警不阻塞），重启不重复安装、管理员对内置行的编辑/归档不会被覆盖。
+
+### 15.1 信息架构（对齐市场惯例，昵称零 DDL）
+
+| 字段 | 语义 | 渲染位 |
+| --- | --- | --- |
+| `title` | 角色名（主标题，如"微信公众号运营专家"） | ExpertCard / 详情主标题 |
+| `name` | 人格化昵称（副行，如"篇篇红"） | 卡片副行 / 详情 |
+| `badge` | 官方角标（"官方"） | 标题旁 inline 徽标 |
+| `usage_count` | 召唤次数（已有） | 详情头 |
+| `sample_tasks` JSONB `[{title,prompt}]` | "专家帮你做"任务模板 | 详情页模板行（点击即以 prompt 为 kickoff / goal） |
+| `showcase` JSONB `[{title,desc,tags[]}]` | 使用案例（静态运营位） | 详情页案例卡 |
+
+experts / expert_teams 两表四列（alembic 0011），管理端 console 全字段可编辑（Form.List 行编辑器：模板 title+prompt、案例 title+desc+tags 逗号串），admin 路由 create/update 透传，xian 读平面 `_expert_card` / `list_expert_teams` 投影透出。
+
+### 15.2 快慢双链（fast_nodes）
+
+- `OrchestrationSpec.fast_nodes: List[DagNode]`（JSONB 内字段，零 DDL）；快速链是**独立完整 DAG**（含自己的 final 汇总节点）。
+- 选择规则（`planner.pick_template_nodes`，纯函数可单测）：`classify_by_rules(goal)` 命中复杂信号（多交付物/跨专业/编排动词）→ 标准链 `nodes`（source=orchestration）；未命中且 fast_nodes 非空 → 快速链（source=orchestration_fast）；否则标准链兜底。source 写入 DagPlan/PlanOutcome，RunDetail 与事件可观察实际走了哪条链。
+- 快速链与标准链**同一套严格校验**：OrchestrationSpec Literal schema + validate_dag（环/未知依赖）+ 成员校验 + `_ensure_final_node`，错误信息标记链来源。
+- 内置软件开发团队：标准链 5 节点（requirement→architecture→implementation→qa-verify→final-summary），快速链 3 节点（fast-requirement→fast-impl→final-summary，跳过架构与 QA、总监汇总+自验兜底）。
+
+### 15.3 使用案例双轨（静态运营 + 真实交付投影）
+
+- **静态 showcase**：管理端可编辑、出厂内置（平台方背书的运营内容，行业惯例）；单专家与团队详情都渲染——解决"单专家无 run 概念"缺口（静态案例不依赖 run）。
+- **团队真实交付投影**：TeamDetailModal 打开时 `GET /xian/workforce/runs?team_id={id}&status=done` 取前 2 条真实 run（goal+summary+交付日期），打"最近交付"徽标，与静态案例同区展示；空态文案"该团队暂无已完成任务，召唤后交付将展示在这里"；加载失败降级为提示（不阻塞静态案例）。
+- 运营案例打底、真实数据佐证，二者互补；不编造数据。
+
+### 15.4 多节点并行配置范式（fe ∥ be）
+
+架构师拆解后 fe/be 双节点写**相同 deps** 即同波并行（engine 波次调度 + `parallelism` 限流）。示例（标准链内替换 implementation）：
+
+```json
+[
+  {"node_key":"requirement","deps":[],"assignee_expert_id":"<PM>","node_type":"task","objective":"需求分析","expected_output":["验收标准"]},
+  {"node_key":"architecture","deps":["requirement"],"assignee_expert_id":"<架构师>","node_type":"task","objective":"技术方案+拆解","expected_output":["任务清单"]},
+  {"node_key":"fe","deps":["architecture"],"assignee_expert_id":"<前端>","node_type":"task","objective":"前端实现","expected_output":["前端代码"]},
+  {"node_key":"be","deps":["architecture"],"assignee_expert_id":"<后端>","node_type":"task","objective":"后端实现","expected_output":["后端代码"]},
+  {"node_key":"final-summary","deps":["fe","be"],"node_type":"final","objective":"汇总交付"}
+]
+```
+
+### 15.5 WavePreview（编排波次预览，console）
+
+`console/src/pages/Admin/WavePreview.tsx`：输入链 JSON 原文实时拓扑分层（`waveLayering` 纯函数，镜像后端 `topological_waves` / xianwork RunDetail `waveKeys`），按波渲染节点 chip——同波多节点标"并行"徽标，环/未知依赖显式报错（不被空态吞掉），JSON 非法报解析错误。标准链与快速链编辑器下方各挂一个，管理员配置 fe∥be 时所见即所得。编辑器校验器（数组/node_key 唯一/deps 存在）+ WavePreview（结构分层）+ engine 严格校验（运行时兜底）三层防线。
+
+### 15.6 内置内容一览
+
+- **单专家**：微信公众号运营专家（篇篇红，marketing）、内容创作专家（墨小爆，writing）——各带 3 条任务模板 + 2 条使用案例。
+- **软件开发团队**（builtin_team_software）：交付总监 成必达（lead，中央大脑：只做审与合，绝不亲自写代码）、产品经理 需明白（用户故事+可验收标准）、架构师 顾大局（两案对比+并行分组建议）、工程师 码到成（按清单批量实现）、QA 严把关（结论必须附证据）；快慢双链 + 3 条任务模板 + 2 条使用案例。
+- **persona 与契约呼应**：成员 system_prompt 只写领域专业性（输出格式由 delegator `_RESULT_SCHEMA_HINT` 统一注入）；QA persona 与 `ResultContract.evidence`、PM persona 与 `TaskContract.quality_criteria` 语义对齐。

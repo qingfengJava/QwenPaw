@@ -560,3 +560,107 @@ async def test_list_teams_returns_member_roles(enterprise_env, store):
     target = next(t for t in teams if t.id == team.id)
     assert target.members[0].member_role == "lead"
     assert target.members[1].member_role == "member"
+
+
+# ---------------------------------------------------------------------------
+# operations payload (sample_tasks / showcase) + builtin seeds (PG required)
+# ---------------------------------------------------------------------------
+
+
+async def test_sample_tasks_showcase_roundtrip(enterprise_env, store):
+    from qwenpaw.app.experts.models import TeamMember
+
+    tasks_v1 = [{"title": "规划菜单", "prompt": "请规划公众号菜单。"}]
+    cases_v1 = [
+        {"title": "粉丝破万", "desc": "3 个月从 2300 到 1.2 万", "tags": ["活动运营"]}
+    ]
+    expert = await store.create_expert(
+        **_mk_expert_kwargs(
+            "运营专家",
+            sample_tasks=tasks_v1,
+            showcase=cases_v1,
+        )
+    )
+    # create 透传 → 读回一致
+    fetched = await store.get_expert(expert.id)
+    assert fetched.sample_tasks == tasks_v1
+    assert fetched.showcase == cases_v1
+
+    # update：显式传 list = 整体替换；传 None 字段 = 不修改
+    tasks_v2 = [{"title": "裂变活动", "prompt": "设计裂变涨粉活动。"}]
+    updated = await store.update_expert(expert.id, sample_tasks=tasks_v2)
+    assert updated.sample_tasks == tasks_v2
+    assert updated.showcase == cases_v1
+
+    # 团队侧同语义（create_team 带运营位 + update_team 整体替换）
+    e2 = await store.create_expert(**_mk_expert_kwargs("团队写手"))
+    team_tasks = [{"title": "开发贪吃蛇", "prompt": "帮我开发贪吃蛇游戏。"}]
+    team_cases = [{"title": "App 全链交付", "desc": "五节点标准链", "tags": ["标准链"]}]
+    team = await store.create_team(
+        name="交付团队",
+        members=[TeamMember(expert_id=e2.id, member_role="lead", seq=0)],
+        sample_tasks=team_tasks,
+        showcase=team_cases,
+    )
+    team_fetched = await store.get_team(team.id)
+    assert team_fetched.sample_tasks == team_tasks
+    assert team_fetched.showcase == team_cases
+    updated_team = await store.update_team(team.id, showcase=[])
+    assert updated_team.sample_tasks == team_tasks
+    assert updated_team.showcase == []
+
+
+async def test_ensure_builtin_experts_and_teams_idempotent(
+    enterprise_env, store, tmp_path, monkeypatch
+):
+    """两次 seed：第二次 0 新增；内置内容（运营位 / 快慢链）完整落库。"""
+    from qwenpaw import constant as constant_mod
+    from qwenpaw.app.experts import builtins as builtins_mod
+
+    # workspace 物化重定向到临时目录（publish 链经 constant.WORKING_DIR
+    # 解析 experts 根目录，函数内延迟 import → patch 模块属性即生效）
+    monkeypatch.setattr(constant_mod, "WORKING_DIR", str(tmp_path))
+
+    installed = await builtins_mod.ensure_builtin_experts()
+    assert installed == len(builtins_mod.BUILTIN_EXPERTS)
+    teams_installed = await builtins_mod.ensure_builtin_teams()
+    assert teams_installed == len(builtins_mod.BUILTIN_TEAMS)
+
+    # 幂等：重复调用不再新增（既有行永不触碰）
+    assert await builtins_mod.ensure_builtin_experts() == 0
+    assert await builtins_mod.ensure_builtin_teams() == 0
+
+    # 内置专家运营位落库
+    wechat = await store.get_expert("builtin_wechat_operator")
+    assert wechat is not None and wechat.is_builtin
+    assert wechat.title == "微信公众号运营专家"
+    assert wechat.name == "篇篇红"
+    assert len(wechat.sample_tasks) == 3
+    assert all({"title", "prompt"} <= set(t) for t in wechat.sample_tasks)
+    assert len(wechat.showcase) == 2
+    assert all("tags" in c and c["tags"] for c in wechat.showcase)
+
+    # 内置团队：固定 id、五成员、快慢双链、运营位
+    team = await store.get_team("builtin_team_software")
+    assert team is not None
+    assert len(team.members) == 5
+    lead = next(m for m in team.members if m.member_role == "lead")
+    assert lead.expert_id == "builtin_dir_deliver"
+    orch = team.orchestration
+    assert orch["runtime_enabled"] is True
+    std_keys = [n["node_key"] for n in orch["nodes"]]
+    fast_keys = [n["node_key"] for n in orch["fast_nodes"]]
+    assert std_keys == [
+        "requirement",
+        "architecture",
+        "implementation",
+        "qa-verify",
+        "final-summary",
+    ]
+    assert fast_keys == [
+        "fast-requirement",
+        "fast-impl",
+        "final-summary",
+    ]
+    assert len(team.sample_tasks) == 3
+    assert len(team.showcase) == 2

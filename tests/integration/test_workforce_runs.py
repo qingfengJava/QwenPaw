@@ -266,6 +266,180 @@ def test_intent_rule_classification():
     assert classify_by_rules("   ").intent == INTENT_SIMPLE
 
 
+def _spec_with_fast_chain() -> "OrchestrationSpec":  # noqa: F821
+    from qwenpaw.app.workforce.contracts import OrchestrationSpec
+
+    return OrchestrationSpec.model_validate(
+        {
+            "runtime_enabled": True,
+            "nodes": [
+                {
+                    "node_key": "requirement",
+                    "deps": [],
+                    "assignee_expert_id": "exp_pm",
+                    "node_type": "task",
+                    "objective": "需求",
+                },
+                {
+                    "node_key": "final-summary",
+                    "deps": ["requirement"],
+                    "node_type": "final",
+                    "objective": "汇总",
+                },
+            ],
+            "fast_nodes": [
+                {
+                    "node_key": "fast-impl",
+                    "deps": [],
+                    "assignee_expert_id": "exp_dev",
+                    "node_type": "task",
+                    "objective": "直接实现",
+                },
+                {
+                    "node_key": "final-summary",
+                    "deps": ["fast-impl"],
+                    "node_type": "final",
+                    "objective": "汇总",
+                },
+            ],
+        }
+    )
+
+
+def test_pick_template_nodes_fast_vs_standard():
+    from qwenpaw.app.workforce.planner import pick_template_nodes
+
+    spec = _spec_with_fast_chain()
+    # 复杂信号（多交付物）→ 标准链
+    nodes, source = pick_template_nodes(spec, "帮我写一个方案和一份架构设计")
+    assert source == "orchestration"
+    assert [n.node_key for n in nodes] == ["requirement", "final-summary"]
+    # 未命中复杂信号（小需求）→ 快速链
+    nodes, source = pick_template_nodes(spec, "帮我改个按钮颜色")
+    assert source == "orchestration_fast"
+    assert [n.node_key for n in nodes] == ["fast-impl", "final-summary"]
+    # 无快速链配置 → 标准链兜底
+    spec_only_std = spec.model_copy(update={"fast_nodes": []})
+    nodes, source = pick_template_nodes(spec_only_std, "帮我改个按钮颜色")
+    assert source == "orchestration"
+    assert [n.node_key for n in nodes] == ["requirement", "final-summary"]
+
+
+async def test_plan_run_fast_chain_validated_like_standard():
+    """快速链与标准链同一套校验：环依赖 / 未知成员均拒绝（可单测无 PG）。"""
+    from qwenpaw.app.workforce.planner import plan_run
+
+    team = SimpleNamespace(
+        orchestration={
+            "runtime_enabled": True,
+            "nodes": [
+                {
+                    "node_key": "requirement",
+                    "deps": [],
+                    "assignee_expert_id": "exp_pm",
+                    "node_type": "task",
+                    "objective": "需求",
+                },
+                {
+                    "node_key": "final-summary",
+                    "deps": ["requirement"],
+                    "node_type": "final",
+                    "objective": "汇总",
+                },
+            ],
+            # 环依赖：a→b→a（分层失败）
+            "fast_nodes": [
+                {
+                    "node_key": "a",
+                    "deps": ["b"],
+                    "assignee_expert_id": "exp_dev",
+                    "node_type": "task",
+                    "objective": "A",
+                },
+                {
+                    "node_key": "b",
+                    "deps": ["a"],
+                    "assignee_expert_id": "exp_dev",
+                    "node_type": "task",
+                    "objective": "B",
+                },
+                {
+                    "node_key": "final-summary",
+                    "deps": ["a", "b"],
+                    "node_type": "final",
+                    "objective": "汇总",
+                },
+            ],
+        }
+    )
+    members = [SimpleNamespace(id="exp_pm"), SimpleNamespace(id="exp_dev")]
+    bundle = SimpleNamespace()
+    # 小需求触发快速链 → 环依赖被 validate_dag 拒绝，错误信息标记链来源
+    outcome = await plan_run("帮我改个按钮颜色", team, members, bundle)
+    assert outcome.plan is None
+    assert outcome.error
+    assert "orchestration_fast" in outcome.error
+
+    # 未知成员：fast 节点指到团队之外 → 成员校验拒绝
+    team.orchestration = {
+        "runtime_enabled": True,
+        "nodes": team.orchestration["nodes"],
+        "fast_nodes": [
+            {
+                "node_key": "fast-impl",
+                "deps": [],
+                "assignee_expert_id": "exp_ghost",
+                "node_type": "task",
+                "objective": "实现",
+            },
+            {
+                "node_key": "final-summary",
+                "deps": ["fast-impl"],
+                "node_type": "final",
+                "objective": "汇总",
+            },
+        ],
+    }
+    outcome = await plan_run("帮我改个按钮颜色", team, members, bundle)
+    assert outcome.plan is None
+    assert outcome.error
+    assert "orchestration_fast" in outcome.error
+
+    # 合法快速链 → 小需求直达 fast 链（source=orchestration_fast）
+    team.orchestration = {
+        "runtime_enabled": True,
+        "nodes": team.orchestration["nodes"],
+        "fast_nodes": [
+            {
+                "node_key": "fast-impl",
+                "deps": [],
+                "assignee_expert_id": "exp_dev",
+                "node_type": "task",
+                "objective": "实现",
+            },
+            {
+                "node_key": "final-summary",
+                "deps": ["fast-impl"],
+                "node_type": "final",
+                "objective": "汇总",
+            },
+        ],
+    }
+    outcome = await plan_run("帮我改个按钮颜色", team, members, bundle)
+    assert not outcome.error
+    assert outcome.source == "orchestration_fast"
+    assert [n.node_key for n in outcome.plan.nodes] == [
+        "fast-impl",
+        "final-summary",
+    ]
+    # 同一团队复杂需求 → 走标准链
+    outcome = await plan_run(
+        "帮我写一个方案和一份架构设计", team, members, bundle
+    )
+    assert not outcome.error
+    assert outcome.source == "orchestration"
+
+
 def test_bundle_versioning_and_minimal_projection():
     from qwenpaw.app.workforce.bundle import (
         build_initial_bundle,
