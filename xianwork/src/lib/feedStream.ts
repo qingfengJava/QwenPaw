@@ -28,6 +28,32 @@ export function subscribeFeed(
   projectId: string,
   handlers: FeedStreamHandlers,
 ): FeedStreamHandle {
+  return subscribeSse(
+    `/api/xian/projects/${encodeURIComponent(projectId)}/events`,
+    handlers,
+  );
+}
+
+/**
+ * Run-detail SSE subscription (`GET /api/xian/workforce/runs/{id}/events`).
+ * Same frame parsing / resume / backoff as the project feed — the backend
+ * endpoint is the identical Last-Event-ID + keepalive shape.
+ */
+export function subscribeRunEvents(
+  runId: string,
+  handlers: FeedStreamHandlers,
+): FeedStreamHandle {
+  return subscribeSse(
+    `/api/xian/workforce/runs/${encodeURIComponent(runId)}/events`,
+    handlers,
+  );
+}
+
+/** Generic GET-SSE subscription shared by the project feed and run events. */
+function subscribeSse(
+  path: string,
+  handlers: FeedStreamHandlers,
+): FeedStreamHandle {
   const controller = new AbortController();
   let lastEventId: number | null = null;
   let attempt = 0;
@@ -65,12 +91,12 @@ export function subscribeFeed(
         if (lastEventId !== null) {
           headers["Last-Event-ID"] = String(lastEventId);
         }
-        const res = await fetch(
-          `/api/xian/projects/${encodeURIComponent(projectId)}/events`,
-          { headers, signal: controller.signal },
-        );
+        const res = await fetch(path, {
+          headers,
+          signal: controller.signal,
+        });
         if (!res.ok || !res.body) {
-          throw new Error(`feed stream failed: ${res.status}`);
+          throw new Error(`sse stream failed: ${res.status}`);
         }
         attempt = 0;
         const reader = res.body.getReader();
@@ -87,7 +113,7 @@ export function subscribeFeed(
           }
         }
         // Stream ended cleanly (server shutdown) — reconnect.
-        throw new Error("feed stream ended");
+        throw new Error("sse stream ended");
       } catch (err) {
         if (closed || controller.signal.aborted) {
           return;

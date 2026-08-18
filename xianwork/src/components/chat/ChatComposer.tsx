@@ -77,6 +77,7 @@ export default function ChatComposer({
   disclaimer = "懂你所需，伴你左右",
   chatId,
   workspaceDisabled,
+  onEscalateTeam,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -101,6 +102,9 @@ export default function ChatComposer({
   chatId?: string;
   /** Streaming guard for the workspace selector (rebind while running is 409). */
   workspaceDisabled?: boolean;
+  /** Chat dual-mode entry: open the "升级为专家团任务" team picker.
+   *  Provided only by the Chat page — omitted keeps the composer as-is. */
+  onEscalateTeam?: () => void;
 }) {
   const toast = useToast();
   const loopModes = useChatPrefs((s) => s.loopModes);
@@ -478,6 +482,17 @@ export default function ChatComposer({
               hidden
               onChange={(e) => void handleFiles(e.target.files)}
             />
+            {onEscalateTeam && (
+              <button
+                type="button"
+                className="composer-icon-btn"
+                onClick={onEscalateTeam}
+                title="升级为专家团任务（后台 DAG 编排执行）"
+                aria-label="升级为专家团任务"
+              >
+                <i className="fa-solid fa-people-group" />
+              </button>
+            )}
             <LoopModeSelector />
             <WorkspaceSelector chatId={chatId} disabled={workspaceDisabled} />
           </div>

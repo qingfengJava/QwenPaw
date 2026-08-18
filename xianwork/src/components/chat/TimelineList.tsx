@@ -7,7 +7,9 @@
  * user-message navigator (console UserMessageAnchors parity).
  */
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import type { TimelineItem, UserAttachment } from "../../chat/protocol";
+import { RUN_STATUS_META } from "../../lib/runStatus";
 import MarkdownView from "./MarkdownView";
 import ReasoningBlock from "./ReasoningBlock";
 import ToolCallCard from "./ToolCallCard";
@@ -31,7 +33,7 @@ function formatTokens(n?: number): string {
 /** Item kinds that open a new assistant turn (identity head rendered above). */
 const TURN_HEAD_KINDS = new Set(["reasoning", "tool", "assistant"]);
 /** Item kinds that close the previous turn — a head after them starts a new one. */
-const TURN_TAIL_KINDS = new Set(["user", "error", "usage"]);
+const TURN_TAIL_KINDS = new Set(["user", "error", "usage", "team_run"]);
 /** Collapsible agent-run steps — chained by the console connector line. */
 const STEP_KINDS = new Set(["reasoning", "tool"]);
 
@@ -314,6 +316,32 @@ export default function TimelineList({
                   <i className="fa-solid fa-triangle-exclamation" /> {item.text}
                 </div>
               );
+            case "team_run": {
+              // 专家团任务卡片（会话本地占位，SSE 实时刷新状态）：
+              // 状态角标 + 团队名 + 汇总摘要 + 跳转 RunDetail 的链接。
+              const meta = RUN_STATUS_META[item.status] ?? RUN_STATUS_META.planning;
+              return (
+                <div key={item.key} className="team-run-card">
+                  <div className="team-run-head">
+                    <span className="team-run-icon">
+                      <i className="fa-solid fa-people-group" />
+                    </span>
+                    <span className="team-run-title">
+                      {item.teamName ? `${item.teamName} · 专家团任务` : "专家团任务"}
+                    </span>
+                    <span className="team-run-status" style={{ color: meta.tone }}>
+                      <i className={meta.icon} /> {meta.label}
+                    </span>
+                  </div>
+                  <div className="team-run-summary">
+                    {item.summary || "已升级为后台专家团任务，正在拆解 DAG 计划并逐节点推进…"}
+                  </div>
+                  <Link className="team-run-link" to={`/runs/${item.runId}`}>
+                    查看任务详情 <i className="fa-solid fa-arrow-right" />
+                  </Link>
+                </div>
+              );
+            }
             default:
               return null;
           }

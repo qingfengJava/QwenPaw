@@ -20,7 +20,7 @@ import ExpertDetailModal from "../components/experts/ExpertDetailModal";
 import TeamDetailModal from "../components/experts/TeamDetailModal";
 import ExpertFormModal from "../components/experts/ExpertFormModal";
 import { teamModeLabel } from "../components/experts/TeamCard";
-import { chatApi, expertApi, resourceApi } from "../api/modules";
+import { chatApi, expertApi, resourceApi, workforceApi } from "../api/modules";
 import type {
   ConnectorView,
   Expert,
@@ -181,16 +181,33 @@ export default function ExpertsPage() {
     [summon],
   );
 
+  /**
+   * 团队召唤：指定专家团直达团队模式（用户确认的四入口之一）——
+   * POST workforce runs 创建后台任务并跳转 RunDetail（DAG 进度 /
+   * 逐节点验收 / 熔断干预全可视）。默认 goal 进入规划器的澄清
+   * 链路（awaiting_confirm），用户在详情页作答后正式编排。
+   */
   const summonTeam = useCallback(
-    (team: ExpertTeam) => {
+    async (team: ExpertTeam) => {
+      if (summoning) {
+        return;
+      }
+      setSummoning(true);
       setDetailTeam(null);
-      void summon(
-        team.agent_id,
-        `专家团 · ${team.name}`,
-        `你好，请按${teamModeLabel(team.mode)}的方式协作处理我的请求。`,
-      );
+      try {
+        const run = await workforceApi.create({
+          team_id: team.id,
+          goal: `请按${teamModeLabel(team.mode)}的方式协作处理我的请求。`,
+        });
+        toast.success(`已创建「${team.name}」专家团任务`);
+        navigate(`/runs/${run.id}`);
+      } catch (err) {
+        toast.error(`创建专家团任务失败：${String(err)}`);
+      } finally {
+        setSummoning(false);
+      }
     },
-    [summon],
+    [navigate, summoning, toast],
   );
 
   const openEdit = useCallback(async (expert: Expert) => {

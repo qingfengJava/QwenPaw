@@ -603,6 +603,145 @@ export const shareApi = {
 };
 
 /* ------------------------------------------------------------------
+ * Workforce team runs — the two-level Harness orchestration plane
+ * (POST /xian/workforce/runs; see backend app/workforce).
+ * ------------------------------------------------------------------ */
+
+/** run 状态机值（与后端 contracts.RUN_STATUS_* 对齐）。 */
+export type TeamRunStatus =
+  | "planning"
+  | "awaiting_confirm"
+  | "running"
+  | "verifying"
+  | "repairing"
+  | "aggregating"
+  | "done"
+  | "failed"
+  | "escalated"
+  | "canceled"
+  | "interrupted";
+
+/** 节点状态机值。 */
+export type TeamNodeStatus =
+  | "pending"
+  | "delegated"
+  | "running"
+  | "verifying"
+  | "repairing"
+  | "done"
+  | "failed";
+
+export interface TeamRunNode {
+  run_id: string;
+  node_key: string;
+  assignee_expert_id: string;
+  /** 跨用户移交：接管者用户（null=团队内成员）。 */
+  assignee_user_id: string | null;
+  node_type: "task" | "repair" | "integration" | "final" | "clarify";
+  status: TeamNodeStatus;
+  contract: Record<string, unknown>;
+  result: Record<string, unknown>;
+  repair: Record<string, unknown>;
+  verdict: "" | "PASS" | "FAIL" | "ESCALATE";
+  repair_count: number;
+  session_id: string;
+  token_cost: number;
+  attempt: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface TeamRun {
+  id: string;
+  team_id: string;
+  project_id: string | null;
+  source_chat_id: string | null;
+  initiator_id: string;
+  status: TeamRunStatus;
+  goal: string;
+  plan: { nodes?: unknown[]; plan_note?: string; source?: string };
+  policy: Record<string, unknown>;
+  context_version: number;
+  summary: string;
+  result: Record<string, unknown>;
+  clarification: { questions?: string[]; options?: Record<string, string[]>; answers?: Record<string, string> };
+  repair_count: number;
+  replan_count: number;
+  error: string;
+  escalation_reason: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+  /** 详情接口附带；列表接口无此字段。 */
+  nodes?: TeamRunNode[];
+}
+
+export interface TeamRunCreateBody {
+  team_id: string;
+  goal: string;
+  source_chat_id?: string;
+  project_id?: string;
+  policy?: Record<string, unknown>;
+}
+
+export const workforceApi = {
+  /** 创建并后台启动一次专家团任务（三通道共用）。 */
+  create: (body: TeamRunCreateBody) =>
+    request<TeamRun>("/xian/workforce/runs", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  /** 个人维度：自己发起的 run；project_id 维度：项目全量（需成员）。 */
+  list: (params: { team_id?: string; project_id?: string; status?: string } = {}) => {
+    const usp = new URLSearchParams();
+    if (params.team_id) usp.set("team_id", params.team_id);
+    if (params.project_id) usp.set("project_id", params.project_id);
+    if (params.status) usp.set("status", params.status);
+    const qs = usp.toString();
+    return request<TeamRun[]>(`/xian/workforce/runs${qs ? `?${qs}` : ""}`);
+  },
+  /** 详情：DAG 计划 + 全部节点留痕（契约/结果/裁决/返工）。 */
+  detail: (runId: string) =>
+    request<TeamRun>(`/xian/workforce/runs/${enc(runId)}`),
+  /** 取消运行中的任务（终态幂等）。 */
+  cancel: (runId: string) =>
+    request<{ status: string }>(`/xian/workforce/runs/${enc(runId)}/cancel`, {
+      method: "POST",
+    }),
+  /** 续跑中断任务（从已完成节点之后恢复）。 */
+  resume: (runId: string) =>
+    request<{ status: string }>(`/xian/workforce/runs/${enc(runId)}/resume`, {
+      method: "POST",
+    }),
+  /** 答复澄清问题（awaiting_confirm 状态输入）。 */
+  clarify: (runId: string, answers: Record<string, string>) =>
+    request<{ status: string; context_version: number }>(
+      `/xian/workforce/runs/${enc(runId)}/clarify`,
+      { method: "POST", body: JSON.stringify({ answers }) },
+    ),
+  /** 人工裁决熔断节点（retry 放行 / abort 终止）。 */
+  resolveEscalation: (
+    runId: string,
+    nodeKey: string,
+    action: "retry" | "abort",
+    note = "",
+  ) =>
+    request<{ status: string }>(
+      `/xian/workforce/runs/${enc(runId)}/nodes/${enc(nodeKey)}/escalation`,
+      { method: "POST", body: JSON.stringify({ action, note }) },
+    ),
+  /** 跨用户移交（项目组内数字员工协同；上下文版本延续）。 */
+  handover: (
+    runId: string,
+    nodeKey: string,
+    body: { target_user_id: string; target_expert_id: string; handover_note?: string },
+  ) =>
+    request<{ node_key: string; assignee_user_id: string }>(
+      `/xian/workforce/runs/${enc(runId)}/nodes/${enc(nodeKey)}/handover`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+};
+
+/* ------------------------------------------------------------------
  * Provider / model plane — mirrors the backend ModelSelector contract.
  * ------------------------------------------------------------------ */
 

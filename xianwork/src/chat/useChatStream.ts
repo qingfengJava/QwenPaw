@@ -58,6 +58,19 @@ export function useChatStream() {
     setItems(next);
   }, []);
 
+  /**
+   * Transform the timeline in place (no abort, no streaming reset) —
+   * used by the team-run card live refresh: run SSE events patch the
+   * matching team_run item's status/summary while chat streaming may
+   * still be running on the same timeline.
+   */
+  const patch = useCallback(
+    (fn: (prev: TimelineItem[]) => TimelineItem[]) => {
+      setItems(fn);
+    },
+    [],
+  );
+
   /** Send one user turn and stream the assistant response. */
   const send = useCallback(
     async (
@@ -187,5 +200,5 @@ export function useChatStream() {
   const itemsRef = useRef<TimelineItem[]>([]);
   itemsRef.current = items;
 
-  return { items, streaming, send, stop, reset };
+  return { items, streaming, send, stop, reset, patch };
 }

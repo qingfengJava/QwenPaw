@@ -1782,6 +1782,81 @@ textarea.main-input::placeholder {
   font-size: 13px;
 }
 
+/* ---- team-run card（聊天双态入口：专家团任务占位/汇总卡片） ---- */
+
+.team-run-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.team-run-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.team-run-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: #ede9fe;
+  color: #7c3aed;
+  font-size: 13px;
+}
+
+.team-run-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2937;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.team-run-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.team-run-summary {
+  font-size: 13px;
+  color: #475569;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.team-run-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #2563eb;
+  text-decoration: none;
+  align-self: flex-start;
+}
+
+.team-run-link:hover { text-decoration: underline; }
+
 /* ============================================================
    Chat composer full-featured controls (backend chat parity)
    ============================================================ */

@@ -71,7 +71,17 @@ export type TimelineItem =
       at?: number;
     }
   | { kind: "usage"; key: string; usage: TurnUsage }
-  | { kind: "error"; key: string; text: string };
+  | { kind: "error"; key: string; text: string }
+  /** 专家团任务卡片：升级占位（本地）/完成汇总（事件驱动本地插入）。 */
+  | {
+      kind: "team_run";
+      key: string;
+      runId: string;
+      teamName?: string;
+      status: string;
+      summary?: string;
+      at?: number;
+    };
 
 interface WireMessage {
   object?: string;
@@ -449,6 +459,30 @@ export function userItem(
     text,
     at: Date.now(),
     ...(attachments && attachments.length > 0 ? { attachments } : {}),
+  };
+}
+
+/**
+ * Build a team-run card timeline entry — the local placeholder inserted
+ * right after the user escalates a chat goal to a workforce team run
+ * (chat dual-mode entry). Status/summary are refreshed later by SSE
+ * events through useChatStream.patch; the card is session-local (not a
+ * persisted chat message).
+ */
+export function teamRunItem(
+  runId: string,
+  teamName: string | undefined,
+  status: string,
+  summary?: string,
+): TimelineItem {
+  return {
+    kind: "team_run",
+    key: `run_${runId}`,
+    runId,
+    teamName,
+    status,
+    summary,
+    at: Date.now(),
   };
 }
 

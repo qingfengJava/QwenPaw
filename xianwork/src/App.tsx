@@ -30,6 +30,7 @@ const ChatPage = lazy(() => import("./pages/Chat"));
 const ShareViewPage = lazy(() => import("./pages/ShareView"));
 const ProjectsPage = lazy(() => import("./pages/Projects"));
 const ProjectDetailPage = lazy(() => import("./pages/ProjectDetail"));
+const RunDetailPage = lazy(() => import("./pages/RunDetail"));
 const ExpertsPage = lazy(() => import("./pages/Experts"));
 const AutomationPage = lazy(() => import("./pages/Automation"));
 const LibraryPage = lazy(() => import("./pages/Library"));
@@ -102,6 +103,7 @@ export default function App() {
               path="/projects/:projectId"
               element={<ProjectDetailPage />}
             />
+            <Route path="/runs/:runId" element={<RunDetailPage />} />
             <Route path="/experts" element={<ExpertsPage />} />
             <Route path="/automation" element={<AutomationPage />} />
             <Route path="/library" element={<LibraryPage />} />

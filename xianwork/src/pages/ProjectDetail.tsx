@@ -9,8 +9,8 @@
  *
  * Data logic lives in hooks/useProjectDetail (moved verbatim + extended).
  */
-import { useCallback, useMemo, useState } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import PromptInput from "../components/PromptInput";
 import Modal from "../components/Modal";
 import ConfigBlock from "../components/config/ConfigBlock";
@@ -27,8 +27,10 @@ import {
   bindingApi,
   projectApi,
   taskApi,
+  workforceApi,
 } from "../api/modules";
-import type { FeedEvent, Task } from "../api/modules";
+import type { FeedEvent, Task, TeamRun } from "../api/modules";
+import { RUN_STATUS_LABEL } from "../lib/runStatus";
 
 const KIND_LABEL: Record<string, string> = {
   project_created: "创建了项目",
@@ -52,6 +54,7 @@ const TABS = [
   { key: "kanban", label: "计划" },
   { key: "tasks", label: "任务" },
   { key: "assets", label: "资产" },
+  { key: "teamruns", label: "团队任务" },
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
@@ -118,6 +121,9 @@ export default function ProjectDetailPage() {
   const tab = (params.get("tab") as TabKey) || "feed";
   const [commentOpen, setCommentOpen] = useState(false);
   const [comment, setComment] = useState("");
+  // 团队任务 tab 数据：项目维度的 workforce runs（SSE 期间按需刷新）
+  const [teamRuns, setTeamRuns] = useState<TeamRun[]>([]);
+  const [teamRunsLoaded, setTeamRunsLoaded] = useState(false);
   const [aiInput, setAiInput] = useState("");
   const [inviteOpen, setInviteOpen] = useState(false);
   const [newTaskOpen, setNewTaskOpen] = useState(false);
@@ -132,6 +138,16 @@ export default function ProjectDetailPage() {
 
   const pid = projectId;
   const setTab = (key: TabKey) => setParams({ tab: key }, { replace: true });
+
+  // 团队任务：进入该 tab 时按项目维度加载（成员可见项目全量）
+  useEffect(() => {
+    if (tab !== "teamruns" || teamRunsLoaded) return;
+    workforceApi
+      .list({ project_id: projectId })
+      .then(setTeamRuns)
+      .catch((err) => notify("error", `加载团队任务失败：${String(err)}`))
+      .finally(() => setTeamRunsLoaded(true));
+  }, [tab, projectId, teamRunsLoaded, notify]);
 
   const feedViews = useMemo(() => feed.map(toFeedView), [feed]);
 
@@ -403,6 +419,36 @@ export default function ProjectDetailPage() {
                 {chats.length === 0 && (
                   <div className="blank-state">
                     项目 AI 会话与文件资产将沉淀在这里
+                  </div>
+                )}
+              </div>
+            )}
+
+            {tab === "teamruns" && (
+              <div className="feed-container">
+                <div className="asset-group-heading">
+                  专家团任务（{teamRuns.length}）
+                </div>
+                {teamRuns.map((teamRun) => (
+                  <div key={teamRun.id} className="task-row" title={teamRun.goal}>
+                    <span className="task-row-title">
+                      <i
+                        className="fa-solid fa-diagram-project"
+                        style={{ marginRight: 8, color: "#94a3b8" }}
+                      />
+                      <Link to={`/runs/${teamRun.id}`} style={{ color: "inherit", textDecoration: "none" }}>
+                        {teamRun.goal.slice(0, 60)}
+                      </Link>
+                    </span>
+                    <span className="task-time">
+                      {RUN_STATUS_LABEL[teamRun.status] ?? teamRun.status} ·{" "}
+                      {teamRun.updated_at?.slice(0, 16).replace("T", " ")}
+                    </span>
+                  </div>
+                ))}
+                {teamRuns.length === 0 && (
+                  <div className="blank-state">
+                    项目内发起的专家团任务将出现在这里（聊天升级 / 右侧专家团配置）
                   </div>
                 )}
               </div>
