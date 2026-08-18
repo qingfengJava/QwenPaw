@@ -32,6 +32,12 @@ import type {
   ExpertRecord,
   ExpertTeamRecord,
 } from "../../api/modules/admin";
+import WavePreview from "./WavePreview";
+import {
+  SampleTasksEditor,
+  ShowcaseEditor,
+  normalizeShowcase,
+} from "./OperationsFields";
 import styles from "./admin.module.less";
 
 /** RunPolicy 数值字段（与后端 contracts.RunPolicy 一致）。 */
@@ -66,6 +72,76 @@ const DEFAULT_NODES_TEMPLATE = [
   },
 ];
 
+/** 快速链模板示例：跳过架构与 QA，适配小需求。 */
+const DEFAULT_FAST_NODES_TEMPLATE = [
+  {
+    node_key: "fast-requirement",
+    deps: [],
+    assignee_expert_id: "<pm-expert-id>",
+    node_type: "task",
+    objective: "一段话需求确认 + 验收要点",
+    expected_output: ["需求确认", "验收要点"],
+  },
+  {
+    node_key: "fast-impl",
+    deps: ["fast-requirement"],
+    assignee_expert_id: "<dev-expert-id>",
+    node_type: "task",
+    objective: "直接实现并自测",
+    expected_output: ["实现产出"],
+  },
+  {
+    node_key: "final-summary",
+    deps: ["fast-impl"],
+    node_type: "final",
+    objective: "交付总监汇总 + 自验兜底",
+  },
+];
+
+/**
+ * nodes / fast_nodes JSON 共享校验：数组、node_key 非空唯一、
+ * deps 必须指向已定义节点（环由 WavePreview 的分层预览兜底提示）。
+ */
+function validateNodesJson(
+  _rule: unknown,
+  value: string | undefined,
+): Promise<void> {
+  const text = (value ?? "").trim();
+  if (!text) return Promise.resolve();
+  try {
+    const parsed = JSON.parse(text);
+    if (!Array.isArray(parsed)) {
+      return Promise.reject(new Error("DAG 模板必须是 JSON 数组（节点列表）"));
+    }
+    const bad = parsed.find(
+      (n) =>
+        !n ||
+        typeof n !== "object" ||
+        typeof n.node_key !== "string" ||
+        !n.node_key,
+    );
+    if (bad !== undefined) {
+      return Promise.reject(new Error("每个节点必须包含非空 node_key 字段"));
+    }
+    const keys = new Set(parsed.map((n) => n.node_key));
+    if (keys.size !== parsed.length) {
+      return Promise.reject(new Error("node_key 存在重复"));
+    }
+    for (const node of parsed) {
+      for (const dep of node.deps ?? []) {
+        if (!keys.has(dep)) {
+          return Promise.reject(
+            new Error(`节点 ${node.node_key} 依赖了未定义的 ${dep}`),
+          );
+        }
+      }
+    }
+    return Promise.resolve();
+  } catch {
+    return Promise.reject(new Error("JSON 语法错误"));
+  }
+}
+
 function ExpertTeamsPage() {
   const { t } = useTranslation();
   const { message } = useAppMessage();
@@ -76,6 +152,10 @@ function ExpertTeamsPage() {
     null,
   );
   const [form] = Form.useForm();
+  // WavePreview 的实时输入（链 JSON 原文）与快速链编辑器的显隐开关
+  const nodesJson = Form.useWatch("orch_nodes", form);
+  const fastEnabled = Form.useWatch("orch_fast_enabled", form);
+  const fastNodesJson = Form.useWatch("orch_fast_nodes", form);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -101,7 +181,8 @@ function ExpertTeamsPage() {
   /**
    * 表单值 → OrchestrationSpec（与后端 contracts.OrchestrationSpec
    * 同一 schema）：nodes 留空表示不预置模板（中央大脑 LLM 规划），
-   * policy 始终作为该团队的默认 RunPolicy 生效。
+   * fast_nodes 留空（或开关关闭）表示不启用快速链，policy 始终
+   * 作为该团队的默认 RunPolicy 生效。
    */
   const buildOrchestration = (values: Record<string, unknown>) => {
     const policy: Record<string, number> = {};
@@ -109,22 +190,25 @@ function ExpertTeamsPage() {
       const raw = values[`orch_${field.name}`];
       policy[field.name] = typeof raw === "number" ? raw : Number(raw ?? 0);
     }
-    // nodes 来自 TextArea（JSON 数组文本，validateFields 已保证合法）
-    let nodes: unknown[] = [];
-    const nodesText = typeof values.orch_nodes === "string" ? values.orch_nodes.trim() : "";
-    if (nodesText) {
+    // nodes / fast_nodes 来自 TextArea（JSON 数组文本，validateFields 已保证合法）
+    const parseNodesText = (text: unknown): unknown[] => {
+      const trimmed = typeof text === "string" ? text.trim() : "";
+      if (!trimmed) return [];
       try {
-        const parsed = JSON.parse(nodesText);
-        if (Array.isArray(parsed)) {
-          nodes = parsed;
-        }
+        const parsed = JSON.parse(trimmed);
+        return Array.isArray(parsed) ? parsed : [];
       } catch {
         // 校验层已拦截；此处兜底忽略（保存的模板为空 = LLM 规划）
+        return [];
       }
-    }
+    };
     return {
       runtime_enabled: values.orch_enabled === true,
-      nodes,
+      nodes: parseNodesText(values.orch_nodes),
+      fast_nodes:
+        values.orch_fast_enabled === true
+          ? parseNodesText(values.orch_fast_nodes)
+          : [],
       policy,
       plan_note: typeof values.orch_plan_note === "string" ? values.orch_plan_note : "",
     };
@@ -139,6 +223,12 @@ function ExpertTeamsPage() {
       orch_nodes: Array.isArray(spec.nodes) && spec.nodes.length > 0
         ? JSON.stringify(spec.nodes, null, 2)
         : "",
+      orch_fast_enabled:
+        Array.isArray(spec.fast_nodes) && spec.fast_nodes.length > 0,
+      orch_fast_nodes:
+        Array.isArray(spec.fast_nodes) && spec.fast_nodes.length > 0
+          ? JSON.stringify(spec.fast_nodes, null, 2)
+          : "",
       orch_plan_note: typeof spec.plan_note === "string" ? spec.plan_note : "",
     };
     for (const field of POLICY_FIELDS) {
@@ -157,6 +247,8 @@ function ExpertTeamsPage() {
             mode: "router",
             router_prompt: "",
             members: [],
+            sample_tasks: [],
+            showcase: [],
             ...orchToFormValues(null),
           }
         : {
@@ -165,6 +257,12 @@ function ExpertTeamsPage() {
             mode: team.mode,
             router_prompt: team.router_prompt,
             members: team.members.map((m) => m.expert_id),
+            sample_tasks: team.sample_tasks ?? [],
+            // tags 回填为逗号串（编辑器输入形态）
+            showcase: (team.showcase ?? []).map((c) => ({
+              ...c,
+              tags: (c.tags ?? []).join(","),
+            })),
             ...orchToFormValues(team.orchestration),
           },
     );
@@ -178,6 +276,13 @@ function ExpertTeamsPage() {
       seq: index,
     }));
     const orchestration = buildOrchestration(values);
+    const sampleTasks = (values.sample_tasks ?? []).filter(
+      (item: { title?: string; prompt?: string }) =>
+        (item.title ?? "").trim() && (item.prompt ?? "").trim(),
+    );
+    const showcase = normalizeShowcase(values.showcase).filter(
+      (item) => item.title.trim() && item.desc.trim(),
+    );
     try {
       if (editing === "new") {
         await adminExpertTeamsApi.create({
@@ -187,6 +292,8 @@ function ExpertTeamsPage() {
           router_prompt: values.router_prompt ?? "",
           members,
           orchestration,
+          sample_tasks: sampleTasks,
+          showcase,
         });
       } else if (editing) {
         await adminExpertTeamsApi.update(editing.id, {
@@ -196,6 +303,8 @@ function ExpertTeamsPage() {
           router_prompt: values.router_prompt,
           members,
           orchestration,
+          sample_tasks: sampleTasks,
+          showcase,
         });
       }
       message.success(t("admin.teamsX.saved", "Team saved"));
@@ -315,12 +424,20 @@ function ExpertTeamsPage() {
             width: 120,
             render: (_, team) => {
               const nodes = (team.orchestration?.nodes ?? []) as unknown[];
+              const fastNodes = (team.orchestration?.fast_nodes ?? []) as unknown[];
               if (!team.orchestration?.runtime_enabled) {
                 return <Tag>LLM 规划</Tag>;
               }
-              return nodes.length
-                ? <Tag color="geekblue">DAG × {nodes.length}</Tag>
-                : <Tag color="purple">运行时编排</Tag>;
+              return (
+                <Space size={4} wrap>
+                  {nodes.length
+                    ? <Tag color="geekblue">DAG × {nodes.length}</Tag>
+                    : <Tag color="purple">运行时编排</Tag>}
+                  {fastNodes.length > 0 && (
+                    <Tag color="cyan">快速 × {fastNodes.length}</Tag>
+                  )}
+                </Space>
+              );
             },
           },
           {
@@ -516,54 +633,9 @@ function ExpertTeamsPage() {
             )}
             extra={t(
               "admin.teamsX.orchNodesExtra",
-              "节点字段：node_key / deps / assignee_expert_id（成员专家 id）/ node_type（task|integration|final）/ objective / expected_output。final 节点由中央大脑自执行汇总。",
+              "节点字段：node_key / deps / assignee_expert_id（成员专家 id）/ node_type（task|integration|final）/ objective / expected_output。final 节点由中央大脑自执行汇总。多工程师并行：让 fe / be 两个节点写相同的 deps（如都依赖 architecture），即在同一波并行执行，下方预览会标出「并行」。",
             )}
-            rules={[
-              {
-                validator: (_, value: string | undefined) => {
-                  const text = (value ?? "").trim();
-                  if (!text) return Promise.resolve();
-                  try {
-                    const parsed = JSON.parse(text);
-                    if (!Array.isArray(parsed)) {
-                      return Promise.reject(
-                        new Error("DAG 模板必须是 JSON 数组（节点列表）"),
-                      );
-                    }
-                    const bad = parsed.find(
-                      (n) =>
-                        !n ||
-                        typeof n !== "object" ||
-                        typeof n.node_key !== "string" ||
-                        !n.node_key,
-                    );
-                    if (bad !== undefined) {
-                      return Promise.reject(
-                        new Error("每个节点必须包含非空 node_key 字段"),
-                      );
-                    }
-                    const keys = new Set(parsed.map((n) => n.node_key));
-                    if (keys.size !== parsed.length) {
-                      return Promise.reject(new Error("node_key 存在重复"));
-                    }
-                    for (const node of parsed) {
-                      for (const dep of node.deps ?? []) {
-                        if (!keys.has(dep)) {
-                          return Promise.reject(
-                            new Error(
-                              `节点 ${node.node_key} 依赖了未定义的 ${dep}`,
-                            ),
-                          );
-                        }
-                      }
-                    }
-                    return Promise.resolve();
-                  } catch {
-                    return Promise.reject(new Error("JSON 语法错误"));
-                  }
-                },
-              },
-            ]}
+            rules={[{ validator: validateNodesJson }]}
           >
             <Input.TextArea
               rows={10}
@@ -572,10 +644,81 @@ function ExpertTeamsPage() {
             />
           </Form.Item>
           <Form.Item
+            label={t("admin.teamsX.wavePreview", "波次预览（标准链）")}
+            style={{ marginBottom: 16 }}
+          >
+            <WavePreview
+              nodesJson={nodesJson}
+              emptyHint="尚未配置节点（留空 = LLM 规划）"
+            />
+          </Form.Item>
+
+          <Form.Item
+            name="orch_fast_enabled"
+            label={t(
+              "admin.teamsX.fastEnabled",
+              "启用快速模式（fast_nodes 精简链）",
+            )}
+            valuePropName="checked"
+            extra={t(
+              "admin.teamsX.fastExtra",
+              "规划器按需求复杂度自动选择：复杂需求走标准链；未命中复杂信号且已配置快速链时走快速链（source=orchestration_fast）。",
+            )}
+          >
+            <Switch />
+          </Form.Item>
+          {fastEnabled && (
+            <>
+              <Form.Item
+                name="orch_fast_nodes"
+                label={t(
+                  "admin.teamsX.fastNodes",
+                  "快速链节点模板（JSON 数组，独立完整 DAG，需含 final 汇总节点）",
+                )}
+                rules={[{ validator: validateNodesJson }]}
+              >
+                <Input.TextArea
+                  rows={8}
+                  placeholder={JSON.stringify(DEFAULT_FAST_NODES_TEMPLATE, null, 2)}
+                  style={{ fontFamily: "monospace", fontSize: 12 }}
+                />
+              </Form.Item>
+              <Form.Item
+                label={t("admin.teamsX.fastWavePreview", "波次预览（快速链）")}
+                style={{ marginBottom: 16 }}
+              >
+                <WavePreview
+                  nodesJson={fastNodesJson}
+                  emptyHint="尚未配置快速链节点"
+                />
+              </Form.Item>
+            </>
+          )}
+          <Form.Item
             name="orch_plan_note"
             label={t("admin.teamsX.orchPlanNote", "计划备注（plan_note）")}
           >
             <Input.TextArea rows={2} />
+          </Form.Item>
+
+          <Divider orientation="left" plain>
+            {t("admin.ops.section", "运营位（任务示例 / 使用案例）")}
+          </Divider>
+          <Form.Item
+            label={t(
+              "admin.ops.tasks",
+              "任务模板（详情页「任务示例」，点击即以提示词发起团队 run）",
+            )}
+          >
+            <SampleTasksEditor />
+          </Form.Item>
+          <Form.Item
+            label={t(
+              "admin.ops.cases",
+              "使用案例（静态运营位；团队详情页另会展示真实「最近交付」）",
+            )}
+          >
+            <ShowcaseEditor />
           </Form.Item>
         </Form>
       </Modal>

@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   Button,
+  Divider,
   Form,
   Input,
   Modal,
@@ -19,6 +20,11 @@ import { PageHeader } from "@/components/PageHeader";
 import { useAppMessage } from "../../hooks/useAppMessage";
 import { adminExpertsApi } from "../../api/modules/admin";
 import type { ExpertRecord } from "../../api/modules/admin";
+import {
+  SampleTasksEditor,
+  ShowcaseEditor,
+  normalizeShowcase,
+} from "./OperationsFields";
 import styles from "./admin.module.less";
 
 const STATUS_COLOR: Record<string, string> = {
@@ -57,12 +63,25 @@ function ExpertsPage() {
     setEditing(expert);
     form.setFieldsValue(
       expert === "new"
-        ? { name: "", icon: "", description: "", agent_spec: "{}" }
+        ? {
+            name: "",
+            icon: "",
+            description: "",
+            agent_spec: "{}",
+            sample_tasks: [],
+            showcase: [],
+          }
         : {
             name: expert.name,
             icon: expert.icon,
             description: expert.description,
             agent_spec: JSON.stringify(expert.agent_spec, null, 2),
+            sample_tasks: expert.sample_tasks ?? [],
+            // tags 回填为逗号串（编辑器输入形态）
+            showcase: (expert.showcase ?? []).map((c) => ({
+              ...c,
+              tags: (c.tags ?? []).join(","),
+            })),
           },
     );
   };
@@ -78,6 +97,13 @@ function ExpertsPage() {
       );
       return;
     }
+    const sampleTasks = (values.sample_tasks ?? []).filter(
+      (item: { title?: string; prompt?: string }) =>
+        (item.title ?? "").trim() && (item.prompt ?? "").trim(),
+    );
+    const showcase = normalizeShowcase(values.showcase).filter(
+      (item) => item.title.trim() && item.desc.trim(),
+    );
     try {
       if (editing === "new") {
         await adminExpertsApi.create({
@@ -85,6 +111,8 @@ function ExpertsPage() {
           icon: values.icon ?? "",
           description: values.description ?? "",
           agent_spec: spec,
+          sample_tasks: sampleTasks,
+          showcase,
         });
       } else if (editing) {
         await adminExpertsApi.update(editing.id, {
@@ -92,6 +120,8 @@ function ExpertsPage() {
           icon: values.icon,
           description: values.description,
           agent_spec: spec,
+          sample_tasks: sampleTasks,
+          showcase,
         });
       }
       message.success(t("admin.experts.saved", "Expert saved"));
@@ -264,6 +294,22 @@ function ExpertsPage() {
             ]}
           >
             <Input.TextArea rows={10} style={{ fontFamily: "monospace" }} />
+          </Form.Item>
+          <Divider orientation="left" plain>
+            {t("admin.ops.section", "运营位（专家帮你做 / 使用案例）")}
+          </Divider>
+          <Form.Item
+            label={t(
+              "admin.ops.tasks",
+              "任务模板（详情页「专家帮你做」，点击即以提示词召唤）",
+            )}
+          >
+            <SampleTasksEditor />
+          </Form.Item>
+          <Form.Item
+            label={t("admin.ops.cases", "使用案例（静态运营位）")}
+          >
+            <ShowcaseEditor />
           </Form.Item>
         </Form>
       </Modal>

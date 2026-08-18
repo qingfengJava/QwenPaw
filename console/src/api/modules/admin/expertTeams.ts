@@ -18,9 +18,13 @@ export interface ExpertTeamRecord {
   router_prompt: string;
   status: "draft" | "published" | "archived";
   version: number;
-  /** Workforce runtime orchestration spec (nodes/policy/plan_note/
-   *  runtime_enabled) — preset DAG template read by the planner. */
+  /** Workforce runtime orchestration spec (nodes/fast_nodes/policy/
+   *  plan_note/runtime_enabled) — preset DAG template read by the planner. */
   orchestration?: Record<string, unknown> | null;
+  /** "任务示例"模板（运营位；点击即以 prompt 为 goal 创建 run）。 */
+  sample_tasks?: Array<{ title: string; prompt: string }> | null;
+  /** 使用案例（静态运营位；与真实交付投影并存）。 */
+  showcase?: Array<{ title: string; desc: string; tags?: string[] }> | null;
   members: TeamMember[];
   created_at?: string | null;
   updated_at?: string | null;
@@ -39,6 +43,8 @@ export interface ExpertTeamCreateBody {
   router_prompt?: string;
   members?: TeamMemberBody[];
   orchestration?: Record<string, unknown> | null;
+  sample_tasks?: Array<{ title: string; prompt: string }> | null;
+  showcase?: Array<{ title: string; desc: string; tags?: string[] }> | null;
 }
 
 export interface ExpertTeamUpdateBody {
@@ -48,6 +54,8 @@ export interface ExpertTeamUpdateBody {
   router_prompt?: string;
   members?: TeamMemberBody[];
   orchestration?: Record<string, unknown> | null;
+  sample_tasks?: Array<{ title: string; prompt: string }> | null;
+  showcase?: Array<{ title: string; desc: string; tags?: string[] }> | null;
 }
 
 const enc = encodeURIComponent;

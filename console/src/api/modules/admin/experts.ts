@@ -11,6 +11,10 @@ export interface ExpertRecord {
   agent_spec: Record<string, unknown>;
   status: "draft" | "published" | "archived";
   version: number;
+  /** "专家帮你做"任务模板（运营位）。 */
+  sample_tasks?: Array<{ title: string; prompt: string }> | null;
+  /** 使用案例（静态运营位）。 */
+  showcase?: Array<{ title: string; desc: string; tags?: string[] }> | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -20,6 +24,14 @@ export interface ExpertCreateBody {
   icon?: string;
   description?: string;
   agent_spec?: Record<string, unknown>;
+  title?: string;
+  category?: string;
+  badge?: string;
+  tags?: string[];
+  system_prompt?: string;
+  visibility?: string;
+  sample_tasks?: Array<{ title: string; prompt: string }> | null;
+  showcase?: Array<{ title: string; desc: string; tags?: string[] }> | null;
 }
 
 export interface ExpertUpdateBody {
@@ -27,6 +39,14 @@ export interface ExpertUpdateBody {
   icon?: string;
   description?: string;
   agent_spec?: Record<string, unknown>;
+  title?: string;
+  category?: string;
+  badge?: string;
+  tags?: string[];
+  system_prompt?: string;
+  visibility?: string;
+  sample_tasks?: Array<{ title: string; prompt: string }> | null;
+  showcase?: Array<{ title: string; desc: string; tags?: string[] }> | null;
 }
 
 const enc = encodeURIComponent;
