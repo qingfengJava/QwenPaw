@@ -45,6 +45,14 @@ async def create_expert(body: ExpertCreateBody) -> ExpertRecord:
         icon=body.icon,
         description=body.description,
         agent_spec=body.agent_spec,
+        title=body.title,
+        category=body.category,
+        badge=body.badge,
+        tags=body.tags,
+        system_prompt=body.system_prompt,
+        visibility=body.visibility,
+        sample_tasks=body.sample_tasks,
+        showcase=body.showcase,
     )
 
 
@@ -68,6 +76,14 @@ async def update_expert(
         icon=body.icon,
         description=body.description,
         agent_spec=body.agent_spec,
+        title=body.title,
+        category=body.category,
+        badge=body.badge,
+        tags=body.tags,
+        system_prompt=body.system_prompt,
+        visibility=body.visibility,
+        sample_tasks=body.sample_tasks,
+        showcase=body.showcase,
     )
     if record is None:
         raise HTTPException(status_code=404, detail="Expert not found")

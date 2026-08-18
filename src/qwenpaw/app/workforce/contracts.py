@@ -390,6 +390,10 @@ class OrchestrationSpec(BaseModel):
 
     #: DAG 模板（node 定义；deps/assignee 同 DagNode）
     nodes: List[DagNode] = Field(default_factory=list)
+    #: 快速链模板（小需求轻量路径；空=不支持快速模式，一律走标准链）。
+    #: 规划器按意图规则选择：goal 命中复杂信号→标准链；未命中且本字段
+    #: 非空→快速链（典型：跳过架构/QA 的短链，交付总监兜底把关）。
+    fast_nodes: List[DagNode] = Field(default_factory=list)
     #: 默认熔断策略（创建 run 时未显式指定则使用）
     policy: Optional[RunPolicy] = None
     #: 规划说明模板

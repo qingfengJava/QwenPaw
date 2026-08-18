@@ -31,16 +31,18 @@ logger = logging.getLogger(__name__)
 _EXPERT_COLS = (
     "id, name, icon, description, agent_spec, status, version, "
     "owner_id, visibility, is_builtin, title, category, badge, tags, "
-    "system_prompt, usage_count, featured, created_at, updated_at"
+    "system_prompt, usage_count, featured, sample_tasks, showcase, "
+    "created_at, updated_at"
 )
 _EXPERT_CARD_COLS = (
     "id, name, icon, description, status, version, owner_id, "
     "visibility, is_builtin, title, category, badge, tags, "
-    "usage_count, featured, created_at, updated_at"
+    "usage_count, featured, sample_tasks, showcase, created_at, updated_at"
 )
 _TEAM_COLS = (
     "id, name, description, mode, router_prompt, status, version, "
-    "owner_id, category, tags, orchestration, created_at, updated_at"
+    "owner_id, category, tags, orchestration, sample_tasks, showcase, "
+    "created_at, updated_at"
 )
 
 # Composite ordering for the market list: builtins first, then heat,
@@ -70,6 +72,8 @@ def _row_to_expert(row) -> ExpertRecord:
         system_prompt=row.system_prompt or "",
         usage_count=row.usage_count or 0,
         featured=bool(row.featured),
+        sample_tasks=list(row.sample_tasks or []),
+        showcase=list(row.showcase or []),
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -88,6 +92,8 @@ def _row_to_team(row, members: List[TeamMember]) -> ExpertTeamRecord:
         category=row.category or "general",
         tags=list(row.tags or []),
         orchestration=row.orchestration or {},
+        sample_tasks=list(row.sample_tasks or []),
+        showcase=list(row.showcase or []),
         members=members,
         created_at=row.created_at,
         updated_at=row.updated_at,
@@ -117,6 +123,8 @@ class ExpertStore:
         tags: Optional[List[str]] = None,
         system_prompt: str = "",
         featured: bool = False,
+        sample_tasks: Optional[List[dict]] = None,
+        showcase: Optional[List[dict]] = None,
     ) -> ExpertRecord:
         tid = current_tenant_id()
         expert_id = expert_id or new_id("exp")
@@ -127,11 +135,12 @@ class ExpertStore:
                     "INSERT INTO experts (tenant_id, id, name, icon, "
                     "description, agent_spec, status, version, owner_id, "
                     "visibility, is_builtin, title, category, badge, tags, "
-                    "system_prompt, featured) VALUES "
+                    "system_prompt, featured, sample_tasks, showcase) VALUES "
                     "(:tid, :id, :name, :icon, :desc, "
                     "CAST(:spec AS JSONB), :status, 1, :owner, :vis, "
                     ":builtin, :title, :category, :badge, "
-                    "CAST(:tags AS JSONB), :prompt, :featured) RETURNING "
+                    "CAST(:tags AS JSONB), :prompt, :featured, "
+                    "CAST(:tasks AS JSONB), CAST(:cases AS JSONB)) RETURNING "
                     + _EXPERT_COLS
                 ),
                 {
@@ -151,6 +160,8 @@ class ExpertStore:
                     "tags": json.dumps(tags or []),
                     "prompt": system_prompt,
                     "featured": featured,
+                    "tasks": json.dumps(sample_tasks or []),
+                    "cases": json.dumps(showcase or []),
                 },
             )
             return _row_to_expert(result.one())
@@ -302,6 +313,14 @@ class ExpertStore:
         if fields.get("visibility") is not None:
             sets.append("visibility = :vis")
             params["vis"] = fields["visibility"]
+        # 运营位双字段：显式传 None 表示不修改；传 list（含空 list）
+        # 表示整体替换。
+        if fields.get("sample_tasks") is not None:
+            sets.append("sample_tasks = CAST(:tasks AS JSONB)")
+            params["tasks"] = json.dumps(fields["sample_tasks"])
+        if fields.get("showcase") is not None:
+            sets.append("showcase = CAST(:cases AS JSONB)")
+            params["cases"] = json.dumps(fields["showcase"])
         if not sets:
             return await self.get_expert(expert_id)
         engine = require_enterprise_engine()
@@ -411,21 +430,26 @@ class ExpertStore:
         tags: Optional[List[str]] = None,
         owner_id: Optional[str] = None,
         orchestration: Optional[dict] = None,
+        sample_tasks: Optional[List[dict]] = None,
+        showcase: Optional[List[dict]] = None,
+        team_id: Optional[str] = None,
     ) -> ExpertTeamRecord:
         if mode not in TEAM_MODES:
             mode = "router"
         tid = current_tenant_id()
-        team_id = new_id("team")
+        team_id = team_id or new_id("team")
         engine = require_enterprise_engine()
         async with engine.begin() as conn:
             result = await conn.execute(
                 text(
                     "INSERT INTO expert_teams (tenant_id, id, name, "
                     "description, mode, router_prompt, status, version, "
-                    "owner_id, category, tags, orchestration) VALUES "
+                    "owner_id, category, tags, orchestration, "
+                    "sample_tasks, showcase) VALUES "
                     "(:tid, :id, :name, :desc, :mode, :rp, :status, 1, "
                     ":owner, :category, CAST(:tags AS JSONB), "
-                    "CAST(:orch AS JSONB))"
+                    "CAST(:orch AS JSONB), CAST(:tasks AS JSONB), "
+                    "CAST(:cases AS JSONB))"
                     " RETURNING " + _TEAM_COLS
                 ),
                 {
@@ -440,6 +464,8 @@ class ExpertStore:
                     "category": category,
                     "tags": json.dumps(tags or []),
                     "orch": json.dumps(orchestration or {}),
+                    "tasks": json.dumps(sample_tasks or []),
+                    "cases": json.dumps(showcase or []),
                 },
             )
             row = result.one()
@@ -621,6 +647,13 @@ class ExpertStore:
         if fields.get("orchestration") is not None:
             sets.append("orchestration = CAST(:orch AS JSONB)")
             params["orch"] = json.dumps(fields["orchestration"])
+        # 运营位双字段（同语义：None 不修改，list 整体替换）
+        if fields.get("sample_tasks") is not None:
+            sets.append("sample_tasks = CAST(:tasks AS JSONB)")
+            params["tasks"] = json.dumps(fields["sample_tasks"])
+        if fields.get("showcase") is not None:
+            sets.append("showcase = CAST(:cases AS JSONB)")
+            params["cases"] = json.dumps(fields["showcase"])
         engine = require_enterprise_engine()
         async with engine.begin() as conn:
             if sets:

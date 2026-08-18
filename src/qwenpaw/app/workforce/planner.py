@@ -249,13 +249,36 @@ def _render_planning_prompt(
     return "\n".join(lines)
 
 
+def pick_template_nodes(
+    spec: OrchestrationSpec,
+    goal: str,
+) -> tuple[List[DagNode], str]:
+    """快慢链选择（纯函数，可单测）：按 goal 的意图规则信号挑选模板。
+
+    - 命中复杂信号（多交付物/跨专业/编排动词）→ 标准链 ``nodes``；
+    - 未命中且 ``fast_nodes`` 非空 → 快速链（小需求轻量路径）；
+    - 其余（无快速链配置）→ 标准链兜底。
+    返回 ``(节点集, 来源标记)``——来源标记写入 DagPlan.source 与
+    PlanOutcome.source（RunDetail/事件可观察实际走了哪条链）。
+    """
+    # 延迟导入：intent 属 workforce 包但非契约依赖，planner 侧引用
+    from .intent import INTENT_COMPLEX, classify_by_rules
+
+    ruled = classify_by_rules(goal)
+    if ruled is not None and ruled.intent == INTENT_COMPLEX:
+        return spec.nodes, "orchestration"
+    if spec.fast_nodes:
+        return spec.fast_nodes, "orchestration_fast"
+    return spec.nodes, "orchestration"
+
+
 async def plan_run(
     goal: str,
     team: ExpertTeamRecord,
     members: List[ExpertRecord],
     bundle: ContextBundle,
 ) -> PlanOutcome:
-    """执行规划：模板优先 → 中央大脑 LLM（失败带错误重试一次）。"""
+    """执行规划：模板优先（快慢链选择）→ 中央大脑 LLM（失败重试一次）。"""
     member_ids = {expert.id for expert in members}
     # ---- 路径 1：orchestration 预置模板（不依赖 LLM） ----
     raw_orch = team.orchestration or {}
@@ -268,18 +291,20 @@ async def plan_run(
         # 模板显式关闭运行时编排 → 回退提示词级团队语义
         if not spec.runtime_enabled:
             return PlanOutcome(error="该团队未启用运行时编排（runtime_enabled=false）")
-        # 图校验 + 成员校验
-        plan = DagPlan(nodes=spec.nodes, plan_note=spec.plan_note, source="orchestration")
+        # 快慢链选择：复杂信号→标准链；小需求→快速链（若配置）
+        nodes, source = pick_template_nodes(spec, goal)
+        # 图校验 + 成员校验（快速链与标准链同一套严格校验）
+        plan = DagPlan(nodes=nodes, plan_note=spec.plan_note, source=source)
         try:
             validate_dag(plan)
         except ValueError as exc:
-            return PlanOutcome(error=f"orchestration 模板 DAG 非法: {exc}")
+            return PlanOutcome(error=f"orchestration 模板 DAG 非法（{source}）: {exc}")
         member_error = _validate_plan_members(plan, member_ids)
         if member_error:
-            return PlanOutcome(error=f"orchestration 模板错误: {member_error}")
+            return PlanOutcome(error=f"orchestration 模板错误（{source}）: {member_error}")
         # 模板路径同样保证 final 节点存在
         plan = _ensure_final_node(plan)
-        return PlanOutcome(plan=plan, source="orchestration")
+        return PlanOutcome(plan=plan, source=source)
     # ---- 路径 2：中央大脑 LLM 规划（lead 成员，一次生成 + 一次修正重试） ----
     # lead 成员优先；无 lead 标记时取第一名成员（团队至少一名成员）
     lead = next(

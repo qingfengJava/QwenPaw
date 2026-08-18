@@ -103,6 +103,11 @@ class ExpertRecord(BaseModel):
     system_prompt: str = ""
     usage_count: int = 0
     featured: bool = False
+    #: "专家帮你做"任务模板 [{title, prompt}]（详情页点击即以 prompt
+    #: 为 kickoff 召唤；管理端可编辑的运营位）
+    sample_tasks: List[Dict[str, Any]] = Field(default_factory=list)
+    #: 使用案例 [{title, desc, tags}]（静态运营位，管理端可编辑）
+    showcase: List[Dict[str, Any]] = Field(default_factory=list)
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     #: Skill bindings (populated by the detail endpoint / publish chain,
@@ -135,6 +140,12 @@ class ExpertTeamRecord(BaseModel):
     #: Reserved for the runtime orchestrator (parallel groups / DAG /
     #: per-member task templates). Read by a future RuntimeTeamOrchestrator.
     orchestration: Dict[str, Any] = Field(default_factory=dict)
+    #: "任务示例"模板 [{title, prompt}]（详情页点击即以 prompt 为 goal
+    #: 创建专家团 run；管理端可编辑的运营位）
+    sample_tasks: List[Dict[str, Any]] = Field(default_factory=list)
+    #: 使用案例 [{title, desc, tags}]（静态运营位；与 team_runs 真实
+    #: 交付投影"最近交付"分区并存）
+    showcase: List[Dict[str, Any]] = Field(default_factory=list)
     members: List[TeamMember] = Field(default_factory=list)
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -167,6 +178,9 @@ class ExpertCreateBody(BaseModel):
     system_prompt: str = ""
     visibility: str = EXPERT_VISIBILITY_ORG
     skills: List[ExpertSkillBinding] = Field(default_factory=list)
+    #: "专家帮你做"任务模板 / 使用案例（运营位，可空）
+    sample_tasks: Optional[List[Dict[str, Any]]] = None
+    showcase: Optional[List[Dict[str, Any]]] = None
 
 
 class ExpertUpdateBody(BaseModel):
@@ -180,6 +194,9 @@ class ExpertUpdateBody(BaseModel):
     tags: Optional[List[str]] = None
     system_prompt: Optional[str] = None
     visibility: Optional[str] = None
+    #: "专家帮你做"任务模板 / 使用案例（传 list 整体替换；None=不修改）
+    sample_tasks: Optional[List[Dict[str, Any]]] = None
+    showcase: Optional[List[Dict[str, Any]]] = None
 
 
 class ExpertSkillsBody(BaseModel):
@@ -207,6 +224,9 @@ class ExpertTeamCreateBody(BaseModel):
     #: runtime_enabled），管理端 workforce 编排编辑面写入；为空表示
     #: 不预置 DAG 模板，规划时走中央大脑 LLM 生成。
     orchestration: Optional[Dict[str, Any]] = None
+    #: "任务示例"模板 / 使用案例（运营位，可空）
+    sample_tasks: Optional[List[Dict[str, Any]]] = None
+    showcase: Optional[List[Dict[str, Any]]] = None
 
 
 class ExpertTeamUpdateBody(BaseModel):
@@ -219,3 +239,6 @@ class ExpertTeamUpdateBody(BaseModel):
     members: Optional[List[TeamMemberBody]] = None
     #: 运行时编排配置（同上）；传空 dict 表示清除模板（回到 LLM 规划）。
     orchestration: Optional[Dict[str, Any]] = None
+    #: "任务示例"模板 / 使用案例（传 list 整体替换；None=不修改）
+    sample_tasks: Optional[List[Dict[str, Any]]] = None
+    showcase: Optional[List[Dict[str, Any]]] = None

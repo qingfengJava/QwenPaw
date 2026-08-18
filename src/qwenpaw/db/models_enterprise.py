@@ -396,6 +396,21 @@ class ExpertRow(TenantMixin, TimestampMixin, Base):
         default=False,
         server_default=text("false"),
     )
+    #: "专家帮你做"任务模板 [{title, prompt}]（详情页点击即以 prompt
+    #: 为 kickoff 召唤；管理端可编辑的运营位）
+    sample_tasks: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default="[]",
+    )
+    #: 使用案例 [{title, desc, tags}]（静态运营位，与聊天直答无 run 依赖）
+    showcase: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default="[]",
+    )
 
     __table_args__ = (
         PrimaryKeyConstraint("tenant_id", "id", name="pk_experts"),
@@ -472,6 +487,22 @@ class ExpertTeamRow(TenantMixin, TimestampMixin, Base):
         nullable=False,
         default=dict,
         server_default="{}",
+    )
+    #: "任务示例"模板 [{title, prompt}]（详情页点击即以 prompt 为 goal
+    #: 创建专家团 run；管理端可编辑的运营位）
+    sample_tasks: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default="[]",
+    )
+    #: 使用案例 [{title, desc, tags}]（静态运营位；与 team_runs 真实
+    #: 交付投影"最近交付"分区并存）
+    showcase: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default="[]",
     )
 
     __table_args__ = (

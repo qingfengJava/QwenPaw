@@ -904,15 +904,29 @@ CREATE INDEX IF NOT EXISTS ix_team_run_nodes_run
     ON team_run_nodes (tenant_id, run_id);
 
 -- ------------------------------------------------------------
--- 14. Alembic 版本标记推进（0009 → 0010）
+-- 14. 内置专家体系：任务模板 + 使用案例（0011）
+-- ------------------------------------------------------------
+
+ALTER TABLE experts ADD COLUMN IF NOT EXISTS sample_tasks JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE experts ADD COLUMN IF NOT EXISTS showcase JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE expert_teams ADD COLUMN IF NOT EXISTS sample_tasks JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE expert_teams ADD COLUMN IF NOT EXISTS showcase JSONB NOT NULL DEFAULT '[]';
+
+COMMENT ON COLUMN experts.sample_tasks IS '"专家帮你做"任务模板数组 [{title, prompt}]：详情页点击模板即以 prompt 为 kickoff 召唤该专家；管理端可编辑';
+COMMENT ON COLUMN experts.showcase IS '使用案例数组 [{title, desc, tags[]}]：静态运营位（管理端可编辑 + 出厂内置），与聊天直答无 run 依赖';
+COMMENT ON COLUMN expert_teams.sample_tasks IS '"任务示例"模板数组 [{title, prompt}]：详情页点击模板即以 prompt 为 goal 创建专家团 run；管理端可编辑';
+COMMENT ON COLUMN expert_teams.showcase IS '使用案例数组 [{title, desc, tags[]}]：静态运营位；与 team_runs 真实交付投影（"最近交付"）分区并存';
+
+-- ------------------------------------------------------------
+-- 15. Alembic 版本标记推进（0010 → 0011）
 -- ------------------------------------------------------------
 
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM alembic_version) THEN
-        UPDATE alembic_version SET version_num = '0010_workforce_team_runs';
+        UPDATE alembic_version SET version_num = '0011_builtin_sample_tasks';
     ELSE
-        INSERT INTO alembic_version (version_num) VALUES ('0010_workforce_team_runs');
+        INSERT INTO alembic_version (version_num) VALUES ('0011_builtin_sample_tasks');
     END IF;
 END $$;
 
