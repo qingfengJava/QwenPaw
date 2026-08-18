@@ -645,6 +645,51 @@ async def test_engine_repair_then_escalate(enterprise_env, run_store, monkeypatc
     assert node["repair"], "返工契约必须留痕"
 
 
+async def test_max_repair_boundary_result_is_verified(
+    enterprise_env, run_store, monkeypatch
+):
+    """max_repair_per_node=1 时：第 2 次委派（首轮 FAIL 后）的结果必须被验收，
+    PASS 则节点 done——不得在验收前直接熔断丢弃结果。"""
+    from qwenpaw.app.workforce import engine as engine_mod
+    from qwenpaw.app.workforce import verifier as verifier_mod
+    from qwenpaw.app.workforce.contracts import RunPolicy
+
+    team, lead, member = await _seed_team()
+    _patch_llm_seams(monkeypatch, _two_node_plan(lead.id, member.id))
+    # 换回真实 verifier（_patch_llm_seams 默认恒 PASS 桩会绕过被测的
+    # 熔断预检），只在 verifier 内部 LLM 接缝注入脚本化裁决：
+    # 第 1 次验收 FAIL（附返工问题），第 2 次验收 PASS。
+    verify_replies = iter(
+        [
+            '```json\n{"verdict":"FAIL","reason":"缺少细节","issues":["缺少细节"],'
+            '"expected_change":["补充细节"],"preserve":[]}\n```',
+            '```json\n{"verdict":"PASS","reason":"补充细节后已达标"}\n```',
+        ]
+    )
+
+    async def fake_verify_llm(to_agent, prompt, session_id=None):
+        return next(verify_replies), session_id or "sess_verify"
+
+    monkeypatch.setattr(verifier_mod, "call_expert_text", fake_verify_llm)
+    monkeypatch.setattr(engine_mod, "verify", verifier_mod.verify)
+    run = await run_store.create_run(
+        team_id=team.id,
+        goal="G",
+        initiator_id="alice",
+        policy=RunPolicy(max_repair_per_node=1).model_dump(),
+    )
+    # 经 _guarded_run 启动：熔断路径收敛为 escalated 终态而非裸抛信号
+    task = engine_mod.start_run_background(run["id"])
+    await task
+    final = await run_store.get_run(run["id"])
+    assert final["status"] == "done"
+    # 边界语义留痕：repair_count 恰达上限 1，末轮结果仍被验收为 PASS
+    node = await run_store.get_node(run["id"], "task-1")
+    assert node["repair_count"] == 1
+    assert node["verdict"] == "PASS"
+    assert node["attempt"] == 2
+
+
 async def test_engine_canceled_mid_run(enterprise_env, run_store, monkeypatch):
     from qwenpaw.app.workforce import engine as engine_mod
 

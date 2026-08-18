@@ -155,11 +155,12 @@ async def verify(
     verifier_expert_id 通常是团队 lead 成员（中央大脑人格）；
     repair_count 达上限直接 ESCALATE（熔断双保险）。
     """
-    # 熔断双保险：已达返工上限不再消耗 LLM（引擎层同样拦截）
-    if repair_count >= policy.max_repair_per_node:
+    # 熔断双保险：已超返工上限不再消耗 LLM（引擎层同样拦截）。
+    # 边界对齐 engine：==max 时本轮结果仍须验收（FAIL 后由引擎计数超限熔断）
+    if repair_count > policy.max_repair_per_node:
         return Verdict(
             VERDICT_ESCALATE,
-            reason=f"返工次数已达上限（{repair_count}/{policy.max_repair_per_node}），升级人工",
+            reason=f"返工次数超上限（{repair_count}/{policy.max_repair_per_node}），升级人工",
         )
     # 规则预检：子员工自报失败 → 直接 FAIL（省一次 LLM）
     if result.status == RESULT_STATUS_FAILED:
