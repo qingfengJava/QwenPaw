@@ -51,6 +51,7 @@ async def create_team(body: ExpertTeamCreateBody) -> ExpertTeamRecord:
             )
             for m in body.members
         ],
+        orchestration=body.orchestration,
     )
 
 
@@ -85,6 +86,7 @@ async def update_team(
             mode=body.mode,
             router_prompt=body.router_prompt,
             members=members,
+            orchestration=body.orchestration,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

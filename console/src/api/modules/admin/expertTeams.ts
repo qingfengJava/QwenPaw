@@ -18,6 +18,9 @@ export interface ExpertTeamRecord {
   router_prompt: string;
   status: "draft" | "published" | "archived";
   version: number;
+  /** Workforce runtime orchestration spec (nodes/policy/plan_note/
+   *  runtime_enabled) — preset DAG template read by the planner. */
+  orchestration?: Record<string, unknown> | null;
   members: TeamMember[];
   created_at?: string | null;
   updated_at?: string | null;
@@ -35,6 +38,7 @@ export interface ExpertTeamCreateBody {
   mode?: string;
   router_prompt?: string;
   members?: TeamMemberBody[];
+  orchestration?: Record<string, unknown> | null;
 }
 
 export interface ExpertTeamUpdateBody {
@@ -43,6 +47,7 @@ export interface ExpertTeamUpdateBody {
   mode?: string;
   router_prompt?: string;
   members?: TeamMemberBody[];
+  orchestration?: Record<string, unknown> | null;
 }
 
 const enc = encodeURIComponent;

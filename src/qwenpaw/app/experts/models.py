@@ -203,6 +203,10 @@ class ExpertTeamCreateBody(BaseModel):
     category: str = "general"
     tags: List[str] = Field(default_factory=list)
     members: List[TeamMemberBody] = Field(default_factory=list)
+    #: 运行时编排配置（OrchestrationSpec：nodes/policy/plan_note/
+    #: runtime_enabled），管理端 workforce 编排编辑面写入；为空表示
+    #: 不预置 DAG 模板，规划时走中央大脑 LLM 生成。
+    orchestration: Optional[Dict[str, Any]] = None
 
 
 class ExpertTeamUpdateBody(BaseModel):
@@ -213,3 +217,5 @@ class ExpertTeamUpdateBody(BaseModel):
     category: Optional[str] = None
     tags: Optional[List[str]] = None
     members: Optional[List[TeamMemberBody]] = None
+    #: 运行时编排配置（同上）；传空 dict 表示清除模板（回到 LLM 规划）。
+    orchestration: Optional[Dict[str, Any]] = None

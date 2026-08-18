@@ -450,6 +450,16 @@ export const BUILTIN_MENU: MenuItem[] = [
     order: 110,
     visible: adminOnly,
   },
+  {
+    id: "core.admin-workforce-runs",
+    location: "primary.settings",
+    parentId: "core.admin-group",
+    label: navLabel("nav.adminWorkforce", "Team Runs"),
+    icon: GitBranch,
+    route: "core.admin-workforce-runs",
+    order: 120,
+    visible: adminOnly,
+  },
 ];
 
 // Self-register at module load. main.tsx imports this file as a side-effect.

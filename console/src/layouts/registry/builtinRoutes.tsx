@@ -81,6 +81,9 @@ const AdminExpertsPage = lazyImportWithRetry(
 const AdminExpertTeamsPage = lazyImportWithRetry(
   "../../pages/Admin/ExpertTeams.tsx",
 );
+const AdminWorkforceRunsPage = lazyImportWithRetry(
+  "../../pages/Admin/WorkforceRuns.tsx",
+);
 
 /**
  * "/" always lands on the canonical Chat workspace.
@@ -206,6 +209,11 @@ export const BUILTIN_ROUTES: Route[] = [
     id: "core.admin-expert-teams",
     path: "/admin/expert-teams",
     component: withRequireAdmin(AdminExpertTeamsPage),
+  },
+  {
+    id: "core.admin-workforce-runs",
+    path: "/admin/workforce-runs",
+    component: withRequireAdmin(AdminWorkforceRunsPage),
   },
 ];
 

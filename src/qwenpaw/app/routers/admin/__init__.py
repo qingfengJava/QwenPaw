@@ -17,6 +17,7 @@ from .quotas import router as quotas_router
 from .roles import router as roles_router
 from .teams import router as teams_router
 from .users import router as users_router
+from .workforce import router as workforce_router
 
 router = APIRouter(prefix="/admin")
 router.include_router(users_router)
@@ -29,5 +30,6 @@ router.include_router(kb_router)
 router.include_router(orgs_router)
 router.include_router(experts_router)
 router.include_router(expert_teams_router)
+router.include_router(workforce_router)
 
 __all__ = ["router"]

@@ -34,3 +34,9 @@ export type {
   ExpertTeamCreateBody,
   ExpertTeamUpdateBody,
 } from "./expertTeams";
+export { adminWorkforceApi } from "./workforce";
+export type {
+  AdminTeamRun,
+  AdminRunStats,
+  AdminRunStatus,
+} from "./workforce";

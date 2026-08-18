@@ -410,6 +410,7 @@ class ExpertStore:
         category: str = "general",
         tags: Optional[List[str]] = None,
         owner_id: Optional[str] = None,
+        orchestration: Optional[dict] = None,
     ) -> ExpertTeamRecord:
         if mode not in TEAM_MODES:
             mode = "router"
@@ -421,9 +422,10 @@ class ExpertStore:
                 text(
                     "INSERT INTO expert_teams (tenant_id, id, name, "
                     "description, mode, router_prompt, status, version, "
-                    "owner_id, category, tags) VALUES "
+                    "owner_id, category, tags, orchestration) VALUES "
                     "(:tid, :id, :name, :desc, :mode, :rp, :status, 1, "
-                    ":owner, :category, CAST(:tags AS JSONB))"
+                    ":owner, :category, CAST(:tags AS JSONB), "
+                    "CAST(:orch AS JSONB))"
                     " RETURNING " + _TEAM_COLS
                 ),
                 {
@@ -437,6 +439,7 @@ class ExpertStore:
                     "owner": owner_id,
                     "category": category,
                     "tags": json.dumps(tags or []),
+                    "orch": json.dumps(orchestration or {}),
                 },
             )
             row = result.one()
@@ -613,6 +616,11 @@ class ExpertStore:
         if fields.get("tags") is not None:
             sets.append("tags = CAST(:tags AS JSONB)")
             params["tags"] = json.dumps(fields["tags"])
+        # 运行时编排配置（管理端 workforce 编辑面）：显式传 None 表示
+        # 不修改；传 dict（含空 dict）表示整体替换。
+        if fields.get("orchestration") is not None:
+            sets.append("orchestration = CAST(:orch AS JSONB)")
+            params["orch"] = json.dumps(fields["orchestration"])
         engine = require_enterprise_engine()
         async with engine.begin() as conn:
             if sets:
