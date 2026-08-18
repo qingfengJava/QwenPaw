@@ -137,6 +137,19 @@ async def bootstrap_enterprise() -> bool:
                 "builtin expert seeding skipped",
                 exc_info=True,
             )
+        # Seed the builtin expert teams (members ensured first; the
+        # publish chain materializes the lead supervisor agent).
+        try:
+            from .experts.builtins import ensure_builtin_teams
+
+            teams_installed = await ensure_builtin_teams()
+            if teams_installed:
+                logger.info("Seeded %d builtin expert teams.", teams_installed)
+        except Exception:  # pylint: disable=broad-except
+            logger.warning(
+                "builtin expert-team seeding skipped",
+                exc_info=True,
+            )
         return True
     except Exception:  # pylint: disable=broad-except
         logger.error(
