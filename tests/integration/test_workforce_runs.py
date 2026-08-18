@@ -839,3 +839,69 @@ async def test_create_run_rejects_unpublished_team(enterprise_env, monkeypatch):
         )
     assert exc.value.status_code == 400
     assert exc.value.detail == "Team is not published"
+
+
+class _HandoverFakeService:
+    """伪造 ProjectService：bob 是项目成员，其余用户不是。"""
+
+    async def get_project(self, project_id, username):
+        return {"id": project_id} if username == "bob" else None
+
+
+async def test_handover_rejects_unpublished_expert(enterprise_env, run_store):
+    """移交目标专家未发布 → 400（对齐 docstring"必须存在且已发布"约束）。"""
+    from qwenpaw.app.routers.xian.workforce import HandoverBody, handover_node
+
+    team, _lead, member = await _seed_team()  # member 为 draft 专家
+    run = await run_store.create_run(
+        team_id=team.id,
+        goal="G",
+        initiator_id="alice",
+        project_id="prj_1",
+    )
+    with pytest.raises(HTTPException) as exc:
+        await handover_node(
+            run["id"],
+            "task-1",
+            HandoverBody(target_user_id="bob", target_expert_id=member.id),
+            _req("alice"),
+            _HandoverFakeService(),
+        )
+    assert exc.value.status_code == 400
+    assert exc.value.detail == "Target expert is not published"
+
+
+async def test_handover_rejects_active_node_race(
+    enterprise_env, run_store, monkeypatch
+):
+    """节点执行中（delegated）不可移交：防止引擎并发委派的结果落地时
+    覆盖移交写入（409 竞态守卫）。"""
+    from qwenpaw.app.experts.store import ExpertStore
+    from qwenpaw.app.routers.xian.workforce import HandoverBody, handover_node
+    from qwenpaw.app.workforce import engine as engine_mod
+
+    # 只测守卫本身：屏蔽后台引擎启动
+    monkeypatch.setattr(engine_mod, "start_run_background", lambda run_id: None)
+    team, lead, member = await _seed_team()
+    # 目标专家须已发布（先过 published 守卫，再触达节点竞态守卫）
+    await ExpertStore().set_expert_status(lead.id, "published")
+    run = await run_store.create_run(
+        team_id=team.id,
+        goal="G",
+        initiator_id="alice",
+        project_id="prj_1",
+    )
+    await run_store.save_plan(run["id"], _two_node_plan(lead.id, member.id))
+    await run_store.set_run_status(run["id"], "running")
+    # 模拟引擎并发现场：task-1 已委派（delegated）尚未回执
+    await run_store.update_node(run["id"], "task-1", status="delegated")
+    with pytest.raises(HTTPException) as exc:
+        await handover_node(
+            run["id"],
+            "task-1",
+            HandoverBody(target_user_id="bob", target_expert_id=lead.id),
+            _req("alice"),
+            _HandoverFakeService(),
+        )
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "节点执行中，请等待本轮完成或先取消任务"

@@ -30,6 +30,7 @@ from ...experts.store import ExpertStore
 from ...workforce import bundle as bundle_mod
 from ...workforce import engine as engine_mod
 from ...workforce.contracts import (
+    NODE_ACTIVE_STATUSES,
     NODE_STATUS_PENDING,
     RUN_STATUS_AWAITING_CONFIRM,
     RUN_STATUS_CANCELED,
@@ -451,12 +452,18 @@ async def handover_node(
     expert = await expert_store.get_expert(body.target_expert_id)
     if expert is None:
         raise HTTPException(status_code=404, detail="目标专家不存在")
+    if expert.status != "published":
+        raise HTTPException(status_code=400, detail="Target expert is not published")
     # 节点存在且未完成（done 节点不可移交）
     node = await store.get_node(run_id, node_key)
     if node is None:
         raise HTTPException(status_code=404, detail="Node not found")
     if node["status"] == "done":
         raise HTTPException(status_code=409, detail="节点已完成，不可移交")
+    # 执行中节点不可移交：引擎可能正在委派，移交写入会被旧委派的
+    # 结果落地覆盖（竞态守卫；等待本轮完成或先取消任务）
+    if node["status"] in NODE_ACTIVE_STATUSES:
+        raise HTTPException(status_code=409, detail="节点执行中，请等待本轮完成或先取消任务")
     # 以最新上下文束重建契约（版本延续，同一事实传递给新执行者）
     bundle = ContextBundle.model_validate(run["context_bundle"])
     plan = run.get("plan") or {}
