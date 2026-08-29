@@ -26,7 +26,7 @@ from ..events.bus import feed_topic, get_event_bus, now_ms
 from .contracts import (
     NODE_ACTIVE_STATUSES,
     NODE_STATUS_PENDING,
-    RUN_ACTIVE_STATUSES,
+    RUN_INTERRUPTIBLE_STATUSES,
     RUN_STATUS_INTERRUPTED,
     DagPlan,
     ResultContract,
@@ -464,7 +464,7 @@ class WorkforceRunStore:
     # ------------------------------------------------------------------
 
     async def mark_interrupted_runs(self) -> int:
-        """进程启动时把活跃态 run 标记为 interrupted，返回受影响行数。
+        """进程启动时把可中断 run 标记为 interrupted，返回受影响行数。
 
         单 worker 拓扑下进程重启必然丢失内存中的 asyncio 任务；
         本扫描保证：活跃 run 在持久层可见地进入 interrupted 态，
@@ -472,6 +472,12 @@ class WorkforceRunStore:
         同时把活跃 run 的中间态节点（delegated/verifying/...）回退
         pending——否则主循环只统计 pending/done，中间态节点续跑时
         被静默跳过，run 可带着缺失产出收敛。
+
+        两条 UPDATE 均**不带租户过滤**：启动扫描是系统级操作，此时
+        无请求上下文（current_tenant_id 恒为 default），带过滤会让
+        非 default 租户的崩溃 run 永远卡在 running 无法续跑。
+        扫描范围用 RUN_INTERRUPTIBLE_STATUSES（不含 awaiting_confirm，
+        保护澄清挂起流程，见 contracts.py 注释）。
         """
         engine = require_enterprise_engine()
         async with engine.begin() as conn:
@@ -484,13 +490,12 @@ class WorkforceRunStore:
                 text(
                     "UPDATE team_run_nodes n SET status = :pending "
                     "FROM team_runs r WHERE r.tenant_id = n.tenant_id "
-                    "AND r.id = n.run_id AND r.tenant_id = :tid "
+                    "AND r.id = n.run_id "
                     "AND r.status = ANY(:active) "
                     "AND n.status = ANY(:node_active)"
                 ),
                 {
-                    "tid": current_tenant_id(),
-                    "active": list(RUN_ACTIVE_STATUSES),
+                    "active": list(RUN_INTERRUPTIBLE_STATUSES),
                     "node_active": list(NODE_ACTIVE_STATUSES),
                     "pending": NODE_STATUS_PENDING,
                 },
@@ -498,12 +503,11 @@ class WorkforceRunStore:
             result = await conn.execute(
                 text(
                     "UPDATE team_runs SET status = :interrupted WHERE "
-                    "tenant_id = :tid AND status = ANY(:active)"
+                    "status = ANY(:active)"
                 ),
                 {
                     "interrupted": RUN_STATUS_INTERRUPTED,
-                    "tid": current_tenant_id(),
-                    "active": list(RUN_ACTIVE_STATUSES),
+                    "active": list(RUN_INTERRUPTIBLE_STATUSES),
                 },
             )
         count = result.rowcount or 0

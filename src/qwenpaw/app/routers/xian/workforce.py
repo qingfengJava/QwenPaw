@@ -62,7 +62,12 @@ _KEEPALIVE_S = 25.0
 
 
 class RunCreateBody(BaseModel):
-    """创建 run 的请求体（三通道共用）。"""
+    """创建 run 的请求体（三通道共用）。
+
+    刻意不收 ``policy``：熔断策略是治理面配置，来源只能是团队
+    orchestration.policy（管理端配置）或默认值——若允许员工请求体
+    覆盖，任何人传 ``max_total_seconds=-1`` 即可关掉全部熔断。
+    """
 
     #: 专家团 ID（必填；团队须为 published）
     team_id: str
@@ -72,8 +77,6 @@ class RunCreateBody(BaseModel):
     source_chat_id: Optional[str] = None
     #: 关联项目（项目 AI 升级 / 跨用户移交的前提）
     project_id: Optional[str] = None
-    #: 熔断策略覆盖（未填用团队 orchestration.policy 或默认）
-    policy: Optional[Dict[str, Any]] = None
 
 
 class ClarifyBody(BaseModel):
@@ -166,11 +169,10 @@ async def create_run(
     # 项目归属校验（挂项目的 run：caller 必须是项目成员）
     if body.project_id:
         await _require_role(service, request, body.project_id, "")
-    # 熔断策略：请求覆盖 > 团队模板 > 默认
+    # 熔断策略：只读治理面——团队 orchestration.policy（管理端配置），
+    # 未配置用引擎默认。请求体不参与（员工不可自行放宽熔断上限）。
     policy: Dict[str, Any] = {}
-    if body.policy:
-        policy = RunPolicy.model_validate(body.policy).model_dump()
-    elif isinstance(team.orchestration, dict) and team.orchestration.get("policy"):
+    if isinstance(team.orchestration, dict) and team.orchestration.get("policy"):
         policy = RunPolicy.model_validate(team.orchestration["policy"]).model_dump()
     # 构建初始上下文束（成员花名册投影，不带 agent_spec）
     members = []

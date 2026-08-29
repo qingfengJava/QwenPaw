@@ -701,7 +701,8 @@ export interface TeamRunCreateBody {
   goal: string;
   source_chat_id?: string;
   project_id?: string;
-  policy?: Record<string, unknown>;
+  // 刻意无 policy：熔断策略是治理面配置（团队 orchestration.policy），
+  // 员工请求体不可覆盖——后端已拒绝该字段。
 }
 
 export const workforceApi = {

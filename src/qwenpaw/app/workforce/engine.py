@@ -56,13 +56,14 @@ from .contracts import (
     ResultContract,
     RunPolicy,
     TaskContract,
+    VERDICT_ESCALATE,
     VERDICT_FAIL,
     VERDICT_PASS,
 )
 from .delegator import DELEGATE_TIMEOUT_S, call_expert_text, delegate, parse_result_contract
 from .planner import build_task_contract, plan_run
 from .run_store import get_run_store
-from .verifier import verify
+from .verifier import Verdict, verify
 
 logger = logging.getLogger(__name__)
 
@@ -407,20 +408,25 @@ async def _execute_node(
             "node_result",
             {"node_key": node_key, "status": result.status, "attempt": attempt},
         )
-        # 验收：final 节点（中央大脑自执行）自验收通过，其余由 lead 裁决
-        if expert_id:
-            verdict = await verify(
-                lead_id,
-                contract,
-                result,
-                policy,
-                repair_count=repair_count,
-                previous_repair=repair,
+        # 验收：全部节点统一由 lead 裁决——final/integration（中央大脑
+        # 自执行）同样不免检。最终交付是全链路最关键的产出，"自验收"
+        # 后门会让未经任何裁决的内容直达用户（企业质量门无例外）。
+        verdict = await verify(
+            lead_id,
+            contract,
+            result,
+            policy,
+            repair_count=repair_count,
+            previous_repair=repair,
+        )
+        # needs_review 守门：ResultContract 解析降级（模型未按结构化
+        # 约定输出）的结果不得静默 PASS——结构化事实已丢失，升级人工
+        # 复核，杜绝垃圾产出无感流入上游摘要与最终交付。
+        if verdict.verdict == VERDICT_PASS and result.needs_review:
+            verdict = Verdict(
+                VERDICT_ESCALATE,
+                reason=f"节点 {node_key} 结果契约解析降级（needs_review），升级人工复核",
             )
-        else:
-            from .verifier import Verdict
-
-            verdict = Verdict(VERDICT_PASS, reason="final 汇总节点自验收")
         # 裁决留痕
         await store.update_node(run_id, node_key, verdict=verdict.verdict)
         await store.emit_event(

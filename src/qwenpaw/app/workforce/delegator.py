@@ -77,9 +77,9 @@ async def call_expert_text(
     """
     # 延迟导入避免模块加载期引入 agent 工具链（保持 workforce 包轻）
     from ...agents.tools.agent_management import (
+        _normalize_api_base_url,
         build_agent_chat_request,
         parse_agent_sse_line,
-        resolve_agent_api_base_url,
     )
     import httpx
 
@@ -90,8 +90,10 @@ async def call_expert_text(
         session_id=session_id,
         from_agent=from_agent,
     )
-    # 归一化本机 API 基址
-    normalized = resolve_agent_api_base_url(None)
+    # 归一化本机 API 基址：resolve_agent_api_base_url 只返回 host:port，
+    # 必须经 _normalize_api_base_url 补 /api 前缀（委派目标路由为
+    # /api/console/chat；漏补前缀会让全部委派调用 404，引擎静默全灭）
+    normalized = _normalize_api_base_url(None)
     # 逐行消费 SSE：记录最后一条非 usage 事件为回执，累加 usage 事件
     response_data: Optional[Dict[str, Any]] = None
     total_tokens = 0

@@ -586,7 +586,13 @@ def _patch_llm_seams(monkeypatch, plan, delegate_impl=None, verify_impl=None):
         return Verdict(VERDICT_PASS, reason="符合验收标准")
 
     async def fake_brain(to_agent, prompt, session_id=None, timeout=None):
-        payload = '{"status":"done","result":"最终汇总产出","result_text":"最终汇总产出"}'
+        # 注意 result 必须是对象（ResultContract.result: Dict）：
+        # 结构非法会触发解析降级 needs_review=True，被引擎质量门
+        # 拦截升级人工——final 不免检后这是真实会被咬中的路径
+        payload = (
+            '{"status":"COMPLETED","result":{"text":"最终汇总产出"},'
+            '"result_text":"最终汇总产出"}'
+        )
         return payload, session_id or "sess_brain", 0
 
     monkeypatch.setattr(engine_mod, "plan_run", fake_plan_run)
@@ -680,12 +686,14 @@ async def test_max_repair_boundary_result_is_verified(
     _patch_llm_seams(monkeypatch, _two_node_plan(lead.id, member.id))
     # 换回真实 verifier（_patch_llm_seams 默认恒 PASS 桩会绕过被测的
     # 熔断预检），只在 verifier 内部 LLM 接缝注入脚本化裁决：
-    # 第 1 次验收 FAIL（附返工问题），第 2 次验收 PASS。
+    # 第 1 次验收 FAIL（附返工问题），第 2 次验收 PASS；
+    # 第 3 次为 final 汇总节点的验收（final 不免检，同样走裁决）。
     verify_replies = iter(
         [
             '```json\n{"verdict":"FAIL","reason":"缺少细节","issues":["缺少细节"],'
             '"expected_change":["补充细节"],"preserve":[]}\n```',
             '```json\n{"verdict":"PASS","reason":"补充细节后已达标"}\n```',
+            '```json\n{"verdict":"PASS","reason":"汇总达标"}\n```',
         ]
     )
 
@@ -924,3 +932,132 @@ async def test_handover_rejects_active_node_race(
         )
     assert exc.value.status_code == 409
     assert exc.value.detail == "节点执行中，请等待本轮完成或先取消任务"
+
+
+# ---------------------------------------------------------------------------
+# 5. Phase 0 质量门与恢复语义（final 免检后门移除 / needs_review 守门 /
+#    启动恢复全租户 + 澄清保护 / policy 治理面只读）
+# ---------------------------------------------------------------------------
+
+
+async def test_final_node_is_verified(enterprise_env, run_store, monkeypatch):
+    """final 汇总节点必须经 lead 验收（自验收后门移除）：验收调用覆盖
+    成员节点与 final 节点，最终交付不得免检直达 done。"""
+    from qwenpaw.app.workforce import engine as engine_mod
+    from qwenpaw.app.workforce.contracts import VERDICT_PASS
+    from qwenpaw.app.workforce.verifier import Verdict
+
+    team, lead, member = await _seed_team()
+    verify_calls: list = []
+
+    def counting_verify(lead_id, contract, result, repair_count):
+        # 同步函数即可（fake_verify 不 await 实现返回值）
+        verify_calls.append(contract.task_id)
+        return Verdict(VERDICT_PASS, reason="ok")
+
+    _patch_llm_seams(
+        monkeypatch,
+        _two_node_plan(lead.id, member.id),
+        verify_impl=counting_verify,
+    )
+    run = await run_store.create_run(
+        team_id=team.id, goal="G", initiator_id="alice"
+    )
+    await engine_mod.run_team_run(run["id"])
+    final = await run_store.get_run(run["id"])
+    assert final["status"] == "done"
+    # 两次验收：task-1（成员节点）+ final-summary（中央大脑节点）
+    assert verify_calls == ["task-1", "final-summary"]
+    final_node = await run_store.get_node(run["id"], "final-summary")
+    assert final_node["verdict"] == "PASS"
+
+
+async def test_needs_review_result_escalates(enterprise_env, run_store, monkeypatch):
+    """ResultContract 解析降级（needs_review=True）不得静默 PASS：
+    强制升级人工复核，垃圾产出不得无感流入最终交付。"""
+    from qwenpaw.app.workforce import engine as engine_mod
+
+    team, lead, member = await _seed_team()
+
+    def degraded_delegate(expert_id, contract, repair):
+        result = _ok_result(f"{expert_id} 完成")
+        # 模拟解析降级：全文兜底 + needs_review 置位
+        result.needs_review = True
+        return result, "sess_degraded"
+
+    _patch_llm_seams(
+        monkeypatch,
+        _two_node_plan(lead.id, member.id),
+        delegate_impl=degraded_delegate,
+    )
+    run = await run_store.create_run(
+        team_id=team.id, goal="G", initiator_id="alice"
+    )
+    # EscalateSignal 经 _guarded_run 收敛为 escalated 终态
+    task = engine_mod.start_run_background(run["id"])
+    await task
+    final = await run_store.get_run(run["id"])
+    assert final["status"] == "escalated"
+    assert "needs_review" in (final.get("escalation_reason") or "")
+
+
+async def test_mark_interrupted_ignores_awaiting_confirm_and_covers_all_tenants(
+    enterprise_env, run_store
+):
+    """启动恢复扫描：awaiting_confirm（澄清挂起）不被改写（保护澄清
+    流程）；非 default 租户的活跃 run 同样被扫描（全租户语义）。"""
+    from qwenpaw.app.enterprise import set_current_org_id
+
+    team, _lead, _member = await _seed_team()
+    # default 租户：澄清挂起 run（重启后必须仍可答复澄清）
+    clarify_run = await run_store.create_run(
+        team_id=team.id, goal="G1", initiator_id="alice"
+    )
+    await run_store.set_run_status(clarify_run["id"], "awaiting_confirm")
+    # org_b 租户：执行中 run（无请求上下文的扫描也必须覆盖到）
+    set_current_org_id("org_b")
+    try:
+        org_run = await run_store.create_run(
+            team_id=team.id, goal="G2", initiator_id="bob"
+        )
+        await run_store.set_run_status(org_run["id"], "running")
+    finally:
+        set_current_org_id(None)
+    # 启动扫描（lifespan 语境：无租户上下文）
+    count = await run_store.mark_interrupted_runs()
+    assert count >= 1
+    # 澄清挂起保持原状（awaiting_confirm 不在可中断集合内）
+    assert (
+        await run_store.get_run(clarify_run["id"])
+    )["status"] == "awaiting_confirm"
+    # 跨租户执行中 run 被标记 interrupted（修复"只扫 default 租户"缺陷）
+    set_current_org_id("org_b")
+    try:
+        assert (
+            await run_store.get_run(org_run["id"])
+        )["status"] == "interrupted"
+    finally:
+        set_current_org_id(None)
+
+
+async def test_create_run_ignores_request_policy(enterprise_env, monkeypatch):
+    """员工通道 policy 只读：请求体携带 policy 也被忽略，策略只来自
+    团队 orchestration（治理面）——防员工传 -1 关掉全部熔断。"""
+    from qwenpaw.app.experts.store import ExpertStore
+    from qwenpaw.app.routers.xian.workforce import RunCreateBody, create_run
+    from qwenpaw.app.workforce import engine as engine_mod
+
+    # 只测守卫与落库：屏蔽后台引擎启动
+    monkeypatch.setattr(engine_mod, "start_run_background", lambda run_id: None)
+    expert_store = ExpertStore()
+    team, _lead, _member = await _seed_team()
+    await expert_store.set_team_status(team.id, "published")
+    # 请求体携带 policy 越权覆盖（pydantic 忽略未声明字段）
+    body = RunCreateBody(
+        team_id=team.id,
+        goal="G",
+        policy={"max_total_seconds": -1, "max_repair_per_node": 999999},
+    )
+    run = await create_run(body, _req("alice"))
+    # 落库策略为空 dict（引擎取默认 RunPolicy），请求覆盖未生效
+    assert run["policy"] == {}

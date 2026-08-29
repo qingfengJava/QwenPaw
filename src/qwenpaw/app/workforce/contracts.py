@@ -76,6 +76,18 @@ RUN_ACTIVE_STATUSES = (
     RUN_STATUS_AGGREGATING,
 )
 
+#: 启动恢复扫描范围：重启后可能仍存在在途引擎工作的状态。
+#: awaiting_confirm 刻意排除——该状态本无在途任务（挂起等用户澄清），
+#: 若被改写为 interrupted，澄清答复接口（只接受 awaiting_confirm）
+#: 将永久 409，澄清流程在重启后彻底死锁。
+RUN_INTERRUPTIBLE_STATUSES = (
+    RUN_STATUS_PLANNING,
+    RUN_STATUS_RUNNING,
+    RUN_STATUS_VERIFYING,
+    RUN_STATUS_REPAIRING,
+    RUN_STATUS_AGGREGATING,
+)
+
 #: 节点状态：待执行（依赖未满足）
 NODE_STATUS_PENDING = "pending"
 #: 节点状态：已委派（委派请求已发出）
