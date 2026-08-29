@@ -31,8 +31,28 @@ RBAC_ENFORCE_ENV = "QWENPAW_RBAC_ENFORCE"
 
 
 def rbac_enforcement_enabled() -> bool:
-    """Whether ``require_perm`` actually rejects (default: off)."""
-    return EnvVarLoader.get_bool(RBAC_ENFORCE_ENV, False)
+    """Whether ``require_perm`` actually rejects.
+
+    默认值跟随认证开关（Governance Engine 的存在前提）：
+
+    - ``QWENPAW_RBAC_ENFORCE`` 显式配置时以其为准（灰度微调仍可用）；
+    - 未配置时：认证开启（多用户/企业部署）→ **默认强制**；认证关闭
+      （本机单机桌面模式）→ 默认关闭。企业平面在多用户部署下不再
+      依赖运维记得手动打开开关。
+    """
+    # 显式配置优先（true/on/1 开；false/off/0 关）
+    explicit = EnvVarLoader.get_str(RBAC_ENFORCE_ENV, "").strip().lower()
+    if explicit in ("1", "true", "on", "yes"):
+        return True
+    if explicit in ("0", "false", "off", "no"):
+        return False
+    # 未显式配置：跟随认证开关（延迟导入防循环依赖）
+    try:
+        from ..auth import is_auth_enabled
+
+        return is_auth_enabled()
+    except Exception:  # pylint: disable=broad-except
+        return False
 
 
 def _resolve_flat_role(username: str) -> str:

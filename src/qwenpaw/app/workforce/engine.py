@@ -213,7 +213,7 @@ async def run_team_run(run_id: str, started_at: Optional[float] = None) -> None:
         # ---- 规划阶段（已有 plan 则跳过：续跑 / 重入） ----
         run = await store.get_run(run_id)
         if not (run.get("plan") or {}).get("nodes"):
-            await _plan_phase(store, run, team, members, bundle)
+            await _plan_phase(store, run, team, members, bundle, member_skills=member_skills)
             # 规划阶段可能改变 run 状态（awaiting_confirm / failed），重读判定
             run = await store.get_run(run_id)
             if run["status"] != RUN_STATUS_RUNNING:
@@ -257,7 +257,7 @@ async def run_team_run(run_id: str, started_at: Optional[float] = None) -> None:
             semaphore = asyncio.Semaphore(max(1, policy.parallelism))
             results = await asyncio.gather(
                 *(
-                    _run_node_bounded(semaphore, store, run_id, run, policy, bundle, node_key, members_by_id, member_skills, lead_id)
+                    _run_node_bounded(semaphore, store, run_id, run, policy, bundle, node_key, members_by_id, member_skills, lead_id, clock_start)
                     for node_key in ready
                 ),
                 return_exceptions=True,
@@ -316,18 +316,61 @@ async def run_team_run(run_id: str, started_at: Optional[float] = None) -> None:
     )
 
 
+async def _retrieve_knowledge(
+    goal: str,
+    username: str,
+) -> List[Dict[str, str]]:
+    """Knowledge Retrieval：对发起人可见 KB 做一次轻量检索（best-effort）。
+
+    Capability Discovery 的知识面：规划前从个人/团队/企业 KB 检索与
+    goal 相关的片段（每库 top2、总上限 5 条），命中注入
+    ``global_ctx.knowledge`` 供规划与契约引用。任何异常静默降级为
+    空集——知识检索故障绝不阻塞编排主链路。
+    """
+    # 延迟导入（KB 为可选子系统；保持 workforce 包加载轻）
+    try:
+        from ..kb.service import get_kb_service
+
+        service = get_kb_service()
+        hits: List[Dict[str, str]] = []
+        for kb in service.accessible_kbs(username, flat_role=""):
+            # 每库取 top2 片段（轻量 BM25；总量有界防上下文膨胀）
+            for chunk, _score in service.search(kb.id, goal, top_k=2):
+                hits.append({"kb": kb.name, "text": chunk.text[:400]})
+                if len(hits) >= 5:
+                    return hits
+        return hits
+    except Exception:  # noqa: BLE001 - 知识面故障不阻塞编排
+        logger.debug("知识检索降级为空集", exc_info=True)
+        return []
+
+
 async def _plan_phase(
     store,
     run: Dict[str, Any],
     team: ExpertTeamRecord,
     members: List[ExpertRecord],
     bundle: ContextBundle,
+    member_skills: Optional[Dict[str, List[str]]] = None,
 ) -> None:
     """规划阶段：模板/LLM 产出 DagPlan，或转澄清挂起，或失败终止。"""
     run_id = run["id"]
     await store.emit_event(run, "planning_started")
-    # 执行规划（模板优先 → 中央大脑）
-    outcome = await plan_run(run["goal"], team, members, bundle)
+    # 知识检索注入（Capability Discovery 的知识面；变更时 bump 版本）
+    knowledge = await _retrieve_knowledge(
+        run["goal"], run.get("initiator_id") or ""
+    )
+    if knowledge and bundle.global_ctx.get("knowledge") != knowledge:
+        bundle.global_ctx = dict(bundle.global_ctx)
+        bundle.global_ctx["knowledge"] = knowledge
+        bundle_mod.record_version_change(bundle, "knowledge: 规划检索命中")
+        bundle.version = bundle.version + 1
+        await store.bump_context_version(run_id)
+        await store.update_run(run_id, context_bundle=bundle.model_dump())
+    # 执行规划（模板优先 → 中央大脑；能力档案随 prompt 注入）
+    outcome = await plan_run(
+        run["goal"], team, members, bundle, member_skills=member_skills
+    )
     # 澄清分支：挂起等待用户答复（不消耗执行预算）
     if outcome.clarification is not None:
         await store.update_run(
@@ -434,6 +477,7 @@ async def _run_node_bounded(
     members_by_id: Dict[str, ExpertRecord],
     member_skills: Dict[str, List[str]],
     lead_id: str,
+    clock_start: float,
 ) -> None:
     """信号量包裹的单节点执行（限制同波并发委派数）。"""
     async with semaphore:
@@ -447,6 +491,7 @@ async def _run_node_bounded(
             members_by_id,
             member_skills,
             lead_id,
+            clock_start,
         )
 
 
@@ -460,6 +505,7 @@ async def _execute_node(
     members_by_id: Dict[str, ExpertRecord],
     member_skills: Dict[str, List[str]],
     lead_id: str,
+    clock_start: float,
 ) -> None:
     """单节点全生命周期：契约 → 委派 → 验收 →（FAIL）返工循环。
 
@@ -493,6 +539,12 @@ async def _execute_node(
     expert_id = dag_node.assignee_expert_id
     # ---- 委派 → 验收 →（FAIL）返工循环 ----
     while True:
+        # 预算检查前移：每轮委派前核对时间与 token 预算——波次开始时
+        # 的检查无法覆盖"单波内 900s×并发"的无监督超支窗口
+        _check_time_budget(clock_start, policy)
+        from .budget import check_token_budget, run_total_tokens
+
+        check_token_budget(await run_total_tokens(store, run_id), policy)
         # 取最近一次返工契约（首轮为空）
         node_now = await store.get_node(run_id, node_key) or {}
         repair = (

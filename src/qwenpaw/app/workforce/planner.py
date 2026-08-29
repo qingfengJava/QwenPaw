@@ -235,8 +235,13 @@ def _render_planning_prompt(
     members: List[ExpertRecord],
     bundle: ContextBundle,
     retry_error: str = "",
+    member_skills: Optional[Dict[str, List[str]]] = None,
 ) -> str:
-    """渲染中央大脑的规划 prompt（结构化输出约定 + 成员花名册）。"""
+    """渲染中央大脑的规划 prompt（结构化输出约定 + 成员能力档案）。
+
+    能力档案（Capability Discovery）：每个成员的技能绑定与启用工具
+    随花名册注入——LLM 按能力指派，而非只靠 description 文字猜。
+    """
     lines = ["# 团队任务规划（你是中央大脑，负责需求理解与任务拆解）"]
     # 原始需求与澄清历史
     lines.append("\n## 用户需求")
@@ -250,6 +255,12 @@ def _render_planning_prompt(
         lines.append("\n## 既定决策（重规划后必须遵守，不得推翻除非用户要求）")
         for decision in bundle.global_ctx["decisions"]:
             lines.append(f"- {decision}")
+    # 知识检索命中（Knowledge Retrieval：企业知识库的规划期输入）
+    knowledge = bundle.global_ctx.get("knowledge") or []
+    if knowledge:
+        lines.append("\n## 相关知识（来自企业知识库检索，规划时可引用）")
+        for item in knowledge:
+            lines.append(f"- 【{item.get('kb', '')}】{str(item.get('text', ''))[:300]}")
     # 已完成产出摘要（Re-plan 重入时的 checkpoint 复用依据：
     # lead 应基于既有成果规划补缺节点，禁止把已完成工作再拆一遍）
     if bundle.execution_ctx:
@@ -261,8 +272,8 @@ def _render_planning_prompt(
             digest = str(summary.get("digest", ""))[:400]
             if digest:
                 lines.append(digest)
-    # 团队成员花名册（id 必须原样引用，禁止虚构）
-    lines.append("\n## 可委派的团队成员（assignee_expert_id 必须取自下表 id）")
+    # 团队成员花名册（id 必须原样引用，禁止虚构；附能力档案）
+    lines.append("\n## 可委派的团队成员（assignee_expert_id 必须取自下表 id，按能力档案指派）")
     for expert in members:
         binding = next(
             (m for m in team.members if m.expert_id == expert.id),
@@ -274,6 +285,16 @@ def _render_planning_prompt(
             f"- id: `{expert.id}`　名称: {expert.name}{title}（{role}）"
             f"　专长: {expert.description or '（未填）'}"
         )
+        # 能力档案：技能（怎么做）+ 工具（用什么做），供按能力选人
+        skills = list((member_skills or {}).get(expert.id, []))
+        tools = _expert_tool_names(expert)
+        capability = []
+        if skills:
+            capability.append(f"技能[{', '.join(skills)}]")
+        if tools:
+            capability.append(f"工具[{', '.join(tools)}]")
+        if capability:
+            lines.append(f"  能力档案: {'　'.join(capability)}")
     # 输出格式约定
     lines.append("\n## 输出要求（只输出一个 ```json 代码块，不要多余内容）")
     lines.append("```json")
@@ -322,8 +343,13 @@ async def plan_run(
     team: ExpertTeamRecord,
     members: List[ExpertRecord],
     bundle: ContextBundle,
+    member_skills: Optional[Dict[str, List[str]]] = None,
 ) -> PlanOutcome:
-    """执行规划：模板优先（快慢链选择）→ 中央大脑 LLM（失败重试一次）。"""
+    """执行规划：模板优先（快慢链选择）→ 中央大脑 LLM（失败重试一次）。
+
+    member_skills 为成员技能绑定（引擎侧已加载），注入规划 prompt 的
+    能力档案供 LLM 按能力指派；模板路径不消费该参数（节点指派已固定）。
+    """
     member_ids = {expert.id for expert in members}
     # ---- 路径 1：orchestration 预置模板（不依赖 LLM） ----
     raw_orch = team.orchestration or {}
@@ -359,11 +385,20 @@ async def plan_run(
     if lead is None:
         return PlanOutcome(error="团队没有可用的成员专家")
     # 第一轮规划
-    prompt = _render_planning_prompt(goal, team, members, bundle)
+    prompt = _render_planning_prompt(
+        goal, team, members, bundle, member_skills=member_skills
+    )
     outcome = await _llm_plan_once(lead, prompt, member_ids)
     # 校验失败：携带错误定向重试一次（禁止静默修复非法 DAG）
     if outcome.error and not outcome.clarification:
-        retry_prompt = _render_planning_prompt(goal, team, members, bundle, retry_error=outcome.error)
+        retry_prompt = _render_planning_prompt(
+            goal,
+            team,
+            members,
+            bundle,
+            retry_error=outcome.error,
+            member_skills=member_skills,
+        )
         outcome = await _llm_plan_once(lead, retry_prompt, member_ids)
         # 重试仍失败 → 报错终止（run 置 failed，用户可改需求后重建）
         if outcome.error and not outcome.clarification:

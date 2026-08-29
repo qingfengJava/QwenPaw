@@ -53,6 +53,46 @@ router = APIRouter(prefix="/experts", tags=["xian-experts"])
 #: Custom-expert quota per user (workspaces live under WORKING_DIR/experts).
 MAX_USER_EXPERTS = 20
 
+#: 员工自建专家 agent_spec 的字段白名单（安全边界，非样式约束）。
+#: AgentProfileConfig 含 mcp（stdio command = 服务端任意命令执行）、
+#: channels、backend_settings、security 等平台级字段——员工 spec 任意
+#: 透传并在同一请求里自动发布 = 权限提升入口。仅放行个性化与工具
+#: 开关两域；渠道/MCP/后端等平台配置只能走 /api/admin/experts。
+_AGENT_SPEC_ALLOWED_KEYS = {"language", "tools"}
+
+
+def _sanitize_agent_spec(spec: object) -> dict:
+    """把员工提交的 agent_spec 过滤为安全白名单形态（深净化）。
+
+    - 仅保留 ``language`` 与 ``tools``；
+    - ``tools`` 只接受 ``builtin_tools`` 的 ``{name: {enabled: bool}}``
+      开关映射（内置工具本身受治理门约束），其余结构整体丢弃；
+    - 非法输入统一回落到默认个性化值，不抛错（创建不因脏 spec 失败）。
+    """
+    # 非对象输入回落默认
+    if not isinstance(spec, dict):
+        return {"language": "zh"}
+    # 第一层：字段白名单
+    cleaned = {k: v for k, v in spec.items() if k in _AGENT_SPEC_ALLOWED_KEYS}
+    # 第二层：tools 深净化（只留 builtin_tools 启用开关）
+    tools = cleaned.get("tools")
+    if isinstance(tools, dict) and isinstance(tools.get("builtin_tools"), dict):
+        cleaned["tools"] = {
+            "builtin_tools": {
+                name: {"enabled": bool(cfg.get("enabled"))}
+                if isinstance(cfg, dict)
+                else {"enabled": False}
+                for name, cfg in tools["builtin_tools"].items()
+            }
+        }
+    else:
+        # tools 缺失或结构非法：整体移除（继承 agent 默认工具）
+        cleaned.pop("tools", None)
+    # language 兜底
+    if not isinstance(cleaned.get("language"), str) or not cleaned["language"]:
+        cleaned["language"] = "zh"
+    return cleaned
+
 
 def _viewer(request: Request) -> str:
     return getattr(request.state, "user", None) or "local"
@@ -408,7 +448,8 @@ async def create_custom_expert(
         name=body.name,
         icon=body.icon,
         description=body.description,
-        agent_spec=body.agent_spec or {"language": "zh"},
+        # 安全白名单净化：mcp/channels 等平台级字段不允许员工自带发布
+        agent_spec=_sanitize_agent_spec(body.agent_spec),
         owner_id=username,
         visibility=body.visibility,
         title=body.title,
@@ -457,7 +498,12 @@ async def update_custom_expert(
         name=body.name,
         icon=body.icon,
         description=body.description,
-        agent_spec=body.agent_spec,
+        # 安全白名单净化（None=不修改 spec，保持 update 语义）
+        agent_spec=(
+            _sanitize_agent_spec(body.agent_spec)
+            if body.agent_spec is not None
+            else None
+        ),
         title=body.title,
         category=body.category,
         badge=body.badge,

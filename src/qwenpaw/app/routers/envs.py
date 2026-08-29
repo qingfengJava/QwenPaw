@@ -4,12 +4,20 @@ from __future__ import annotations
 
 from typing import Dict, List
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from ...envs import load_envs, save_envs, delete_env_var
+from ..rbac.deps import require_perm
+from ..rbac.models import PERM_ADMIN_PLATFORM
 
-router = APIRouter(prefix="/envs", tags=["envs"])
+# 全局配置面（平台运维）：envs 含数据库 DSN / provider key 等跨租户
+# 敏感信息，仅 platform_admin 可读写（enforce 默认跟随认证开关）。
+router = APIRouter(
+    prefix="/envs",
+    tags=["envs"],
+    dependencies=[Depends(require_perm(PERM_ADMIN_PLATFORM))],
+)
 
 
 # ------------------------------------------------------------------

@@ -569,7 +569,7 @@ def _patch_llm_seams(monkeypatch, plan, delegate_impl=None, verify_impl=None):
     from qwenpaw.app.workforce import engine as engine_mod
     from qwenpaw.app.workforce.planner import PlanOutcome
 
-    async def fake_plan_run(goal, team, members, bundle):
+    async def fake_plan_run(goal, team, members, bundle, member_skills=None):
         return PlanOutcome(plan=plan, source="orchestration")
 
     async def fake_delegate(expert_id, contract, repair=None, session_id=None, timeout=None):
@@ -1130,7 +1130,7 @@ async def test_replan_flow_on_dependency_changed(enterprise_env, run_store, monk
     # 规划序列：首轮 plan1，Re-plan 重入后 plan2（新 DAG 补缺口）
     plan_calls = {"n": 0}
 
-    async def seq_plan_run(goal, team_, members_, bundle):
+    async def seq_plan_run(goal, team_, members_, bundle, member_skills=None):
         plan_calls["n"] += 1
         return PlanOutcome(
             plan=plan1 if plan_calls["n"] == 1 else plan2,
@@ -1359,3 +1359,168 @@ async def test_plan_writes_decision_and_version_history(
     assert "plan:" in bundle["history"][0]["reason"]
     # 持久层版本号与束版本一致
     assert final["context_version"] == 2
+
+
+# ---------------------------------------------------------------------------
+# 8. Phase 3 能力发现 + 治理地基
+# ---------------------------------------------------------------------------
+
+
+def test_planning_prompt_capability_profile_and_knowledge():
+    """规划 prompt 注入成员能力档案（技能+工具）与知识检索命中——
+    LLM 按能力选人而非只靠 description 文字。"""
+    from qwenpaw.app.experts.models import (
+        ExpertRecord,
+        ExpertTeamRecord,
+        TeamMember,
+    )
+    from qwenpaw.app.workforce import planner
+    from qwenpaw.app.workforce.contracts import ContextBundle
+
+    lead = ExpertRecord(
+        id="exp_lead",
+        name="技术专家",
+        agent_spec={
+            "tools": {"builtin_tools": {"file_editor": {"enabled": True}}}
+        },
+    )
+    member = ExpertRecord(id="exp_fe", name="前端专家", title="资深前端")
+    team = ExpertTeamRecord(
+        id="team_1",
+        name="软件团队",
+        members=[TeamMember(expert_id="exp_lead", member_role="lead", seq=0)],
+    )
+    bundle = ContextBundle()
+    bundle.global_ctx["knowledge"] = [
+        {"kb": "企业规范库", "text": "前端必须使用 React 18"}
+    ]
+    prompt = planner._render_planning_prompt(
+        "设计登录页",
+        team,
+        [lead, member],
+        bundle,
+        member_skills={"exp_lead": ["architecture"]},
+    )
+    # 能力档案：技能与启用工具逐成员可见
+    assert "能力档案" in prompt
+    assert "技能[architecture]" in prompt
+    assert "工具[file_editor]" in prompt
+    # 知识检索命中注入规划上下文
+    assert "企业规范库" in prompt
+    assert "React 18" in prompt
+
+
+def test_sanitize_agent_spec_whitelist():
+    """员工 agent_spec 白名单：mcp/channels 等平台字段被剥离，tools
+    深净化为 builtin_tools 启用开关——堵 MCP stdio 命令执行入口。"""
+    from qwenpaw.app.routers.xian.experts import _sanitize_agent_spec
+
+    dirty = {
+        "language": "zh",
+        "mcp": {"clients": {"evil": {"type": "stdio", "command": "calc"}}},
+        "channels": {"dingtalk": {"enabled": True}},
+        "backend_settings": {"x": 1},
+        "project_dir": "/etc",
+        "security": {"allow_all": True},
+        "tools": {
+            "builtin_tools": {
+                "browser": {"enabled": True},
+                "terminal": {"enabled": False},
+            },
+            "evil_extra": {"x": 1},
+        },
+    }
+    cleaned = _sanitize_agent_spec(dirty)
+    # 平台级字段全部剥离
+    for key in ("mcp", "channels", "backend_settings", "project_dir", "security"):
+        assert key not in cleaned
+    # tools 只剩 builtin_tools 启用开关（bool 化）
+    assert cleaned["tools"] == {
+        "builtin_tools": {"browser": {"enabled": True}, "terminal": {"enabled": False}}
+    }
+    # 非法输入回落默认
+    assert _sanitize_agent_spec(None) == {"language": "zh"}
+    assert _sanitize_agent_spec("junk") == {"language": "zh"}
+    assert _sanitize_agent_spec({"mcp": {}}) == {"language": "zh"}
+
+
+def test_rbac_enforce_default_follows_auth_switch(monkeypatch):
+    """RBAC enforce 默认值跟随认证开关：多用户部署默认强制、本机单机
+    默认关闭；显式环境变量始终优先。"""
+    from qwenpaw.app import auth as auth_mod
+    from qwenpaw.app.rbac.deps import RBAC_ENFORCE_ENV, rbac_enforcement_enabled
+
+    for key in (RBAC_ENFORCE_ENV, "COPAW_RBAC_ENFORCE"):
+        monkeypatch.delenv(key, raising=False)
+    # 认证开 → 默认强制；认证关 → 默认关闭
+    monkeypatch.setattr(auth_mod, "is_auth_enabled", lambda: True)
+    assert rbac_enforcement_enabled() is True
+    monkeypatch.setattr(auth_mod, "is_auth_enabled", lambda: False)
+    assert rbac_enforcement_enabled() is False
+    # 显式配置优先于认证开关
+    monkeypatch.setenv(RBAC_ENFORCE_ENV, "0")
+    monkeypatch.setattr(auth_mod, "is_auth_enabled", lambda: True)
+    assert rbac_enforcement_enabled() is False
+    monkeypatch.setenv(RBAC_ENFORCE_ENV, "1")
+    monkeypatch.setattr(auth_mod, "is_auth_enabled", lambda: False)
+    assert rbac_enforcement_enabled() is True
+
+
+def test_require_perm_dependency_enforcement(monkeypatch):
+    """require_perm 依赖：enforce 关闭全放行；开启后无身份 403
+    （fail-closed）。依赖为 async，用 asyncio.run 驱动。"""
+    import asyncio
+
+    import pytest
+    from fastapi import HTTPException
+
+    from qwenpaw.app.rbac.deps import RBAC_ENFORCE_ENV, require_perm
+
+    check = require_perm("admin:platform")
+    fake_request = SimpleNamespace(
+        state=SimpleNamespace(user=None), url=SimpleNamespace(path="/api/envs")
+    )
+    # enforce 关闭（auth off + env 未设）：全放行
+    for key in (RBAC_ENFORCE_ENV, "COPAW_RBAC_ENFORCE"):
+        monkeypatch.delenv(key, raising=False)
+    from qwenpaw.app import auth as auth_mod
+
+    monkeypatch.setattr(auth_mod, "is_auth_enabled", lambda: False)
+    asyncio.run(check(fake_request))
+    # enforce 开启：无身份 → 403（fail-closed，不区分"缺权限/未登录"）
+    monkeypatch.setenv(RBAC_ENFORCE_ENV, "1")
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(check(fake_request))
+    assert exc.value.status_code == 403
+
+
+async def test_knowledge_injection_into_planning_context(
+    enterprise_env, run_store, monkeypatch
+):
+    """规划期知识检索命中注入 global_ctx.knowledge 并 bump 版本——
+    Knowledge Retrieval 正式进入编排链路。"""
+    from qwenpaw.app.workforce import engine as engine_mod
+
+    team, lead, member = await _seed_team()
+    _patch_llm_seams(monkeypatch, _two_node_plan(lead.id, member.id))
+    # 检索接缝打桩（真实 KB 文件级检索已在 kb 套件覆盖；此处验证接线）
+    async def fake_knowledge(goal, username):
+        return [{"kb": "规范库", "text": "登录页需支持多租户"}]
+
+    monkeypatch.setattr(engine_mod, "_retrieve_knowledge", fake_knowledge)
+    run = await run_store.create_run(
+        team_id=team.id, goal="设计登录页", initiator_id="alice"
+    )
+    await engine_mod.run_team_run(run["id"])
+    final = await run_store.get_run(run["id"])
+    assert final["status"] == "done"
+    bundle = final["context_bundle"]
+    # 知识命中写入全局事实（检索文本进入 global_ctx.knowledge）
+    assert bundle["global_ctx"]["knowledge"] == [
+        {"kb": "规范库", "text": "登录页需支持多租户"}
+    ]
+    # 知识注入与拆解决策各 bump 一次（v3：v1 初始 → knowledge → plan）
+    assert bundle["version"] >= 3
+    reasons = [h["reason"] for h in bundle["history"]]
+    assert any(r.startswith("knowledge:") for r in reasons)
+    assert any(r.startswith("plan:") for r in reasons)

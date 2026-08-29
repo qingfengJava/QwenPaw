@@ -10,7 +10,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from fastapi import APIRouter, Form, HTTPException, Request, UploadFile, File
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile, File
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from ...backup import (
@@ -22,6 +22,8 @@ from ...backup import (
     import_backup,
     list_backups,
 )
+from ..rbac.deps import require_perm
+from ..rbac.models import PERM_ADMIN_PLATFORM
 from ...backup.models import (
     BackupConflictError,
     BackupDetail,
@@ -46,7 +48,13 @@ from ._backup_helpers import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/backups", tags=["backups"])
+# 全局配置面（平台运维）：备份含全量工作区与配置（可恢复出全部租户
+# 数据），仅 platform_admin 可操作（enforce 默认跟随认证开关）。
+router = APIRouter(
+    prefix="/backups",
+    tags=["backups"],
+    dependencies=[Depends(require_perm(PERM_ADMIN_PLATFORM))],
+)
 
 _UPLOAD_TMP_MAX_AGE = 3600  # 1 hour
 

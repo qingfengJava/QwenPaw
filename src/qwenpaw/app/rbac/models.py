@@ -39,6 +39,11 @@ PERM_ADMIN_EXPERTS = "admin:experts"
 PERM_PROJECT_USE = "project:use"
 PERM_PROJECT_MANAGE = "project:manage"
 
+# Platform operations: global env vars / channel & app config / backups.
+# 全局配置面（含数据库 DSN、渠道 token 等跨租户敏感信息）的管理权限——
+# 仅 platform_admin（PERM_ALL 覆盖）可持有，普通员工与 team_lead 不可。
+PERM_ADMIN_PLATFORM = "admin:platform"
+
 #: Wildcard permission held by platform admins.
 PERM_ALL = "*"
 
