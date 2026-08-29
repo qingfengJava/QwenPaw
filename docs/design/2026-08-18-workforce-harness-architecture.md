@@ -433,3 +433,43 @@ experts / expert_teams 两表四列（alembic 0011），管理端 console 全字
 - **单专家**：微信公众号运营专家（篇篇红，marketing）、内容创作专家（墨小爆，writing）——各带 3 条任务模板 + 2 条使用案例。
 - **软件开发团队**（builtin_team_software）：交付总监 成必达（lead，中央大脑：只做审与合，绝不亲自写代码）、产品经理 需明白（用户故事+可验收标准）、架构师 顾大局（两案对比+并行分组建议）、工程师 码到成（按清单批量实现）、QA 严把关（结论必须附证据）；快慢双链 + 3 条任务模板 + 2 条使用案例。
 - **persona 与契约呼应**：成员 system_prompt 只写领域专业性（输出格式由 delegator `_RESULT_SCHEMA_HINT` 统一注入）；QA persona 与 `ResultContract.evidence`、PM persona 与 `TaskContract.quality_criteria` 语义对齐。
+
+---
+
+## 16. 实现状态修正（2026-08-29，Phase 0/1 通电与 L1 回路补全）
+
+> 本节修正前文与实现之间的落差（§13.2 的"本机无 5432"也已过时：
+> 开发机 5432 已可用并跑通全量 PG 层回归）。
+
+**Phase 0（通电，commit f6234064）**：
+
+- **协议 08/09 通道修复**：delegator 基址改走 `_normalize_api_base_url`
+  （原 `resolve_agent_api_base_url` 缺 `/api` 前缀，真实环境全部委派/
+  验收/规划/汇总调用 404——引擎此前从未真实跑通的根因）。新增真实
+  HTTP 自环测试（uvicorn 假 `/api/console/chat`，已做变异验证），
+  此后 LLM 接缝打桩测试不再是引擎正确性的唯一证据。
+- **协议 10 质量门**：final/integration 节点移除"自验收 PASS"后门，
+  统一走 lead 裁决；`needs_review=True`（ResultContract 解析降级）
+  强制升级人工复核，垃圾产出不得无感流入交付。
+- **协议 16 治理**：xian 通道 policy 只读（请求体不可覆盖熔断策略）。
+- **协议 14 恢复**：启动扫描去租户过滤（非 default 租户崩溃 run 不再
+  永久卡死）；`awaiting_confirm` 排除出可中断集合（澄清流程不再被
+  重启打死）。
+
+**Phase 1（L1 回路补全）**：
+
+- **协议 10/12 Failure Analyzer**：verifier 裁决 JSON 增加
+  `failure_kind` 结构化归因（repairable / structural /
+  dependency_changed）；自报 FAILED 按 结构性关键词 规则预检归因。
+- **协议 12 Re-plan 接线**：dependency_changed → `_handle_replan`
+  （`add_replan_count`/`reset_nodes_for_replan` 首次接入主循环；
+  教训写入 `global_ctx.decisions` 并 bump 上下文版本；外层循环重入
+  规划，规划 prompt 注入已完成产出摘要与既定决策）。受
+  `RunPolicy.max_replan` 熔断约束，admin 面板 `replan_total` 从此真实。
+- **协议 14 恢复对称**：委派/汇总通道瞬时异常 → 节点回 pending +
+  run 置 interrupted（可续跑），不再整 run failed 报废已完成
+  checkpoint；structural 归因 fast-fail（不再烧满返工轮）。
+
+新增回归：`test_workforce_runs.py` 8 例（replan 全链路 / structural
+fast-fail / 瞬时异常续跑 / replan 熔断 / final 验收 / needs_review
+守门 / 启动恢复租户与澄清语义 / policy 只读）+ 委派通道 3 例。

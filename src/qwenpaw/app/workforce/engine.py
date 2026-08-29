@@ -48,6 +48,8 @@ from .contracts import (
     RUN_STATUS_DONE,
     RUN_STATUS_ESCALATED,
     RUN_STATUS_FAILED,
+    RUN_STATUS_INTERRUPTED,
+    RUN_STATUS_PLANNING,
     RUN_STATUS_RUNNING,
     ContextBundle,
     DagNode,
@@ -63,7 +65,12 @@ from .contracts import (
 from .delegator import DELEGATE_TIMEOUT_S, call_expert_text, delegate, parse_result_contract
 from .planner import build_task_contract, plan_run
 from .run_store import get_run_store
-from .verifier import Verdict, verify
+from .verifier import (
+    FAILURE_KIND_DEPENDENCY_CHANGED,
+    FAILURE_KIND_STRUCTURAL,
+    Verdict,
+    verify,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +95,33 @@ class EscalateSignal(Exception):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         #: 熔断原因（写入 escalation_reason）
+        self.reason = reason
+
+
+class ReplanSignal(Exception):
+    """重规划信号（Failure Analyzer 归因 dependency_changed 时抛出）。
+
+    主循环捕获后执行清图重规划（协议 12），受 RunPolicy.max_replan
+    熔断约束；已完成节点的产出摘要保留在上下文束，不随节点行删除。
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        #: 重规划原因（写入事件与教训决策）
+        self.reason = reason
+
+
+class RunInterruptSignal(Exception):
+    """节点通道瞬时异常信号（委派/汇总执行段抛出）。
+
+    主循环捕获后 run 转 interrupted（可续跑）而非 failed（死路）——
+    恢复策略与 verify 通道的 ESCALATE 对称，一次网络抖动不再报废
+    整个 run 的已完成 checkpoint。
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        #: 中断原因（写入 run.error）
         self.reason = reason
 
 
@@ -174,73 +208,101 @@ async def run_team_run(run_id: str, started_at: Optional[float] = None) -> None:
     # 状态进入执行态（planning/interrupted → running）
     await store.set_run_status(run_id, RUN_STATUS_RUNNING)
     await store.emit_event(run, "run_started", {"team": team.name})
-    # ---- 规划阶段（已有 plan 则跳过：续跑 / 重入） ----
-    if not (run.get("plan") or {}).get("nodes"):
-        await _plan_phase(store, run, team, members, bundle)
-        # 规划阶段可能改变 run 状态（awaiting_confirm / failed），重读判定
-        run = await store.get_run(run_id)
-        if run["status"] != RUN_STATUS_RUNNING:
-            return
-    # ---- 执行阶段：波次拓扑调度 ----
+    # ---- Re-plan 外层循环：dependency_changed 归因时清图重规划后重入 ----
     while True:
-        # 每轮重读 run/节点状态（并行完成后的最新视图）
+        # ---- 规划阶段（已有 plan 则跳过：续跑 / 重入） ----
         run = await store.get_run(run_id)
-        if run["status"] in _RUN_TERMINAL:
-            return
-        # 依赖关系以持久化的 plan 为权威（节点行不存 deps）
-        plan = DagPlan.model_validate(run["plan"])
-        plan_by_key = {n.node_key: n for n in plan.nodes}
-        nodes = await store.list_nodes(run_id)
-        done_keys = {n["node_key"] for n in nodes if n["status"] == NODE_STATUS_DONE}
-        pending_keys = [
-            n["node_key"] for n in nodes if n["status"] == NODE_STATUS_PENDING
-        ]
-        # 全部完成 → 进入汇总收尾
-        if not pending_keys:
-            break
-        # 就绪节点：依赖全部 done（deps 来自 plan 定义）
-        ready = [
-            key
-            for key in pending_keys
-            if all(dep in done_keys for dep in plan_by_key[key].deps)
-        ]
-        # 有 pending 但无 ready = DAG 死锁（校验过不应发生，防御失败）
-        if not ready:
-            await store.set_run_status(run_id, RUN_STATUS_FAILED, error="DAG 调度死锁（存在无法就绪的节点）")
-            await store.emit_event(run, "team_run_failed", {"error": "DAG 调度死锁"})
-            return
-        # 时间与 token 双熔断（每波开始前检查）
-        _check_time_budget(clock_start, policy)
-        from .budget import check_token_budget, run_total_tokens
+        if not (run.get("plan") or {}).get("nodes"):
+            await _plan_phase(store, run, team, members, bundle)
+            # 规划阶段可能改变 run 状态（awaiting_confirm / failed），重读判定
+            run = await store.get_run(run_id)
+            if run["status"] != RUN_STATUS_RUNNING:
+                return
+        # ---- 执行阶段：波次拓扑调度 ----
+        replanned = False
+        while True:
+            # 每轮重读 run/节点状态（并行完成后的最新视图）
+            run = await store.get_run(run_id)
+            if run["status"] in _RUN_TERMINAL:
+                return
+            # 依赖关系以持久化的 plan 为权威（节点行不存 deps）
+            plan = DagPlan.model_validate(run["plan"])
+            plan_by_key = {n.node_key: n for n in plan.nodes}
+            nodes = await store.list_nodes(run_id)
+            done_keys = {n["node_key"] for n in nodes if n["status"] == NODE_STATUS_DONE}
+            pending_keys = [
+                n["node_key"] for n in nodes if n["status"] == NODE_STATUS_PENDING
+            ]
+            # 全部完成 → 进入汇总收尾
+            if not pending_keys:
+                break
+            # 就绪节点：依赖全部 done（deps 来自 plan 定义）
+            ready = [
+                key
+                for key in pending_keys
+                if all(dep in done_keys for dep in plan_by_key[key].deps)
+            ]
+            # 有 pending 但无 ready = DAG 死锁（校验过不应发生，防御失败）
+            if not ready:
+                await store.set_run_status(run_id, RUN_STATUS_FAILED, error="DAG 调度死锁（存在无法就绪的节点）")
+                await store.emit_event(run, "team_run_failed", {"error": "DAG 调度死锁"})
+                return
+            # 时间与 token 双熔断（每波开始前检查）
+            _check_time_budget(clock_start, policy)
+            from .budget import check_token_budget, run_total_tokens
 
-        total_tokens = await run_total_tokens(store, run_id)
-        check_token_budget(total_tokens, policy)
-        # 并发执行本波节点（信号量限流；单节点异常不中断同波其他节点）
-        semaphore = asyncio.Semaphore(max(1, policy.parallelism))
-        results = await asyncio.gather(
-            *(
-                _run_node_bounded(semaphore, store, run_id, run, policy, bundle, node_key, members_by_id, member_skills, lead_id)
-                for node_key in ready
-            ),
-            return_exceptions=True,
-        )
-        # 同波内熔断信号优先冒泡（escalated 终态）
-        for item in results:
-            if isinstance(item, EscalateSignal):
-                raise item
-        # 同波内取消信号冒泡（让 _guarded_run 收敛 canceled）
-        for item in results:
-            if isinstance(item, asyncio.CancelledError):
-                raise item
-        # 其余节点执行异常不得静默：否则主循环会把同一 pending 节点
-        # 无限重新 gather（引擎空转烧 CPU、run 永不终态）。统一冒泡给
-        # _guarded_run 收敛为 failed 终态并留痕日志。
-        for item in results:
-            if isinstance(item, BaseException) and not isinstance(
-                item, (EscalateSignal, asyncio.CancelledError)
-            ):
-                logger.error("节点执行异常（run=%s）: %r", run_id, item)
-                raise item
+            total_tokens = await run_total_tokens(store, run_id)
+            check_token_budget(total_tokens, policy)
+            # 并发执行本波节点（信号量限流；单节点异常不中断同波其他节点）
+            semaphore = asyncio.Semaphore(max(1, policy.parallelism))
+            results = await asyncio.gather(
+                *(
+                    _run_node_bounded(semaphore, store, run_id, run, policy, bundle, node_key, members_by_id, member_skills, lead_id)
+                    for node_key in ready
+                ),
+                return_exceptions=True,
+            )
+            # 同波内熔断信号优先冒泡（escalated 终态）
+            for item in results:
+                if isinstance(item, EscalateSignal):
+                    raise item
+            # 同波内取消信号冒泡（让 _guarded_run 收敛 canceled）
+            for item in results:
+                if isinstance(item, asyncio.CancelledError):
+                    raise item
+            # Re-plan 信号：清图重规划（受 max_replan 熔断），重入外层循环
+            replan_signal = next(
+                (i for i in results if isinstance(i, ReplanSignal)), None
+            )
+            if replan_signal is not None:
+                await _handle_replan(store, run_id, bundle, replan_signal, policy)
+                replanned = True
+                break
+            # 通道瞬时异常：run 转 interrupted（可续跑）而非 failed（死路）
+            interrupt_signal = next(
+                (i for i in results if isinstance(i, RunInterruptSignal)), None
+            )
+            if interrupt_signal is not None:
+                run = await store.get_run(run_id)
+                await store.set_run_status(
+                    run_id, RUN_STATUS_INTERRUPTED, error=interrupt_signal.reason
+                )
+                await store.emit_event(
+                    run, "run_interrupted", {"reason": interrupt_signal.reason}
+                )
+                return
+            # 其余节点执行异常不得静默：否则主循环会把同一 pending 节点
+            # 无限重新 gather（引擎空转烧 CPU、run 永不终态）。统一冒泡给
+            # _guarded_run 收敛为 failed 终态并留痕日志。
+            for item in results:
+                if isinstance(item, BaseException) and not isinstance(
+                    item, (EscalateSignal, asyncio.CancelledError, ReplanSignal, RunInterruptSignal)
+                ):
+                    logger.error("节点执行异常（run=%s）: %r", run_id, item)
+                    raise item
+        if replanned:
+            continue
+        break
     # ---- 汇总收尾（final 节点已在执行阶段完成，此处收束状态） ----
     await store.set_run_status(run_id, RUN_STATUS_AGGREGATING)
     final_summary, final_result = await _collect_final(store, run_id)
@@ -290,6 +352,53 @@ async def _plan_phase(
         run,
         "plan_ready",
         {"source": outcome.source, "nodes": [n.node_key for n in outcome.plan.nodes]},
+    )
+
+
+async def _handle_replan(
+    store,
+    run_id: str,
+    bundle: ContextBundle,
+    signal: ReplanSignal,
+    policy: RunPolicy,
+) -> None:
+    """Re-plan 处置（协议 12 的引擎接线）：清图重规划，重入规划阶段。
+
+    语义：dependency_changed 归因的验收失败后——
+    1. 熔断检查：replan_count 超过 policy.max_replan → EscalateSignal；
+    2. 教训写入全局决策（bundle.global_ctx.decisions）并 bump 版本，
+       后续所有节点契约引用新的版本化事实（Context Protocol）；
+    3. 删除全部节点行与 plan 快照（已完成产出的摘要保留在
+       bundle.execution_ctx，checkpoint 价值不随节点行丢失）；
+    4. run 回 planning 态——外层循环检测到空 plan 自动重入规划，
+       规划 prompt 携带已完成摘要与教训，新 DAG 复用既有成果。
+    """
+    # 熔断：重规划次数超上限 → 升级人工（防反复重规划空转）
+    run = await store.get_run(run_id)
+    if int(run.get("replan_count", 0) or 0) + 1 > policy.max_replan:
+        raise EscalateSignal(
+            f"重规划次数超上限（{policy.max_replan}）：{signal.reason}"
+        )
+    await store.add_replan_count(run_id)
+    # 教训决策写入全局上下文（不可变决策清单，节点契约逐条可见）
+    decisions = list(bundle.global_ctx.get("decisions", []))
+    decisions.append(f"[Re-plan] {signal.reason}")
+    bundle.global_ctx = dict(bundle.global_ctx)
+    bundle.global_ctx["decisions"] = decisions
+    bundle.version = bundle.version + 1
+    # 持久化：版本号由 bump_context_version 单点递增，束内容整列覆盖
+    await store.bump_context_version(run_id)
+    await store.update_run(run_id, context_bundle=bundle.model_dump())
+    # 清空任务图（节点行删除；plan 清空触发外层循环重入规划）
+    await store.reset_nodes_for_replan(run_id)
+    await store.update_run(run_id, plan={}, summary="", result={})
+    # 回执行态：外层循环检测到空 plan 直接重入规划（若置 planning，
+    # 外层规划重入后的 RUNNING 判定会误判提前 return，run 卡死）
+    await store.set_run_status(run_id, RUN_STATUS_RUNNING)
+    await store.emit_event(
+        run,
+        "replan_started",
+        {"reason": signal.reason, "context_version": bundle.version},
     )
 
 
@@ -374,22 +483,35 @@ async def _execute_node(
         await store.update_node(run_id, node_key, status=NODE_STATUS_DELEGATED, attempt=attempt + 1)
         await store.emit_event(run, "node_started", {"node_key": node_key, "attempt": attempt + 1})
         # 执行节点：final/integration 由中央大脑自执行，成员节点走委派
-        if expert_id:
-            result, session_id = await delegate(
-                expert_id,
-                contract,
-                repair=repair,
-                session_id=session_id,
-                timeout=DELEGATE_TIMEOUT_S,
-            )
-        else:
-            result, session_id = await _execute_brain_node(
-                lead_id,
-                dag_node,
-                contract,
-                bundle,
-                repair,
-            )
+        try:
+            if expert_id:
+                result, session_id = await delegate(
+                    expert_id,
+                    contract,
+                    repair=repair,
+                    session_id=session_id,
+                    timeout=DELEGATE_TIMEOUT_S,
+                )
+            else:
+                result, session_id = await _execute_brain_node(
+                    lead_id,
+                    dag_node,
+                    contract,
+                    bundle,
+                    repair,
+                )
+        except (EscalateSignal, asyncio.CancelledError, ReplanSignal):
+            raise
+        except Exception as exc:
+            # 通道瞬时异常（网络/超时/5xx）：节点回 pending（保留 attempt
+            # 与 token 账本），冒泡 RunInterruptSignal 让主循环把 run 置
+            # interrupted 可续跑——一次抖动不再报废整个 run 的已完成
+            # checkpoint（与 verify 通道的 ESCALATE 恢复语义对称）。
+            logger.warning("节点 %s 执行通道异常: %s", node_key, exc)
+            await store.update_node(run_id, node_key, status=NODE_STATUS_PENDING)
+            raise RunInterruptSignal(
+                f"节点 {node_key} 执行通道异常: {exc}"
+            ) from exc
         attempt += 1
         # 结果 checkpoint（崩溃恢复点）+ 会话与计量累计回写
         node_now = await store.get_node(run_id, node_key) or {}
@@ -451,8 +573,21 @@ async def _execute_node(
                 await store.update_run(run_id, context_bundle=bundle.model_dump())
             await store.update_node(run_id, node_key, status=NODE_STATUS_DONE)
             return
-        # FAIL：返工契约持久化 + 计数 + 事件，进入下一轮
+        # FAIL：按归因三路分派（Failure Analyzer 协议）
         if verdict.verdict == VERDICT_FAIL and verdict.repair is not None:
+            # structural：能力/工具/权限缺失，返工只会烧预算 → 直接熔断
+            if verdict.failure_kind == FAILURE_KIND_STRUCTURAL:
+                raise EscalateSignal(
+                    f"节点 {node_key} 结构性失败（返工无意义）：{verdict.reason}；"
+                    f"问题：{'；'.join(verdict.repair.issues)}"
+                )
+            # dependency_changed：上游产出与目标矛盾/缺失 → 全局 Re-plan
+            if verdict.failure_kind == FAILURE_KIND_DEPENDENCY_CHANGED:
+                raise ReplanSignal(
+                    f"节点 {node_key} 依赖的上游产出不满足目标：{verdict.reason}；"
+                    f"问题：{'；'.join(verdict.repair.issues)}"
+                )
+            # repairable（默认）：返工契约持久化 + 计数 + 事件，进入下一轮
             repair_count += 1
             # 引擎层熔断（与 verifier 双保险相互独立）：达到返工上限不再
             # 进入下一轮——防被替换/异常的验收器永远 FAIL 造成无限返工

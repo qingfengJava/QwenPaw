@@ -1061,3 +1061,216 @@ async def test_create_run_ignores_request_policy(enterprise_env, monkeypatch):
     run = await create_run(body, _req("alice"))
     # 落库策略为空 dict（引擎取默认 RunPolicy），请求覆盖未生效
     assert run["policy"] == {}
+
+
+# ---------------------------------------------------------------------------
+# 6. Phase 1 L1 回路：Failure Analyzer 三路分派 / Re-plan / 瞬时异常续跑
+# ---------------------------------------------------------------------------
+
+
+def _plan_with_keys(lead_id: str, member_id: str, task_key: str):
+    """可定制任务键的两节点 DAG：{task_key}（member）→ final（lead）。"""
+    from qwenpaw.app.workforce.contracts import DagNode, DagPlan
+
+    return DagPlan(
+        nodes=[
+            DagNode(
+                node_key=task_key,
+                deps=[],
+                assignee_expert_id=member_id,
+                node_type="task",
+                objective="产出方案",
+                expected_output=["结构化方案"],
+            ),
+            DagNode(
+                node_key="final-summary",
+                deps=[task_key],
+                node_type="final",
+                objective="汇总全部上游结果",
+            ),
+        ],
+        source="orchestration",
+    )
+
+
+def _fail_kind_verdict(contract, kind: str) -> "Verdict":  # noqa: F821
+    """构造带归因的 FAIL 裁决（Re-plan / fast-fail 用例共用）。"""
+    from qwenpaw.app.workforce.contracts import (
+        VERDICT_FAIL,
+        RepairContract,
+    )
+    from qwenpaw.app.workforce.verifier import Verdict
+
+    return Verdict(
+        VERDICT_FAIL,
+        reason="上游产出与目标矛盾",
+        repair=RepairContract(
+            original_task=contract.task_id,
+            issues=["上游架构产出与前端目标矛盾"],
+            expected_change=["重新对齐上游"],
+            preserve=[],
+            acceptance=["与上游一致"],
+            attempt=1,
+        ),
+        failure_kind=kind,
+    )
+
+
+async def test_replan_flow_on_dependency_changed(enterprise_env, run_store, monkeypatch):
+    """dependency_changed 归因 → 清图重规划全链路：replan_count 计数、
+    教训写入全局决策（版本 bump）、新 plan 执行到 done。"""
+    from qwenpaw.app.workforce import engine as engine_mod
+    from qwenpaw.app.workforce.contracts import VERDICT_PASS
+    from qwenpaw.app.workforce.planner import PlanOutcome
+    from qwenpaw.app.workforce.verifier import FAILURE_KIND_DEPENDENCY_CHANGED
+
+    team, lead, member = await _seed_team()
+    plan1 = _plan_with_keys(lead.id, member.id, "task-1")
+    plan2 = _plan_with_keys(lead.id, member.id, "task-1-re")
+    # 规划序列：首轮 plan1，Re-plan 重入后 plan2（新 DAG 补缺口）
+    plan_calls = {"n": 0}
+
+    async def seq_plan_run(goal, team_, members_, bundle):
+        plan_calls["n"] += 1
+        return PlanOutcome(
+            plan=plan1 if plan_calls["n"] == 1 else plan2,
+            source="orchestration",
+        )
+
+    monkeypatch.setattr(engine_mod, "plan_run", seq_plan_run)
+    # 验收序列：第 1 次（task-1）FAIL 归因 dependency_changed → Re-plan；
+    # 之后（task-1-re、final）PASS
+    verify_calls = {"n": 0}
+
+    def seq_verify(lead_id, contract, result, repair_count):
+        verify_calls["n"] += 1
+        if verify_calls["n"] == 1:
+            return _fail_kind_verdict(contract, FAILURE_KIND_DEPENDENCY_CHANGED)
+        from qwenpaw.app.workforce.verifier import Verdict
+
+        return Verdict(VERDICT_PASS, reason="ok")
+
+    _patch_llm_seams(monkeypatch, plan1, verify_impl=seq_verify)
+    monkeypatch.setattr(engine_mod, "plan_run", seq_plan_run)
+    run = await run_store.create_run(
+        team_id=team.id, goal="G", initiator_id="alice"
+    )
+    await engine_mod.run_team_run(run["id"])
+    final = await run_store.get_run(run["id"])
+    # Re-plan 一次后收敛 done
+    assert final["status"] == "done"
+    assert final["replan_count"] == 1
+    # 新 plan 落库（节点行为 plan2 的键集），旧节点行已随重规划清除
+    node_keys = {n["node_key"] for n in await run_store.list_nodes(run["id"])}
+    assert node_keys == {"task-1-re", "final-summary"}
+    # 教训写入全局决策 + 上下文版本 bump（v1 初始 → v2 重规划）
+    bundle = final["context_bundle"]
+    assert any("[Re-plan]" in d for d in bundle["global_ctx"]["decisions"])
+    assert bundle["version"] >= 2
+
+
+async def test_structural_failure_fast_fails(enterprise_env, run_store, monkeypatch):
+    """成员自报结构性失败（工具/权限缺失）→ 引擎熔断升级人工，
+    不再烧满返工轮（attempt 保持 1，无返工）。"""
+    from qwenpaw.app.workforce import engine as engine_mod
+    from qwenpaw.app.workforce import verifier as verifier_mod
+    from qwenpaw.app.workforce.contracts import RESULT_STATUS_FAILED, ResultContract
+
+    team, lead, member = await _seed_team()
+
+    def structural_delegate(expert_id, contract, repair):
+        return ResultContract(
+            task_id=contract.task_id,
+            status=RESULT_STATUS_FAILED,
+            result_text="无法完成",
+            issues=["我没有查询数据库的工具，无法完成任务"],
+        ), "sess_s1"
+
+    _patch_llm_seams(
+        monkeypatch,
+        _two_node_plan(lead.id, member.id),
+        delegate_impl=structural_delegate,
+    )
+    # 换回真实 verifier：structural 判定发生在其规则预检（LLM 之前的
+    # 零成本路径），self-report FAILED 直接带归因返回，不触达 LLM 接缝
+    monkeypatch.setattr(engine_mod, "verify", verifier_mod.verify)
+    run = await run_store.create_run(
+        team_id=team.id, goal="G", initiator_id="alice"
+    )
+    task = engine_mod.start_run_background(run["id"])
+    await task
+    final = await run_store.get_run(run["id"])
+    assert final["status"] == "escalated"
+    assert "结构性失败" in (final.get("escalation_reason") or "")
+    # fast-fail：单次委派即熔断，无返工轮次
+    node = await run_store.get_node(run["id"], "task-1")
+    assert node["attempt"] == 1
+    assert int(node.get("repair_count", 0) or 0) == 0
+
+
+async def test_delegate_transient_error_marks_interrupted_then_resume(
+    enterprise_env, run_store, monkeypatch
+):
+    """委派通道瞬时异常 → run 置 interrupted（可续跑）而非 failed（死路）；
+    续跑后从 pending 节点恢复收敛 done。"""
+    from qwenpaw.app.workforce import engine as engine_mod
+
+    team, lead, member = await _seed_team()
+    calls = {"n": 0}
+
+    def flaky_delegate(expert_id, contract, repair):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("模拟网络抖动")
+        return _ok_result(f"{expert_id} 完成"), "sess_f1"
+
+    _patch_llm_seams(
+        monkeypatch,
+        _two_node_plan(lead.id, member.id),
+        delegate_impl=flaky_delegate,
+    )
+    run = await run_store.create_run(
+        team_id=team.id, goal="G", initiator_id="alice"
+    )
+    task = engine_mod.start_run_background(run["id"])
+    await task
+    interrupted = await run_store.get_run(run["id"])
+    # 一次抖动 → interrupted（可续跑），节点回 pending 且无 result 损坏
+    assert interrupted["status"] == "interrupted"
+    assert "执行通道异常" in (interrupted.get("error") or "")
+    node = await run_store.get_node(run["id"], "task-1")
+    assert node["status"] == "pending"
+    # 续跑：done 收敛（delegate 第 2 次调用成功）
+    await engine_mod.run_team_run(run["id"])
+    final = await run_store.get_run(run["id"])
+    assert final["status"] == "done"
+
+
+async def test_replan_budget_escalates(enterprise_env, run_store, monkeypatch):
+    """Re-plan 次数超上限（max_replan=1）→ 熔断升级人工，不再无限重规划。"""
+    from qwenpaw.app.workforce import engine as engine_mod
+    from qwenpaw.app.workforce.contracts import RunPolicy
+    from qwenpaw.app.workforce.verifier import FAILURE_KIND_DEPENDENCY_CHANGED
+
+    team, lead, member = await _seed_team()
+    plan = _plan_with_keys(lead.id, member.id, "task-1")
+
+    def always_dependency_changed(lead_id, contract, result, repair_count):
+        return _fail_kind_verdict(contract, FAILURE_KIND_DEPENDENCY_CHANGED)
+
+    _patch_llm_seams(
+        monkeypatch, plan, verify_impl=always_dependency_changed
+    )
+    run = await run_store.create_run(
+        team_id=team.id,
+        goal="G",
+        initiator_id="alice",
+        policy=RunPolicy(max_replan=1).model_dump(),
+    )
+    task = engine_mod.start_run_background(run["id"])
+    await task
+    final = await run_store.get_run(run["id"])
+    # 第 1 次 Re-plan（count 0→1，未超限）→ 第 2 次触发时 count 1+1>1 熔断
+    assert final["status"] == "escalated"
+    assert "重规划次数超上限" in (final.get("escalation_reason") or "")
+    assert final["replan_count"] == 1

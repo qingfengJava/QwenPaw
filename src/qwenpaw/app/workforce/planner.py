@@ -221,6 +221,22 @@ def _render_planning_prompt(
         lines.append("\n## 历史澄清问答")
         for qa in bundle.task_ctx["clarifications"]:
             lines.append(f"- 问：{qa.get('question')}　答：{qa.get('answer')}")
+    # 全局既定决策（含 Re-plan 教训；节点契约同源，禁止偏离）
+    if bundle.global_ctx.get("decisions"):
+        lines.append("\n## 既定决策（重规划后必须遵守，不得推翻除非用户要求）")
+        for decision in bundle.global_ctx["decisions"]:
+            lines.append(f"- {decision}")
+    # 已完成产出摘要（Re-plan 重入时的 checkpoint 复用依据：
+    # lead 应基于既有成果规划补缺节点，禁止把已完成工作再拆一遍）
+    if bundle.execution_ctx:
+        lines.append("\n## 已完成节点的产出摘要（重规划时直接复用，勿重复拆解执行）")
+        for key, summary in bundle.execution_ctx.items():
+            label = summary.get("label", key)
+            status = summary.get("status", "")
+            lines.append(f"### {label}（node_key: {key}，状态 {status}）")
+            digest = str(summary.get("digest", ""))[:400]
+            if digest:
+                lines.append(digest)
     # 团队成员花名册（id 必须原样引用，禁止虚构）
     lines.append("\n## 可委派的团队成员（assignee_expert_id 必须取自下表 id）")
     for expert in members:

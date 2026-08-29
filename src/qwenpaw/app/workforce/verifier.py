@@ -41,10 +41,30 @@ logger = logging.getLogger(__name__)
 _JSON_FENCE_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
 _BARE_JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
 
+#: 失败归因：可返工修复（默认；进入 RepairContract 返工循环）
+FAILURE_KIND_REPAIRABLE = "repairable"
+#: 失败归因：结构性失败（成员能力/工具/权限缺失，返工无意义 → 熔断升级）
+FAILURE_KIND_STRUCTURAL = "structural"
+#: 失败归因：依赖变更（上游产出与目标矛盾/缺失 → 全局 Re-plan）
+FAILURE_KIND_DEPENDENCY_CHANGED = "dependency_changed"
+
+#: 自报 FAILED 的结构性关键词（命中即判 structural，fast-fail 省返工轮）：
+#: 成员因工具缺失/权限不足/能力不具备失败时，反复返工只会烧预算
+_STRUCTURAL_ISSUE_RE = re.compile(
+    r"没有权限|无权限|未授权|权限不足|缺少工具|没有.{0,8}工具|缺.{0,4}工具"
+    r"|无法调用工具|无法访问|不支持|不具备|无此能力|无法执行该任务"
+    r"|no tool|not authorized|forbidden|permission denied|not available",
+    re.IGNORECASE,
+)
+
 
 @dataclass
 class Verdict:
-    """一次验收裁决的结果（PASS / FAIL（附 RepairContract）/ ESCALATE）。"""
+    """一次验收裁决的结果（PASS / FAIL（附 RepairContract）/ ESCALATE）。
+
+    FAIL 时携带结构化归因 ``failure_kind``（Failure Analyzer 的
+    裁决输入）：引擎据此分派 返工 / 熔断 / Re-plan 三路处置。
+    """
 
     #: 裁决值：VERDICT_PASS / VERDICT_FAIL / VERDICT_ESCALATE
     verdict: str
@@ -52,6 +72,8 @@ class Verdict:
     repair: Optional[RepairContract] = None
     #: 裁决理由（展示给用户与留痕）
     reason: str = ""
+    #: FAIL 归因：repairable / structural / dependency_changed
+    failure_kind: str = FAILURE_KIND_REPAIRABLE
 
 
 def _render_verify_prompt(
@@ -91,7 +113,11 @@ def _render_verify_prompt(
     lines.append('  "reason": "裁决理由（一句话）",')
     lines.append('  "issues": ["FAIL 时：具体问题"],')
     lines.append('  "expected_change": ["FAIL 时：每个问题对应的期望修改"],')
-    lines.append('  "preserve": ["FAIL 时：不得破坏的已有内容"]')
+    lines.append('  "preserve": ["FAIL 时：不得破坏的已有内容"],')
+    lines.append('  "failure_kind": "FAIL 时必填，三选一：')
+    lines.append('    repairable=产出质量缺陷可返工修复 |')
+    lines.append('    structural=成员能力/工具/权限缺失返工无意义 |')
+    lines.append('    dependency_changed=上游产出与目标矛盾或缺失需全局重新规划"')
     lines.append("}")
     lines.append("```")
     lines.append("\n裁决纪律：标准全部满足才 PASS；只看产出是否达标，不做风格偏好评判；无法判断时 verdict 填 FAIL 并在 issues 写明信息缺口。")
@@ -130,6 +156,14 @@ def _parse_verdict(
             VERDICT_ESCALATE,
             reason="验收器判定 FAIL 但未给出具体问题，升级人工复核",
         )
+    # 结构化归因（Failure Analyzer 的分派依据；非法值/缺省回退可返工）
+    kind = str(data.get("failure_kind", FAILURE_KIND_REPAIRABLE)).strip().lower()
+    if kind not in (
+        FAILURE_KIND_REPAIRABLE,
+        FAILURE_KIND_STRUCTURAL,
+        FAILURE_KIND_DEPENDENCY_CHANGED,
+    ):
+        kind = FAILURE_KIND_REPAIRABLE
     # 组装返工契约（attempt 记录返工轮次）
     repair = RepairContract(
         original_task=contract.task_id,
@@ -139,7 +173,7 @@ def _parse_verdict(
         acceptance=list(contract.quality_criteria),
         attempt=attempt,
     )
-    return Verdict(VERDICT_FAIL, repair=repair, reason=str(data.get("reason", "")))
+    return Verdict(VERDICT_FAIL, repair=repair, reason=str(data.get("reason", "")), failure_kind=kind)
 
 
 async def verify(
@@ -162,19 +196,28 @@ async def verify(
             VERDICT_ESCALATE,
             reason=f"返工次数超上限（{repair_count}/{policy.max_repair_per_node}），升级人工",
         )
-    # 规则预检：子员工自报失败 → 直接 FAIL（省一次 LLM）
+    # 规则预检：子员工自报失败 → 直接 FAIL（省一次 LLM）。
+    # 归因：issues 命中结构性关键词（权限/工具/能力缺失）→ structural
+    # （引擎 fast-fail 熔断，不再烧满返工轮）；其余默认可返工修复。
     if result.status == RESULT_STATUS_FAILED:
+        issues = [str(i) for i in result.issues or ["未说明原因"]]
+        kind = (
+            FAILURE_KIND_STRUCTURAL
+            if any(_STRUCTURAL_ISSUE_RE.search(i) for i in issues)
+            else FAILURE_KIND_REPAIRABLE
+        )
         return Verdict(
             VERDICT_FAIL,
             repair=RepairContract(
                 original_task=contract.task_id,
-                issues=["子员工自报执行失败：" + "; ".join(result.issues or ["未说明原因"])],
+                issues=["子员工自报执行失败：" + "; ".join(issues)],
                 expected_change=["分析失败原因并重新完成任务"],
                 preserve=[],
                 acceptance=list(contract.quality_criteria),
                 attempt=repair_count + 1,
             ),
             reason="子员工自报 FAILED",
+            failure_kind=kind,
         )
     # LLM 裁决（lead 专家人格执行；通道异常升级人工）
     prompt = _render_verify_prompt(contract, result, previous_repair)
