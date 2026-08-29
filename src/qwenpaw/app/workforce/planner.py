@@ -236,16 +236,24 @@ def _render_planning_prompt(
     bundle: ContextBundle,
     retry_error: str = "",
     member_skills: Optional[Dict[str, List[str]]] = None,
+    team_lessons: Optional[List[str]] = None,
 ) -> str:
     """渲染中央大脑的规划 prompt（结构化输出约定 + 成员能力档案）。
 
     能力档案（Capability Discovery）：每个成员的技能绑定与启用工具
     随花名册注入——LLM 按能力指派，而非只靠 description 文字猜。
+    team_lessons 为该团队历史熔断教训（组织记忆回灌），规划时规避
+    同类踩坑。
     """
     lines = ["# 团队任务规划（你是中央大脑，负责需求理解与任务拆解）"]
     # 原始需求与澄清历史
     lines.append("\n## 用户需求")
     lines.append(goal)
+    # 组织记忆：历史熔断教训（Memory Protocol 的规划期回灌）
+    if team_lessons:
+        lines.append("\n## 该团队历史教训（此前任务的熔断归因，规划时必须规避同类问题）")
+        for lesson in team_lessons:
+            lines.append(f"- {lesson}")
     if bundle.task_ctx.get("clarifications"):
         lines.append("\n## 历史澄清问答")
         for qa in bundle.task_ctx["clarifications"]:
@@ -344,11 +352,13 @@ async def plan_run(
     members: List[ExpertRecord],
     bundle: ContextBundle,
     member_skills: Optional[Dict[str, List[str]]] = None,
+    team_lessons: Optional[List[str]] = None,
 ) -> PlanOutcome:
     """执行规划：模板优先（快慢链选择）→ 中央大脑 LLM（失败重试一次）。
 
     member_skills 为成员技能绑定（引擎侧已加载），注入规划 prompt 的
-    能力档案供 LLM 按能力指派；模板路径不消费该参数（节点指派已固定）。
+    能力档案供 LLM 按能力指派；team_lessons 为团队历史熔断教训（组织
+    记忆回灌）；模板路径不消费这两项（节点指派已固定）。
     """
     member_ids = {expert.id for expert in members}
     # ---- 路径 1：orchestration 预置模板（不依赖 LLM） ----
@@ -386,7 +396,12 @@ async def plan_run(
         return PlanOutcome(error="团队没有可用的成员专家")
     # 第一轮规划
     prompt = _render_planning_prompt(
-        goal, team, members, bundle, member_skills=member_skills
+        goal,
+        team,
+        members,
+        bundle,
+        member_skills=member_skills,
+        team_lessons=team_lessons,
     )
     outcome = await _llm_plan_once(lead, prompt, member_ids)
     # 校验失败：携带错误定向重试一次（禁止静默修复非法 DAG）
@@ -398,6 +413,7 @@ async def plan_run(
             bundle,
             retry_error=outcome.error,
             member_skills=member_skills,
+            team_lessons=team_lessons,
         )
         outcome = await _llm_plan_once(lead, retry_prompt, member_ids)
         # 重试仍失败 → 报错终止（run 置 failed，用户可改需求后重建）

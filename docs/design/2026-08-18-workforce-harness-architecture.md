@@ -502,3 +502,10 @@ fast-fail / 瞬时异常续跑 / replan 熔断 / final 验收 / needs_review
 - **协议 01/14 生命周期**：cancel 等待终态落库再返回（有界 10s），
   取消后滞留中间态节点回退 pending；abort 裁决保留
   escalation_reason（修复注释与实现相反的审计线索丢失）。
+
+**Phase 5（组织记忆回灌，本提交）**：
+
+- **协议 13 Memory**：`run_store.list_team_lessons` 收集同团队
+  escalated 归因（新到旧、去重、有界），规划期注入 prompt——同一
+  团队第二次任务自动规避此前踩坑，组织记忆闭环最小可用版。
+  （showcase 自动转化与 KB 向量升级仍为后续迭代。）

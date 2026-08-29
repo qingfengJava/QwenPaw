@@ -475,9 +475,20 @@ async def _plan_phase(
         bundle.version = bundle.version + 1
         await store.bump_context_version(run_id)
         await store.update_run(run_id, context_bundle=bundle.model_dump())
+    # 组织记忆回灌（Memory Protocol）：取该团队历史熔断教训注入规划
+    # ——同一团队第二次任务自动规避此前踩过的坑（best-effort，故障降级空集）
+    try:
+        team_lessons = await store.list_team_lessons(run["team_id"])
+    except Exception:  # noqa: BLE001 - 教训检索故障不阻塞规划
+        team_lessons = []
     # 执行规划（模板优先 → 中央大脑；能力档案随 prompt 注入）
     outcome = await plan_run(
-        run["goal"], team, members, bundle, member_skills=member_skills
+        run["goal"],
+        team,
+        members,
+        bundle,
+        member_skills=member_skills,
+        team_lessons=team_lessons,
     )
     # 澄清分支：挂起等待用户答复（不消耗执行预算）
     if outcome.clarification is not None:

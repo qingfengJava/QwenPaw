@@ -569,7 +569,7 @@ def _patch_llm_seams(monkeypatch, plan, delegate_impl=None, verify_impl=None):
     from qwenpaw.app.workforce import engine as engine_mod
     from qwenpaw.app.workforce.planner import PlanOutcome
 
-    async def fake_plan_run(goal, team, members, bundle, member_skills=None):
+    async def fake_plan_run(goal, team, members, bundle, member_skills=None, team_lessons=None):
         return PlanOutcome(plan=plan, source="orchestration")
 
     async def fake_delegate(expert_id, contract, repair=None, session_id=None, timeout=None):
@@ -1130,7 +1130,7 @@ async def test_replan_flow_on_dependency_changed(enterprise_env, run_store, monk
     # 规划序列：首轮 plan1，Re-plan 重入后 plan2（新 DAG 补缺口）
     plan_calls = {"n": 0}
 
-    async def seq_plan_run(goal, team_, members_, bundle, member_skills=None):
+    async def seq_plan_run(goal, team_, members_, bundle, member_skills=None, team_lessons=None):
         plan_calls["n"] += 1
         return PlanOutcome(
             plan=plan1 if plan_calls["n"] == 1 else plan2,
@@ -1651,3 +1651,76 @@ async def test_run_claim_blocks_duplicate_start(enterprise_env):
         assert claimed_3 is True
     finally:
         await engine_mod._release_run_claim(run_id, conn_3)
+
+
+# ---------------------------------------------------------------------------
+# 10. Phase 5 组织记忆：熔断教训回灌同团队后续规划
+# ---------------------------------------------------------------------------
+
+
+async def test_team_lessons_feedback_into_planning(enterprise_env, run_store, monkeypatch):
+    """Memory Protocol 闭环：团队 escalated 归因 → 后续任务规划 prompt
+    自动注入历史教训（同一团队第二次任务规避同类踩坑）。"""
+    from qwenpaw.app.workforce import engine as engine_mod
+    from qwenpaw.app.workforce.contracts import (
+        RepairContract,
+        RunPolicy,
+        VERDICT_FAIL,
+    )
+    from qwenpaw.app.workforce.planner import PlanOutcome
+    from qwenpaw.app.workforce.verifier import Verdict
+
+    team, lead, member = await _seed_team()
+    plan = _two_node_plan(lead.id, member.id)
+
+    # 第一步：制造一次 escalated（熔断归因落库 = 组织教训的来源）
+    def always_fail(lead_id, contract, result, repair_count):
+        return Verdict(
+            VERDICT_FAIL,
+            reason="不达标",
+            repair=RepairContract(
+                original_task=contract.objective,
+                issues=["缺少细节"],
+                expected_change=["补充细节"],
+                preserve=[],
+                acceptance=["细节完整"],
+                attempt=repair_count + 1,
+            ),
+        )
+
+    _patch_llm_seams(monkeypatch, plan, verify_impl=always_fail)
+    failed_run = await run_store.create_run(
+        team_id=team.id,
+        goal="旧任务",
+        initiator_id="alice",
+        policy=RunPolicy(max_repair_per_node=1, max_total_tokens=0).model_dump(),
+    )
+    task = engine_mod.start_run_background(failed_run["id"])
+    await task
+    assert (await run_store.get_run(failed_run["id"]))["status"] == "escalated"
+    lesson_reason = (await run_store.get_run(failed_run["id"])).get(
+        "escalation_reason"
+    )
+    assert lesson_reason
+
+    # 教训存储：同团队查询命中、去重有界
+    lessons = await run_store.list_team_lessons(team.id)
+    assert lesson_reason in lessons
+
+    # 第二步：同团队新任务的规划收到教训回灌（spy 捕获 plan_run 入参）
+    _patch_llm_seams(monkeypatch, plan)  # 恢复默认 PASS 桩
+    captured: dict = {}
+
+    async def spy_plan_run(goal, team_, members_, bundle, member_skills=None, team_lessons=None):
+        captured["team_lessons"] = team_lessons
+        return PlanOutcome(plan=plan, source="orchestration")
+
+    monkeypatch.setattr(engine_mod, "plan_run", spy_plan_run)
+    new_run = await run_store.create_run(
+        team_id=team.id, goal="新任务", initiator_id="alice"
+    )
+    await engine_mod.run_team_run(new_run["id"])
+    assert (await run_store.get_run(new_run["id"]))["status"] == "done"
+    # 教训进入规划上下文（含本次熔断归因）
+    assert captured["team_lessons"]
+    assert lesson_reason in captured["team_lessons"]

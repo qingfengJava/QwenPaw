@@ -399,6 +399,43 @@ class WorkforceRunStore:
                 {"tid": current_tenant_id(), "rid": run_id},
             )
 
+    async def list_team_lessons(
+        self,
+        team_id: str,
+        limit: int = 5,
+    ) -> List[str]:
+        """取该团队最近的熔断教训（组织记忆：Memory Protocol 回灌源）。
+
+        收集同团队 escalated run 的 escalation_reason（新到旧、去重、
+        有界）——规划期注入 prompt，让后续任务规避同类踩坑。
+        """
+        # 租户内按团队查询非空熔断原因（新到旧）
+        engine = require_enterprise_engine()
+        async with engine.begin() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT escalation_reason FROM team_runs WHERE "
+                    "tenant_id = :tid AND team_id = :team AND "
+                    "status = 'escalated' AND escalation_reason <> '' "
+                    "ORDER BY created_at DESC LIMIT :limit"
+                ),
+                {
+                    "tid": current_tenant_id(),
+                    "team": team_id,
+                    "limit": limit * 4,
+                },
+            )
+            rows = result.scalars().all()
+        # 去重 + 截断（同因反复熔断只留一条；有界防 prompt 膨胀）
+        lessons: List[str] = []
+        for reason in rows:
+            text_reason = str(reason or "").strip()
+            if text_reason and text_reason not in lessons:
+                lessons.append(text_reason)
+            if len(lessons) >= limit:
+                break
+        return lessons
+
     # ------------------------------------------------------------------
     # 事件发射（总线双 topic + PG feed_events）
     # ------------------------------------------------------------------
