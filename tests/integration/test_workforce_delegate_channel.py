@@ -61,6 +61,11 @@ def _build_app(seen: List[Dict[str, Any]]) -> FastAPI:
 
     故意不注册无 ``/api`` 前缀的 ``/console/chat``：被测代码若回退
     到未归一化基址，请求将 404 抛错——这正是要防的回归。
+
+    按请求内容区分两种角色：委派（回 ResultContract JSON）与
+    验收裁决（prompt 含"任务验收裁决"标记，回 verdict JSON）——
+    verifier 通道与委派通道走同一 HTTP 自环，元组签名/解析契约
+    必须一起锁定。
     """
     app = FastAPI()
 
@@ -78,12 +83,20 @@ def _build_app(seen: List[Dict[str, Any]]) -> FastAPI:
         # 约定标记：X-Agent-Id=expert_fail_me → 500（非 2xx 异常路径）
         if seen[-1]["agent_id"] == "expert_fail_me":
             return StreamingResponse(iter(["boom"]), status_code=500)
-        # 正常回执：先业务事件，再 usage 事件（token 采集依赖后者）
-        reply = (
-            "好的，任务完成。\n```json\n"
-            '{"status": "COMPLETED", "result_text": "前端方案正文", '
-            '"decisions": ["采用响应式布局"], "confidence": 0.9}\n```'
-        )
+        # 验收裁决角色：回结构化 verdict（PASS）
+        if "任务验收裁决" in json.dumps(body, ensure_ascii=False):
+            reply = (
+                "验收完成。\n```json\n"
+                '{"verdict": "PASS", "reason": "产出符合验收标准", '
+                '"issues": [], "expected_change": [], "preserve": []}\n```'
+            )
+        else:
+            # 委派角色：回 ResultContract JSON
+            reply = (
+                "好的，任务完成。\n```json\n"
+                '{"status": "COMPLETED", "result_text": "前端方案正文", '
+                '"decisions": ["采用响应式布局"], "confidence": 0.9}\n```'
+            )
         return _sse(
             _message_event(reply),
             {"type": "turn_usage", "usage": {"total_tokens": 123}},
@@ -190,3 +203,32 @@ async def test_delegate_returns_parsed_contract_with_tokens(last_api):
     sent_body = last_api["seen"][0]["body"]
     prompt_text = json.dumps(sent_body, ensure_ascii=False)
     assert "产出前端方案" in prompt_text
+
+
+async def test_verify_passes_over_real_channel(last_api):
+    """verifier 走真实 HTTP 自环裁决 PASS——锁定验收通道的完整契约
+    （call_expert_text 三元组解包 + verdict JSON 解析）。真实 E2E 曾
+    暴露二元组解包让验收 100% ESCALATE 的缺陷（mock 桩互相掩盖）。"""
+    from qwenpaw.app.workforce.contracts import (
+        RESULT_STATUS_COMPLETED,
+        ResultContract,
+        RunPolicy,
+        TaskContract,
+        VERDICT_PASS,
+    )
+    from qwenpaw.app.workforce.verifier import verify
+
+    contract = TaskContract(
+        task_id="task-1",
+        objective="产出前端方案",
+        quality_criteria=["覆盖期望交付物"],
+    )
+    result = ResultContract(
+        status=RESULT_STATUS_COMPLETED,
+        result_text="前端方案正文",
+    )
+    verdict = await verify("lead", contract, result, RunPolicy())
+    assert verdict.verdict == VERDICT_PASS
+    assert "符合验收标准" in verdict.reason
+    # 验收请求确实经过了归一化自环通道
+    assert last_api["seen"][-1]["path"] == "/api/console/chat"

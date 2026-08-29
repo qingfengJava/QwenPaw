@@ -509,3 +509,26 @@ fast-fail / 瞬时异常续跑 / replan 熔断 / final 验收 / needs_review
   escalated 归因（新到旧、去重、有界），规划期注入 prompt——同一
   团队第二次任务自动规避此前踩坑，组织记忆闭环最小可用版。
   （showcase 自动转化与 KB 向量升级仍为后续迭代。）
+
+**Phase 6（真实 E2E 通电验收 + 三缺陷修复，本提交）**：
+
+真实起服（PG + 真实模型）跑通内置软件专家团全链路至 done：
+需求节点 PASS(11,385 tok) → 实现节点 FAIL 后返工一轮 PASS(25,301 tok，
+repair_count=1) → final 真实验收 PASS(11,448 tok)，context_version=2、
+拆解决策与版本历史落库。E2E 揪出并修复三处此前被 mock 掩盖的缺陷：
+
+1. **verifier 二元组解包**：`call_expert_text` 返回三元组，verifier
+   按二元组解包 → 验收通道 100% ValueError → 全部 ESCALATE（桩用
+   错签名互相掩盖）；同步修正测试桩签名并新增真实 HTTP 验收用例
+   `test_verify_passes_over_real_channel`。
+2. **verifier 裸 JSON 正则缺捕获组**（delegator 已修，verifier 漏网）
+   → bare JSON 裁决全部 IndexError→ESCALATE。
+3. **专家 workspace 无 channel_manager**：`create_channel_service`
+   对未配置 channels 的 agent 返回 None → 专家经 /api/console/chat
+   被委派/召唤必 500。修复：缺省注入默认 ChannelConfig（仅 console
+   启用，IM 渠道默认全关）。
+4. **测试隔离缺陷（环境事故根因）**：`config/utils.py` 导入期绑定
+   `WORKING_DIR`，monkeypatch constant 模块属性不生效 → builtin
+   seeding 测试把 pytest 临时路径写进用户真实 config.json（13 个
+   profile 污染，channel_manager 初始化异常）。修复为模块属性动态
+   读取 + 回归测试锁定；被污染环境已备份并清理重建。

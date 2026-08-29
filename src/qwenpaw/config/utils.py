@@ -19,13 +19,13 @@ from json_repair import repair_json
 
 from pydantic import ValidationError
 
+from .. import constant as _constant_mod
 from ..constant import (
     HEARTBEAT_FILE,
     JOBS_FILE,
     CHATS_FILE,
     PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH_ENV,
     RUNNING_IN_CONTAINER,
-    WORKING_DIR,
     EnvVarLoader,
 )
 from .config import (
@@ -61,7 +61,9 @@ def _normalize_working_dir_bound_paths(data: object) -> object:
     """
     legacy_root_tilde = "~/.copaw"
     legacy_root_abs = str(Path(legacy_root_tilde).expanduser().resolve())
-    new_root_abs = str(WORKING_DIR)
+    # 动态读模块属性（非导入期绑定）：测试 monkeypatch constant.WORKING_DIR
+    # 必须对本模块生效，否则发布链会把真实用户 config.json 写脏
+    new_root_abs = str(_constant_mod.WORKING_DIR)
 
     def _rewrite_path_value(v: object) -> object:
         if not isinstance(v, str) or not v:
@@ -432,7 +434,9 @@ def is_running_in_container() -> bool:
 
 def get_config_path() -> Path:
     """Get the path to the config file."""
-    return WORKING_DIR.joinpath("config.json")
+    # 动态读模块属性：WORKING_DIR 若被测试替换（隔离工作区），
+    # config.json 的读写必须跟随，禁止使用导入期绑定的旧值
+    return _constant_mod.WORKING_DIR.joinpath("config.json")
 
 
 def get_heartbeat_query_path() -> Path:
@@ -816,12 +820,12 @@ def write_last_api(host: str, port: int) -> None:
 def get_jobs_path() -> Path:
     """Return cron jobs.json path."""
 
-    return (WORKING_DIR / JOBS_FILE).expanduser()
+    return (_constant_mod.WORKING_DIR / JOBS_FILE).expanduser()
 
 
 def get_chats_path() -> Path:
     """Return chats.json path."""
-    return (WORKING_DIR / CHATS_FILE).expanduser()
+    return (_constant_mod.WORKING_DIR / CHATS_FILE).expanduser()
 
 
 def get_plugins_dir() -> Path:

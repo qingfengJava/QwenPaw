@@ -698,7 +698,9 @@ async def test_max_repair_boundary_result_is_verified(
     )
 
     async def fake_verify_llm(to_agent, prompt, session_id=None):
-        return next(verify_replies), session_id or "sess_verify"
+        # 桩签名必须对齐真实契约：call_expert_text 返回三元组
+        # （真实 E2E 曾暴露二元组桩掩盖 verifier 解包错误的缺陷）
+        return next(verify_replies), session_id or "sess_verify", 0
 
     monkeypatch.setattr(verifier_mod, "call_expert_text", fake_verify_llm)
     monkeypatch.setattr(engine_mod, "verify", verifier_mod.verify)

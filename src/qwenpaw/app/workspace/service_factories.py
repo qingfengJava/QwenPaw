@@ -135,28 +135,34 @@ async def create_chat_service(ws: "Workspace", service):
 
 
 async def create_channel_service(ws: "Workspace", _):
-    """Create channel manager if configured.
+    """Create channel manager (console always available as fallback).
 
     Args:
         ws: Workspace instance
         _: Unused service parameter
 
     Returns:
-        ChannelManager instance or None if not configured
+        ChannelManager instance
+
+    未配置 channels 的 agent（builtin/用户自建专家）会获得一份默认
+    渠道配置（仅 console 启用——其余渠道 enabled 默认 False）：专家
+    必须经 /api/console/chat 被 A2A 委派与市场"召唤"，若
+    channel_manager 缺失，chat 端点会因 workspace.channel_manager
+    为 None 直接 500（真实 E2E 暴露的缺陷）。
     """
     # pylint: disable=protected-access
-    if not ws._config.channels:
-        return None
-
-    from ...config import Config, load_config, update_last_dispatch
+    from ...config import ChannelConfig, Config, load_config, update_last_dispatch
     from ..channels.manager import ChannelManager
     from ..channels.access_control import init_access_control_store
 
     init_access_control_store(ws.workspace_dir)
 
     root_config = load_config()
+    # 渠道配置缺省时注入默认 ChannelConfig（console enabled=True，
+    # 其余渠道 enabled=False）——不再跳过创建
+    channels_cfg = ws._config.channels or ChannelConfig()
     temp_config = Config(
-        channels=ws._config.channels,
+        channels=channels_cfg,
         show_tool_details=root_config.show_tool_details,
     )
 

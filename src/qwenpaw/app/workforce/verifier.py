@@ -39,7 +39,9 @@ from .delegator import call_expert_text
 logger = logging.getLogger(__name__)
 
 _JSON_FENCE_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
-_BARE_JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
+# 裸 JSON 必须带捕获组（group(1) 取 JSON 文本）；缺捕获组会让
+# parse 抛 IndexError 全部 ESCALATE——与 delegator 同款缺陷，勿回退
+_BARE_JSON_RE = re.compile(r"(\{.*\})", re.DOTALL)
 
 #: 失败归因：可返工修复（默认；进入 RepairContract 返工循环）
 FAILURE_KIND_REPAIRABLE = "repairable"
@@ -219,10 +221,13 @@ async def verify(
             reason="子员工自报 FAILED",
             failure_kind=kind,
         )
-    # LLM 裁决（lead 专家人格执行；通道异常升级人工）
+    # LLM 裁决（lead 专家人格执行；通道异常升级人工）。
+    # call_expert_text 返回三元组 (回复, session_id, total_tokens)——
+    # 二元组解包会让验收通道 100% 抛 ValueError 全部 ESCALATE
+    # （真实 E2E 暴露：monkeypatch 桩用错签名互相掩盖的典型）
     prompt = _render_verify_prompt(contract, result, previous_repair)
     try:
-        reply, _session = await call_expert_text(
+        reply, _session, _tokens = await call_expert_text(
             expert_agent_id(verifier_expert_id),
             prompt,
             session_id=None,
