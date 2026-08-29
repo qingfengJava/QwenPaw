@@ -26,6 +26,9 @@ from .contracts import (
 #: 上游结果摘要中 result_digest 的最大字符数（防上下文膨胀）
 _DIGEST_MAX_CHARS = 800
 
+#: 版本历史轨迹的保留上限（有界防膨胀；更早轨迹以 feed 事件留痕）
+_MAX_HISTORY_ENTRIES = 20
+
 
 def build_initial_bundle(
     goal: str,
@@ -63,13 +66,37 @@ def build_initial_bundle(
     )
 
 
-def bump(bundle: ContextBundle) -> ContextBundle:
+def bump(bundle: ContextBundle, reason: str = "") -> ContextBundle:
     """返回版本 +1 的新束（不可变语义：原束保留，新束引用）。
 
-    调用方负责把新束持久化回 team_runs.context_bundle。
+    reason 记入版本历史轨迹（V1→V2 的演进原因可追溯）；调用方
+    负责把新束持久化回 team_runs.context_bundle，并由
+    ``run_store.bump_context_version`` 单点递增持久层版本号。
     """
-    # 模型拷贝后仅递增版本号（其余段落按引用共享，未变更）
-    return bundle.model_copy(update={"version": bundle.version + 1})
+    # 记录版本变更轨迹（旧版本号 + 业务原因），有界保留
+    history = list(bundle.history)
+    history.append({"version": bundle.version, "reason": reason})
+    # 模型拷贝：递增版本号 + 追加历史（其余段落按引用共享，未变更）
+    return bundle.model_copy(
+        update={
+            "version": bundle.version + 1,
+            "history": history[-_MAX_HISTORY_ENTRIES:],
+        }
+    )
+
+
+def record_version_change(bundle: ContextBundle, reason: str) -> ContextBundle:
+    """原地记录版本变更轨迹（引擎的就地束同步路径专用）。
+
+    与 ``bump`` 的差异：不创建新对象、不递增版本号——引擎在并行
+    节点共享同一束对象（外部引用需就地可见），由调用方自行执行
+    ``bundle.version += 1`` 并持久化。
+    """
+    # 原地追加轨迹（旧版本号 + 业务原因），有界保留
+    history = list(bundle.history)
+    history.append({"version": bundle.version, "reason": reason})
+    bundle.history = history[-_MAX_HISTORY_ENTRIES:]
+    return bundle
 
 
 def summarize_result(result: ResultContract) -> Dict[str, Any]:

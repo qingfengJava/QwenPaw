@@ -367,8 +367,8 @@ async def answer_clarification(
     for question, answer in body.answers.items():
         history.append({"question": question, "answer": answer})
     bundle.task_ctx["clarifications"] = history
-    # 版本 bump（澄清答复改变了任务事实）+ 持久化
-    bundle = bundle_mod.bump(bundle)
+    # 版本 bump（澄清答复改变了任务事实；reason 入版本历史轨迹）+ 持久化
+    bundle = bundle_mod.bump(bundle, reason="clarification")
     new_version = await store.bump_context_version(run_id)
     await store.update_run(run_id, context_bundle=bundle.model_dump())
     # 澄清记录更新（answers 并入留痕）

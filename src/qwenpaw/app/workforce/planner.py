@@ -68,6 +68,28 @@ class PlanOutcome:
     source: str = "orchestration"
 
 
+def _expert_tool_names(expert: Optional[ExpertRecord]) -> List[str]:
+    """提取成员专家启用的内置工具名（TaskContract.available_tools 源）。
+
+    数据源为专家 agent_spec 的 ``tools.builtin_tools`` 启用映射
+    （发布链物化的同一配置）。spec 未显式配置 tools 时返回空表——
+    契约渲染会自动省略工具段（表示"继承 agent 默认工具"，而非
+    "没有工具"，避免向子员工传递错误事实）。
+    """
+    # 无成员（final/integration 中央大脑自执行）无工具清单
+    if expert is None:
+        return []
+    # 读取 spec 内启用中的内置工具名（字典序稳定输出）
+    builtin = ((expert.agent_spec or {}).get("tools") or {}).get(
+        "builtin_tools"
+    ) or {}
+    return sorted(
+        name
+        for name, cfg in builtin.items()
+        if isinstance(cfg, dict) and cfg.get("enabled")
+    )
+
+
 def build_task_contract(
     node: DagNode,
     expert: Optional[ExpertRecord],
@@ -114,7 +136,9 @@ def build_task_contract(
         constraints=["遵守全局背景中的既定决策，不得自行偏离"],
         quality_criteria=criteria,
         available_skills=skills,
-        available_tools=[],
+        # 工具清单接真：来自成员 agent_spec 的启用工具映射（Skill=能力
+        # / Tool=动作 严格分离；空表渲染时自动省略该段）
+        available_tools=_expert_tool_names(expert),
         upstream_summaries=bundle_mod.upstream_summaries(bundle, node),
     )
 

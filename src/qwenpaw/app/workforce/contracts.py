@@ -158,6 +158,9 @@ class ContextBundle(BaseModel):
     execution_ctx: Dict[str, Any] = Field(default_factory=dict)
     #: 上下文版本号（单调递增；全局决策变更 / 澄清答复 / 移交时 +1）
     version: int = 1
+    #: 版本历史轨迹 [{version, reason}]（有界：只保留最近 _MAX 条）
+    #: ——V1→V4 的演进可追溯，每条记录版本变更的业务原因
+    history: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

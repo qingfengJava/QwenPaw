@@ -353,6 +353,23 @@ async def _plan_phase(
         "plan_ready",
         {"source": outcome.source, "nodes": [n.node_key for n in outcome.plan.nodes]},
     )
+    # 拆解决策写入全局上下文（Context Protocol：规划产出即全局决策，
+    # 后续节点契约经 parent_decision 引用同一版本化事实）。模板重规划
+    # 产生相同决策时去重，不做无意义 bump。
+    decision_text = f"[Plan:{outcome.source}] " + (
+        outcome.plan.plan_note
+        or f"拆解为 {len(outcome.plan.nodes)} 个节点"
+    )
+    decisions = list(bundle.global_ctx.get("decisions", []))
+    if not decisions or decisions[-1] != decision_text:
+        decisions.append(decision_text)
+        bundle.global_ctx = dict(bundle.global_ctx)
+        bundle.global_ctx["decisions"] = decisions
+        bundle_mod.record_version_change(bundle, f"plan: {decision_text[:120]}")
+        bundle.version = bundle.version + 1
+        # 持久化：版本号单点递增 + 束内容整列覆盖
+        await store.bump_context_version(run_id)
+        await store.update_run(run_id, context_bundle=bundle.model_dump())
 
 
 async def _handle_replan(
@@ -385,6 +402,10 @@ async def _handle_replan(
     decisions.append(f"[Re-plan] {signal.reason}")
     bundle.global_ctx = dict(bundle.global_ctx)
     bundle.global_ctx["decisions"] = decisions
+    # 版本历史轨迹 + 就地版本递增（外部引用同一束对象，须原地变更）
+    bundle_mod.record_version_change(
+        bundle, f"re-plan: {signal.reason[:120]}"
+    )
     bundle.version = bundle.version + 1
     # 持久化：版本号由 bump_context_version 单点递增，束内容整列覆盖
     await store.bump_context_version(run_id)
@@ -570,6 +591,7 @@ async def _execute_node(
                 bundle.task_ctx = updated.task_ctx
                 bundle.execution_ctx = updated.execution_ctx
                 bundle.version = updated.version
+                bundle.history = updated.history
                 await store.update_run(run_id, context_bundle=bundle.model_dump())
             await store.update_node(run_id, node_key, status=NODE_STATUS_DONE)
             return

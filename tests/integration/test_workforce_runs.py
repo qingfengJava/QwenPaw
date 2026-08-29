@@ -1274,3 +1274,88 @@ async def test_replan_budget_escalates(enterprise_env, run_store, monkeypatch):
     assert final["status"] == "escalated"
     assert "重规划次数超上限" in (final.get("escalation_reason") or "")
     assert final["replan_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# 7. Phase 2 Context Fabric 接线：拆解决策 / 版本历史 / 工具清单接真
+# ---------------------------------------------------------------------------
+
+
+def test_bundle_bump_records_version_history():
+    """bump 记录版本历史轨迹（version + 业务 reason），演进可追溯。"""
+    from qwenpaw.app.workforce import bundle as bundle_mod
+    from qwenpaw.app.workforce.contracts import ContextBundle
+
+    bundle = ContextBundle()
+    bumped = bundle_mod.bump(bundle, reason="clarification")
+    assert bumped.version == 2
+    assert bumped.history == [{"version": 1, "reason": "clarification"}]
+    # 原地轨迹助手：引擎就地同步路径使用（不换对象、不递增）
+    bundle_mod.record_version_change(bumped, "plan: 拆解为 3 个节点")
+    bumped.version = bumped.version + 1
+    assert bumped.history[-1] == {"version": 2, "reason": "plan: 拆解为 3 个节点"}
+    assert bumped.version == 3
+
+
+def test_task_contract_tools_from_agent_spec():
+    """available_tools 接真：来自成员 agent_spec 启用工具映射；
+    未配置 tools 时空表（渲染省略，语义为"继承默认"而非"没有工具"）。"""
+    from qwenpaw.app.experts.models import ExpertRecord
+    from qwenpaw.app.workforce.contracts import (
+        ContextBundle,
+        DagNode,
+    )
+    from qwenpaw.app.workforce.planner import build_task_contract
+
+    expert = ExpertRecord(
+        id="exp_fe",
+        name="前端专家",
+        agent_spec={
+            "tools": {
+                "builtin_tools": {
+                    "file_editor": {"enabled": True},
+                    "browser": {"enabled": True},
+                    "terminal": {"enabled": False},
+                }
+            }
+        },
+    )
+    node = DagNode(node_key="fe-1", node_type="task", objective="做页面")
+    contract = build_task_contract(
+        node, expert, ContextBundle(), member_skills={"exp_fe": ["ui-design"]}
+    )
+    # 仅启用中的工具进入契约（禁用的 terminal 不出现），字典序稳定
+    assert contract.available_tools == ["browser", "file_editor"]
+    assert contract.available_skills == ["ui-design"]
+    # 未配置 tools 的成员：空表
+    plain = ExpertRecord(id="exp_x", name="X")
+    contract2 = build_task_contract(node, plain, ContextBundle())
+    assert contract2.available_tools == []
+
+
+async def test_plan_writes_decision_and_version_history(
+    enterprise_env, run_store, monkeypatch
+):
+    """规划成功 → 拆解决策写入 global_ctx.decisions、版本 bump 并留痕
+    （Context Protocol：节点契约的 parent_decision 与版本号同源）。"""
+    from qwenpaw.app.workforce import engine as engine_mod
+
+    team, lead, member = await _seed_team()
+    _patch_llm_seams(monkeypatch, _two_node_plan(lead.id, member.id))
+    run = await run_store.create_run(
+        team_id=team.id, goal="设计登录页", initiator_id="alice"
+    )
+    await engine_mod.run_team_run(run["id"])
+    final = await run_store.get_run(run["id"])
+    assert final["status"] == "done"
+    bundle = final["context_bundle"]
+    # 拆解决策已写入（来源与规划说明可见）
+    assert any(
+        d.startswith("[Plan:orchestration]") for d in bundle["global_ctx"]["decisions"]
+    )
+    # 版本演进 v1→v2，历史轨迹记录 plan 变更原因
+    assert bundle["version"] == 2
+    assert bundle["history"][0]["version"] == 1
+    assert "plan:" in bundle["history"][0]["reason"]
+    # 持久层版本号与束版本一致
+    assert final["context_version"] == 2
