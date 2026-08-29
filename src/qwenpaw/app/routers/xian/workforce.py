@@ -415,8 +415,14 @@ async def resolve_escalation(
         # 重入引擎（其余 done 节点跳过）
         engine_mod.start_run_background(run_id)
         return {"status": RUN_STATUS_RUNNING}
-    # 终止：保留熔断原因，终态 failed（区别于自然失败：escalation_reason 非空）
-    await store.set_run_status(run_id, RUN_STATUS_FAILED)
+    # 终止：终态 failed 并**保留**熔断原因（set_run_status 会整列覆写
+    # escalation_reason，必须显式回传——否则 abort 后与自然失败无法
+    # 区分，审计线索丢失）
+    await store.set_run_status(
+        run_id,
+        RUN_STATUS_FAILED,
+        escalation_reason=run.get("escalation_reason") or "",
+    )
     await store.emit_event(
         run,
         "escalation_resolved",

@@ -37,6 +37,7 @@ from ..experts.models import (
 from ..experts.store import ExpertStore
 from . import bundle as bundle_mod
 from .contracts import (
+    NODE_ACTIVE_STATUSES,
     NODE_STATUS_DELEGATED,
     NODE_STATUS_DONE,
     NODE_STATUS_PENDING,
@@ -140,20 +141,122 @@ def start_run_background(run_id: str) -> asyncio.Task:
 
 
 async def cancel_run(run_id: str) -> bool:
-    """取消一次运行中的 run（传播取消到后台任务）；返回是否生效。"""
+    """取消一次运行中的 run（传播取消到后台任务）；返回是否生效。
+
+    取消后**等待终态落库再返回**（有界 10s）——修复"响应 canceled
+    但详情页短暂仍显示 running"的发后不管语义；超时则接受异步收敛
+    （_guarded_run 护栏兜底落终态）。
+    """
     task = _active_tasks.get(run_id)
     # 无运行任务：仅状态置 canceled（终态幂等）
     if task is None or task.done():
         return False
     # 请求协作取消（CancelledError 在引擎内收敛为 canceled 终态）
     task.cancel()
+    # 有界等待后台任务收敛（shield：超时只放弃等待，不二次取消任务）
+    try:
+        await asyncio.wait_for(asyncio.shield(task), timeout=_CANCEL_WAIT_S)
+    except asyncio.TimeoutError:
+        pass
     return True
 
 
+#: cancel 等待终态落库的上限（秒）
+_CANCEL_WAIT_S = 10.0
+
+#: run 认领 advisory lock 的键前缀（会话级锁：进程死亡连接断开自动释放）
+_RUN_CLAIM_LOCK_PREFIX = "workforce-run:"
+
+
+async def _try_claim_run(run_id: str) -> tuple:
+    """用 PG advisory lock 认领 run（多实例护栏，免 DDL）。
+
+    返回 ``(claimed, lock_conn)``：
+
+    - ``(True, conn)``：认领成功，conn 为持锁的专用连接（调用方在
+      finally 中经 :func:`_release_run_claim` 释放）；
+    - ``(False, None)``：锁被其他实例/任务持有——同一 run 不重复执行
+      （防双实例并发委派、节点结果互相覆写、token 双倍燃烧）；
+    - ``(True, None)``：锁通道不可用（PG 未达/连接失败）——降级为
+      无护栏执行，保持单机部署既有可用性（护栏是增强不是开关）。
+
+    会话级锁的崩溃语义：持有进程死亡 → 连接断开 → 锁自动释放，
+    无需租约续期与过期回收。
+    """
+    # 专用裸连接（不经 SQLAlchemy 池）：长任务持锁不占用业务连接池
+    try:
+        import asyncpg
+
+        from ...db.engine import get_pg_dsn
+
+        dsn = get_pg_dsn().replace("postgresql+asyncpg://", "postgresql://", 1)
+        conn = await asyncio.wait_for(asyncpg.connect(dsn), timeout=10.0)
+    except Exception:
+        logger.warning(
+            "run 认领连接不可用，降级为无护栏执行 run=%s", run_id, exc_info=True
+        )
+        return True, None
+    key = _RUN_CLAIM_LOCK_PREFIX + run_id
+    try:
+        ok = await conn.fetchval(
+            "SELECT pg_try_advisory_lock(hashtext($1)::bigint)", key
+        )
+    except Exception:
+        logger.warning(
+            "run 认领锁查询失败，降级为无护栏执行 run=%s", run_id, exc_info=True
+        )
+        await conn.close()
+        return True, None
+    # 锁被持有：其他实例正在执行，拒绝重复启动
+    if not ok:
+        await conn.close()
+        return False, None
+    return True, conn
+
+
+async def _release_run_claim(run_id: str, conn) -> None:
+    """释放 run 认领锁并关闭专用连接（best-effort，绝不抛出）。"""
+    # 未持锁（降级路径）无需释放
+    if conn is None:
+        return
+    # 先解锁再断连（断连本身也会释放会话锁，双保险）
+    try:
+        await conn.execute(
+            "SELECT pg_advisory_unlock(hashtext($1)::bigint)",
+            _RUN_CLAIM_LOCK_PREFIX + run_id,
+        )
+    except Exception:
+        pass
+    try:
+        await conn.close()
+    except Exception:
+        pass
+
+
+async def _reset_active_nodes(store, run_id: str) -> None:
+    """把 run 的中间态节点（delegated/verifying/...）回退 pending。
+
+    取消收敛后的数据视图一致性清理：canceled 是终态不可续跑，但
+    滞留在 delegated 的节点行会让详情页与数据审计呈现"执行中"假象。
+    """
+    # 逐节点回退（节点行数量有限；状态来自活跃态集合）
+    for node in await store.list_nodes(run_id):
+        if node.get("status") in NODE_ACTIVE_STATUSES:
+            await store.update_node(
+                run_id, node["node_key"], status=NODE_STATUS_PENDING
+            )
+
+
 async def _guarded_run(run_id: str) -> None:
-    """带异常护栏的 run 主入口（任何异常收敛为 failed 终态）。"""
+    """带异常护栏的 run 主入口（任何异常收敛为对应终态）。"""
     store = get_run_store()
     started_at = time.monotonic()
+    # 多实例护栏：PG advisory lock 认领——锁被其他实例持有时静默退出
+    # （重复启动的第二个任务不做任何状态写入，避免双实例互踩）
+    claimed, lock_conn = await _try_claim_run(run_id)
+    if not claimed:
+        logger.warning("run %s 正在被其他实例执行，跳过本次启动", run_id)
+        return
     try:
         await run_team_run(run_id, started_at=started_at)
     except asyncio.CancelledError:
@@ -162,6 +265,8 @@ async def _guarded_run(run_id: str) -> None:
         if run is not None and run["status"] not in _RUN_TERMINAL:
             await store.set_run_status(run_id, RUN_STATUS_CANCELED)
             await store.emit_event(run, "team_run_canceled")
+        # 取消后节点中间态清理（数据视图一致性，见 _reset_active_nodes）
+        await _reset_active_nodes(store, run_id)
     except EscalateSignal as exc:
         # 熔断：终态 escalated + 人工介入入口事件
         run = await store.get_run(run_id)
@@ -178,6 +283,9 @@ async def _guarded_run(run_id: str) -> None:
         if run is not None:
             await store.set_run_status(run_id, RUN_STATUS_FAILED, error=str(exc))
             await store.emit_event(run, "team_run_failed", {"error": str(exc)})
+    finally:
+        # 无论何种终态都释放认领锁（进程死亡时连接断开锁亦自动释放）
+        await _release_run_claim(run_id, lock_conn)
 
 
 async def run_team_run(run_id: str, started_at: Optional[float] = None) -> None:

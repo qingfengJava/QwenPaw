@@ -473,3 +473,32 @@ experts / expert_teams 两表四列（alembic 0011），管理端 console 全字
 新增回归：`test_workforce_runs.py` 8 例（replan 全链路 / structural
 fast-fail / 瞬时异常续跑 / replan 熔断 / final 验收 / needs_review
 守门 / 启动恢复租户与澄清语义 / policy 只读）+ 委派通道 3 例。
+
+**Phase 2（Context Fabric 接线，commit 9d3f04a7）**：
+
+- **协议 06 Context Protocol**：规划成功写入拆解决策
+  （`[Plan:source]`）并 bump 版本——`parent_decision` 不再恒空；
+  `ContextBundle.history` 版本轨迹（有界 20 条）记录每次变更原因，
+  V1→V4 演进可追溯。
+- **协议 05/07**：`TaskContract.available_tools` 接真（成员
+  agent_spec 启用工具映射），Skill/Tool 分离补齐 Tool 侧。
+
+**Phase 3（能力发现 + 治理地基，commit aca0cf74）**：
+
+- **Capability Discovery**：规划 prompt 注入成员能力档案（技能 +
+  工具）；Knowledge Retrieval 入链（发起人可见 KB 轻量检索 →
+  `global_ctx.knowledge`，故障静默降级）。
+- **协议 16 Governance**：RBAC enforce 默认跟随认证开关（多用户
+  部署默认强制）；`/api/envs`、`/api/config`、`/api/backups` 收
+  `admin:platform`，`/api/models` 管理收 `model:manage`；员工自建
+  专家 agent_spec 字段白名单（堵 MCP stdio 命令执行入口）。
+- 预算检查前移到每轮委派前（消灭单波内超支窗口）。
+
+**Phase 4（运行时加固，本提交）**：
+
+- **多实例护栏**：run 认领改 PG advisory lock（专用裸连接持锁，
+  免 DDL；进程死亡连接断开锁自动释放）——第二实例对同一 run 的
+  启动被静默拒绝；锁通道不可用时降级放行（护栏是增强不是开关）。
+- **协议 01/14 生命周期**：cancel 等待终态落库再返回（有界 10s），
+  取消后滞留中间态节点回退 pending；abort 裁决保留
+  escalation_reason（修复注释与实现相反的审计线索丢失）。

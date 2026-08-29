@@ -1524,3 +1524,130 @@ async def test_knowledge_injection_into_planning_context(
     reasons = [h["reason"] for h in bundle["history"]]
     assert any(r.startswith("knowledge:") for r in reasons)
     assert any(r.startswith("plan:") for r in reasons)
+
+
+# ---------------------------------------------------------------------------
+# 9. Phase 4 运行时加固：取消收敛 / abort 留痕 / 多实例认领护栏
+# ---------------------------------------------------------------------------
+
+
+async def test_cancel_awaits_terminal_and_resets_active_nodes(
+    enterprise_env, run_store, monkeypatch
+):
+    """取消语义加固：cancel_run 返回时 run 已落 canceled 终态（不再
+    发后不管），滞留在 delegated 的节点回退 pending（数据视图一致）。"""
+    from qwenpaw.app.workforce import engine as engine_mod
+
+    team, lead, member = await _seed_team()
+    plan = _two_node_plan(lead.id, member.id)
+    # 委派内阻塞 → 主测试协程 cancel_run 传播取消
+    delegate_started = asyncio.Event()
+
+    async def slow_delegate(expert_id, contract, repair=None, session_id=None, timeout=None):
+        delegate_started.set()
+        await asyncio.sleep(30)
+        return _ok_result(), session_id or "sess"
+
+    _patch_llm_seams(monkeypatch, plan, delegate_impl=None)
+    monkeypatch.setattr(engine_mod, "delegate", slow_delegate)
+    run = await run_store.create_run(
+        team_id=team.id, goal="设计登录页", initiator_id="alice"
+    )
+    task = engine_mod.start_run_background(run["id"])
+    await asyncio.wait_for(delegate_started.wait(), timeout=5)
+    # cancel 返回即终态已落库（等待收敛语义）
+    assert await engine_mod.cancel_run(run["id"]) is True
+    final = await run_store.get_run(run["id"])
+    assert final["status"] == "canceled"
+    # 节点中间态清理：task-1 不再滞留 delegated
+    node = await run_store.get_node(run["id"], "task-1")
+    assert node["status"] == "pending"
+    # 后台任务已收敛（取消等待语义的直接证据）
+    await asyncio.wait_for(task, timeout=5)
+
+
+async def test_abort_preserves_escalation_reason(enterprise_env, run_store, monkeypatch):
+    """abort 裁决后 escalation_reason 必须保留（与自然失败可区分，
+    审计线索不丢）。"""
+    from qwenpaw.app.routers.xian.workforce import (
+        EscalationBody,
+        resolve_escalation,
+    )
+    from qwenpaw.app.workforce import engine as engine_mod
+    from qwenpaw.app.workforce.contracts import (
+        RepairContract,
+        RunPolicy,
+        VERDICT_FAIL,
+    )
+    from qwenpaw.app.workforce.verifier import Verdict
+
+    team, lead, member = await _seed_team()
+    policy = RunPolicy(max_repair_per_node=1, max_total_tokens=0)
+    plan = _two_node_plan(lead.id, member.id)
+
+    def always_fail(lead_id, contract, result, repair_count):
+        return Verdict(
+            VERDICT_FAIL,
+            reason="不达标",
+            repair=RepairContract(
+                original_task=contract.objective,
+                issues=["缺少细节"],
+                expected_change=["补充细节"],
+                preserve=[],
+                acceptance=["细节完整"],
+                attempt=repair_count + 1,
+            ),
+        )
+
+    _patch_llm_seams(monkeypatch, plan, verify_impl=always_fail)
+    run = await run_store.create_run(
+        team_id=team.id,
+        goal="G",
+        initiator_id="alice",
+        policy=policy.model_dump(),
+    )
+    task = engine_mod.start_run_background(run["id"])
+    await task
+    escalated = await run_store.get_run(run["id"])
+    assert escalated["status"] == "escalated"
+    original_reason = escalated.get("escalation_reason") or ""
+    assert original_reason
+    # 人工裁决 abort：终态 failed 但熔断原因保留
+    result = await resolve_escalation(
+        run["id"],
+        "task-1",
+        EscalationBody(action="abort", note="放弃该任务"),
+        _req("alice"),
+    )
+    assert result["status"] == "failed"
+    aborted = await run_store.get_run(run["id"])
+    assert aborted["status"] == "failed"
+    assert aborted.get("escalation_reason") == original_reason
+
+
+async def test_run_claim_blocks_duplicate_start(enterprise_env):
+    """PG advisory lock 认领：同一 run 第二次认领被拒（多实例护栏），
+    释放后可重新认领；锁通道互斥由 PG 会话级锁保证。"""
+    from qwenpaw.app.workforce import engine as engine_mod
+
+    run_id = "run_claim_test_1"
+    claimed_1, conn_1 = await engine_mod._try_claim_run(run_id)
+    try:
+        # 首次认领成功（持锁连接可用）
+        assert claimed_1 is True
+        assert conn_1 is not None
+        # 第二次认领（模拟另一实例）被拒
+        claimed_2, conn_2 = await engine_mod._try_claim_run(run_id)
+        try:
+            assert claimed_2 is False
+            assert conn_2 is None
+        finally:
+            await engine_mod._release_run_claim(run_id, conn_2)
+    finally:
+        await engine_mod._release_run_claim(run_id, conn_1)
+    # 释放后可重新认领
+    claimed_3, conn_3 = await engine_mod._try_claim_run(run_id)
+    try:
+        assert claimed_3 is True
+    finally:
+        await engine_mod._release_run_claim(run_id, conn_3)
