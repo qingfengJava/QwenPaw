@@ -318,7 +318,7 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
   const hasInboxUnread = hasUnreadMessages || hasPendingApprovals;
   const inboxDotColor = hasPendingApprovals
     ? "#e04848"
-    : "rgba(255, 157, 77, 1)";
+    : "#1a71ff";
   const effectiveShake = shakeInbox && wobbleEnabled;
 
   // ── Adapter: convert MenuItem trees to antd, with inbox badge decoration.

@@ -2,7 +2,7 @@ import type { TFunction } from "i18next";
 
 const defaultConfig = {
   theme: {
-    colorPrimary: "#FF7F16",
+    colorPrimary: "#18181a",
     darkMode: false,
     prefix: "qwenpaw",
     leftHeader: {

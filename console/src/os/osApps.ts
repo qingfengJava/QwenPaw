@@ -210,7 +210,7 @@ export const STORE_APP: OsAppDef = {
   labelKey: "os.appStore",
   fallback: "App Store",
   Icon: Store,
-  accent: "#FF7F16",
+  accent: "#18181a",
   defaultW: 860,
   defaultH: 600,
 };

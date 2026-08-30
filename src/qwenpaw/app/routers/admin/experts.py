@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Admin expert management API: drafts, publish, archive (XianWork P3)."""
+
 from __future__ import annotations
 
 import logging
@@ -61,6 +62,8 @@ async def get_expert(expert_id: str) -> ExpertRecord:
     record = await get_expert_store().get_expert(expert_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Expert not found")
+    # skills 由详情端点填充（非持久化列，见 ExpertRecord.skills 注释）
+    record.skills = await get_expert_store().list_skills(expert_id)
     return record
 
 
@@ -92,12 +95,21 @@ async def update_expert(
 
 @router.delete("/{expert_id}", status_code=204)
 async def delete_expert(expert_id: str) -> None:
-    """Delete a draft (published history is immutable)."""
+    """Delete a draft (published history is immutable).
+
+    级联清理能力层数据（绑定/记忆），避免删除后残留悬挂挂载。
+    """
     if not await get_expert_store().delete_expert(expert_id):
         raise HTTPException(
             status_code=400,
             detail="only draft experts can be deleted",
         )
+    from ...experts.capability import get_capability_store
+    from ...experts.memories import get_memory_store
+
+    # 绑定与记忆跟 draft 一起物理清理（published 归档路径不清理）
+    await get_capability_store().delete_expert_bindings(expert_id)
+    await get_memory_store().clear_memories(expert_id)
 
 
 @router.post("/{expert_id}/publish", response_model=ExpertRecord)

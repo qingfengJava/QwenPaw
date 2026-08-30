@@ -38,6 +38,7 @@ from .checkpoints import router as checkpoints_router
 from .admin import router as admin_router
 from .kb import router as kb_router
 from .xian import router as xian_router
+from .open_api import router as open_api_router
 
 router = APIRouter()
 
@@ -76,6 +77,7 @@ router.include_router(checkpoints_router)
 router.include_router(admin_router)
 router.include_router(kb_router)
 router.include_router(xian_router)
+router.include_router(open_api_router)
 
 
 def create_agent_scoped_router() -> APIRouter:

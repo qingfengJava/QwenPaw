@@ -22,6 +22,7 @@ max_total_seconds 任一超限 → escalated 终态（人工裁决 API 恢复）
 
 @author qingfeng
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -63,7 +64,12 @@ from .contracts import (
     VERDICT_FAIL,
     VERDICT_PASS,
 )
-from .delegator import DELEGATE_TIMEOUT_S, call_expert_text, delegate, parse_result_contract
+from .delegator import (
+    DELEGATE_TIMEOUT_S,
+    call_expert_text,
+    delegate,
+    parse_result_contract,
+)
 from .planner import build_task_contract, plan_run
 from .run_store import get_run_store
 from .verifier import (
@@ -302,17 +308,25 @@ async def run_team_run(run_id: str, started_at: Optional[float] = None) -> None:
     if run["status"] in _RUN_TERMINAL:
         return
     clock_start = started_at if started_at is not None else time.monotonic()
-    # 加载团队上下文（成员 + 技能绑定 + 中央大脑人格）
-    team, members, member_skills = await _load_team_context(run["team_id"])
+    # 加载团队上下文（成员 + 技能绑定 + 能力挂载 + 中央大脑人格）
+    team, members, member_skills, member_caps = await _load_team_context(
+        run["team_id"],
+    )
     if team is None or not members:
-        await store.set_run_status(run_id, RUN_STATUS_FAILED, error="团队不存在或没有成员")
-        await store.emit_event(run, "team_run_failed", {"error": "团队不存在或没有成员"})
+        await store.set_run_status(
+            run_id, RUN_STATUS_FAILED, error="团队不存在或没有成员"
+        )
+        await store.emit_event(
+            run, "team_run_failed", {"error": "团队不存在或没有成员"}
+        )
         return
     members_by_id = {e.id: e for e in members}
     lead_id = _pick_lead(team, members)
     # 恢复或初始化上下文束与策略
     bundle = _restore_bundle(run, team, members)
-    policy = RunPolicy.model_validate(run["policy"]) if run.get("policy") else RunPolicy()
+    policy = (
+        RunPolicy.model_validate(run["policy"]) if run.get("policy") else RunPolicy()
+    )
     # 状态进入执行态（planning/interrupted → running）
     await store.set_run_status(run_id, RUN_STATUS_RUNNING)
     await store.emit_event(run, "run_started", {"team": team.name})
@@ -321,7 +335,15 @@ async def run_team_run(run_id: str, started_at: Optional[float] = None) -> None:
         # ---- 规划阶段（已有 plan 则跳过：续跑 / 重入） ----
         run = await store.get_run(run_id)
         if not (run.get("plan") or {}).get("nodes"):
-            await _plan_phase(store, run, team, members, bundle, member_skills=member_skills)
+            await _plan_phase(
+                store,
+                run,
+                team,
+                members,
+                bundle,
+                member_skills=member_skills,
+                member_caps=member_caps,
+            )
             # 规划阶段可能改变 run 状态（awaiting_confirm / failed），重读判定
             run = await store.get_run(run_id)
             if run["status"] != RUN_STATUS_RUNNING:
@@ -337,7 +359,9 @@ async def run_team_run(run_id: str, started_at: Optional[float] = None) -> None:
             plan = DagPlan.model_validate(run["plan"])
             plan_by_key = {n.node_key: n for n in plan.nodes}
             nodes = await store.list_nodes(run_id)
-            done_keys = {n["node_key"] for n in nodes if n["status"] == NODE_STATUS_DONE}
+            done_keys = {
+                n["node_key"] for n in nodes if n["status"] == NODE_STATUS_DONE
+            }
             pending_keys = [
                 n["node_key"] for n in nodes if n["status"] == NODE_STATUS_PENDING
             ]
@@ -352,8 +376,14 @@ async def run_team_run(run_id: str, started_at: Optional[float] = None) -> None:
             ]
             # 有 pending 但无 ready = DAG 死锁（校验过不应发生，防御失败）
             if not ready:
-                await store.set_run_status(run_id, RUN_STATUS_FAILED, error="DAG 调度死锁（存在无法就绪的节点）")
-                await store.emit_event(run, "team_run_failed", {"error": "DAG 调度死锁"})
+                await store.set_run_status(
+                    run_id,
+                    RUN_STATUS_FAILED,
+                    error="DAG 调度死锁（存在无法就绪的节点）",
+                )
+                await store.emit_event(
+                    run, "team_run_failed", {"error": "DAG 调度死锁"}
+                )
                 return
             # 时间与 token 双熔断（每波开始前检查）
             _check_time_budget(clock_start, policy)
@@ -365,7 +395,19 @@ async def run_team_run(run_id: str, started_at: Optional[float] = None) -> None:
             semaphore = asyncio.Semaphore(max(1, policy.parallelism))
             results = await asyncio.gather(
                 *(
-                    _run_node_bounded(semaphore, store, run_id, run, policy, bundle, node_key, members_by_id, member_skills, lead_id, clock_start)
+                    _run_node_bounded(
+                        semaphore,
+                        store,
+                        run_id,
+                        run,
+                        policy,
+                        bundle,
+                        node_key,
+                        members_by_id,
+                        member_skills,
+                        lead_id,
+                        clock_start,
+                    )
                     for node_key in ready
                 ),
                 return_exceptions=True,
@@ -404,7 +446,13 @@ async def run_team_run(run_id: str, started_at: Optional[float] = None) -> None:
             # _guarded_run 收敛为 failed 终态并留痕日志。
             for item in results:
                 if isinstance(item, BaseException) and not isinstance(
-                    item, (EscalateSignal, asyncio.CancelledError, ReplanSignal, RunInterruptSignal)
+                    item,
+                    (
+                        EscalateSignal,
+                        asyncio.CancelledError,
+                        ReplanSignal,
+                        RunInterruptSignal,
+                    ),
                 ):
                     logger.error("节点执行异常（run=%s）: %r", run_id, item)
                     raise item
@@ -427,6 +475,7 @@ async def run_team_run(run_id: str, started_at: Optional[float] = None) -> None:
 async def _retrieve_knowledge(
     goal: str,
     username: str,
+    extra_kb_ids: Optional[List[str]] = None,
 ) -> List[Dict[str, str]]:
     """Knowledge Retrieval：对发起人可见 KB 做一次轻量检索（best-effort）。
 
@@ -434,6 +483,9 @@ async def _retrieve_knowledge(
     goal 相关的片段（每库 top2、总上限 5 条），命中注入
     ``global_ctx.knowledge`` 供规划与契约引用。任何异常静默降级为
     空集——知识检索故障绝不阻塞编排主链路。
+
+    ``extra_kb_ids`` 为成员专家绑定的知识库（能力挂载，P1）——
+    优先检索专家自己挂的库（经营性知识），再回落通用可见库。
     """
     # 延迟导入（KB 为可选子系统；保持 workforce 包加载轻）
     try:
@@ -441,12 +493,32 @@ async def _retrieve_knowledge(
 
         service = get_kb_service()
         hits: List[Dict[str, str]] = []
-        for kb in service.accessible_kbs(username, flat_role=""):
-            # 每库取 top2 片段（轻量 BM25；总量有界防上下文膨胀）
-            for chunk, _score in service.search(kb.id, goal, top_k=2):
-                hits.append({"kb": kb.name, "text": chunk.text[:400]})
+
+        def _search_kb(kb_id: str, kb_name: str) -> bool:
+            """Search one KB (top2); return True when the cap is hit."""
+            for chunk, _score in service.search(kb_id, goal, top_k=2):
+                hits.append({"kb": kb_name, "text": chunk.text[:400]})
                 if len(hits) >= 5:
-                    return hits
+                    return True
+            return False
+
+        # 成员绑定库优先（专家挂载的经营性知识）
+        seen: set = set()
+        for kb_id in extra_kb_ids or []:
+            if kb_id in seen or len(hits) >= 5:
+                break
+            seen.add(kb_id)
+            kb = service.get_kb(kb_id)
+            if kb is None:
+                continue
+            if _search_kb(kb_id, kb.name):
+                return hits
+        for kb in service.accessible_kbs(username, flat_role=""):
+            if kb.id in seen or len(hits) >= 5:
+                break
+            seen.add(kb.id)
+            if _search_kb(kb.id, kb.name):
+                return hits
         return hits
     except Exception:  # noqa: BLE001 - 知识面故障不阻塞编排
         logger.debug("知识检索降级为空集", exc_info=True)
@@ -460,19 +532,42 @@ async def _plan_phase(
     members: List[ExpertRecord],
     bundle: ContextBundle,
     member_skills: Optional[Dict[str, List[str]]] = None,
+    member_caps: Optional[Dict[str, Dict[str, list]]] = None,
 ) -> None:
     """规划阶段：模板/LLM 产出 DagPlan，或转澄清挂起，或失败终止。"""
     run_id = run["id"]
     await store.emit_event(run, "planning_started")
+    # 成员能力挂载快照（P1）：绑定 SOP/知识/工具 → 版本化全局事实。
+    # 契约构建（build_task_contract）从 bundle.global_ctx["member_caps"]
+    # 取数——零签名扰动的注入通道。
+    caps_payload = _member_caps_payload(member_caps or {})
+    bound_kb_ids = sorted(
+        {
+            kb_id
+            for caps in (member_caps or {}).values()
+            for kb_id in caps.get("kb_ids", [])
+        },
+    )
     # 知识检索注入（Capability Discovery 的知识面；变更时 bump 版本）
     knowledge = await _retrieve_knowledge(
-        run["goal"], run.get("initiator_id") or ""
+        run["goal"],
+        run.get("initiator_id") or "",
+        extra_kb_ids=bound_kb_ids,
     )
+    changed = False
     if knowledge and bundle.global_ctx.get("knowledge") != knowledge:
         bundle.global_ctx = dict(bundle.global_ctx)
         bundle.global_ctx["knowledge"] = knowledge
         bundle_mod.record_version_change(bundle, "knowledge: 规划检索命中")
         bundle.version = bundle.version + 1
+        changed = True
+    if caps_payload and bundle.global_ctx.get("member_caps") != caps_payload:
+        bundle.global_ctx = dict(bundle.global_ctx)
+        bundle.global_ctx["member_caps"] = caps_payload
+        bundle_mod.record_version_change(bundle, "member_caps: 绑定 SOP/知识/工具快照")
+        bundle.version = bundle.version + 1
+        changed = True
+    if changed:
         await store.bump_context_version(run_id)
         await store.update_run(run_id, context_bundle=bundle.model_dump())
     # 组织记忆回灌（Memory Protocol）：取该团队历史熔断教训注入规划
@@ -506,7 +601,9 @@ async def _plan_phase(
     # 失败分支：规划两次未通过校验（不静默修复非法 DAG）
     if outcome.plan is None:
         await store.set_run_status(run_id, RUN_STATUS_FAILED, error=outcome.error)
-        await store.emit_event(run, "team_run_failed", {"error": outcome.error, "stage": "planning"})
+        await store.emit_event(
+            run, "team_run_failed", {"error": outcome.error, "stage": "planning"}
+        )
         return
     # 成功：物化任务图与节点行
     await store.save_plan(run_id, outcome.plan)
@@ -519,8 +616,7 @@ async def _plan_phase(
     # 后续节点契约经 parent_decision 引用同一版本化事实）。模板重规划
     # 产生相同决策时去重，不做无意义 bump。
     decision_text = f"[Plan:{outcome.source}] " + (
-        outcome.plan.plan_note
-        or f"拆解为 {len(outcome.plan.nodes)} 个节点"
+        outcome.plan.plan_note or f"拆解为 {len(outcome.plan.nodes)} 个节点"
     )
     decisions = list(bundle.global_ctx.get("decisions", []))
     if not decisions or decisions[-1] != decision_text:
@@ -565,9 +661,7 @@ async def _handle_replan(
     bundle.global_ctx = dict(bundle.global_ctx)
     bundle.global_ctx["decisions"] = decisions
     # 版本历史轨迹 + 就地版本递增（外部引用同一束对象，须原地变更）
-    bundle_mod.record_version_change(
-        bundle, f"re-plan: {signal.reason[:120]}"
-    )
+    bundle_mod.record_version_change(bundle, f"re-plan: {signal.reason[:120]}")
     bundle.version = bundle.version + 1
     # 持久化：版本号由 bump_context_version 单点递增，束内容整列覆盖
     await store.bump_context_version(run_id)
@@ -672,8 +766,12 @@ async def _execute_node(
             else None
         )
         # 节点状态推进：委派中
-        await store.update_node(run_id, node_key, status=NODE_STATUS_DELEGATED, attempt=attempt + 1)
-        await store.emit_event(run, "node_started", {"node_key": node_key, "attempt": attempt + 1})
+        await store.update_node(
+            run_id, node_key, status=NODE_STATUS_DELEGATED, attempt=attempt + 1
+        )
+        await store.emit_event(
+            run, "node_started", {"node_key": node_key, "attempt": attempt + 1}
+        )
         # 执行节点：final/integration 由中央大脑自执行，成员节点走委派
         try:
             if expert_id:
@@ -701,13 +799,13 @@ async def _execute_node(
             # checkpoint（与 verify 通道的 ESCALATE 恢复语义对称）。
             logger.warning("节点 %s 执行通道异常: %s", node_key, exc)
             await store.update_node(run_id, node_key, status=NODE_STATUS_PENDING)
-            raise RunInterruptSignal(
-                f"节点 {node_key} 执行通道异常: {exc}"
-            ) from exc
+            raise RunInterruptSignal(f"节点 {node_key} 执行通道异常: {exc}") from exc
         attempt += 1
         # 结果 checkpoint（崩溃恢复点）+ 会话与计量累计回写
         node_now = await store.get_node(run_id, node_key) or {}
-        token_total = int(node_now.get("token_cost", 0) or 0) + int(result.token_cost or 0)
+        token_total = int(node_now.get("token_cost", 0) or 0) + int(
+            result.token_cost or 0
+        )
         await store.update_node(
             run_id,
             node_key,
@@ -746,7 +844,11 @@ async def _execute_node(
         await store.emit_event(
             run,
             "node_verdict",
-            {"node_key": node_key, "verdict": verdict.verdict, "reason": verdict.reason},
+            {
+                "node_key": node_key,
+                "verdict": verdict.verdict,
+                "reason": verdict.reason,
+            },
         )
         # PASS：记录上游摘要（互斥）并收敛 done
         if verdict.verdict == VERDICT_PASS:
@@ -801,13 +903,15 @@ async def _execute_node(
             await store.emit_event(
                 run,
                 "repair_issued",
-                {"node_key": node_key, "attempt": repair_count, "issues": verdict.repair.issues},
+                {
+                    "node_key": node_key,
+                    "attempt": repair_count,
+                    "issues": verdict.repair.issues,
+                },
             )
             continue
         # ESCALATE（或 FAIL 无契约的异常形态）：熔断升级人工
-        raise EscalateSignal(
-            f"节点 {node_key} {verdict.verdict}：{verdict.reason}"
-        )
+        raise EscalateSignal(f"节点 {node_key} {verdict.verdict}：{verdict.reason}")
 
 
 async def _execute_brain_node(
@@ -906,12 +1010,40 @@ def _restore_bundle(
     )
 
 
+def _member_caps_payload(
+    member_caps: Dict[str, Dict[str, list]],
+) -> Dict[str, Dict[str, list]]:
+    """压缩成员能力快照为可版本化的 prompt 友好载荷。
+
+    - sops/kb_ids 原样保留（契约与检索都要用）；
+    - tools 按字典序稳定排序（避免无意义的内容抖动触发版本 bump）。
+    """
+    payload: Dict[str, Dict[str, list]] = {}
+    for expert_id, caps in member_caps.items():
+        if not caps:
+            continue
+        entry: Dict[str, list] = {}
+        if caps.get("sops"):
+            entry["sops"] = caps["sops"]
+        if caps.get("kb_ids"):
+            entry["kb_ids"] = list(caps["kb_ids"])
+        if caps.get("tools"):
+            entry["tools"] = sorted(caps["tools"])
+        if entry:
+            payload[expert_id] = entry
+    return payload
+
+
 async def _load_team_context(team_id: str):
-    """加载团队、成员专家与技能绑定（规划与契约构建的输入）。"""
+    """加载团队、成员专家、技能绑定与能力挂载快照（规划与契约的输入）。
+
+    能力挂载快照（member_caps：绑定 SOP/知识库/工具）为 20260830
+    P1 接线——加载失败静默降级为空 dict，绝不阻塞编排主链路。
+    """
     store = ExpertStore()
     team = await store.get_team(team_id)
     if team is None:
-        return None, [], {}
+        return None, [], {}, {}
     # 成员专家按绑定顺序加载（跳过已删除的专家行）
     members: List[ExpertRecord] = []
     for member in team.members:
@@ -925,7 +1057,17 @@ async def _load_team_context(team_id: str):
             member_skills[expert.id] = await store.enabled_skill_names(expert.id)
         except Exception:  # noqa: BLE001 - 技能查询失败不阻塞（空集降级）
             member_skills[expert.id] = []
-    return team, members, member_skills
+    # 能力挂载快照（SOP/知识/工具绑定，五步范式批查）
+    member_caps: Dict[str, Dict[str, list]] = {}
+    try:
+        from ..experts.capability import get_capability_store
+
+        member_caps = await get_capability_store().member_capability_snapshot(
+            [e.id for e in members],
+        )
+    except Exception:  # noqa: BLE001 - 绑定快照失败降级为空（原有能力面不受影响）
+        logger.debug("成员能力挂载快照降级为空", exc_info=True)
+    return team, members, member_skills, member_caps
 
 
 def _check_time_budget(clock_start: float, policy: RunPolicy) -> None:

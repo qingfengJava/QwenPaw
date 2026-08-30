@@ -19,6 +19,7 @@ Specification 的数据载体），定义中央大脑（L1 Workforce ReAct）与
 
 @author qingfeng
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
@@ -195,6 +196,10 @@ class TaskContract(BaseModel):
     available_skills: List[str] = Field(default_factory=list)
     #: 可用工具（成员专家 agent 已装配的工具，动作=Tool）
     available_tools: List[str] = Field(default_factory=list)
+    #: 绑定 SOP 参考（能力挂载，20260830 P1）：[{name, goal,
+    #: steps: [{t: 步骤, ok: 验收要点}]}]——经验路径参考而非硬状态机；
+    #: 验收要点由规划器并入 quality_criteria，Verifier 裁决自动覆盖
+    sop_refs: List[Dict[str, Any]] = Field(default_factory=list)
     #: 上游节点结果摘要投影（仅注入依赖节点的 ResultContract 摘要）
     upstream_summaries: Dict[str, Any] = Field(default_factory=dict)
 

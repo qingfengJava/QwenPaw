@@ -40,3 +40,27 @@ export type {
   AdminRunStats,
   AdminRunStatus,
 } from "./workforce";
+export {
+  expertCapabilityApi,
+  sopApi,
+  evolutionApi,
+} from "./expertCapability";
+export type {
+  ResourceBinding,
+  ResourceType,
+  CapabilityCounts,
+  ApiKeyRecord,
+  PendingItem,
+  SopRecord,
+  SopNode,
+  SopEdge,
+  SopSlot,
+  SopVersion,
+  MemoryRecord,
+  ScheduledTask,
+  TaskRun,
+  TimelineEvent,
+  WorkRecord,
+  FeedbackSummary,
+  EvolutionProposal,
+} from "./expertCapability";

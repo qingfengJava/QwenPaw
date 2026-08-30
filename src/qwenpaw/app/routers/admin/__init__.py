@@ -9,10 +9,12 @@ from fastapi import APIRouter
 
 from ...orgs.api import router as orgs_router
 from .audit import router as audit_router
+from .expert_capability import router as expert_capability_router
 from .expert_teams import router as expert_teams_router
 from .experts import router as experts_router
 from .grants import router as grants_router
 from .kb import router as kb_router
+from .pending import router as pending_router
 from .quotas import router as quotas_router
 from .roles import router as roles_router
 from .teams import router as teams_router
@@ -29,7 +31,9 @@ router.include_router(grants_router)
 router.include_router(kb_router)
 router.include_router(orgs_router)
 router.include_router(experts_router)
+router.include_router(expert_capability_router)
 router.include_router(expert_teams_router)
 router.include_router(workforce_router)
+router.include_router(pending_router)
 
 __all__ = ["router"]

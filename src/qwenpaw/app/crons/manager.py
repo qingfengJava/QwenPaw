@@ -90,15 +90,38 @@ class CronManager(ManagerBase):
         self._rt: Dict[str, _Runtime] = {}
         self._started = False
         self._keepalive_task: Optional[asyncio.Task] = None
+        #: 执行记录观察者（async (job, record, execution_result) -> None）。
+        #: 域投影（如数字员工定时任务 expert_task_runs）据此回流执行
+        #: 留痕——权威仍在本 manager，观察者只做投影，禁止反向写。
+        self.execution_observers: list = []
+
+    def add_execution_observer(self, observer) -> None:
+        """Register one execution observer (idempotent)."""
+        if observer not in self.execution_observers:
+            self.execution_observers.append(observer)
+
+    async def _notify_execution_observers(
+        self,
+        job: CronJobSpec,
+        record: CronExecutionRecord,
+        execution_result: Dict[str, Any],
+    ) -> None:
+        """Fan out one execution record; observer failures never propagate."""
+        for observer in self.execution_observers:
+            try:
+                await observer(job, record, execution_result)
+            except Exception:  # pylint: disable=broad-except
+                logger.exception(
+                    "cron execution observer failed: job_id=%s",
+                    job.id,
+                )
 
     async def start(self) -> None:
         async with self._lock:
             if self._started:
                 return
             jobs_file = await self._repo.load()
-            valid_job_ids = {
-                job.id for job in jobs_file.jobs if job.id is not None
-            }
+            valid_job_ids = {job.id for job in jobs_file.jobs if job.id is not None}
             await self._repo.prune_orphan_history(valid_job_ids)
 
             self._register_scheduler_listeners()
@@ -124,8 +147,7 @@ class CronManager(ManagerBase):
                         )
                         await self._repo.upsert_job(disabled_job)
                         logger.warning(
-                            "Auto-disabled invalid cron job: "
-                            "job_id=%s name=%s",
+                            "Auto-disabled invalid cron job: " "job_id=%s name=%s",
                             job.id,
                             job.name,
                         )
@@ -311,8 +333,7 @@ class CronManager(ManagerBase):
                 declarations = list(memory_manager.list_cron_jobs())
             except Exception:  # pylint: disable=broad-except
                 logger.exception(
-                    "Failed to load cron jobs from memory manager "
-                    "for agent %s",
+                    "Failed to load cron jobs from memory manager " "for agent %s",
                     self._agent_id,
                 )
                 return
@@ -376,8 +397,7 @@ class CronManager(ManagerBase):
                 )
             except Exception as exc:  # pylint: disable=broad-except
                 logger.error(
-                    "Failed to schedule %s cron job: key=%s cron=%s "
-                    "error=%r",
+                    "Failed to schedule %s cron job: key=%s cron=%s " "error=%r",
                     source,
                     declaration.key,
                     declaration.cron,
@@ -682,8 +702,7 @@ class CronManager(ManagerBase):
             tz = ZoneInfo(tz_name)
         except (ZoneInfoNotFoundError, ValueError):
             logger.warning(
-                "Invalid cron job timezone, using UTC: job_id=%s "
-                "timezone=%s",
+                "Invalid cron job timezone, using UTC: job_id=%s " "timezone=%s",
                 job.id,
                 tz_name,
             )
@@ -764,14 +783,11 @@ class CronManager(ManagerBase):
             try:
                 execution_result = await self._executor.execute(job)
                 execution_succeeded = True
-                delivery_failed = (
-                    execution_result.get("delivery_status") == "failed"
-                )
+                delivery_failed = execution_result.get("delivery_status") == "failed"
                 if delivery_failed:
                     st.last_status = "error"
                     delivery_error = (
-                        execution_result.get("delivery_error")
-                        or "delivery failed"
+                        execution_result.get("delivery_error") or "delivery failed"
                     )
                     st.last_error = f"delivery failed: {delivery_error}"
                 else:
@@ -864,12 +880,17 @@ class CronManager(ManagerBase):
                                     "task_type": job.task_type,
                                     "trigger": trigger,
                                     "run_id": execution_result.get("run_id"),
-                                    "save_result_to_inbox": (
-                                        job.save_result_to_inbox
-                                    ),
+                                    "save_result_to_inbox": (job.save_result_to_inbox),
                                 },
                             )
                         except Exception:  # pylint: disable=broad-except
                             logger.exception(
                                 "failed to append cron result inbox event",
                             )
+                # 通知域投影观察者（如 expert_task_runs 留痕）；
+                # 放在 finally 链尾：无论成败都回流，异常不外泄
+                await self._notify_execution_observers(
+                    job,
+                    record,
+                    execution_result,
+                )

@@ -14,6 +14,7 @@ Sandbox/治理门），不新建执行通道：
 
 @author qingfeng
 """
+
 from __future__ import annotations
 
 import json
@@ -36,11 +37,11 @@ DELEGATE_TIMEOUT_S = 900.0
 
 #: ResultContract JSON 输出指令（render_task_prompt 尾部注入）
 _RESULT_SCHEMA_HINT = (
-    '请在完成任务的回复最末尾，输出一个 ```json 代码块，内容为如下'
+    "请在完成任务的回复最末尾，输出一个 ```json 代码块，内容为如下"
     "结构的 JSON（result_text 字段填你的完整正文产出，其余字段如实"
     "填写）：\n"
     "```json\n"
-    '{\n'
+    "{\n"
     '  "status": "COMPLETED | PARTIAL | FAILED",\n'
     '  "result_text": "你的完整产出正文",\n'
     '  "decisions": ["你做出的关键决策"],\n'
@@ -144,11 +145,14 @@ def render_task_prompt(
     尾部固定注入 ResultContract JSON 输出指令。
     """
     # 上下文版本号显式告知（子员工知晓其依据的任务事实版本）
-    lines = [f"# 任务委派（Task Contract · 上下文版本 v{contract.global_context.get('context_version', 1)}）"]
-    # 全局背景段（不可变快照）
+    lines = [
+        f"# 任务委派（Task Contract · 上下文版本 v{contract.global_context.get('context_version', 1)}）"
+    ]
+    # 全局背景段（不可变快照；member_caps 是全团队能力快照——最小充分
+    # 原则下不对单个成员泄露，其本人能力经 sop_refs / 工具段呈现）
     lines.append("\n## 全局背景")
     for key, value in contract.global_context.items():
-        if key == "context_version":
+        if key in ("context_version", "member_caps"):
             continue
         lines.append(f"- {key}: {json.dumps(value, ensure_ascii=False, default=str)}")
     # 父决策段（必须遵守）
@@ -198,6 +202,23 @@ def render_task_prompt(
             lines.append(f"- 技能（怎么做）: {', '.join(contract.available_skills)}")
         if contract.available_tools:
             lines.append(f"- 工具（用什么做）: {', '.join(contract.available_tools)}")
+    # 绑定 SOP 段（能力挂载，P1）：经验路径参考——不是硬状态机，成员
+    # 可自主选择更优工具路径，但产出需覆盖各步骤的验收要点
+    if contract.sop_refs:
+        lines.append(
+            "\n## 参考流程（绑定 SOP——经验路径参考，非硬性状态机；"
+            "可自主选择更优实现路径，但需覆盖各步骤验收要点）",
+        )
+        for sop in contract.sop_refs:
+            goal = str(sop.get("goal") or "").strip()
+            lines.append(f"- 《{sop.get('name')}》{goal}".rstrip())
+            for index, step in enumerate(sop.get("steps") or [], start=1):
+                title = str(step.get("t") or "").strip()
+                outcome = str(step.get("ok") or "").strip()
+                line = f"  {index}. {title}" if title else f"  {index}."
+                if outcome:
+                    line += f"（验收：{outcome}）"
+                lines.append(line)
     # 返工指令段（仅返工轮注入）
     if repair is not None:
         lines.append("\n## 返工指令（第 %d 轮，前次产出未通过验收）" % repair.attempt)

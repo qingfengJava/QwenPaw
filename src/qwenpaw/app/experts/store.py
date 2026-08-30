@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 """PG persistence for experts / expert teams / published snapshots."""
+
 from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from sqlalchemy import text
@@ -32,12 +34,15 @@ _EXPERT_COLS = (
     "id, name, icon, description, agent_spec, status, version, "
     "owner_id, visibility, is_builtin, title, category, badge, tags, "
     "system_prompt, usage_count, featured, sample_tasks, showcase, "
+    "department, work_styles, work_modes, hire_date, "
     "created_at, updated_at"
 )
 _EXPERT_CARD_COLS = (
     "id, name, icon, description, status, version, owner_id, "
     "visibility, is_builtin, title, category, badge, tags, "
-    "usage_count, featured, sample_tasks, showcase, created_at, updated_at"
+    "usage_count, featured, sample_tasks, showcase, "
+    "department, work_styles, work_modes, hire_date, "
+    "created_at, updated_at"
 )
 _TEAM_COLS = (
     "id, name, description, mode, router_prompt, status, version, "
@@ -80,6 +85,10 @@ def _row_to_expert(row, *, card: bool = False) -> ExpertRecord:
         featured=bool(row.featured),
         sample_tasks=list(row.sample_tasks or []),
         showcase=list(row.showcase or []),
+        department=row.department or "",
+        work_styles=list(row.work_styles or []),
+        work_modes=list(row.work_modes or []),
+        hire_date=row.hire_date,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -131,9 +140,16 @@ class ExpertStore:
         featured: bool = False,
         sample_tasks: Optional[List[dict]] = None,
         showcase: Optional[List[dict]] = None,
+        department: str = "",
+        work_styles: Optional[List[str]] = None,
+        work_modes: Optional[List[str]] = None,
+        hire_date: Optional[object] = None,
     ) -> ExpertRecord:
         tid = current_tenant_id()
         expert_id = expert_id or new_id("exp")
+        # 入职时间缺省=建档时刻（"建档即入职"语义）；显式传值尊重调用方
+        if hire_date is None:
+            hire_date = datetime.now(timezone.utc)
         engine = require_enterprise_engine()
         async with engine.begin() as conn:
             result = await conn.execute(
@@ -141,13 +157,15 @@ class ExpertStore:
                     "INSERT INTO experts (tenant_id, id, name, icon, "
                     "description, agent_spec, status, version, owner_id, "
                     "visibility, is_builtin, title, category, badge, tags, "
-                    "system_prompt, featured, sample_tasks, showcase) VALUES "
+                    "system_prompt, featured, sample_tasks, showcase, "
+                    "department, work_styles, work_modes, hire_date) VALUES "
                     "(:tid, :id, :name, :icon, :desc, "
                     "CAST(:spec AS JSONB), :status, 1, :owner, :vis, "
                     ":builtin, :title, :category, :badge, "
                     "CAST(:tags AS JSONB), :prompt, :featured, "
-                    "CAST(:tasks AS JSONB), CAST(:cases AS JSONB)) RETURNING "
-                    + _EXPERT_COLS
+                    "CAST(:tasks AS JSONB), CAST(:cases AS JSONB), "
+                    ":department, CAST(:work_styles AS JSONB), "
+                    "CAST(:work_modes AS JSONB), :hire_date) RETURNING " + _EXPERT_COLS
                 ),
                 {
                     "tid": tid,
@@ -168,6 +186,11 @@ class ExpertStore:
                     "featured": featured,
                     "tasks": json.dumps(sample_tasks or []),
                     "cases": json.dumps(showcase or []),
+                    "department": department,
+                    "work_styles": json.dumps(work_styles or []),
+                    "work_modes": json.dumps(work_modes or []),
+                    # 入职时间缺省=now()（"入职"语义）；显式传值/None 尊重调用方
+                    "hire_date": hire_date,
                 },
             )
             return _row_to_expert(result.one())
@@ -212,8 +235,7 @@ class ExpertStore:
             params["category"] = category
         if q:
             clauses.append(
-                "(name ILIKE :kw OR description ILIKE :kw "
-                "OR title ILIKE :kw)"
+                "(name ILIKE :kw OR description ILIKE :kw " "OR title ILIKE :kw)"
             )
             params["kw"] = f"%{q}%"
         if sort == EXPERT_SORT_HOT:
@@ -252,7 +274,12 @@ class ExpertStore:
         """
         engine = require_enterprise_engine()
         sql, params = self._expert_query(
-            _EXPERT_COLS, status, category, q, sort, owner,
+            _EXPERT_COLS,
+            status,
+            category,
+            q,
+            sort,
+            owner,
             include_private_for,
         )
         async with engine.connect() as conn:
@@ -272,7 +299,12 @@ class ExpertStore:
         ``system_prompt`` columns (same filters as ``list_experts``)."""
         engine = require_enterprise_engine()
         sql, params = self._expert_query(
-            _EXPERT_CARD_COLS, status, category, q, sort, owner,
+            _EXPERT_CARD_COLS,
+            status,
+            category,
+            q,
+            sort,
+            owner,
             include_private_for,
         )
         async with engine.connect() as conn:
@@ -327,13 +359,29 @@ class ExpertStore:
         if fields.get("showcase") is not None:
             sets.append("showcase = CAST(:cases AS JSONB)")
             params["cases"] = json.dumps(fields["showcase"])
+        # 数字员工档案列（None=不修改；hire_date 置空走 hire_date_clear）
+        if fields.get("department") is not None:
+            sets.append("department = :department")
+            params["department"] = fields["department"]
+        if fields.get("work_styles") is not None:
+            sets.append("work_styles = CAST(:work_styles AS JSONB)")
+            params["work_styles"] = json.dumps(fields["work_styles"])
+        if fields.get("work_modes") is not None:
+            sets.append("work_modes = CAST(:work_modes AS JSONB)")
+            params["work_modes"] = json.dumps(fields["work_modes"])
+        if fields.get("hire_date_clear"):
+            sets.append("hire_date = NULL")
+        elif fields.get("hire_date") is not None:
+            sets.append("hire_date = :hire_date")
+            params["hire_date"] = fields["hire_date"]
         if not sets:
             return await self.get_expert(expert_id)
         engine = require_enterprise_engine()
         async with engine.begin() as conn:
             result = await conn.execute(
                 text(
-                    "UPDATE experts SET " + ", ".join(sets)
+                    "UPDATE experts SET "
+                    + ", ".join(sets)
                     + ", updated_at = now() WHERE tenant_id = :tid "
                     "AND id = :id RETURNING " + _EXPERT_COLS
                 ),
@@ -353,7 +401,8 @@ class ExpertStore:
             fragment = ", version = version + 1" if bump_version else ""
             result = await conn.execute(
                 text(
-                    "UPDATE experts SET status = :status" + fragment
+                    "UPDATE experts SET status = :status"
+                    + fragment
                     + ", updated_at = now() WHERE tenant_id = :tid "
                     "AND id = :id RETURNING " + _EXPERT_COLS
                 ),
@@ -604,7 +653,9 @@ class ExpertStore:
             # SELECT 与 mapper 漂移（20260818 PG 补验的教训）
             result = await conn.execute(
                 text(
-                    "SELECT " + _TEAM_COLS + " FROM expert_teams WHERE "
+                    "SELECT "
+                    + _TEAM_COLS
+                    + " FROM expert_teams WHERE "
                     + " AND ".join(clauses)
                     + " ORDER BY updated_at DESC"
                 ),
@@ -663,7 +714,8 @@ class ExpertStore:
             if sets:
                 await conn.execute(
                     text(
-                        "UPDATE expert_teams SET " + ", ".join(sets)
+                        "UPDATE expert_teams SET "
+                        + ", ".join(sets)
                         + ", updated_at = now() WHERE tenant_id = :tid "
                         "AND id = :id"
                     ),
@@ -709,7 +761,8 @@ class ExpertStore:
             fragment = ", version = version + 1" if bump_version else ""
             await conn.execute(
                 text(
-                    "UPDATE expert_teams SET status = :status" + fragment
+                    "UPDATE expert_teams SET status = :status"
+                    + fragment
                     + ", updated_at = now() WHERE tenant_id = :tid "
                     "AND id = :id"
                 ),
@@ -732,10 +785,7 @@ class ExpertStore:
                 {"tid": current_tenant_id(), "id": team_id},
             )
             result = await conn.execute(
-                text(
-                    "DELETE FROM expert_teams WHERE tenant_id = :tid "
-                    "AND id = :id"
-                ),
+                text("DELETE FROM expert_teams WHERE tenant_id = :tid " "AND id = :id"),
                 {"tid": current_tenant_id(), "id": team_id},
             )
             return result.rowcount > 0

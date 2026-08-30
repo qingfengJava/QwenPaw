@@ -1,54 +1,71 @@
 /**
- * Admin/Experts — expert lifecycle: draft → publish → archive
- * (XianWork Phase 3). The draft `agent_spec` is edited as JSON in the
- * first release; full Agent-form parity is a follow-up enhancement.
+ * Admin/Experts — 数字员工列表页（StaffDeck 设计语言重构，20260830）。
+ *
+ * 结构：统计卡行（总数/在线/草稿 + 新建入口）→ 状态 UnderlineTabs +
+ * 搜索 → EmployeeCard 网格（点击进详情页）。保留既有生命周期操作：
+ * 新建/编辑（含档案字段）/发布/归档/删除。
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Button,
   Divider,
+  Dropdown,
   Form,
   Input,
   Modal,
-  Popconfirm,
   Space,
-  Table,
-  Tag,
 } from "antd";
 import { useTranslation } from "react-i18next";
 import { PageHeader } from "@/components/PageHeader";
+import {
+  EmployeeCard,
+  StatCard,
+  UnderlineTabs,
+} from "@/components/staffdeck";
 import { useAppMessage } from "../../hooks/useAppMessage";
-import { adminExpertsApi } from "../../api/modules/admin";
+import {
+  adminExpertsApi,
+  expertCapabilityApi,
+  type CapabilityCounts,
+} from "../../api/modules/admin";
 import type { ExpertRecord } from "../../api/modules/admin";
 import {
   SampleTasksEditor,
   ShowcaseEditor,
   normalizeShowcase,
 } from "./OperationsFields";
-import styles from "./admin.module.less";
 
-const STATUS_COLOR: Record<string, string> = {
-  draft: "default",
-  published: "green",
-  archived: "red",
-};
+type StatusFilter = "all" | "published" | "draft" | "archived";
 
 function ExpertsPage() {
   const { t } = useTranslation();
   const { message } = useAppMessage();
+  const navigate = useNavigate();
   const [experts, setExperts] = useState<ExpertRecord[]>([]);
+  const [counts, setCounts] = useState<Record<string, CapabilityCounts>>({});
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<ExpertRecord | "new" | null>(null);
+  const [filter, setFilter] = useState<StatusFilter>("all");
+  const [keyword, setKeyword] = useState("");
   const [form] = Form.useForm();
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      setExperts(await adminExpertsApi.list());
+      const list = await adminExpertsApi.list();
+      setExperts(list);
+      // 卡片计数一次批查（无 N+1）
+      if (list.length > 0) {
+        const res = await expertCapabilityApi.capabilityCounts(
+          list.map((e) => e.id),
+        );
+        setCounts(res.counts ?? {});
+      } else {
+        setCounts({});
+      }
     } catch (err) {
-      message.error(
-        t("admin.experts.loadFailed", "Failed to load experts"),
-      );
+      message.error(t("admin.experts.loadFailed", "Failed to load experts"));
       console.error(err);
     } finally {
       setLoading(false);
@@ -70,10 +87,14 @@ function ExpertsPage() {
             agent_spec: "{}",
             sample_tasks: [],
             showcase: [],
+            work_styles_text: "",
+            work_modes_text: "",
           }
         : {
             name: expert.name,
             icon: expert.icon,
+            title: expert.title,
+            department: expert.department,
             description: expert.description,
             agent_spec: JSON.stringify(expert.agent_spec, null, 2),
             sample_tasks: expert.sample_tasks ?? [],
@@ -82,6 +103,8 @@ function ExpertsPage() {
               ...c,
               tags: (c.tags ?? []).join(","),
             })),
+            work_styles_text: (expert.work_styles ?? []).join("，"),
+            work_modes_text: (expert.work_modes ?? []).join("，"),
           },
     );
   };
@@ -104,6 +127,18 @@ function ExpertsPage() {
     const showcase = normalizeShowcase(values.showcase).filter(
       (item) => item.title.trim() && item.desc.trim(),
     );
+    // 档案字段：逗号/顿号分隔输入 → 数组
+    const splitList = (text: string | undefined) =>
+      (text ?? "")
+        .split(/[,，]/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+    const profile = {
+      title: values.title ?? "",
+      department: values.department ?? "",
+      work_styles: splitList(values.work_styles_text),
+      work_modes: splitList(values.work_modes_text),
+    };
     try {
       if (editing === "new") {
         await adminExpertsApi.create({
@@ -113,6 +148,7 @@ function ExpertsPage() {
           agent_spec: spec,
           sample_tasks: sampleTasks,
           showcase,
+          ...profile,
         });
       } else if (editing) {
         await adminExpertsApi.update(editing.id, {
@@ -122,6 +158,7 @@ function ExpertsPage() {
           agent_spec: spec,
           sample_tasks: sampleTasks,
           showcase,
+          ...profile,
         });
       }
       message.success(t("admin.experts.saved", "Expert saved"));
@@ -165,85 +202,176 @@ function ExpertsPage() {
     }
   };
 
+  const visible = useMemo(() => {
+    const kw = keyword.trim().toLowerCase();
+    return experts.filter((e) => {
+      if (filter !== "all" && e.status !== filter) return false;
+      if (!kw) return true;
+      return (
+        e.name.toLowerCase().includes(kw)
+        || (e.title ?? "").toLowerCase().includes(kw)
+        || (e.description ?? "").toLowerCase().includes(kw)
+      );
+    });
+  }, [experts, filter, keyword]);
+
+  const publishedCount = experts.filter((e) => e.status === "published").length;
+  const draftCount = experts.filter((e) => e.status === "draft").length;
+
+  const cardMenu = (expert: ExpertRecord) => (
+    <Dropdown
+      menu={{
+        items: [
+          { key: "edit", label: t("common.edit", "Edit") },
+          ...(expert.status !== "archived"
+            ? [{ key: "publish", label: t("admin.experts.publish", "Publish") }]
+            : []),
+          ...(expert.status === "published"
+            ? [{ key: "archive", label: t("admin.experts.archive", "Archive") }]
+            : []),
+          ...(expert.status === "draft"
+            ? [{ key: "delete", label: t("common.delete", "Delete"), danger: true }]
+            : []),
+        ],
+        onClick: ({ key }) => {
+          if (key === "edit") openEditor(expert);
+          else if (key === "publish") void handlePublish(expert);
+          else if (key === "archive") void handleArchive(expert);
+          else if (key === "delete") {
+            void handleDelete(expert);
+          }
+        },
+      }}
+    >
+      <Button type="text" size="small">
+        ···
+      </Button>
+    </Dropdown>
+  );
+
   return (
-    <div className={styles.page}>
+    <div className="sd-page">
       <PageHeader
         parent={t("nav.admin", "Administration")}
         current={t("nav.adminExperts", "Experts")}
-        extra={
-          <Button type="primary" onClick={() => openEditor("new")}>
-            {t("admin.experts.create", "New expert")}
-          </Button>
-        }
-      />
-      <Table<ExpertRecord>
-        rowKey="id"
-        loading={loading}
-        dataSource={experts}
-        pagination={false}
-        columns={[
-          { title: t("admin.experts.name", "Name"), dataIndex: "name" },
-          {
-            title: t("admin.experts.description", "Description"),
-            dataIndex: "description",
-            render: (v: string) => v || "—",
-          },
-          {
-            title: t("admin.experts.status", "Status"),
-            dataIndex: "status",
-            width: 110,
-            render: (status: string) => (
-              <Tag color={STATUS_COLOR[status]}>{status}</Tag>
-            ),
-          },
-          {
-            title: "v",
-            dataIndex: "version",
-            width: 60,
-          },
-          {
-            title: t("admin.experts.actions", "Actions"),
-            key: "actions",
-            width: 280,
-            render: (_, expert) => (
-              <Space>
-                <Button size="small" onClick={() => openEditor(expert)}>
-                  {t("common.edit", "Edit")}
-                </Button>
-                {expert.status !== "archived" && (
-                  <Button
-                    size="small"
-                    type="primary"
-                    ghost
-                    onClick={() => handlePublish(expert)}
-                  >
-                    {t("admin.experts.publish", "Publish")}
-                  </Button>
-                )}
-                {expert.status === "published" && (
-                  <Button size="small" onClick={() => handleArchive(expert)}>
-                    {t("admin.experts.archive", "Archive")}
-                  </Button>
-                )}
-                {expert.status === "draft" && (
-                  <Popconfirm
-                    title={t(
-                      "admin.experts.deleteConfirm",
-                      "Delete this draft?",
-                    )}
-                    onConfirm={() => handleDelete(expert)}
-                  >
-                    <Button size="small" danger>
-                      {t("common.delete", "Delete")}
-                    </Button>
-                  </Popconfirm>
-                )}
-              </Space>
-            ),
-          },
-        ]}
       />
 
+      {/* 统计卡行 */}
+      <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+        <StatCard
+          value={experts.length}
+          label={t("staffdeck.experts.total", "员工总数")}
+          onClick={() => setFilter("all")}
+        />
+        <StatCard
+          value={publishedCount}
+          label={t("staffdeck.experts.published", "在线员工")}
+          tone="green"
+          onClick={() => setFilter("published")}
+        />
+        <StatCard
+          value={draftCount}
+          label={t("staffdeck.experts.draft", "草稿员工")}
+          onClick={() => setFilter("draft")}
+        />
+        <StatCard
+          value="+"
+          label={t("staffdeck.experts.create", "创建新员工")}
+          sublabel={t("staffdeck.experts.createHint", "几步搭好你的数字员工")}
+          onClick={() => openEditor("new")}
+        />
+      </div>
+
+      {/* 筛选行：状态 Tabs + 搜索 */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          margin: "28px 0 20px",
+          flexWrap: "wrap",
+          gap: 12,
+        }}
+      >
+        <UnderlineTabs
+          items={[
+            { key: "all", label: t("staffdeck.experts.tabAll", "全部员工"), count: experts.length },
+            { key: "published", label: t("staffdeck.experts.tabOnline", "在线员工"), count: publishedCount },
+            { key: "draft", label: t("staffdeck.experts.tabDraft", "草稿"), count: draftCount },
+            {
+              key: "archived",
+              label: t("staffdeck.experts.tabArchived", "已归档"),
+              count: experts.filter((e) => e.status === "archived").length,
+            },
+          ]}
+          value={filter}
+          onChange={(key) => setFilter(key as StatusFilter)}
+        />
+        <Input.Search
+          allowClear
+          placeholder={t("staffdeck.experts.search", "搜索员工…")}
+          onChange={(e) => setKeyword(e.target.value)}
+          style={{ maxWidth: 320 }}
+        />
+      </div>
+
+      {/* 员工卡片网格 */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))",
+          gap: 24,
+        }}
+      >
+        {visible.map((expert) => {
+          const c = counts[expert.id] ?? {
+            resources: 0,
+            skills: 0,
+            sops: 0,
+            scheduled_tasks: 0,
+          };
+          return (
+            <EmployeeCard
+              key={expert.id}
+              expert={{
+                id: expert.id,
+                name: expert.name,
+                title: expert.title,
+                description: expert.description,
+                status: expert.status,
+                department: expert.department,
+                work_styles: expert.work_styles,
+                work_modes: expert.work_modes,
+                badge: expert.badge,
+              }}
+              counts={{
+                resources: c.resources,
+                skills: c.skills,
+                sops: c.sops,
+                scheduledTasks: c.scheduled_tasks,
+              }}
+              onClick={() => navigate(`/admin/experts/${expert.id}`)}
+              extraMenu={cardMenu(expert)}
+            />
+          );
+        })}
+        {visible.length === 0 && !loading ? (
+          <div
+            className="sd-card"
+            style={{
+              gridColumn: "1 / -1",
+              padding: "48px 0",
+              textAlign: "center",
+              color: "var(--sd-text-3)",
+              borderStyle: "dashed",
+            }}
+          >
+            {t("staffdeck.experts.empty", "暂无员工，点击右上角「创建新员工」开始")}
+          </div>
+        ) : null}
+      </div>
+
+      {/* 新建/编辑弹窗（保留既有 CRUD + 档案字段） */}
       <Modal
         title={
           editing === "new"
@@ -264,8 +392,53 @@ function ExpertsPage() {
           >
             <Input />
           </Form.Item>
-          <Form.Item name="icon" label={t("admin.experts.icon", "Icon")}>
-            <Input placeholder="🧑‍💼" />
+          <Space size="middle" style={{ display: "flex" }}>
+            <Form.Item name="icon" label={t("admin.experts.icon", "Icon")}>
+              <Input placeholder="🧑‍💼" style={{ width: 120 }} />
+            </Form.Item>
+            <Form.Item
+              name="title"
+              label={t("staffdeck.experts.jobTitle", "职称")}
+            >
+              <Input
+                placeholder={t(
+                  "staffdeck.experts.jobTitlePlaceholder",
+                  "如：高级客户经理",
+                )}
+                style={{ width: 220 }}
+              />
+            </Form.Item>
+          </Space>
+          <Space size="middle" style={{ display: "flex" }}>
+            <Form.Item
+              name="department"
+              label={t("staffdeck.experts.department", "部门")}
+            >
+              <Input style={{ width: 160 }} />
+            </Form.Item>
+            <Form.Item
+              name="work_styles_text"
+              label={t("staffdeck.experts.workStyles", "工作风格（逗号分隔）")}
+            >
+              <Input
+                placeholder={t(
+                  "staffdeck.experts.workStylesPlaceholder",
+                  "耐心细致，结果导向",
+                )}
+                style={{ width: 260 }}
+              />
+            </Form.Item>
+          </Space>
+          <Form.Item
+            name="work_modes_text"
+            label={t("staffdeck.experts.workModes", "工作方式（逗号分隔）")}
+          >
+            <Input
+              placeholder={t(
+                "staffdeck.experts.workModesPlaceholder",
+                "7x24 值守，定时巡检",
+              )}
+            />
           </Form.Item>
           <Form.Item
             name="description"

@@ -14,6 +14,7 @@ Two layers, mirroring the enterprise-experts suite conventions:
 
 @author qingfeng
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -159,9 +160,7 @@ def test_dag_validation_rejects_cycle_and_unknown_dep():
         )
     # 未知依赖 → 拒绝
     with pytest.raises(ValueError):
-        validate_dag(
-            plan([{"node_key": "a", "deps": ["ghost"], "node_type": "task"}])
-        )
+        validate_dag(plan([{"node_key": "a", "deps": ["ghost"], "node_type": "task"}]))
     # 重复 node_key → 拒绝
     with pytest.raises(ValueError):
         validate_dag(
@@ -257,9 +256,7 @@ def test_intent_rule_classification():
     # 多交付物 → complex
     assert classify_by_rules("帮我写一个方案和一份架构设计").intent == INTENT_COMPLEX
     # 跨专业协作 → complex
-    assert (
-        classify_by_rules("需要前端和后端配合完成").intent == INTENT_COMPLEX
-    )
+    assert classify_by_rules("需要前端和后端配合完成").intent == INTENT_COMPLEX
     # 编排动词 → complex
     assert classify_by_rules("请把这个需求拆解分工").intent == INTENT_COMPLEX
     # 简单问题：无规则信号 → None（交由 LLM 兜底；自动升级关闭时
@@ -435,9 +432,7 @@ async def test_plan_run_fast_chain_validated_like_standard():
         "final-summary",
     ]
     # 同一团队复杂需求 → 走标准链
-    outcome = await plan_run(
-        "帮我写一个方案和一份架构设计", team, members, bundle
-    )
+    outcome = await plan_run("帮我写一个方案和一份架构设计", team, members, bundle)
     assert not outcome.error
     assert outcome.source == "orchestration"
 
@@ -517,9 +512,7 @@ async def test_run_store_lifecycle_and_event_bus(enterprise_env, run_store):
     topic = run_topic(tid, run["id"])
     subscription = get_event_bus().subscribe(topic)
     events: list[dict] = []
-    collector = asyncio.create_task(
-        _drain_subscription(subscription, events)
-    )
+    collector = asyncio.create_task(_drain_subscription(subscription, events))
     await asyncio.sleep(0)
     # 物化 plan → 节点行生成
     await run_store.save_plan(run["id"], _two_node_plan(lead.id, member.id))
@@ -528,9 +521,7 @@ async def test_run_store_lifecycle_and_event_bus(enterprise_env, run_store):
     assert all(n["status"] == NODE_STATUS_PENDING for n in nodes)
     # 状态流转 + 节点更新 + repair 计数
     await run_store.set_run_status(run["id"], RUN_STATUS_RUNNING)
-    await run_store.update_node(
-        run["id"], "task-1", status="done", token_cost=42
-    )
+    await run_store.update_node(run["id"], "task-1", status="done", token_cost=42)
     await run_store.add_repair_count(run["id"])
     got = await run_store.get_run(run["id"])
     assert got["status"] == "running"
@@ -569,15 +560,21 @@ def _patch_llm_seams(monkeypatch, plan, delegate_impl=None, verify_impl=None):
     from qwenpaw.app.workforce import engine as engine_mod
     from qwenpaw.app.workforce.planner import PlanOutcome
 
-    async def fake_plan_run(goal, team, members, bundle, member_skills=None, team_lessons=None):
+    async def fake_plan_run(
+        goal, team, members, bundle, member_skills=None, team_lessons=None
+    ):
         return PlanOutcome(plan=plan, source="orchestration")
 
-    async def fake_delegate(expert_id, contract, repair=None, session_id=None, timeout=None):
+    async def fake_delegate(
+        expert_id, contract, repair=None, session_id=None, timeout=None
+    ):
         if delegate_impl is not None:
             return delegate_impl(expert_id, contract, repair)
         return _ok_result(f"{expert_id} 完成"), session_id or "sess_1"
 
-    async def fake_verify(lead_id, contract, result, policy, repair_count=0, previous_repair=None):
+    async def fake_verify(
+        lead_id, contract, result, policy, repair_count=0, previous_repair=None
+    ):
         if verify_impl is not None:
             return verify_impl(lead_id, contract, result, repair_count)
         from qwenpaw.app.workforce.contracts import VERDICT_PASS
@@ -634,6 +631,7 @@ async def test_engine_repair_then_escalate(enterprise_env, run_store, monkeypatc
     team, lead, member = await _seed_team()
     policy = RunPolicy(max_repair_per_node=1, max_total_tokens=0)
     plan = _two_node_plan(lead.id, member.id)
+
     # 永远 FAIL：第一次给返工契约（repair_count 0→1），第二次 FAIL 推高
     # 引擎侧计数超限熔断（repair_count 1→2 > max_repair_per_node → EscalateSignal）
     def always_fail(lead_id, contract, result, repair_count):
@@ -650,9 +648,7 @@ async def test_engine_repair_then_escalate(enterprise_env, run_store, monkeypatc
             ),
         )
 
-    _patch_llm_seams(
-        monkeypatch, plan, verify_impl=always_fail
-    )
+    _patch_llm_seams(monkeypatch, plan, verify_impl=always_fail)
     run = await run_store.create_run(
         team_id=team.id,
         goal="设计登录页",
@@ -730,7 +726,9 @@ async def test_engine_canceled_mid_run(enterprise_env, run_store, monkeypatch):
     # 委派内阻塞 → 主测试协程 cancel_run 传播取消
     delegate_started = asyncio.Event()
 
-    async def slow_delegate(expert_id, contract, repair=None, session_id=None, timeout=None):
+    async def slow_delegate(
+        expert_id, contract, repair=None, session_id=None, timeout=None
+    ):
         delegate_started.set()
         await asyncio.sleep(30)
         return _ok_result(), session_id or "sess"
@@ -778,7 +776,9 @@ async def test_engine_interrupted_resume(enterprise_env, run_store, monkeypatch)
     assert "最终汇总产出" in (final["summary"] or "")
 
 
-async def test_interrupted_resume_recovers_midflight_node(enterprise_env, run_store, monkeypatch):
+async def test_interrupted_resume_recovers_midflight_node(
+    enterprise_env, run_store, monkeypatch
+):
     """崩溃时节点卡在 delegated（无 result）：续跑后必须被重新执行并 done，
     不得静默跳过导致 run 带缺失产出收敛。"""
     from qwenpaw.app.workforce import engine as engine_mod
@@ -789,7 +789,9 @@ async def test_interrupted_resume_recovers_midflight_node(enterprise_env, run_st
     await run_store.save_plan(run["id"], _two_node_plan(lead.id, member.id))
     # 模拟崩溃现场：task-1 委派中断（delegated、无结果），final 未开始
     await run_store.update_node(
-        run["id"], "task-1", status="delegated",
+        run["id"],
+        "task-1",
+        status="delegated",
         contract={"task_id": "task-1", "objective": "产出方案"},
     )
     await run_store.set_run_status(run["id"], "running")
@@ -804,9 +806,7 @@ async def test_interrupted_resume_recovers_midflight_node(enterprise_env, run_st
 
 async def test_mark_interrupted_runs_scan(enterprise_env, run_store):
     team, lead, member = await _seed_team()
-    run = await run_store.create_run(
-        team_id=team.id, goal="G", initiator_id="alice"
-    )
+    run = await run_store.create_run(team_id=team.id, goal="G", initiator_id="alice")
     await run_store.set_run_status(run["id"], "running")
     done_run = await run_store.create_run(
         team_id=team.id, goal="G2", initiator_id="alice"
@@ -962,9 +962,7 @@ async def test_final_node_is_verified(enterprise_env, run_store, monkeypatch):
         _two_node_plan(lead.id, member.id),
         verify_impl=counting_verify,
     )
-    run = await run_store.create_run(
-        team_id=team.id, goal="G", initiator_id="alice"
-    )
+    run = await run_store.create_run(team_id=team.id, goal="G", initiator_id="alice")
     await engine_mod.run_team_run(run["id"])
     final = await run_store.get_run(run["id"])
     assert final["status"] == "done"
@@ -992,9 +990,7 @@ async def test_needs_review_result_escalates(enterprise_env, run_store, monkeypa
         _two_node_plan(lead.id, member.id),
         delegate_impl=degraded_delegate,
     )
-    run = await run_store.create_run(
-        team_id=team.id, goal="G", initiator_id="alice"
-    )
+    run = await run_store.create_run(team_id=team.id, goal="G", initiator_id="alice")
     # EscalateSignal 经 _guarded_run 收敛为 escalated 终态
     task = engine_mod.start_run_background(run["id"])
     await task
@@ -1029,15 +1025,11 @@ async def test_mark_interrupted_ignores_awaiting_confirm_and_covers_all_tenants(
     count = await run_store.mark_interrupted_runs()
     assert count >= 1
     # 澄清挂起保持原状（awaiting_confirm 不在可中断集合内）
-    assert (
-        await run_store.get_run(clarify_run["id"])
-    )["status"] == "awaiting_confirm"
+    assert (await run_store.get_run(clarify_run["id"]))["status"] == "awaiting_confirm"
     # 跨租户执行中 run 被标记 interrupted（修复"只扫 default 租户"缺陷）
     set_current_org_id("org_b")
     try:
-        assert (
-            await run_store.get_run(org_run["id"])
-        )["status"] == "interrupted"
+        assert (await run_store.get_run(org_run["id"]))["status"] == "interrupted"
     finally:
         set_current_org_id(None)
 
@@ -1118,7 +1110,9 @@ def _fail_kind_verdict(contract, kind: str) -> "Verdict":  # noqa: F821
     )
 
 
-async def test_replan_flow_on_dependency_changed(enterprise_env, run_store, monkeypatch):
+async def test_replan_flow_on_dependency_changed(
+    enterprise_env, run_store, monkeypatch
+):
     """dependency_changed 归因 → 清图重规划全链路：replan_count 计数、
     教训写入全局决策（版本 bump）、新 plan 执行到 done。"""
     from qwenpaw.app.workforce import engine as engine_mod
@@ -1132,7 +1126,9 @@ async def test_replan_flow_on_dependency_changed(enterprise_env, run_store, monk
     # 规划序列：首轮 plan1，Re-plan 重入后 plan2（新 DAG 补缺口）
     plan_calls = {"n": 0}
 
-    async def seq_plan_run(goal, team_, members_, bundle, member_skills=None, team_lessons=None):
+    async def seq_plan_run(
+        goal, team_, members_, bundle, member_skills=None, team_lessons=None
+    ):
         plan_calls["n"] += 1
         return PlanOutcome(
             plan=plan1 if plan_calls["n"] == 1 else plan2,
@@ -1154,9 +1150,7 @@ async def test_replan_flow_on_dependency_changed(enterprise_env, run_store, monk
 
     _patch_llm_seams(monkeypatch, plan1, verify_impl=seq_verify)
     monkeypatch.setattr(engine_mod, "plan_run", seq_plan_run)
-    run = await run_store.create_run(
-        team_id=team.id, goal="G", initiator_id="alice"
-    )
+    run = await run_store.create_run(team_id=team.id, goal="G", initiator_id="alice")
     await engine_mod.run_team_run(run["id"])
     final = await run_store.get_run(run["id"])
     # Re-plan 一次后收敛 done
@@ -1181,12 +1175,15 @@ async def test_structural_failure_fast_fails(enterprise_env, run_store, monkeypa
     team, lead, member = await _seed_team()
 
     def structural_delegate(expert_id, contract, repair):
-        return ResultContract(
-            task_id=contract.task_id,
-            status=RESULT_STATUS_FAILED,
-            result_text="无法完成",
-            issues=["我没有查询数据库的工具，无法完成任务"],
-        ), "sess_s1"
+        return (
+            ResultContract(
+                task_id=contract.task_id,
+                status=RESULT_STATUS_FAILED,
+                result_text="无法完成",
+                issues=["我没有查询数据库的工具，无法完成任务"],
+            ),
+            "sess_s1",
+        )
 
     _patch_llm_seams(
         monkeypatch,
@@ -1196,9 +1193,7 @@ async def test_structural_failure_fast_fails(enterprise_env, run_store, monkeypa
     # 换回真实 verifier：structural 判定发生在其规则预检（LLM 之前的
     # 零成本路径），self-report FAILED 直接带归因返回，不触达 LLM 接缝
     monkeypatch.setattr(engine_mod, "verify", verifier_mod.verify)
-    run = await run_store.create_run(
-        team_id=team.id, goal="G", initiator_id="alice"
-    )
+    run = await run_store.create_run(team_id=team.id, goal="G", initiator_id="alice")
     task = engine_mod.start_run_background(run["id"])
     await task
     final = await run_store.get_run(run["id"])
@@ -1231,9 +1226,7 @@ async def test_delegate_transient_error_marks_interrupted_then_resume(
         _two_node_plan(lead.id, member.id),
         delegate_impl=flaky_delegate,
     )
-    run = await run_store.create_run(
-        team_id=team.id, goal="G", initiator_id="alice"
-    )
+    run = await run_store.create_run(team_id=team.id, goal="G", initiator_id="alice")
     task = engine_mod.start_run_background(run["id"])
     await task
     interrupted = await run_store.get_run(run["id"])
@@ -1260,9 +1253,7 @@ async def test_replan_budget_escalates(enterprise_env, run_store, monkeypatch):
     def always_dependency_changed(lead_id, contract, result, repair_count):
         return _fail_kind_verdict(contract, FAILURE_KIND_DEPENDENCY_CHANGED)
 
-    _patch_llm_seams(
-        monkeypatch, plan, verify_impl=always_dependency_changed
-    )
+    _patch_llm_seams(monkeypatch, plan, verify_impl=always_dependency_changed)
     run = await run_store.create_run(
         team_id=team.id,
         goal="G",
@@ -1382,9 +1373,7 @@ def test_planning_prompt_capability_profile_and_knowledge():
     lead = ExpertRecord(
         id="exp_lead",
         name="技术专家",
-        agent_spec={
-            "tools": {"builtin_tools": {"file_editor": {"enabled": True}}}
-        },
+        agent_spec={"tools": {"builtin_tools": {"file_editor": {"enabled": True}}}},
     )
     member = ExpertRecord(id="exp_fe", name="前端专家", title="资深前端")
     team = ExpertTeamRecord(
@@ -1505,8 +1494,9 @@ async def test_knowledge_injection_into_planning_context(
 
     team, lead, member = await _seed_team()
     _patch_llm_seams(monkeypatch, _two_node_plan(lead.id, member.id))
+
     # 检索接缝打桩（真实 KB 文件级检索已在 kb 套件覆盖；此处验证接线）
-    async def fake_knowledge(goal, username):
+    async def fake_knowledge(goal, username, extra_kb_ids=None):
         return [{"kb": "规范库", "text": "登录页需支持多租户"}]
 
     monkeypatch.setattr(engine_mod, "_retrieve_knowledge", fake_knowledge)
@@ -1545,7 +1535,9 @@ async def test_cancel_awaits_terminal_and_resets_active_nodes(
     # 委派内阻塞 → 主测试协程 cancel_run 传播取消
     delegate_started = asyncio.Event()
 
-    async def slow_delegate(expert_id, contract, repair=None, session_id=None, timeout=None):
+    async def slow_delegate(
+        expert_id, contract, repair=None, session_id=None, timeout=None
+    ):
         delegate_started.set()
         await asyncio.sleep(30)
         return _ok_result(), session_id or "sess"
@@ -1568,7 +1560,9 @@ async def test_cancel_awaits_terminal_and_resets_active_nodes(
     await asyncio.wait_for(task, timeout=5)
 
 
-async def test_abort_preserves_escalation_reason(enterprise_env, run_store, monkeypatch):
+async def test_abort_preserves_escalation_reason(
+    enterprise_env, run_store, monkeypatch
+):
     """abort 裁决后 escalation_reason 必须保留（与自然失败可区分，
     审计线索不丢）。"""
     from qwenpaw.app.routers.xian.workforce import (
@@ -1660,7 +1654,9 @@ async def test_run_claim_blocks_duplicate_start(enterprise_env):
 # ---------------------------------------------------------------------------
 
 
-async def test_team_lessons_feedback_into_planning(enterprise_env, run_store, monkeypatch):
+async def test_team_lessons_feedback_into_planning(
+    enterprise_env, run_store, monkeypatch
+):
     """Memory Protocol 闭环：团队 escalated 归因 → 后续任务规划 prompt
     自动注入历史教训（同一团队第二次任务规避同类踩坑）。"""
     from qwenpaw.app.workforce import engine as engine_mod
@@ -1700,9 +1696,7 @@ async def test_team_lessons_feedback_into_planning(enterprise_env, run_store, mo
     task = engine_mod.start_run_background(failed_run["id"])
     await task
     assert (await run_store.get_run(failed_run["id"]))["status"] == "escalated"
-    lesson_reason = (await run_store.get_run(failed_run["id"])).get(
-        "escalation_reason"
-    )
+    lesson_reason = (await run_store.get_run(failed_run["id"])).get("escalation_reason")
     assert lesson_reason
 
     # 教训存储：同团队查询命中、去重有界
@@ -1713,7 +1707,9 @@ async def test_team_lessons_feedback_into_planning(enterprise_env, run_store, mo
     _patch_llm_seams(monkeypatch, plan)  # 恢复默认 PASS 桩
     captured: dict = {}
 
-    async def spy_plan_run(goal, team_, members_, bundle, member_skills=None, team_lessons=None):
+    async def spy_plan_run(
+        goal, team_, members_, bundle, member_skills=None, team_lessons=None
+    ):
         captured["team_lessons"] = team_lessons
         return PlanOutcome(plan=plan, source="orchestration")
 

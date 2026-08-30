@@ -155,3 +155,6 @@ docs/reviews/
 # Qoder IDE session plan caches (rules under .qoder/rules stay tracked)
 .qoder/plans/
 .mimosa
+
+# StaffDeck 参考项目（仅本地设计参考，不入库）
+/StaffDeck/

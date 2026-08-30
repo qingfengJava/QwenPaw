@@ -17,6 +17,7 @@ Team publishing ensures every member expert is published first, then
 materializes the supervisor agent whose prompt embeds the member
 roster (see ``team_runtime``).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -152,9 +153,7 @@ def _sync_workspace_skills(
 
     skills_dir = get_workspace_skills_dir(workspace_dir)
     skills_dir.mkdir(parents=True, exist_ok=True)
-    existing = {
-        child.name for child in skills_dir.iterdir() if child.is_dir()
-    }
+    existing = {child.name for child in skills_dir.iterdir() if child.is_dir()}
     wanted = set(desired)
 
     for stale in sorted(existing - wanted):
@@ -224,22 +223,87 @@ _PROFILE_TEMPLATE = """# {name}
 {skill_list}
 
 > 技能位于工作区 ``skills/`` 目录，运行时按需渐进加载；使用技能能力前先阅读其 SKILL.md 说明。
+{capability_sections}
+"""
+
+_SOP_SECTION_TEMPLATE = """
+## 绑定 SOP（经验路径参考，非硬性状态机）
+
+任务命中下列流程时优先按其步骤推进；可自主选择更优实现路径，
+但产出需覆盖各步骤的验收要点。
+
+{sop_list}
+"""
+
+_KB_SECTION_TEMPLATE = """
+## 绑定知识库
+
+回答涉及下列知识库的问题时优先检索引用，并给出来源：
+{kb_list}
+"""
+
+_TOOL_SECTION_TEMPLATE = """
+## 已挂载工具
+
+以下工具已对本员工开放，按需选用：
+{tool_list}
 """
 
 
-def _expert_profile_md(record, skill_names: List[str]) -> str:
-    """Render the expert persona card materialized as PROFILE.md."""
+def _capability_sections(caps: Optional[dict]) -> str:
+    """Render the mounted-capability sections of PROFILE.md (P1 收尾).
+
+    ``caps`` 为 capability snapshot（sops/kb_ids/tools，可能为空）：
+    - SOP：目标 + 步骤验收要点（每 SOP 最多 8 步，紧凑渲染）；
+    - 知识库/工具：清单级引用（运行时检索与工具可用性由平台面保证）。
+    空快照返回空串（PROFILE.md 保持原形态）。
+    """
+    if not caps:
+        return ""
+    sections = ""
+    sops = caps.get("sops") or []
+    if sops:
+        lines = []
+        for sop in sops:
+            goal = str(sop.get("goal") or "").strip()
+            head = f"- **《{sop.get('name')}》**{('：' + goal) if goal else ''}"
+            lines.append(head)
+            for index, step in enumerate(sop.get("steps") or [], start=1):
+                title = str(step.get("t") or "").strip()
+                outcome = str(step.get("ok") or "").strip()
+                line = f"  {index}. {title}" if title else f"  {index}."
+                if outcome:
+                    line += f"（验收：{outcome}）"
+                lines.append(line)
+        sections += _SOP_SECTION_TEMPLATE.format(sop_list="\n".join(lines))
+    kb_ids = caps.get("kb_ids") or []
+    if kb_ids:
+        kb_list = "\n".join(f"- `{kb_id}`" for kb_id in kb_ids)
+        sections += _KB_SECTION_TEMPLATE.format(kb_list=kb_list)
+    tools = caps.get("tools") or []
+    if tools:
+        tool_list = "\n".join(f"- `{name}`" for name in tools)
+        sections += _TOOL_SECTION_TEMPLATE.format(tool_list=tool_list)
+    return sections
+
+
+def _expert_profile_md(
+    record,
+    skill_names: List[str],
+    caps: Optional[dict] = None,
+) -> str:
+    """Render the expert persona card materialized as PROFILE.md.
+
+    ``caps``（能力挂载快照）非空时追加绑定 SOP/知识库/工具段
+    （20260830 P1 收尾：直聊会话经 PROFILE.md 系统提示词生效）。
+    """
     persona = (record.system_prompt or "").strip()
     if not persona:
         persona = (
             f"你是「{record.name}」，一位专业的 {(record.title or '领域').strip()}。"
             f"{record.description or ''}"
         ).strip()
-    title_line = (
-        f"**职称**：{record.title}"
-        if record.title
-        else "**职称**：领域专家"
-    )
+    title_line = f"**职称**：{record.title}" if record.title else "**职称**：领域专家"
     if record.description:
         title_line += f"  \n**简介**：{record.description}"
     if skill_names:
@@ -251,6 +315,7 @@ def _expert_profile_md(record, skill_names: List[str]) -> str:
         title_line=title_line,
         persona=persona,
         skill_list=skill_list,
+        capability_sections=_capability_sections(caps),
     )
 
 
@@ -308,6 +373,22 @@ async def publish_expert(
     # field and silently drops unknown keys) — they live in the
     # workspace ``skills/`` directory the runtime auto-discovers.
     skill_names = await store.enabled_skill_names(expert_id)
+    # 能力挂载快照（绑定 SOP/知识/工具）随 PROFILE.md 物化——直聊
+    # 会话经系统提示词生效（P1 收尾）；快照失败降级为 None（原形态）
+    caps: Optional[dict] = None
+    try:
+        from .capability import get_capability_store
+
+        snapshot = await get_capability_store().member_capability_snapshot(
+            [expert_id],
+        )
+        caps = snapshot.get(expert_id)
+    except Exception:  # pylint: disable=broad-except
+        logger.warning(
+            "expert %s capability snapshot failed; PROFILE.md w/o caps",
+            expert_id,
+            exc_info=True,
+        )
 
     spec = _build_expert_spec(record, agent_id, workspace_dir)
 
@@ -323,7 +404,7 @@ async def publish_expert(
         # The persona card is refreshed on every publish (mirrors the
         # team SOUL.md policy below).
         (workspace_dir / "PROFILE.md").write_text(
-            _expert_profile_md(record, skill_names),
+            _expert_profile_md(record, skill_names, caps=caps),
             encoding="utf-8",
         )
 
@@ -340,6 +421,19 @@ async def publish_expert(
         EXPERT_STATUS_PUBLISHED,
         bump_version=True,
     )
+
+    # 发布即物化员工分桶记忆到 workspace memory/（D4 注入通道；
+    # best-effort：失败不阻断发布，下次记忆变更会重建）
+    try:
+        from .memories import materialize_expert_memory
+
+        await materialize_expert_memory(expert_id)
+    except Exception:  # pylint: disable=broad-except
+        logger.warning(
+            "expert %s published but memory materialization failed",
+            expert_id,
+            exc_info=True,
+        )
 
     if manager is not None:
         try:
@@ -358,6 +452,43 @@ async def publish_expert(
         record.version,
     )
     return updated or record
+
+
+async def materialize_expert_profile(expert_id: str) -> Optional[Path]:
+    """Re-materialize PROFILE.md for a published expert (binding changes).
+
+    P1 收尾：能力挂载（SOP/知识/工具）变更后调用——直聊会话经
+    PROFILE.md 系统提示词感知新绑定，无需整体重发布。best-effort：
+    专家不存在/未发布（无 workspace）时静默返回 None。
+    """
+    store = get_expert_store()
+    record = await store.get_expert(expert_id)
+    if record is None or record.status != EXPERT_STATUS_PUBLISHED:
+        return None
+    workspace_dir = _expert_workspace_dir(expert_id)
+    if not workspace_dir.is_dir():
+        return None
+    skill_names = await store.enabled_skill_names(expert_id)
+    caps: Optional[dict] = None
+    try:
+        from .capability import get_capability_store
+
+        snapshot = await get_capability_store().member_capability_snapshot(
+            [expert_id],
+        )
+        caps = snapshot.get(expert_id)
+    except Exception:  # pylint: disable=broad-except
+        logger.warning(
+            "expert %s capability snapshot failed; PROFILE.md w/o caps",
+            expert_id,
+            exc_info=True,
+        )
+    profile_path = workspace_dir / "PROFILE.md"
+    profile_path.write_text(
+        _expert_profile_md(record, skill_names, caps=caps),
+        encoding="utf-8",
+    )
+    return profile_path
 
 
 async def archive_expert(
@@ -405,8 +536,7 @@ async def publish_expert_team(
     # Resolve member metadata once for the supervisor prompt (five-step:
     # one batched list query instead of per-member lookups).
     published = {
-        e.id: e
-        for e in await store.list_experts(status=EXPERT_STATUS_PUBLISHED)
+        e.id: e for e in await store.list_experts(status=EXPERT_STATUS_PUBLISHED)
     }
 
     agent_id = expert_team_agent_id(team_id)
@@ -416,9 +546,7 @@ async def publish_expert_team(
         workspace_dir=str(workspace_dir),
         team=team,
         members=[
-            published[m.expert_id]
-            for m in team.members
-            if m.expert_id in published
+            published[m.expert_id] for m in team.members if m.expert_id in published
         ],
     )
 
@@ -443,9 +571,7 @@ async def publish_expert_team(
         try:
             await manager.reload_agent(agent_id)
         except Exception:  # pylint: disable=broad-except
-            logger.warning(
-                "team %s published but hot-reload failed", agent_id
-            )
+            logger.warning("team %s published but hot-reload failed", agent_id)
     logger.info("Expert team %s published by %s", team_id, published_by)
     return updated or team
 

@@ -55,6 +55,7 @@ import { isDesktopTauriRuntime } from "./utils/openExternalLink";
 import { interceptBlankLinkClicks } from "./utils/interceptBlankLinkClicks";
 import "./styles/layout.css";
 import "./styles/form-override.css";
+import "./styles/staffdeck-tokens.css";
 
 const antdLocaleMap: Record<string, Locale> = {
   zh: zhCN,
@@ -267,7 +268,32 @@ function AppInner() {
             ? antdTheme.darkAlgorithm
             : antdTheme.defaultAlgorithm,
           token: {
-            colorPrimary: "#FF7F16",
+            // StaffDeck 设计语言（docs/design/2026-08-30-…md §七）：
+            // 墨色主按钮 + 链接蓝 + 冷白布局底 + 控件圆角 10
+            colorPrimary: "#18181a",
+            colorLink: "#1a71ff",
+            colorInfo: "#1a71ff",
+            colorBgLayout: "#fcfcfc",
+            colorBgContainer: "#ffffff",
+            borderRadius: 10,
+          },
+          components: {
+            Menu: {
+              // 侧栏菜单：白底 + 浅灰选中 + 墨色文字（去橙色/米色高亮）
+              itemBg: "#ffffff",
+              subMenuItemBg: "#ffffff",
+              popupBg: "#ffffff",
+              itemSelectedBg: "#f6f6f6",
+              itemSelectedColor: "#18181a",
+              itemHoverBg: "#f6f6f6",
+              itemHoverColor: "#18181a",
+              activeBarBorderWidth: 0,
+            },
+            Tabs: {
+              itemSelectedColor: "#18181a",
+              itemColor: "#757f9c",
+              inkBarColor: "#18181a",
+            },
           },
         }}
       >

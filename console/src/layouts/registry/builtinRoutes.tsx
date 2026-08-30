@@ -78,6 +78,12 @@ const AdminOrganizationPage = lazyImportWithRetry(
 const AdminExpertsPage = lazyImportWithRetry(
   "../../pages/Admin/Experts.tsx",
 );
+const AdminExpertDetailPage = lazyImportWithRetry(
+  "../../pages/Admin/ExpertDetail.tsx",
+);
+const AdminPendingPage = lazyImportWithRetry(
+  "../../pages/Admin/Pending.tsx",
+);
 const AdminExpertTeamsPage = lazyImportWithRetry(
   "../../pages/Admin/ExpertTeams.tsx",
 );
@@ -204,6 +210,16 @@ export const BUILTIN_ROUTES: Route[] = [
     id: "core.admin-experts",
     path: "/admin/experts",
     component: withRequireAdmin(AdminExpertsPage),
+  },
+  {
+    id: "core.admin-expert-detail",
+    path: "/admin/experts/:expertId",
+    component: withRequireAdmin(AdminExpertDetailPage),
+  },
+  {
+    id: "core.admin-pending",
+    path: "/admin/pending",
+    component: withRequireAdmin(AdminPendingPage),
   },
   {
     id: "core.admin-expert-teams",

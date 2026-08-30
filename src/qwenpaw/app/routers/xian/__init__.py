@@ -11,6 +11,7 @@ from fastapi import APIRouter
 from .automations import router as xian_automations_router
 from .bindings import router as xian_bindings_router
 from .directory import router as xian_directory_router
+from .expert_capability import router as xian_expert_capability_router
 from .experts import router as xian_experts_router
 from .feed import router as xian_feed_router
 from .files import router as xian_files_router
@@ -26,6 +27,7 @@ router.include_router(xian_projects_router)
 router.include_router(xian_tasks_router)
 router.include_router(xian_feed_router)
 router.include_router(xian_experts_router)
+router.include_router(xian_expert_capability_router)
 router.include_router(xian_directory_router)
 router.include_router(xian_resources_router)
 router.include_router(xian_bindings_router)

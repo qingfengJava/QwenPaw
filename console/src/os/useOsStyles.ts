@@ -7,12 +7,12 @@
  * theme (ThemeContext.isDark), so switching the theme restyles the whole
  * shell. Wallpaper-layer pieces (desktop icons, watermark, boot splash)
  * stay constant — they sit on the user-chosen wallpaper, not on a themed
- * surface. Single brand-orange accent (#FF7F16).
+ * surface. Single brand-orange accent (#18181a).
  */
 import { createStyles } from "antd-style";
 import { useTheme } from "../contexts/ThemeContext";
 
-export const ACCENT = "#FF7F16";
+export const ACCENT = "#18181a";
 /** Legacy bottom-bar height, kept for existing imports. */
 export const TASKBAR_H = 56;
 /** macOS-style top menu bar height. */

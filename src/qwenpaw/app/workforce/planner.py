@@ -16,6 +16,7 @@ TaskContract.available_skills（Skill=能力 / Tool=动作 严格分离）。
 
 @author qingfeng
 """
+
 from __future__ import annotations
 
 import json
@@ -80,9 +81,7 @@ def _expert_tool_names(expert: Optional[ExpertRecord]) -> List[str]:
     if expert is None:
         return []
     # 读取 spec 内启用中的内置工具名（字典序稳定输出）
-    builtin = ((expert.agent_spec or {}).get("tools") or {}).get(
-        "builtin_tools"
-    ) or {}
+    builtin = ((expert.agent_spec or {}).get("tools") or {}).get("builtin_tools") or {}
     return sorted(
         name
         for name, cfg in builtin.items()
@@ -102,6 +101,9 @@ def build_task_contract(
     - ``global_context`` 携带版本化快照（含 context_version）；
     - ``upstream_summaries`` 仅投影本节点 deps 声明的上游摘要；
     - ``available_skills`` 来自 expert_skills 绑定（能力发现）；
+    - ``available_tools`` = agent_spec 内置工具 ∪ 能力挂载绑定工具；
+    - ``sop_refs`` 来自能力挂载绑定的已发布 SOP（经验路径参考），
+      其节点验收要点并入 quality_criteria → Verifier rubric 自动覆盖；
     - final/integration 节点（expert 为空）由中央大脑自执行。
     """
     # 全局快照注入版本号（子员工可见其依据的事实版本）
@@ -112,18 +114,37 @@ def build_task_contract(
     for dep in node.deps:
         summary = bundle.execution_ctx.get(dep)
         if summary:
-            dependencies[dep] = f"{summary.get('label', dep)}（状态 {summary.get('status')}）"
+            dependencies[dep] = (
+                f"{summary.get('label', dep)}（状态 {summary.get('status')}）"
+            )
         else:
             dependencies[dep] = "上游节点"
     # 能力发现：成员技能绑定（expert_skills 权威）
     skills: List[str] = []
     if expert and member_skills:
         skills = list(member_skills.get(expert.id, []))
+    # 能力挂载（20260830 P1）：绑定工具并入工具清单；绑定 SOP 注入
+    # sop_refs 且其验收要点并入验收标准（每 SOP 最多 4 步、总计 8 条封顶）
+    mounted_tools: List[str] = []
+    sop_refs: List[Dict[str, Any]] = []
+    if expert is not None:
+        caps = (bundle.global_ctx.get("member_caps") or {}).get(expert.id) or {}
+        mounted_tools = [str(t) for t in caps.get("tools", []) if str(t).strip()]
+        sop_refs = list(caps.get("sops", []))
     # 默认验收标准（DAG 节点未显式给出时）
     criteria = [
         "产出完整覆盖期望交付物",
         "与既定决策和上游产出一致",
     ]
+    for sop in sop_refs[:2]:
+        for step in (sop.get("steps") or [])[:4]:
+            outcome = str(step.get("ok") or "").strip()
+            title = str(step.get("t") or "").strip()
+            if outcome:
+                criteria.append(
+                    f"覆盖流程《{sop.get('name')}》步骤「{title}」：{outcome}",
+                )
+    criteria = criteria[:8]
     # 组装契约（objective 缺省时按节点类型给兜底文案）
     objective = node.objective or f"完成节点 {node.node_key} 的任务"
     return TaskContract(
@@ -136,9 +157,11 @@ def build_task_contract(
         constraints=["遵守全局背景中的既定决策，不得自行偏离"],
         quality_criteria=criteria,
         available_skills=skills,
-        # 工具清单接真：来自成员 agent_spec 的启用工具映射（Skill=能力
+        # 工具清单接真：agent_spec 启用映射 ∪ 能力挂载绑定（Skill=能力
         # / Tool=动作 严格分离；空表渲染时自动省略该段）
-        available_tools=_expert_tool_names(expert),
+        available_tools=sorted(set(_expert_tool_names(expert)) | set(mounted_tools)),
+        # 绑定 SOP 参考（经验路径，非硬状态机；空表渲染自动省略）
+        sop_refs=sop_refs,
         upstream_summaries=bundle_mod.upstream_summaries(bundle, node),
     )
 
@@ -153,7 +176,10 @@ def _validate_plan_members(
     """
     for node in plan.nodes:
         # 中央大脑自执行节点跳过成员校验
-        if node.node_type in (NODE_TYPE_FINAL, NODE_TYPE_INTEGRATION) and not node.assignee_expert_id:
+        if (
+            node.node_type in (NODE_TYPE_FINAL, NODE_TYPE_INTEGRATION)
+            and not node.assignee_expert_id
+        ):
             continue
         # task/repair 节点必须指派给真实成员
         if node.assignee_expert_id and node.assignee_expert_id not in member_ids:
@@ -251,7 +277,9 @@ def _render_planning_prompt(
     lines.append(goal)
     # 组织记忆：历史熔断教训（Memory Protocol 的规划期回灌）
     if team_lessons:
-        lines.append("\n## 该团队历史教训（此前任务的熔断归因，规划时必须规避同类问题）")
+        lines.append(
+            "\n## 该团队历史教训（此前任务的熔断归因，规划时必须规避同类问题）"
+        )
         for lesson in team_lessons:
             lines.append(f"- {lesson}")
     if bundle.task_ctx.get("clarifications"):
@@ -281,13 +309,19 @@ def _render_planning_prompt(
             if digest:
                 lines.append(digest)
     # 团队成员花名册（id 必须原样引用，禁止虚构；附能力档案）
-    lines.append("\n## 可委派的团队成员（assignee_expert_id 必须取自下表 id，按能力档案指派）")
+    lines.append(
+        "\n## 可委派的团队成员（assignee_expert_id 必须取自下表 id，按能力档案指派）"
+    )
     for expert in members:
         binding = next(
             (m for m in team.members if m.expert_id == expert.id),
             None,
         )
-        role = "主理人" if binding and binding.member_role == TEAM_MEMBER_ROLE_LEAD else "成员"
+        role = (
+            "主理人"
+            if binding and binding.member_role == TEAM_MEMBER_ROLE_LEAD
+            else "成员"
+        )
         title = f" · {expert.title}" if expert.title else ""
         lines.append(
             f"- id: `{expert.id}`　名称: {expert.name}{title}（{role}）"
@@ -308,15 +342,21 @@ def _render_planning_prompt(
     lines.append("```json")
     lines.append("{")
     lines.append('  "need_clarification": false,')
-    lines.append('  "questions": ["仅当 need_clarification 为 true 时填写，向用户确认的问题"],')
+    lines.append(
+        '  "questions": ["仅当 need_clarification 为 true 时填写，向用户确认的问题"],'
+    )
     lines.append('  "options": {"问题一": ["候选答案A", "候选答案B"]},')
     lines.append('  "nodes": [')
-    lines.append('    {"node_key": "英文短标识", "deps": ["上游node_key"], "assignee_expert_id": "成员id", "node_type": "task", "objective": "该节点目标", "expected_output": ["交付物"]}')
+    lines.append(
+        '    {"node_key": "英文短标识", "deps": ["上游node_key"], "assignee_expert_id": "成员id", "node_type": "task", "objective": "该节点目标", "expected_output": ["交付物"]}'
+    )
     lines.append("  ],")
     lines.append('  "plan_note": "拆解思路（展示给用户）"')
     lines.append("}")
     lines.append("```")
-    lines.append("\n规划约束：无依赖的节点会被并行执行；最后一个汇总节点可用 node_type=\"final\" 且不填 assignee（由你执行）。")
+    lines.append(
+        '\n规划约束：无依赖的节点会被并行执行；最后一个汇总节点可用 node_type="final" 且不填 assignee（由你执行）。'
+    )
     # 重试时附带上一轮校验错误（定向修正而非盲重试）
     if retry_error:
         lines.append(f"\n## 上一次规划被驳回的原因（必须修正）\n{retry_error}")
@@ -382,7 +422,9 @@ async def plan_run(
             return PlanOutcome(error=f"orchestration 模板 DAG 非法（{source}）: {exc}")
         member_error = _validate_plan_members(plan, member_ids)
         if member_error:
-            return PlanOutcome(error=f"orchestration 模板错误（{source}）: {member_error}")
+            return PlanOutcome(
+                error=f"orchestration 模板错误（{source}）: {member_error}"
+            )
         # 模板路径同样保证 final 节点存在
         plan = _ensure_final_node(plan)
         return PlanOutcome(plan=plan, source=source)
@@ -418,14 +460,19 @@ async def plan_run(
         outcome = await _llm_plan_once(lead, retry_prompt, member_ids)
         # 重试仍失败 → 报错终止（run 置 failed，用户可改需求后重建）
         if outcome.error and not outcome.clarification:
-            return PlanOutcome(error=f"中央大脑规划两次未通过校验: {outcome.error}", source="llm")
+            return PlanOutcome(
+                error=f"中央大脑规划两次未通过校验: {outcome.error}", source="llm"
+            )
     return outcome
 
 
 def _is_lead(team: ExpertTeamRecord, expert_id: str) -> bool:
     """判断某成员是否为团队主理人（lead）。"""
     for member in team.members:
-        if member.expert_id == expert_id and member.member_role == TEAM_MEMBER_ROLE_LEAD:
+        if (
+            member.expert_id == expert_id
+            and member.member_role == TEAM_MEMBER_ROLE_LEAD
+        ):
             return True
     return False
 
@@ -438,6 +485,7 @@ async def _llm_plan_once(
     """单次 LLM 规划调用（通道异常按 error 返回，不抛出）。"""
     # 延迟导入避免循环依赖（delegator 不依赖 planner）
     from .delegator import call_expert_text
+
     try:
         # 走既有 A2A 通道调 lead 专家（每次规划独立 session，不复用）
         reply, _session = await call_expert_text(

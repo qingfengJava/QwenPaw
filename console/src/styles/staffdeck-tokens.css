@@ -1,0 +1,149 @@
+/**
+ * staffdeck-tokens.css — StaffDeck 设计语言 tokens（20260830 console UI 重构）。
+ *
+ * 依据 docs/design/2026-08-30-digital-employee-capability-layer.md §七：
+ * 冷灰蓝、卡片化、圆角分级、发丝线、克制阴影。所有数字员工相关页面
+ * 从这里取色取形，禁止页面内散落魔法值。
+ */
+
+:root {
+  /* 墨色与辅助文字 */
+  --sd-ink: #18181a;
+  --sd-ink-hover: #303030;
+  --sd-text-2: #757f9c;
+  --sd-text-3: #858b9c;
+  --sd-text-4: #464c5e;
+
+  /* 面与线 */
+  --sd-line: #e3e7f1;
+  --sd-surface: #f6f6f6;
+  --sd-bg: #fcfcfc;
+  --sd-card: #ffffff;
+
+  /* 语义色 */
+  --sd-link: #1a71ff;
+  --sd-green: #2cb360;
+  --sd-green-bg: #e9f7ef;
+  --sd-red: #d20b0b;
+  --sd-red-bg: #fce7e7;
+  --sd-blue-bg: #e8f0ff;
+  --sd-amber: #d97706;
+  --sd-amber-bg: #fdf3e3;
+  --sd-gray-bg: #f2f3f7;
+
+  /* 圆角分级：页面卡 / 区块 / 控件 / 胶囊 */
+  --sd-radius-xl: 20px;
+  --sd-radius-lg: 14px;
+  --sd-radius-md: 10px;
+  --sd-radius-sm: 8px;
+  --sd-radius-pill: 999px;
+
+  /* 阴影（克制：默认无，浮起才出现） */
+  --sd-shadow-hover: 0 16px 30px rgba(0, 0, 0, 0.1);
+  --sd-shadow-pop: 0 0 6px rgba(0, 0, 0, 0.05);
+}
+
+/* ─── 通用工具类 ─────────────────────────────────────────────── */
+
+.sd-page {
+  padding: 32px 48px;
+  background: var(--sd-bg);
+  min-height: 100%;
+}
+
+.sd-card {
+  background: var(--sd-card);
+  border: 0.5px solid var(--sd-line);
+  border-radius: var(--sd-radius-xl);
+}
+
+.sd-hairline {
+  border-color: var(--sd-line);
+}
+
+/* StaffDeck 式主按钮（黑底白字，hover 微亮） */
+.sd-btn-primary {
+  background: var(--sd-ink);
+  color: #fff;
+  border: none;
+  border-radius: var(--sd-radius-md);
+  transition: background 150ms ease;
+}
+
+.sd-btn-primary:hover {
+  background: var(--sd-ink-hover) !important;
+  color: #fff !important;
+}
+
+/* 状态胶囊（表驱动 tone 配 StatusPill 组件使用） */
+.sd-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  border-radius: var(--sd-radius-pill);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.sd-pill-green {
+  background: var(--sd-green-bg);
+  color: var(--sd-green);
+}
+
+.sd-pill-red {
+  background: var(--sd-red-bg);
+  color: var(--sd-red);
+}
+
+.sd-pill-blue {
+  background: var(--sd-blue-bg);
+  color: var(--sd-link);
+}
+
+.sd-pill-amber {
+  background: var(--sd-amber-bg);
+  color: var(--sd-amber);
+}
+
+.sd-pill-gray {
+  background: var(--sd-gray-bg);
+  color: var(--sd-text-3);
+}
+
+.sd-pill-green::before,
+.sd-pill-red::before,
+.sd-pill-gray::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* 无圆点变体（语气标签） */
+.sd-pill.sd-pill-nodot::before {
+  content: none;
+}
+
+/* 统计卡数字（34px 半增大字 + 12px 灰标签） */
+.sd-stat-number {
+  font-size: 30px;
+  font-weight: 600;
+  color: var(--sd-ink);
+  line-height: 38px;
+}
+
+.sd-stat-label {
+  font-size: 12px;
+  color: var(--sd-text-2);
+  line-height: 18px;
+}
+
+/* 员工卡灰色 header 带（头像"探出"面板的承托） */
+.sd-employee-card-band {
+  background: var(--sd-surface);
+  border-radius: 18px;
+  height: 68px;
+}

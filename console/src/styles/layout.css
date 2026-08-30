@@ -4,11 +4,11 @@ body {
   overflow: hidden;
   margin: 0;
   padding: 0;
-  background: #f9f8f4;
+  background: #fcfcfc;
 }
 
 .qwenpaw-layout {
-  background: #f9f8f4;
+  background: #fcfcfc;
 }
 
 /* ─── Dark mode global token overrides ─────────────────────────────────────── */

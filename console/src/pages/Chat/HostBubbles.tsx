@@ -49,6 +49,7 @@ import type {
   ChatRequestData,
   ChatResponseData,
 } from "../../plugins/registry/types";
+import { MessageFeedbackBar } from "./MessageFeedbackBar";
 
 function sortByOrder<T extends { item: { order?: number } }>(arr: T[]): T[] {
   return arr
@@ -196,6 +197,7 @@ function DefaultHostResponseCard({
       })}
       {data.error ? <ResponseError data={data.error} /> : null}
       {contentAppend}
+      <MessageFeedbackBar responseId={data.id} />
       <ResponseActions data={data} isLast={isLast} />
     </>
   );
