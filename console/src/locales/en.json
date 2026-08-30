@@ -132,6 +132,8 @@
     "agentConfig": "Configuration",
     "agents": "Agent Management",
     "settings": "Settings",
+    "dataSecurity": "Data & Security",
+    "advanced": "Advanced",
     "models": "Models",
     "environments": "Environments",
     "offloadPolicy": "Tool Offload",

@@ -103,10 +103,11 @@
     }
   }
 
-  // 设置分组等第二/第三个 Menu：统一白底（覆盖预设残留的米色底）
+  // 设置分组等第二/第三个 Menu：透明底跟随侧栏背景（覆盖 layout.css 的全局米色菜单底，
+  // 亮色/暗色模式下分别露出侧栏的白底/深色底）
   .sideMenu,
-  .sider :global(.qwenpaw-menu-root) {
-    background: #ffffff !important;
+  & :global(.qwenpaw-menu) {
+    background: transparent !important;
   }
   // AgentSelector + Chat container - sticky at top
   .agentSelectorContainer {
@@ -243,7 +244,7 @@
       border-inline-end: 0 !important;
     }
 
-    /* Group title (一级菜单分组) */
+    /* Group title (一级菜单分组，可点击折叠/展开) */
     .qwenpaw-menu-submenu-title {
       font-family: "PingFang SC", sans-serif !important;
       font-size: 12px !important;
@@ -252,24 +253,22 @@
       letter-spacing: normal !important;
       color: rgba(26, 23, 22, 0.25) !important;
       padding-left: 8px !important;
+      cursor: pointer !important;
+      border-radius: 8px !important;
+      transition:
+        background 0.2s,
+        color 0.2s !important;
 
-      /* No hover effect for group titles */
+      /* Hover feedback for collapsible group titles */
       &:hover {
-        background: transparent !important;
-        color: rgba(26, 23, 22, 0.25) !important;
+        background: rgba(0, 0, 0, 0.06) !important;
+        color: rgba(26, 23, 22, 0.55) !important;
       }
     }
 
-    /* Hide submenu arrow */
+    /* Submenu arrow (collapsed/expanded indicator) */
     .qwenpaw-menu-submenu-arrow {
-      display: none !important;
-    }
-
-    /* Always expand submenus */
-    .qwenpaw-menu-submenu {
-      > .qwenpaw-menu {
-        display: block !important;
-      }
+      color: rgba(26, 23, 22, 0.25) !important;
     }
 
     /* Menu item padding - align all items */
@@ -344,15 +343,25 @@
       border-inline-end: 0 !important;
     }
 
-    /* Group title (sub-menu label) */
+    /* Group title (sub-menu label，可点击折叠/展开) */
     .qwenpaw-menu-submenu-title {
       color: rgba(255, 255, 255, 0.45) !important;
+      cursor: pointer !important;
+      border-radius: 8px !important;
+      transition:
+        background 0.2s,
+        color 0.2s !important;
 
-      /* No hover effect for group titles in dark mode */
+      /* Hover feedback for collapsible group titles in dark mode */
       &:hover {
-        background: transparent !important;
-        color: rgba(255, 255, 255, 0.45) !important;
+        background: rgba(255, 255, 255, 0.1) !important;
+        color: rgba(255, 255, 255, 0.75) !important;
       }
+    }
+
+    /* Submenu arrow in dark mode */
+    .qwenpaw-menu-submenu-arrow {
+      color: rgba(255, 255, 255, 0.45) !important;
     }
 
     /* Regular menu item */
@@ -389,6 +398,21 @@
 .logoImg {
   height: 16px;
   width: auto;
+}
+
+.brandText {
+  font-family: "PingFang SC", "Helvetica Neue", sans-serif;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  line-height: 1;
+  color: #1a1716;
+  user-select: none;
+  white-space: nowrap;
+}
+
+:global(.dark-mode) .brandText {
+  color: rgba(255, 255, 255, 0.92);
 }
 
 .logoDivider {

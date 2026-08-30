@@ -132,6 +132,8 @@
     "agentConfig": "运行配置",
     "agents": "智能体管理",
     "settings": "设置",
+    "dataSecurity": "数据与安全",
+    "advanced": "高级",
     "models": "模型",
     "environments": "环境变量",
     "offloadPolicy": "工具后台策略",

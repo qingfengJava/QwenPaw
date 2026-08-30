@@ -14,6 +14,10 @@
   --sd-text-3: #858b9c;
   --sd-text-4: #464c5e;
 
+  /* antd 主按钮文字色：@agentscope-ai/design 的全局按钮样式消费该变量，
+     但 antd cssVar 模式不会注册它，缺失会导致主按钮黑底黑字（主色为墨色时） */
+  --qwenpaw-color-text-on-primary: #ffffff;
+
   /* 面与线 */
   --sd-line: #e3e7f1;
   --sd-surface: #f6f6f6;

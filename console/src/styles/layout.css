@@ -961,10 +961,10 @@ html.dark-mode .qwenpaw-sender-content {
   color: inherit !important;
 }
 
-/* Hide submenu arrow in light mode */
+/* Submenu arrow in light mode (collapsible group indicator) */
 .qwenpaw-menu-submenu-arrow,
 .ant-menu-submenu-arrow {
-  display: none !important;
+  color: rgba(26, 23, 22, 0.25) !important;
 }
 
 /* Group title (一级菜单) in light mode */

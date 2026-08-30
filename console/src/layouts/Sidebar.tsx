@@ -184,6 +184,27 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
     [rawSettingsMenu, sidebarMode],
   );
 
+  // Collapsible groups: start fully expanded; the user can collapse each
+  // group by clicking its title (see handleOpenChange below).
+  const [openKeys, setOpenKeys] = useState<string[]>(() => [
+    ...deriveOpenKeys(rawAgentMenu),
+    ...deriveOpenKeys(rawSettingsMenu),
+  ]);
+
+  // Groups registered later (plugins, async agent capabilities) should also
+  // start expanded; merging only adds missing keys so user-collapsed groups
+  // are left untouched between menu recomputations.
+  useEffect(() => {
+    const defaults = [
+      ...deriveOpenKeys(agentMenu),
+      ...deriveOpenKeys(settingsMenu),
+    ];
+    setOpenKeys((prev) => {
+      const merged = new Set([...prev, ...defaults]);
+      return merged.size === prev.length ? prev : [...merged];
+    });
+  }, [agentMenu, settingsMenu]);
+
   // Flat nav entries for simple mode (icon + label + path)
   const simpleFlatNav = useMemo(() => {
     if (sidebarMode !== "simple") return [];
@@ -378,11 +399,6 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
   const settingsMenuItems = useMemo(
     () => toAntdItems(settingsMenu, { collapsed }),
     [settingsMenu, collapsed],
-  );
-
-  const openKeys = useMemo(
-    () => [...deriveOpenKeys(agentMenu), ...deriveOpenKeys(settingsMenu)],
-    [agentMenu, settingsMenu],
   );
 
   const collapsedNavItems = useMemo(() => {
@@ -682,6 +698,7 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
               mode="inline"
               selectedKeys={[selectedKey]}
               openKeys={openKeys}
+              onOpenChange={(keys) => setOpenKeys(keys as string[])}
               onClick={({ key }) => handleMenuClick(String(key), agentMenu)}
               items={agentMenuItems}
               theme={isDark ? "dark" : "light"}
@@ -694,6 +711,7 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
             mode="inline"
             selectedKeys={[selectedKey]}
             openKeys={openKeys}
+            onOpenChange={(keys) => setOpenKeys(keys as string[])}
             onClick={({ key }) => handleMenuClick(String(key), settingsMenu)}
             items={settingsMenuItems}
             theme={isDark ? "dark" : "light"}
