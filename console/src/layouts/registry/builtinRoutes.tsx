@@ -13,29 +13,18 @@
  * Naming convention mirrors builtinMenu: `core.<key>`.
  */
 import { Suspense } from "react";
-import { Navigate } from "react-router-dom";
-import { Card, Empty } from "antd";
+import { Navigate, useLocation } from "react-router-dom";
 import { lazyImportWithRetry } from "../../utils/lazyWithRetry";
 import { routeRegistry } from "../../plugins/registry/store";
 import { withRequireAdmin } from "../../components/RequireAdmin";
+import { useAgentStore } from "../../stores/agentStore";
+import AgentDetailLayout from "../../pages/Agents/AgentDetailLayout";
 import type { Route } from "../../plugins/registry/types";
 
-// Eager pages
-import Chat from "../../pages/Chat";
-
-// Lazy pages
-const ChannelsPage = lazyImportWithRetry("../../pages/Control/Channels");
-const SessionsPage = lazyImportWithRetry("../../pages/Control/Sessions");
+// Lazy pages (platform-level only — agent-scoped pages are mounted inside
+// AgentDetailLayout's sub-routes; their old top-level URLs are redirects now)
 const InboxPage = lazyImportWithRetry("../../pages/Inbox");
-const CronJobsPage = lazyImportWithRetry("../../pages/Control/CronJobs");
-const HeartbeatPage = lazyImportWithRetry("../../pages/Control/Heartbeat");
-const AgentConfigPage = lazyImportWithRetry("../../pages/Agent/Config");
-const SkillsPage = lazyImportWithRetry("../../pages/Agent/Skills");
 const SkillPoolPage = lazyImportWithRetry("../../pages/Settings/SkillPool");
-const ToolsPage = lazyImportWithRetry("../../pages/Agent/Tools");
-const CheckpointsPage = lazyImportWithRetry("../../pages/Agent/Checkpoints");
-const MCPPage = lazyImportWithRetry("../../pages/Agent/MCP");
-const ACPPage = lazyImportWithRetry("../../pages/Agent/ACP");
 const ModelsPage = lazyImportWithRetry("../../pages/Settings/Models");
 const EnvironmentsPage = lazyImportWithRetry(
   "../../pages/Settings/Environments",
@@ -45,7 +34,6 @@ const OffloadPolicyPage = lazyImportWithRetry(
 );
 const SecurityPage = lazyImportWithRetry("../../pages/Settings/Security");
 const TokenUsagePage = lazyImportWithRetry("../../pages/Settings/TokenUsage");
-const AgentStatsPage = lazyImportWithRetry("../../pages/Settings/AgentStats");
 const VoiceTranscriptionPage = lazyImportWithRetry(
   "../../pages/Settings/VoiceTranscription",
 );
@@ -58,7 +46,6 @@ const PluginManagerPage = lazyImportWithRetry(
   "../../pages/Settings/PluginManager",
 );
 const AppCenterPage = lazyImportWithRetry("../../pages/AppCenter");
-const FilesPage = lazyImportWithRetry("../../pages/Files");
 
 // Admin pages (M5): flat .tsx files, wrapped in the RoleGuard at registration.
 const AdminUsersPage = lazyImportWithRetry("../../pages/Admin/Users.tsx");
@@ -95,10 +82,11 @@ const AdminWorkforceRunsPage = lazyImportWithRetry(
 );
 
 /**
- * "/" always lands on the canonical Chat workspace.
+ * "/" lands on the platform workbench (placeholder routes to the roster
+ * until the workbench page ships in a later platform-IA phase).
  */
 function DefaultRedirect() {
-  return <Navigate to="/chat" replace />;
+  return <Navigate to="/workbench" replace />;
 }
 
 /** Workbench page lands in a later platform-IA phase; park on the roster. */
@@ -106,13 +94,19 @@ function WorkbenchPlaceholder() {
   return <Navigate to="/agents" replace />;
 }
 
-/** Employee detail shell lands in platform-IA phase 3. */
-function AgentDetailPlaceholder() {
-  return (
-    <Card style={{ margin: 24 }}>
-      <Empty description="员工详情页建设中（平台 IA 阶段 3）/ Employee detail page is under construction" />
-    </Card>
-  );
+/**
+ * Old agent-scoped top-level URLs → /agents/:aid/<sub>.
+ * `aid` comes from the remembered selectedAgent so deep links keep working;
+ * the sub-path beyond the first segment (e.g. /chat/<sessionId>) is preserved.
+ */
+function createAgentScopedRedirect(subPath: string) {
+  return function AgentScopedRedirect() {
+    const location = useLocation();
+    const aid = useAgentStore.getState().selectedAgent || "default";
+    const rest = location.pathname.split("/").slice(2).join("/");
+    const target = `/agents/${aid}/${subPath}${rest ? `/${rest}` : ""}${location.search}`;
+    return <Navigate to={target} replace />;
+  };
 }
 
 /** Synonym for /acp. Kept for plugins / external links that reference uppercase. */
@@ -127,25 +121,25 @@ export const BUILTIN_ROUTES: Route[] = [
     path: "/workbench",
     component: WorkbenchPlaceholder,
   },
-  { id: "core.chat", path: "/chat/*", component: Chat },
-  { id: "core.files", path: "/files", component: FilesPage },
-  { id: "core.channels", path: "/channels", component: ChannelsPage },
-  { id: "core.sessions", path: "/sessions", component: SessionsPage },
+  { id: "core.chat", path: "/chat/*", component: createAgentScopedRedirect("chat") },
+  { id: "core.files", path: "/files", component: createAgentScopedRedirect("files") },
+  { id: "core.channels", path: "/channels", component: createAgentScopedRedirect("channels") },
+  { id: "core.sessions", path: "/sessions", component: createAgentScopedRedirect("sessions") },
   { id: "core.inbox", path: "/inbox", component: InboxPage },
-  { id: "core.cron-jobs", path: "/cron-jobs", component: CronJobsPage },
-  { id: "core.heartbeat", path: "/heartbeat", component: HeartbeatPage },
-  { id: "core.skills", path: "/skills", component: SkillsPage },
+  { id: "core.cron-jobs", path: "/cron-jobs", component: createAgentScopedRedirect("cron-jobs") },
+  { id: "core.heartbeat", path: "/heartbeat", component: createAgentScopedRedirect("heartbeat") },
+  { id: "core.skills", path: "/skills", component: createAgentScopedRedirect("skills") },
   { id: "core.skill-pool", path: "/skill-pool", component: SkillPoolPage },
-  { id: "core.tools", path: "/tools", component: ToolsPage },
-  { id: "core.mcp", path: "/mcp", component: MCPPage },
-  { id: "core.acp", path: "/acp", component: ACPPage },
+  { id: "core.tools", path: "/tools", component: createAgentScopedRedirect("tools") },
+  { id: "core.mcp", path: "/mcp", component: createAgentScopedRedirect("mcp") },
+  { id: "core.acp", path: "/acp", component: createAgentScopedRedirect("acp") },
   { id: "core.acp-alias", path: "/ACP", component: ACPRedirect },
-  { id: "core.checkpoints", path: "/checkpoints", component: CheckpointsPage },
+  { id: "core.checkpoints", path: "/checkpoints", component: createAgentScopedRedirect("checkpoints") },
   { id: "core.agents", path: "/agents", component: AgentsPage },
   {
     id: "core.agent-detail",
-    path: "/agents/:aid",
-    component: AgentDetailPlaceholder,
+    path: "/agents/:aid/*",
+    component: AgentDetailLayout,
   },
   { id: "core.models", path: "/models", component: ModelsPage },
   {
@@ -161,11 +155,11 @@ export const BUILTIN_ROUTES: Route[] = [
   {
     id: "core.agent-config",
     path: "/agent-config",
-    component: AgentConfigPage,
+    component: createAgentScopedRedirect("config"),
   },
   { id: "core.security", path: "/security", component: SecurityPage },
   { id: "core.token-usage", path: "/token-usage", component: TokenUsagePage },
-  { id: "core.agent-stats", path: "/agent-stats", component: AgentStatsPage },
+  { id: "core.agent-stats", path: "/agent-stats", component: createAgentScopedRedirect("stats") },
   {
     id: "core.voice-transcription",
     path: "/voice-transcription",

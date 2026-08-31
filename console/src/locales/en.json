@@ -700,7 +700,19 @@
     "saved": "Saved",
     "unsaved": "Unsaved"
   },
-  "agent": {
+  "agentDetail": {
+    "overview": "Overview",
+    "chat": "Chat",
+    "channels": "Channel Bindings",
+    "goChat": "Chat",
+    "switchAgent": "Switch employee",
+    "groupBasic": "General",
+    "groupCapability": "Capabilities",
+    "groupOps": "Operations",
+    "overviewComingSoon": "Overview metrics coming soon"
+  
+},
+"agent": {
     "parent": "Settings",
     "agents": "Agents",
     "management": "Agent Management",
@@ -3001,7 +3013,7 @@
       "skills": {
         "description": "List chat-available skills and expose explicit skill commands"
       },
-      "agents": {
+            "agents": {
         "description": "List agents available to the current runtime"
       },
       "review": {

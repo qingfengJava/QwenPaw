@@ -12,7 +12,7 @@ import {
 } from "antd";
 import type { TourProps } from "antd";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useAppMessage } from "../hooks/useAppMessage";
 import {
@@ -23,18 +23,11 @@ import {
   SparkEmailLine,
   SparkSettingLine,
 } from "@agentscope-ai/icons";
-import SidebarSessionList from "./SidebarSessionList";
 import SidebarSettingsPanel from "./SidebarSettingsPanel";
 import { clearAuthToken } from "../api/config";
 import { authApi } from "../api/modules/auth";
 import api from "../api";
-import {
-  syncSessionsGlobal,
-  type ExtendedSession,
-} from "../stores/sessionListStore";
 import { useSidebarModeStore } from "../stores/sidebarModeStore";
-import { buildChatPath } from "../utils/sessionRoute";
-import sessionApi from "../pages/Chat/sessionApi";
 import { useInboxWobble } from "../hooks/useInboxWobble";
 import styles from "./index.module.less";
 import { useTheme } from "../contexts/ThemeContext";
@@ -115,7 +108,6 @@ interface SidebarProps {
 
 export default function Sidebar({ selectedKey }: SidebarProps) {
   const navigate = useNavigate();
-  const location = useLocation();
   const { t } = useTranslation();
   const { message } = useAppMessage();
   const { isDark } = useTheme();
@@ -301,32 +293,6 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
   }, []);
 
   // ── Pre-fetch sessions on mount ───────────────────────────────────────────
-  // On mobile the sidebar starts collapsed so SidebarSessionList is unmounted
-  // and never fetches.  When the user expands the sidebar the list mounts fresh
-  // but the Zustand store may still be empty (ChatSessionInitializer may not
-  // have synced yet).  Proactively fetch sessions into the store so the data
-  // is ready the moment the user expands.  Fire on mount regardless of
-  // sidebar mode (the default "full" mode also benefits from this).
-  // Uses sessionApi.getSessionList() instead of raw api.listChats() to ensure
-  // the same data processing pipeline (dedup, realId, generating state) as
-  // the desktop ChatSessionDrawer.
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const list = await sessionApi.getSessionList();
-        if (!cancelled && list.length > 0) {
-          syncSessionsGlobal(list as ExtendedSession[]);
-        }
-      } catch {
-        // Best-effort: let SidebarSessionList retry on its own.
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   // ── Inbox badge dot & wobble ─────────────────────────────────────────────
   const hasInboxUnread = hasUnreadMessages || hasPendingApprovals;
   const inboxDotColor = hasPendingApprovals
@@ -438,33 +404,9 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
   };
 
   /**
-   * New chat: if we're already on the chat page, dispatch the event so
-   * ChatSessionInitializer (which is mounted) creates the session.
-   * If we're on another page, navigate to /chat without a session id —
-   * the chat page will auto-create a new session on mount.
-   */
-  const handleNewChat = useCallback(() => {
-    const onChatPage = location.pathname.startsWith("/chat");
-    if (onChatPage) {
-      window.dispatchEvent(new CustomEvent("qwenpaw:sidebar-new-chat"));
-    } else {
-      sessionStorage.setItem("qwenpaw_pending_new_chat", "1");
-      navigate("/chat");
-    }
-  }, [location.pathname, navigate]);
-
-  /**
    * Session click: navigate directly without relying on ChatSessionInitializer.
    * Resolve realId (backend UUID) to avoid exposing local timestamp in URL.
    */
-  const handleSidebarSessionClick = useCallback(
-    (sessionId: string) => {
-      const effectiveId = sessionApi.getEffectiveSessionId(sessionId);
-      const targetPath = buildChatPath(effectiveId);
-      navigate(targetPath);
-    },
-    [navigate],
-  );
 
   const handleUpdateProfile = async (values: {
     currentPassword: string;
@@ -579,7 +521,7 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
         </nav>
       ) : isSimpleExpanded ? (
         <>
-          {/* Simple mode: flat nav items + session list */}
+          {/* Simple mode: flat nav items */}
           <div className={styles.agentScopedSection}>
             {/* Flat nav items (no groups) */}
             <div className={styles.simpleNavItems}>
@@ -638,12 +580,6 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
               })}
             </div>
           </div>
-
-          {/* Session list — fills remaining space */}
-          <SidebarSessionList
-            onNewChat={handleNewChat}
-            onSessionClick={handleSidebarSessionClick}
-          />
         </>
       ) : (
         <>

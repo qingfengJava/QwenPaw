@@ -489,7 +489,19 @@
     "saved": "已保存",
     "unsaved": "未保存"
   },
-  "agent": {
+    "agentDetail": {
+    "overview": "概览",
+    "chat": "对话",
+    "channels": "渠道绑定",
+    "goChat": "去对话",
+    "switchAgent": "切换员工",
+    "groupBasic": "基本",
+    "groupCapability": "能力",
+    "groupOps": "运维",
+    "overviewComingSoon": "概览指标建设中，即将上线"
+  
+},
+"agent": {
     "parent": "设置",
     "agents": "智能体",
     "management": "智能体管理",
@@ -2865,7 +2877,7 @@
       "skills": {
         "description": "列出当前对话可用的技能，并显示可显式调用的技能命令"
       },
-      "agents": {
+            "agents": {
         "description": "列出当前运行时可用的智能体"
       },
       "review": {

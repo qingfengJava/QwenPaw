@@ -1,0 +1,168 @@
+.detailPage {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding: 16px 20px 0;
+  overflow: auto;
+}
+
+.detailHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 12px;
+}
+
+.headerMain {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.agentName {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.pinIcon {
+  color: #f59e0b;
+}
+
+.enabledTag {
+  margin-inline-start: 2px;
+}
+
+.agentDescription {
+  font-size: 13px;
+  color: rgba(0, 0, 0, 0.55);
+  max-width: 720px;
+}
+
+:global([data-theme="dark"]) .agentDescription,
+:global(.dark) .agentDescription {
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.tabBar {
+  display: flex;
+  align-items: stretch;
+  gap: 18px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  padding-bottom: 0;
+  margin-bottom: 14px;
+}
+
+:global([data-theme="dark"]) .tabBar,
+:global(.dark) .tabBar {
+  border-bottom-color: rgba(255, 255, 255, 0.12);
+}
+
+.tabGroup {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 6px;
+}
+
+.tabGroupLabel {
+  font-size: 11px;
+  color: rgba(0, 0, 0, 0.4);
+  white-space: nowrap;
+}
+
+:global([data-theme="dark"]) .tabGroupLabel,
+:global(.dark) .tabGroupLabel {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.tabGroupItems {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-wrap: wrap;
+}
+
+.tabItem {
+  border: none;
+  background: transparent;
+  padding: 5px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: rgba(0, 0, 0, 0.65);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
+
+  &:hover {
+    background: rgba(0, 0, 0, 0.05);
+    color: rgba(0, 0, 0, 0.9);
+  }
+}
+
+:global([data-theme="dark"]) .tabItem,
+:global(.dark) .tabItem {
+  color: rgba(255, 255, 255, 0.65);
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.9);
+  }
+}
+
+.tabItemActive {
+  background: #f6f6f6;
+  color: #18181a;
+  font-weight: 500;
+
+  &:hover {
+    background: #f6f6f6 !important;
+    color: #18181a !important;
+  }
+}
+
+:global([data-theme="dark"]) .tabItemActive,
+:global(.dark) .tabItemActive {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.14) !important;
+    color: #fff !important;
+  }
+}
+
+.detailBody {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding-bottom: 16px;
+}
+
+.overviewPlaceholder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 24px;
+  font-size: 13px;
+  color: rgba(0, 0, 0, 0.45);
+}
+
+.overviewAid {
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.06);
+  font-size: 12px;
+}
