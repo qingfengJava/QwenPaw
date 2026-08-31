@@ -1,102 +1,82 @@
 import { describe, expect, it } from "vitest";
-import type { MenuItem } from "../../plugins/registry/types";
-import { filterMenuForAgentCapabilities } from "./capabilities";
+import { filterTabsForAgentCapabilities } from "./capabilities";
 
-const items: MenuItem[] = [
-  {
-    id: "core.channels",
-    location: "primary.agentScoped",
-    label: "Channels",
-  },
-  {
-    id: "core.agent-group",
-    location: "primary.agentScoped",
-    label: "Workspace",
-    isGroup: true,
-    __children: [
-      {
-        id: "core.workspace",
-        location: "primary.agentScoped",
-        label: "Files",
-      },
-      {
-        id: "core.skills",
-        location: "primary.agentScoped",
-        label: "Skills",
-      },
-      {
-        id: "core.tools",
-        location: "primary.agentScoped",
-        label: "Tools",
-      },
-      {
-        id: "core.mcp",
-        location: "primary.agentScoped",
-        label: "MCP",
-      },
-    ],
-  } as MenuItem,
-  {
-    id: "core.sessions",
-    location: "primary.agentScoped",
-    label: "Sessions",
-  },
-];
-
-function visibleIds(menuItems: MenuItem[]): string[] {
-  return menuItems.flatMap((item) => {
-    const children = (item as MenuItem & { __children?: MenuItem[] })
-      .__children;
-    return [item.id, ...(children ? visibleIds(children) : [])];
-  });
+interface TestTab {
+  key: string;
 }
 
-describe("filterMenuForAgentCapabilities", () => {
-  it("hides native workspace entries without hiding shared controls", () => {
-    const visible = filterMenuForAgentCapabilities(items, {
+const ALL_TABS: TestTab[] = [
+  { key: "overview" },
+  { key: "chat" },
+  { key: "sessions" },
+  { key: "cron-jobs" },
+  { key: "files" },
+  { key: "skills" },
+  { key: "tools" },
+  { key: "mcp" },
+  { key: "acp" },
+  { key: "checkpoints" },
+  { key: "channels" },
+  { key: "config" },
+  { key: "stats" },
+  { key: "heartbeat" },
+];
+
+describe("filterTabsForAgentCapabilities", () => {
+  it("returns tabs unchanged when workspace_ui is not false", () => {
+    expect(
+      filterTabsForAgentCapabilities(ALL_TABS, { workspace_ui: true }),
+    ).toBe(ALL_TABS);
+    expect(filterTabsForAgentCapabilities(ALL_TABS, undefined)).toBe(ALL_TABS);
+  });
+
+  it("hides workspace-only tabs for non-workspace backends", () => {
+    const visible = filterTabsForAgentCapabilities(ALL_TABS, {
       workspace_ui: false,
     });
-
-    expect(visibleIds(visible)).toEqual(["core.channels", "core.sessions"]);
+    const keys = visible.map((tab) => tab.key);
+    for (const hidden of [
+      "files",
+      "acp",
+      "checkpoints",
+      "config",
+      "stats",
+    ]) {
+      expect(keys).not.toContain(hidden);
+    }
+    // 基本/运维类 Tab 始终保留
+    for (const kept of [
+      "overview",
+      "chat",
+      "sessions",
+      "cron-jobs",
+      "channels",
+      "heartbeat",
+    ]) {
+      expect(keys).toContain(kept);
+    }
   });
 
-  it("keeps the complete menu for native agents", () => {
-    expect(filterMenuForAgentCapabilities(items, { workspace_ui: true })).toBe(
-      items,
-    );
-  });
-
-  it("shows projected Skills and MCP without the native workspace", () => {
-    const visible = filterMenuForAgentCapabilities(items, {
+  it("shows projected skills/tools/mcp when capabilities allow", () => {
+    const visible = filterTabsForAgentCapabilities(ALL_TABS, {
       workspace_ui: false,
-      native_skills_ui: false,
-      native_tools_ui: false,
-      native_mcp_ui: false,
       qwenpaw_skills_projection: true,
-      qwenpaw_mcp_projection: true,
+      native_tools_ui: true,
       provider_mcp_discovery: true,
     });
-
-    expect(visibleIds(visible)).toEqual([
-      "core.channels",
-      "core.agent-group",
-      "core.skills",
-      "core.mcp",
-      "core.sessions",
-    ]);
+    const keys = visible.map((tab) => tab.key);
+    expect(keys).toContain("skills");
+    expect(keys).toContain("tools");
+    expect(keys).toContain("mcp");
   });
 
-  it("shows Provider MCP discovery without other workspace panels", () => {
-    const visible = filterMenuForAgentCapabilities(items, {
+  it("hides skills/tools/mcp without any enabling capability", () => {
+    const visible = filterTabsForAgentCapabilities(ALL_TABS, {
       workspace_ui: false,
-      provider_mcp_discovery: true,
     });
-
-    expect(visibleIds(visible)).toEqual([
-      "core.channels",
-      "core.agent-group",
-      "core.mcp",
-      "core.sessions",
-    ]);
+    const keys = visible.map((tab) => tab.key);
+    expect(keys).not.toContain("skills");
+    expect(keys).not.toContain("tools");
+    expect(keys).not.toContain("mcp");
   });
 });

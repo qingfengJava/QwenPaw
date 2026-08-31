@@ -20,7 +20,7 @@ describe("cronJobApi", () => {
     const jobs = [{ id: "job-1", name: "backup" }];
     vi.mocked(request).mockResolvedValue(jobs);
     const result = await cronJobApi.listCronJobs();
-    expect(request).toHaveBeenCalledWith("/cron/jobs");
+    expect(request).toHaveBeenCalledWith("/cron/jobs", {});
     expect(result).toEqual(jobs);
   });
 
