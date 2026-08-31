@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { useParams } from "react-router-dom";
 import {
   Button,
   Card,
@@ -61,6 +62,8 @@ dayjs.extend(timezone);
 
 function CronJobsPage() {
   const { t } = useTranslation();
+  // 详情页内时 :aid 显式指定数据域；旧路径/独立挂载时回退 selectedAgent（借壳）
+  const { aid } = useParams<{ aid: string }>();
   const {
     jobs,
     loading,
@@ -69,7 +72,7 @@ function CronJobsPage() {
     deleteJob,
     toggleEnabled,
     executeNow,
-  } = useCronJobs();
+  } = useCronJobs(aid);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingJob, setEditingJob] = useState<CronJob | null>(null);
   const [saving, setSaving] = useState(false);

@@ -3,8 +3,13 @@ import api from "../../../api";
 import type { ChannelSchema } from "../../../api/modules/channel";
 import { useAgentStore } from "../../../stores/agentStore";
 
-export function useChannels() {
+/**
+ * Channels data hook. `agentId`（可选）显式指定员工时优先（平台页逐员工拉取），
+ * 否则沿用全局 selectedAgent（详情页借壳数据域）。
+ */
+export function useChannels(agentId?: string) {
   const { selectedAgent } = useAgentStore();
+  const effectiveAgent = agentId ?? selectedAgent;
   const [channels, setChannels] = useState<
     Record<string, Record<string, unknown>>
   >({});
@@ -18,7 +23,7 @@ export function useChannels() {
     setLoading(true);
     try {
       const [data, types] = await Promise.all([
-        api.listChannels(),
+        api.listChannels(agentId),
         api.listChannelTypes(),
       ]);
       if (data)
@@ -36,11 +41,11 @@ export function useChannels() {
     } catch {
       // Plugin system may not be available; non-critical
     }
-  }, []);
+  }, [agentId]);
 
   useEffect(() => {
     fetchChannels();
-  }, [fetchChannels, selectedAgent]);
+  }, [fetchChannels, effectiveAgent]);
 
   // Built-in channels come first (in a fixed order), then custom channels
   const builtinOrder = useMemo(

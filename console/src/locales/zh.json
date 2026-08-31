@@ -1418,6 +1418,8 @@
     "clickCardToEdit": "点击卡片进行编辑",
     "settings": "设置",
     "channelSettings": "频道设置",
+    "platformHint": "点击员工卡片进入该员工的渠道绑定管理",
+    "platformEmpty": "该员工尚未启用渠道",
     "channelNames": {
       "console": "控制台",
       "dingtalk": "钉钉",

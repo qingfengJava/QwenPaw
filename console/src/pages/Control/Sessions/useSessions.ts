@@ -7,18 +7,23 @@ import type { Session } from "./components/constants";
 import { useAgentStore } from "../../../stores/agentStore";
 import { useTranslation } from "react-i18next";
 
-export function useSessions() {
+/**
+ * Sessions data hook. `agentId`（可选）显式指定员工时优先，
+ * 否则沿用全局 selectedAgent（详情页借壳数据域）。
+ */
+export function useSessions(agentId?: string) {
   const { t } = useTranslation();
   const [allSessions, setAllSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<"active" | "archived">("active");
   const { selectedAgent } = useAgentStore();
+  const effectiveAgent = agentId ?? selectedAgent;
   const { message } = useAppMessage();
 
   const fetchSessions = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await chatApi.listChats();
+      const data = await chatApi.listChats(undefined, agentId);
       if (data) {
         setAllSessions(data as Session[]);
       }
@@ -27,11 +32,11 @@ export function useSessions() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [agentId]);
 
   useEffect(() => {
     fetchSessions();
-  }, [fetchSessions, selectedAgent]);
+  }, [fetchSessions, effectiveAgent]);
 
   const activeSessions = useMemo(
     () => allSessions.filter((s) => !s.archived),

@@ -182,6 +182,14 @@ def page(browser_context: BrowserContext, request: pytest.FixtureRequest) -> Gen
     page = browser_context.new_page()
     page.set_default_timeout(config.browser.timeout)
 
+    # Pre-dismiss the "Try Desktop Mode" tour (antd Tour in the Sidebar).
+    # Fresh contexts always trigger it on first visit and its overlay
+    # intercepts clicks, breaking every UI test; real users only see it once.
+    page.add_init_script(
+        "try { window.localStorage.setItem("
+        "'qwenpaw.desktop-mode-hint.dismissed', '1'); } catch (e) {}"
+    )
+
     # Inject test name + step counter, used by BasePage.step_shot for auto-archiving
     try:
         page._qwenpaw_test_name = test_name

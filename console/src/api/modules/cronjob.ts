@@ -1,4 +1,4 @@
-import { request } from "../request";
+import { request, type RequestOptions } from "../request";
 import type {
   CronDispatchTargetsResponse,
   CronJobExecutionRecord,
@@ -8,7 +8,12 @@ import type {
 } from "../types";
 
 export const cronJobApi = {
-  listCronJobs: () => request<CronJobSpecOutput[]>("/cron/jobs"),
+  /** 与 listChannels 同模式：显式 agentId 作 X-Agent-Id，未传走借壳通道。 */
+  listCronJobs: (agentId?: string) => {
+    const opts: RequestOptions = {};
+    if (agentId) opts.headers = new Headers({ "X-Agent-Id": agentId });
+    return request<CronJobSpecOutput[]>("/cron/jobs", opts);
+  },
 
   createCronJob: (spec: CronJobSpecInput) =>
     request<CronJobSpecOutput>("/cron/jobs", {

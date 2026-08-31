@@ -27,6 +27,9 @@ const WorkbenchPage = lazyImportWithRetry(
   "../../pages/Workbench/index.tsx",
 );
 const InboxPage = lazyImportWithRetry("../../pages/Inbox");
+const ChannelsPlatformPage = lazyImportWithRetry(
+  "../../pages/Control/Channels/ChannelsPlatformPage.tsx",
+);
 const SkillPoolPage = lazyImportWithRetry("../../pages/Settings/SkillPool");
 const ModelsPage = lazyImportWithRetry("../../pages/Settings/Models");
 const EnvironmentsPage = lazyImportWithRetry(
@@ -118,7 +121,9 @@ export const BUILTIN_ROUTES: Route[] = [
   },
   { id: "core.chat", path: "/chat/*", component: createAgentScopedRedirect("chat") },
   { id: "core.files", path: "/files", component: createAgentScopedRedirect("files") },
-  { id: "core.channels", path: "/channels", component: createAgentScopedRedirect("channels") },
+  // 平台级渠道接入：全量渠道按员工分组聚合（阶段5平台化）。
+  // 旧的 /channels 深链直达平台视图，从卡片再进入具体员工的绑定管理。
+  { id: "core.channels", path: "/channels", component: ChannelsPlatformPage },
   { id: "core.sessions", path: "/sessions", component: createAgentScopedRedirect("sessions") },
   { id: "core.inbox", path: "/inbox", component: InboxPage },
   { id: "core.cron-jobs", path: "/cron-jobs", component: createAgentScopedRedirect("cron-jobs") },

@@ -8,8 +8,13 @@ import { parseErrorDetail } from "../../../utils/error";
 
 type CronJob = CronJobSpecOutput;
 
-export function useCronJobs() {
+/**
+ * Cron jobs data hook. `agentId`（可选）显式指定员工时优先，
+ * 否则沿用全局 selectedAgent（详情页借壳数据域）。
+ */
+export function useCronJobs(agentId?: string) {
   const { selectedAgent } = useAgentStore();
+  const effectiveAgent = agentId ?? selectedAgent;
   const [jobs, setJobs] = useState<CronJob[]>([]);
   const [loading, setLoading] = useState(false);
   const { message } = useAppMessage();
@@ -98,7 +103,7 @@ export function useCronJobs() {
   const fetchJobs = async () => {
     setLoading(true);
     try {
-      const data = await api.listCronJobs();
+      const data = await api.listCronJobs(agentId);
       if (data) {
         setJobs(data as CronJob[]);
       }
@@ -124,7 +129,7 @@ export function useCronJobs() {
     return () => {
       mounted = false;
     };
-  }, [selectedAgent]);
+  }, [effectiveAgent]);
 
   const createJob = async (values: CronJob) => {
     try {

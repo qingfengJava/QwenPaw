@@ -1,4 +1,4 @@
-import { lazy } from "react";
+import { lazy, createElement } from "react";
 import type { ComponentType } from "react";
 import { moduleRegistry } from "../plugins/moduleRegistry";
 
@@ -128,10 +128,25 @@ export function lazyImportWithRetry(
     : base;
   const factory = PAGE_MODULES[globKey];
   if (!factory) {
-    throw new Error(
-      `[lazyImportWithRetry] No glob entry found for "${path}".\n` +
+    // Degrade to an error placeholder instead of throwing: this runs during
+    // route-module evaluation, and a throw here blanks the entire app.
+    // Typical cause: a new page file created while the dev server is running
+    // (its glob map is stale until restart); prod builds never hit this.
+    console.error(
+      `[lazyImportWithRetry] No glob entry found for "${path}". ` +
         `Resolved key: "${globKey}". ` +
-        `Available: ${Object.keys(PAGE_MODULES).join(", ")}`,
+        `Available: ${Object.keys(PAGE_MODULES).length} entries.`,
+    );
+    const MissingPage = () =>
+      createElement(
+        "div",
+        { style: { padding: 32, color: "rgba(0,0,0,0.45)" } },
+        `Module not found: ${path} (dev server may need a restart)`,
+      );
+    return lazy(() =>
+      Promise.resolve({
+        default: MissingPage as unknown as ComponentType<unknown>,
+      }),
     );
   }
   const key = pathToModuleKey(path);

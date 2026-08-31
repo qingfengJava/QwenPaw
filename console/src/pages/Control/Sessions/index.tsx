@@ -1,5 +1,5 @@
 import { useEffect, useState, useDeferredValue } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { Card, Form, Modal, Table, Button, Tabs } from "@agentscope-ai/design";
 import { useAppMessage } from "../../../hooks/useAppMessage";
 import { useTranslation } from "react-i18next";
@@ -19,6 +19,8 @@ import styles from "./index.module.less";
 function SessionsPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  // 详情页内时 :aid 显式指定数据域；旧路径/独立挂载时回退 selectedAgent（借壳）
+  const { aid } = useParams<{ aid: string }>();
   const {
     sessions,
     loading,
@@ -33,7 +35,7 @@ function SessionsPage() {
     setActiveTab,
     activeCount,
     archivedCount,
-  } = useSessions();
+  } = useSessions(aid);
   const [filteredSessions, setFilteredSessions] = useState<Session[]>([]);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingSession, setEditingSession] = useState<Session | null>(null);

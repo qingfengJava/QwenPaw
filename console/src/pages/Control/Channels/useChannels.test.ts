@@ -160,4 +160,28 @@ describe("useChannels", () => {
     expect(result.current.isBuiltin("dingtalk")).toBe(false);
     expect(result.current.isBuiltin("non-existent-key")).toBe(false);
   });
+
+  it("显式 agentId 优先于 selectedAgent 传给 listChannels", async () => {
+    (api.listChannels as ReturnType<typeof vi.fn>).mockResolvedValue({});
+
+    const { result } = renderHook(() => useChannels("agent-explicit"));
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    expect(api.listChannels).toHaveBeenCalledWith("agent-explicit");
+  });
+
+  it("未传 agentId 时沿用全局 selectedAgent（借壳兜底）", async () => {
+    (api.listChannels as ReturnType<typeof vi.fn>).mockResolvedValue({});
+
+    const { result } = renderHook(() => useChannels());
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    expect(api.listChannels).toHaveBeenCalledWith(undefined);
+  });
 });

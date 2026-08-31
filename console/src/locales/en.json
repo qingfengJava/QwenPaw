@@ -1572,6 +1572,8 @@
     "clickCardToEdit": "Click card to edit",
     "settings": "Settings",
     "channelSettings": "Channel Settings",
+    "platformHint": "Click an employee card to manage its channel bindings",
+    "platformEmpty": "No channels enabled for this employee yet",
     "pleaseInputDbPath": "Please input DB path",
     "pleaseInputPollInterval": "Please input poll interval",
     "discordBotToken": "Discord bot token",

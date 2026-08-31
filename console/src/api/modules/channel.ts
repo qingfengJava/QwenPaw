@@ -1,4 +1,4 @@
-import { request } from "../request";
+import { request, type RequestOptions } from "../request";
 import type { ChannelConfig, SingleChannelConfig } from "../types";
 
 /**
@@ -42,7 +42,17 @@ export interface ChannelConflictResponse {
 export const channelApi = {
   listChannelTypes: () => request<string[]>("/config/channels/types"),
 
-  listChannels: () => request<ChannelConfig>("/config/channels"),
+  /**
+   * List channels for one agent. `agentId` is sent as X-Agent-Id
+   * (explicit param wins over the storage-backed default header), so the
+   * platform-level channels page can fan out per-agent queries without
+   * touching the global selectedAgent.
+   */
+  listChannels: (agentId?: string) => {
+    const opts: RequestOptions = {};
+    if (agentId) opts.headers = new Headers({ "X-Agent-Id": agentId });
+    return request<ChannelConfig>("/config/channels", opts);
+  },
 
   listChannelSchemas: () =>
     request<Record<string, ChannelSchema>>("/config/channels/schemas"),
