@@ -185,9 +185,13 @@ def page(browser_context: BrowserContext, request: pytest.FixtureRequest) -> Gen
     # Pre-dismiss the "Try Desktop Mode" tour (antd Tour in the Sidebar).
     # Fresh contexts always trigger it on first visit and its overlay
     # intercepts clicks, breaking every UI test; real users only see it once.
+    # Also pin the UI language to English: i18n.ts reads localStorage
+    # "language" first, and several test assertions expect the English UI
+    # (config.settings declares the system under test as English-only).
     page.add_init_script(
         "try { window.localStorage.setItem("
-        "'qwenpaw.desktop-mode-hint.dismissed', '1'); } catch (e) {}"
+        "'qwenpaw.desktop-mode-hint.dismissed', '1'); "
+        "window.localStorage.setItem('language', 'en'); } catch (e) {}"
     )
 
     # Inject test name + step counter, used by BasePage.step_shot for auto-archiving

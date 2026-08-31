@@ -618,7 +618,8 @@ def ensure_session_data(page: Page):
                 try {
                     const resp = await fetch('/api/console/chat', {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: { 'Content-Type': 'application/json',
+                                   'X-Agent-Id': 'default' },
                         body: JSON.stringify({
                             input: [{
                                 role: 'user',
@@ -662,7 +663,9 @@ def ensure_session_data(page: Page):
         chat_list = page.evaluate(
             """async (targetSessionIds) => {
                 try {
-                    const resp = await fetch('/api/chats');
+                    const resp = await fetch('/api/chats', {
+                        headers: { 'X-Agent-Id': 'default' }
+                    });
                     if (!resp.ok) return { ok: false, status: resp.status };
                     const chats = await resp.json();
                     const matches = chats

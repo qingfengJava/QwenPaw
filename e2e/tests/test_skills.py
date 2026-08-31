@@ -772,18 +772,24 @@ class TestSkillImportFromHub:
         log_test_step("Navigate to skills management page")
         navigate_to_skills(page)
 
-        log_test_step("Find the Hub import button")
-        import_btn = page.locator(
-            'button:has-text("Import"), button:has-text("导入"), '
-            'button:has-text("Hub"), '
-            'button:has(.anticon-import)'
+        log_test_step("Open the Add Skill dropdown")
+        add_btn = page.locator(
+            'button:has-text("Add Skill"), button:has-text("添加技能")'
         ).first
-        assert import_btn.count() > 0, "Hub import button not found"
-        expect(import_btn).to_be_visible(timeout=5000)
-        logger.info("Hub import button exists")
+        assert add_btn.count() > 0, "Add Skill button not found"
+        expect(add_btn).to_be_visible(timeout=5000)
+        add_btn.click()
 
-        log_test_step("Click the Hub import button")
-        import_btn.click()
+        log_test_step("Click the 'Upload via URL' menu item")
+        # Hub import lives inside the Add Skill dropdown since the header
+        # was consolidated (import modal is opened by the menu item).
+        menu_item = page.locator(
+            '[role="menuitem"]:has-text("Upload via URL"), '
+            '[role="menuitem"]:has-text("导入")'
+        ).first
+        # Wait for the dropdown to render instead of counting immediately.
+        expect(menu_item).to_be_visible(timeout=5000)
+        menu_item.click()
         page.wait_for_timeout(1500)
 
         log_test_step("Verify import modal opens")

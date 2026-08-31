@@ -45,8 +45,10 @@ class SessionsPage(BasePage):
 
     # Session table
     SESSION_TABLE = '.ant-table, .qwenpaw-table, table'
-    SESSION_ROW = '.ant-table-tbody tr, .qwenpaw-table-tbody tr, table tbody tr'
-    SESSION_TABLE_ROW = '.ant-table-tbody tr, .qwenpaw-table-tbody tr, table tbody tr'
+    # Data rows only: bare `tbody tr` also matches antd's hidden measure row
+    # and the empty-state placeholder row, inflating empty tables to 2 "rows".
+    SESSION_ROW = 'tbody tr[class*="table-row"]'
+    SESSION_TABLE_ROW = 'tbody tr[class*="table-row"]'
     SESSION_ROW_SELECTED = '.ant-table-tbody tr.ant-table-row-selected, .qwenpaw-table-tbody tr.qwenpaw-table-row-selected'
 
     # Table columns

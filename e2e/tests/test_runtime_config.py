@@ -798,7 +798,7 @@ class TestMemorySummaryConfig:
 
         log_test_step("Switch to the Memory Summary tab")
         memory_tab = page.locator(
-            '[data-node-key="memorySummary"] .qwenpaw-tabs-tab-btn, '
+            '[data-node-key="remeLightMemory"] .qwenpaw-tabs-tab-btn, '
             '.qwenpaw-tabs-tab-btn:has-text("Memory")'
         ).first
         expect(memory_tab).to_be_visible(timeout=5000)
@@ -810,11 +810,12 @@ class TestMemorySummaryConfig:
         active_panel = page.locator('.qwenpaw-tabs-tabpane-active').first
         expect(active_panel).to_be_visible(timeout=5000)
 
-        # Verify the card title
-        card_title = active_panel.locator('.qwenpaw-spark-title').first
+        # Verify the card title (the remelight card uses a plain heading,
+        # not .qwenpaw-spark-title)
+        card_title = active_panel.locator('.qwenpaw-spark-title, h3').first
         expect(card_title).to_be_visible()
         title_text = card_title.inner_text()
-        assert "Memory" in title_text or "Summary" in title_text, \
+        assert "memory" in title_text.lower() or "summary" in title_text.lower(), \
             f"Card title does not contain expected keywords: {title_text}"
         logger.info(f"Card title verified: {title_text}")
 
@@ -837,10 +838,15 @@ class TestMemorySummaryConfig:
 
         log_test_step("Toggle the memory summary switch")
         first_switch = switches[0]
-        original_state = first_switch.get_attribute("aria-checked")
+        # The css-var antd theme's Switch does not expose aria-checked;
+        # detect the on-state via the checked modifier class instead.
+        def _switch_is_on(loc) -> bool:
+            return "checked" in (loc.get_attribute("class") or "")
+
+        original_state = _switch_is_on(first_switch)
         first_switch.click()
         page.wait_for_timeout(1000)
-        new_state = first_switch.get_attribute("aria-checked")
+        new_state = _switch_is_on(first_switch)
         assert original_state != new_state, \
             f"Switch toggle had no effect: before={original_state}, after={new_state}"
         logger.info(f"Switch toggled: {original_state} -> {new_state}")

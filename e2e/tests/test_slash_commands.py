@@ -91,7 +91,9 @@ def _send_slash(chat_page: ChatPage, command: str, timeout: int = 30000) -> str:
 
     inp = page.locator("textarea").first
     assert inp.count() > 0, "chat textarea not found"
-    inp.click()
+    # focus() instead of click(): the rich-input wrapper intercepts pointer
+    # events over the textarea, which stalls Playwright's actionability checks.
+    inp.focus()
     page.wait_for_timeout(200)
     inp.fill("")
     page.wait_for_timeout(150)
@@ -267,7 +269,7 @@ def test_slash_unknown_does_not_crash(clean_chat_page: ChatPage):
     _wait_session_ready(page)
 
     inp = page.locator("textarea").first
-    inp.click()
+    inp.focus()
     inp.fill("/notarealcommand_e2e_probe")
     page.wait_for_timeout(400)
 
@@ -309,7 +311,7 @@ def test_slash_suggestion_popup_renders(clean_chat_page: ChatPage):
     _wait_session_ready(page)
 
     inp = page.locator("textarea").first
-    inp.click()
+    inp.focus()
     inp.fill("/")
     page.wait_for_timeout(600)
 
