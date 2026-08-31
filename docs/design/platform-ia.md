@@ -51,14 +51,16 @@ skills/tools/mcp 按细粒度能力）。
 显式 `agentId` 参数优先于借壳兜底：
 
 ```ts
-useChannels(agentId?)   // api.listChannels(agentId) → X-Agent-Id header
-useSessions(agentId?)   // chatApi.listChats(undefined, agentId)
-useCronJobs(agentId?)   // api.listCronJobs(agentId)
+useChannels(agentId?)    // api.listChannels(agentId) → X-Agent-Id header
+useSessions(agentId?)    // chatApi.listChats(undefined, agentId)
+useCronJobs(agentId?)    // api.listCronJobs(agentId)
+useHeartbeat(agentId?)   // heartbeatApi 读/写/run 均支持显式 agentId
 ```
 
 详情页内组件从 `useParams().aid` 读取并传入；`request()` 层保证调用方显式
 `X-Agent-Id` 优先、Authorization 自动补齐。已参数化：channels / sessions /
-cron-jobs；其余页面沿用借壳通道（过渡态，不阻塞）。
+cron-jobs / heartbeat（heartbeat 为读写一体，save/run 同样显式传 aid）；
+其余页面沿用借壳通道（过渡态，不阻塞）。
 
 ### 3. 旧路径重定向矩阵
 
@@ -94,4 +96,4 @@ cron-jobs；其余页面沿用借壳通道（过渡态，不阻塞）。
   现阶段不做假数据；若聚合需求增多，考虑 `GET /agents/{agentId}/summary`
 - e2e 套件存在与本次重构无关的历史失配（英文断言 vs 中文渲染、UI 演进后的
   选择器漂移），见 `e2e/E2E_COVERAGE_REPORT.md`，待单独任务治理
-- 剩余 hooks（heartbeat 等）按需继续参数化
+- 剩余 hooks 按需继续参数化（channels / sessions / cron-jobs / heartbeat 已完成）

@@ -12,6 +12,7 @@ import { TimePicker } from "antd";
 import dayjs from "dayjs";
 import customParseFormat from "dayjs/plugin/customParseFormat";
 import { useTranslation } from "react-i18next";
+import { useParams } from "react-router-dom";
 import api from "../../../api";
 import { useAgentStore } from "../../../stores/agentStore";
 import type { HeartbeatConfig } from "../../../api/types/heartbeat";
@@ -72,7 +73,10 @@ const EVERY_UNIT_OPTIONS: { value: EveryUnit; labelKey: string }[] = [
 
 function HeartbeatPage() {
   const { t } = useTranslation();
+  // 详情页内时 :aid 显式指定数据域；旧路径/独立挂载时回退 selectedAgent（借壳）
+  const { aid } = useParams<{ aid: string }>();
   const { selectedAgent } = useAgentStore();
+  const effectiveAgent = aid ?? selectedAgent;
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [form] = Form.useForm<HeartbeatFormValues>();
@@ -81,7 +85,7 @@ function HeartbeatPage() {
   const fetchConfig = async () => {
     setLoading(true);
     try {
-      const data = await api.getHeartbeatConfig();
+      const data = await api.getHeartbeatConfig(aid);
       const everyParts = parseEvery(data.every ?? "6h");
       form.setFieldsValue({
         enabled: data.enabled ?? false,
@@ -104,7 +108,7 @@ function HeartbeatPage() {
   useEffect(() => {
     fetchConfig();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedAgent]);
+  }, [effectiveAgent]);
 
   const onFinish = async (values: HeartbeatFormValues) => {
     const every =
@@ -131,7 +135,7 @@ function HeartbeatPage() {
     };
     setSaving(true);
     try {
-      await api.updateHeartbeatConfig(body);
+      await api.updateHeartbeatConfig(body, aid);
       message.success(t("heartbeat.saveSuccess"));
     } catch (e) {
       console.error("Failed to save heartbeat config:", e);
