@@ -511,6 +511,7 @@
     "deleteConfirmDesc": "删除后智能体将不可用，但工作区文件会保留",
     "deleteSuccess": "智能体删除成功",
     "deleteFailed": "智能体删除失败",
+    "openDetail": "进入员工详情",
     "selectAgent": "选择智能体",
     "defaultDisplayName": "默认智能体",
     "currentWorkspace": "当前智能体",

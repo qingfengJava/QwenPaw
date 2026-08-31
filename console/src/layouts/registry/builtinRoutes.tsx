@@ -14,6 +14,7 @@
  */
 import { Suspense } from "react";
 import { Navigate } from "react-router-dom";
+import { Card, Empty } from "antd";
 import { lazyImportWithRetry } from "../../utils/lazyWithRetry";
 import { routeRegistry } from "../../plugins/registry/store";
 import { withRequireAdmin } from "../../components/RequireAdmin";
@@ -48,7 +49,9 @@ const AgentStatsPage = lazyImportWithRetry("../../pages/Settings/AgentStats");
 const VoiceTranscriptionPage = lazyImportWithRetry(
   "../../pages/Settings/VoiceTranscription",
 );
-const AgentsPage = lazyImportWithRetry("../../pages/Settings/Agents");
+const AgentsPage = lazyImportWithRetry(
+  "../../pages/Agents/AgentsGalleryPage.tsx",
+);
 const DebugPage = lazyImportWithRetry("../../pages/Settings/Debug");
 const BackupsPage = lazyImportWithRetry("../../pages/Settings/Backups");
 const PluginManagerPage = lazyImportWithRetry(
@@ -103,6 +106,15 @@ function WorkbenchPlaceholder() {
   return <Navigate to="/agents" replace />;
 }
 
+/** Employee detail shell lands in platform-IA phase 3. */
+function AgentDetailPlaceholder() {
+  return (
+    <Card style={{ margin: 24 }}>
+      <Empty description="员工详情页建设中（平台 IA 阶段 3）/ Employee detail page is under construction" />
+    </Card>
+  );
+}
+
 /** Synonym for /acp. Kept for plugins / external links that reference uppercase. */
 function ACPRedirect() {
   return <Navigate to="/acp" replace />;
@@ -130,6 +142,11 @@ export const BUILTIN_ROUTES: Route[] = [
   { id: "core.acp-alias", path: "/ACP", component: ACPRedirect },
   { id: "core.checkpoints", path: "/checkpoints", component: CheckpointsPage },
   { id: "core.agents", path: "/agents", component: AgentsPage },
+  {
+    id: "core.agent-detail",
+    path: "/agents/:aid",
+    component: AgentDetailPlaceholder,
+  },
   { id: "core.models", path: "/models", component: ModelsPage },
   {
     id: "core.environments",

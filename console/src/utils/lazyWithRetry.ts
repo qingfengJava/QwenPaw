@@ -111,10 +111,16 @@ export function lazyImportWithRetry(
 ): ReturnType<typeof lazy<ComponentType<unknown>>> {
   // Normalise to the glob-map key (relative to src/utils/).
   // Bare-directory paths like "../../pages/Settings/Debug" are tried with
-  // /index.tsx and /index.ts suffixes automatically.
+  // /index.tsx and /index.ts suffixes automatically; extension-less file
+  // paths like "../../pages/Agents/AgentsGalleryPage" are tried with
+  // .tsx and .ts suffixes automatically.
   const base = toGlobKey(path);
   const globKey = PAGE_MODULES[base]
     ? base
+    : PAGE_MODULES[`${base}.tsx`]
+    ? `${base}.tsx`
+    : PAGE_MODULES[`${base}.ts`]
+    ? `${base}.ts`
     : PAGE_MODULES[`${base}/index.tsx`]
     ? `${base}/index.tsx`
     : PAGE_MODULES[`${base}/index.ts`]

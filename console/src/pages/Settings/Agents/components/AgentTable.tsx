@@ -17,6 +17,7 @@ import {
 import {
   EditOutlined,
   DeleteOutlined,
+  RightOutlined,
   RobotOutlined,
   CopyOutlined,
 } from "@ant-design/icons";
@@ -45,6 +46,8 @@ interface AgentTableProps {
   agents: AgentSummary[];
   loading: boolean;
   reordering: boolean;
+  /** 当提供时，名称可点击且操作列首位出现「进入」按钮，跳转员工详情页。 */
+  onOpen?: (agent: AgentSummary) => void;
   onEdit: (agent: AgentSummary) => void;
   onCopy: (agent: AgentSummary) => void;
   onDelete: (agentId: string) => void;
@@ -57,6 +60,7 @@ export function AgentTable({
   agents,
   loading,
   reordering,
+  onOpen,
   onEdit,
   onCopy,
   onDelete,
@@ -142,7 +146,13 @@ export function AgentTable({
               opacity: record.enabled ? 1 : 0.5,
             }}
           />
-          <span style={{ opacity: record.enabled ? 1 : 0.5 }}>
+          <span
+            style={{
+              opacity: record.enabled ? 1 : 0.5,
+              cursor: onOpen ? "pointer" : undefined,
+            }}
+            onClick={onOpen ? () => onOpen(record) : undefined}
+          >
             {getAgentDisplayName(record, t)}
           </span>
           {(record.id === "default" || record.pinned) && (
@@ -260,6 +270,18 @@ export function AgentTable({
 
         return (
           <Space>
+            {onOpen && (
+              <Tooltip title={t("agent.openDetail")}>
+                <Button
+                  type="text"
+                  size="middle"
+                  aria-label={t("agent.openDetail")}
+                  icon={<RightOutlined />}
+                  onClick={() => onOpen(record)}
+                  style={iconStyle}
+                />
+              </Tooltip>
+            )}
             <Tooltip title={pinActionLabel}>
               <Button
                 type="text"

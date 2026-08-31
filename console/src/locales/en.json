@@ -722,6 +722,7 @@
     "deleteConfirmDesc": "Agent will be unavailable after deletion, but workspace files will be kept",
     "deleteSuccess": "Agent deleted successfully",
     "deleteFailed": "Failed to delete agent",
+    "openDetail": "Open employee details",
     "selectAgent": "Select Agent",
     "defaultDisplayName": "Default Agent",
     "currentWorkspace": "Current Agent",
