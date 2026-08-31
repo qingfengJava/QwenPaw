@@ -131,6 +131,8 @@
     "acp": "ACP",
     "agentConfig": "Configuration",
     "agents": "Agent Management",
+    "employees": "Digital Employees",
+    "workbench": "Workbench",
     "settings": "Settings",
     "dataSecurity": "Data & Security",
     "advanced": "Advanced",

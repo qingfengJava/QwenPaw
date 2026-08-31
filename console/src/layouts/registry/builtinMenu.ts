@@ -11,11 +11,10 @@
  *  Item ids:  `core.<key>`        (e.g. core.workspace)
  *  Plugin items use their own prefix (e.g. cloudpaw.a2a) — no clash possible.
  *
- * ── Sticky chat button carve-out ───────────────────────────────────────────
- *  `core.chat` is NOT in this data. The sticky chat button lives outside the
- *  antd <Menu> (rendered next to AgentSelector with bespoke styling); see
- *  Sidebar.tsx. We don't model it as menu data because it has zero antd-Menu
- *  semantics in common with the rest of the sidebar entries.
+ * ── Platform-only sidebar ────────────────────────────────────────────────
+ *  The sidebar carries platform-level entries only. Agent-scoped functions
+ *  (chat, files, skills, tools, mcp, cron, ...) live inside the digital
+ *  employee detail page (`/agents/:aid/*`), not in this data.
  *
  * ── Order convention ───────────────────────────────────────────────────────
  *  Within each group, items use order = 10/20/30/… in their natural sequence
@@ -23,31 +22,22 @@
  */
 import {
   SparkAgentLine,
-  SparkBarChartLine,
   SparkBrowseLine,
   SparkDataLine,
   SparkDateLine,
   SparkDebugLine,
   SparkEmailLine,
   SparkInternetLine,
-  SparkMagicWandLine,
-  SparkMcpMcpLine,
   SparkMicLine,
   SparkModePlazaLine,
-  SparkModifyLine,
   SparkMyApplicationLine,
   SparkOtherLine,
   SparkPluginLine,
   SparkSaveLine,
-  SparkScanLine,
-  SparkToolLine,
-  SparkUserGroupLine,
-  SparkVoiceChat01Line,
   SparkWifiLine,
 } from "@agentscope-ai/icons";
-import { GitBranch } from "lucide-react";
+import { GitBranch, LayoutDashboard } from "lucide-react";
 import i18next from "i18next";
-import { Files } from "lucide-react";
 import {
   BookOpen,
   Bot,
@@ -78,149 +68,68 @@ const navLabel = (key: string, defaultValue?: string) => (): string =>
 const adminOnly = (): boolean => selectIsAdmin(useAuthStore.getState());
 
 export const BUILTIN_MENU: MenuItem[] = [
-  // ── Agent-scoped (Sidebar Menu #1) ───────────────────────────────────────
+  // ── Platform (Sidebar Menu #1) ───────────────────────────────────────
+  {
+    id: "core.workbench",
+    location: "primary.platform",
+    label: navLabel("nav.workbench", "Workbench"),
+    icon: LayoutDashboard,
+    route: "core.workbench",
+    order: 10,
+  },
+
   {
     id: "core.inbox",
-    location: "primary.agentScoped",
+    location: "primary.platform",
     label: navLabel("nav.inbox"),
     icon: SparkEmailLine,
     route: "core.inbox",
-    order: 10,
+    order: 40,
   },
 
   {
     id: "core.app-center",
-    location: "primary.agentScoped",
+    location: "primary.platform",
     label: navLabel("nav.apps", "Apps"),
     icon: SparkMyApplicationLine,
     route: "core.app-center",
-    order: 15,
+    order: 50,
   },
 
-  // control-group
-  {
-    id: "core.control-group",
-    location: "primary.agentScoped",
-    label: navLabel("nav.control"),
-    isGroup: true,
-    order: 20,
-  },
   {
     id: "core.channels",
-    location: "primary.agentScoped",
-    parentId: "core.control-group",
+    location: "primary.platform",
     label: navLabel("nav.channels"),
     icon: SparkWifiLine,
     route: "core.channels",
-    order: 10,
-  },
-  {
-    id: "core.sessions",
-    location: "primary.agentScoped",
-    parentId: "core.control-group",
-    label: navLabel("nav.sessions"),
-    icon: SparkUserGroupLine,
-    route: "core.sessions",
-    order: 20,
-  },
-  {
-    id: "core.cron-jobs",
-    location: "primary.agentScoped",
-    parentId: "core.control-group",
-    label: navLabel("nav.cronJobs"),
-    icon: SparkDateLine,
-    route: "core.cron-jobs",
     order: 30,
-  },
-  {
-    id: "core.heartbeat",
-    location: "primary.agentScoped",
-    parentId: "core.control-group",
-    label: navLabel("nav.heartbeat"),
-    icon: SparkVoiceChat01Line,
-    route: "core.heartbeat",
-    order: 40,
   },
 
-  // workspace-group
   {
-    id: "core.workspace-group",
-    location: "primary.agentScoped",
-    label: navLabel("nav.agent"),
-    isGroup: true,
-    order: 30,
-  },
-  {
-    id: "core.files",
-    location: "primary.agentScoped",
-    parentId: "core.workspace-group",
-    label: navLabel("nav.files"),
-    icon: Files,
-    route: "core.files",
-    order: 5,
-  },
-  {
-    id: "core.skills",
-    location: "primary.agentScoped",
-    parentId: "core.workspace-group",
-    label: navLabel("nav.skills"),
-    icon: SparkMagicWandLine,
-    route: "core.skills",
-    order: 10,
-  },
-  {
-    id: "core.tools",
-    location: "primary.agentScoped",
-    parentId: "core.workspace-group",
-    label: navLabel("nav.tools"),
-    icon: SparkToolLine,
-    route: "core.tools",
+    id: "core.agents",
+    location: "primary.platform",
+    label: navLabel("nav.employees", "Digital Employees"),
+    icon: SparkAgentLine,
+    route: "core.agents",
     order: 20,
   },
+
   {
-    id: "core.mcp",
-    location: "primary.agentScoped",
-    parentId: "core.workspace-group",
-    label: navLabel("nav.mcp"),
-    icon: SparkMcpMcpLine,
-    route: "core.mcp",
-    order: 40,
-  },
-  {
-    id: "core.acp",
-    location: "primary.agentScoped",
-    parentId: "core.workspace-group",
-    label: navLabel("nav.acp"),
-    icon: SparkScanLine,
-    route: "core.acp",
-    order: 50,
-  },
-  {
-    id: "core.agent-config",
-    location: "primary.agentScoped",
-    parentId: "core.workspace-group",
-    label: navLabel("nav.agentConfig"),
-    icon: SparkModifyLine,
-    route: "core.agent-config",
+    id: "core.models",
+    location: "primary.platform",
+    label: navLabel("nav.models"),
+    icon: SparkModePlazaLine,
+    route: "core.models",
     order: 60,
   },
+
   {
-    id: "core.agent-stats",
-    location: "primary.agentScoped",
-    parentId: "core.workspace-group",
-    label: navLabel("nav.agentStats"),
-    icon: SparkBarChartLine,
-    route: "core.agent-stats",
+    id: "core.skill-pool",
+    location: "primary.platform",
+    label: navLabel("nav.skillPool", "Skill Pool"),
+    icon: SparkOtherLine,
+    route: "core.skill-pool",
     order: 70,
-  },
-  {
-    id: "core.checkpoints",
-    location: "primary.agentScoped",
-    parentId: "core.workspace-group",
-    label: navLabel("checkpoints.nav"),
-    icon: GitBranch,
-    route: "core.checkpoints",
-    order: 80,
   },
 
   // ── Settings (Sidebar Menu #2) ───────────────────────────────────────────
@@ -232,31 +141,13 @@ export const BUILTIN_MENU: MenuItem[] = [
     order: 10,
   },
   {
-    id: "core.agents",
+    id: "core.voice-transcription",
     location: "primary.settings",
     parentId: "core.settings-group",
-    label: navLabel("nav.agents"),
-    icon: SparkAgentLine,
-    route: "core.agents",
+    label: navLabel("nav.voiceTranscription"),
+    icon: SparkMicLine,
+    route: "core.voice-transcription",
     order: 10,
-  },
-  {
-    id: "core.models",
-    location: "primary.settings",
-    parentId: "core.settings-group",
-    label: navLabel("nav.models"),
-    icon: SparkModePlazaLine,
-    route: "core.models",
-    order: 20,
-  },
-  {
-    id: "core.skill-pool",
-    location: "primary.settings",
-    parentId: "core.settings-group",
-    label: navLabel("nav.skillPool", "Skill Pool"),
-    icon: SparkOtherLine,
-    route: "core.skill-pool",
-    order: 30,
   },
   // data-group (数据与安全)
   {
@@ -310,15 +201,6 @@ export const BUILTIN_MENU: MenuItem[] = [
     icon: SparkSaveLine,
     route: "core.backups",
     order: 50,
-  },
-  {
-    id: "core.voice-transcription",
-    location: "primary.settings",
-    parentId: "core.settings-group",
-    label: navLabel("nav.voiceTranscription"),
-    icon: SparkMicLine,
-    route: "core.voice-transcription",
-    order: 90,
   },
   // advanced-group (高级)
   {

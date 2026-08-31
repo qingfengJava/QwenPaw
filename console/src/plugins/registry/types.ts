@@ -65,7 +65,8 @@ export function resolveLocalized<T>(
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type MenuLocation =
-  | "primary.agentScoped" // Sidebar Menu #1 (agent-bound entries: inbox, control, agent-group)
+  | "primary.platform" // Sidebar Menu #1 (platform entries: workbench, employees, channels, inbox, apps, models, skill-pool)
+  | "primary.agentScoped" // Legacy agent-scoped bucket (kept for third-party plugins; Sidebar merges it into the platform tail)
   | "primary.settings" //   Sidebar Menu #2 (global settings + plugins-group)
   | "userMenu"; //          Reserved for future avatar-dropdown items
 

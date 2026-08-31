@@ -15,9 +15,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useAppMessage } from "../hooks/useAppMessage";
-import AgentSelector from "../components/AgentSelector";
 import {
-  SparkChatTabFill,
   SparkExitFullscreenLine,
   SparkSearchUserLine,
   SparkMenuExpandLine,
@@ -35,8 +33,7 @@ import {
   type ExtendedSession,
 } from "../stores/sessionListStore";
 import { useSidebarModeStore } from "../stores/sidebarModeStore";
-import { buildChatPath, getSessionIdFromPath } from "../utils/sessionRoute";
-import { useAgentStore } from "../stores/agentStore";
+import { buildChatPath } from "../utils/sessionRoute";
 import sessionApi from "../pages/Chat/sessionApi";
 import { useInboxWobble } from "../hooks/useInboxWobble";
 import styles from "./index.module.less";
@@ -51,8 +48,6 @@ import {
   routeIdToPath,
   toAntdItems,
 } from "./registry/adapter";
-import type { FlatMenuEntry } from "./registry/adapter";
-import { filterMenuForAgentCapabilities } from "./registry/capabilities";
 import type { MenuItem } from "../plugins/registry/types";
 import type { ReactNode } from "react";
 import {
@@ -78,12 +73,13 @@ const INBOX_BADGE_POLLING_MS = 6000;
 
 /** Menu item IDs that remain visible in simple sidebar mode (no groups). */
 const SIMPLE_MODE_WHITELIST = new Set([
-  "core.files",
+  "core.workbench",
+  "core.agents",
+  "core.channels",
   "core.inbox",
   "core.app-center",
-  "core.cron-jobs",
-  "core.agent-config",
   "core.models",
+  "core.skill-pool",
 ]);
 
 /**
@@ -123,8 +119,6 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
   const { t } = useTranslation();
   const { message } = useAppMessage();
   const { isDark } = useTheme();
-  const currentSessionId = getSessionIdFromPath(location.pathname);
-  const chatPath = buildChatPath(currentSessionId);
   const [authEnabled, setAuthEnabled] = useState(false);
   const [accountModalOpen, setAccountModalOpen] = useState(false);
   const [accountLoading, setAccountLoading] = useState(false);
@@ -145,37 +139,35 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
 
   // Sidebar mode: "simple" (only core items) or "full" (everything)
   const { mode: sidebarMode } = useSidebarModeStore();
-  const { selectedAgent, agents } = useAgentStore();
-  const currentAgent = agents.find((agent) => agent.id === selectedAgent);
-  const backendCapabilities = useMemo(
-    () =>
-      currentAgent
-        ? {
-            ...currentAgent.backend_capabilities,
-            workspace_ui:
-              currentAgent.backend === "qwenpaw"
-                ? currentAgent.backend_capabilities?.workspace_ui ?? true
-                : false,
-          }
-        : undefined,
-    [currentAgent],
-  );
 
   // Menu + route snapshots from registry (builtin + plugin registrations merged).
-  const rawAgentMenu = useMenuItems("primary.agentScoped");
+  const rawPlatformMenu = useMenuItems("primary.platform");
+  // Third-party plugins may still register into the legacy agentScoped bucket;
+  // merge them under a trailing group so they remain reachable.
+  const rawLegacyAgentMenu = useMenuItems("primary.agentScoped");
   const rawSettingsMenu = useMenuItems("primary.settings");
   const routes = useRoutes();
 
-  // Apply simple-mode filtering when enabled
+  // Platform menu; simple mode flattens groups via the whitelist.
   const agentMenu = useMemo(() => {
-    const visibleMenu = filterMenuForAgentCapabilities(
-      rawAgentMenu,
-      backendCapabilities,
-    );
-    return sidebarMode === "simple"
-      ? flattenMenuForSimpleMode(visibleMenu)
-      : visibleMenu;
-  }, [backendCapabilities, rawAgentMenu, sidebarMode]);
+    const platformMenu =
+      sidebarMode === "simple"
+        ? flattenMenuForSimpleMode(rawPlatformMenu)
+        : rawPlatformMenu;
+    const legacy = rawLegacyAgentMenu.filter((item) => !item.isGroup);
+    if (legacy.length === 0) return platformMenu;
+    const pluginGroup = {
+      id: "platform.plugins-group",
+      label: () => t("nav.plugins", "Plugins"),
+      isGroup: true,
+      order: 900,
+      __children: legacy.map((item) => ({
+        ...item,
+        parentId: "platform.plugins-group",
+      })),
+    } as MenuItem;
+    return [...platformMenu, pluginGroup];
+  }, [rawPlatformMenu, rawLegacyAgentMenu, sidebarMode, t]);
   const settingsMenu = useMemo(
     () =>
       sidebarMode === "simple"
@@ -187,7 +179,7 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
   // Collapsible groups: start fully expanded; the user can collapse each
   // group by clicking its title (see handleOpenChange below).
   const [openKeys, setOpenKeys] = useState<string[]>(() => [
-    ...deriveOpenKeys(rawAgentMenu),
+    ...deriveOpenKeys(rawPlatformMenu),
     ...deriveOpenKeys(rawSettingsMenu),
   ]);
 
@@ -402,13 +394,6 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
   );
 
   const collapsedNavItems = useMemo(() => {
-    // Sticky chat is its own carve-out (lives outside menu data — see builtinMenu.ts).
-    const stickyChat: FlatMenuEntry = {
-      key: "core.chat",
-      icon: <SparkChatTabFill size={18} />,
-      path: chatPath,
-      label: t("nav.chat"),
-    };
     // Inbox in collapsed mode shows a dot overlay on its icon (kept Sidebar-local
     // for the same reason as decorateLabel: live state isn't menu data).
     const decorateInboxIcon = (icon: ReactNode): ReactNode => (
@@ -430,7 +415,6 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
       </span>
     );
     const flat = [
-      stickyChat,
       ...flattenMenu(agentMenu, routes, 18),
       ...flattenMenu(settingsMenu, routes, 18),
     ];
@@ -439,15 +423,7 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
         ? { ...entry, icon: decorateInboxIcon(entry.icon) }
         : entry,
     );
-  }, [
-    agentMenu,
-    settingsMenu,
-    routes,
-    chatPath,
-    t,
-    hasInboxUnread,
-    inboxDotColor,
-  ]);
+  }, [agentMenu, settingsMenu, routes, hasInboxUnread, inboxDotColor]);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
@@ -546,7 +522,6 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
   // ── Render ────────────────────────────────────────────────────────────────
 
   const siderWidth = collapsed ? (isMobile ? 56 : 72) : 240;
-  const isChatActive = selectedKey === "core.chat";
   // `renderIcon` retained for tree-shaking awareness.
   void renderIcon;
 
@@ -566,10 +541,7 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
       {collapsed ? (
         <nav className={styles.collapsedNav}>
           {collapsedNavItems.map((item) => {
-            const isActive =
-              item.key === "core.chat"
-                ? isChatActive
-                : selectedKey === item.key;
+            const isActive = selectedKey === item.key;
             return (
               <Tooltip
                 key={item.key}
@@ -609,9 +581,6 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
         <>
           {/* Simple mode: flat nav items + session list */}
           <div className={styles.agentScopedSection}>
-            <div className={styles.agentSelectorContainer}>
-              <AgentSelector collapsed={collapsed} />
-            </div>
             {/* Flat nav items (no groups) */}
             <div className={styles.simpleNavItems}>
               {simpleFlatNav.map((entry) => {
@@ -678,21 +647,8 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
         </>
       ) : (
         <>
-          {/* Agent-scoped section: selector + Chat + Control + Workspace */}
+          {/* Platform section */}
           <div className={styles.agentScopedSection}>
-            <div className={styles.agentSelectorContainer}>
-              <AgentSelector collapsed={collapsed} />
-              {/* Chat entry — sticky together with agent selector */}
-              <button
-                className={`${styles.stickyChatButton}${
-                  isChatActive ? ` ${styles.stickyChatButtonActive}` : ""
-                }`}
-                onClick={() => navigate(chatPath)}
-              >
-                <SparkChatTabFill size={16} />
-                <span>{t("nav.chat")}</span>
-              </button>
-            </div>
             <Slot name="sider.top" kind="fill" />
             <Menu
               mode="inline"

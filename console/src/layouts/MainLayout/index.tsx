@@ -16,7 +16,7 @@ const { Content } = Layout;
 
 /**
  * Find the registered route whose path pattern matches the current URL.
- * Falls back to "core.chat" so the sidebar always has a sensible
+ * Falls back to "core.workbench" so the sidebar always has a sensible
  * highlight, mirroring the old `pathToKey` default.
  */
 function pickSelectedKey(
@@ -28,7 +28,7 @@ function pickSelectedKey(
       return r.id;
     }
   }
-  return "core.chat";
+  return "core.workbench";
 }
 
 export default function MainLayout() {

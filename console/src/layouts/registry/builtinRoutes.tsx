@@ -98,6 +98,11 @@ function DefaultRedirect() {
   return <Navigate to="/chat" replace />;
 }
 
+/** Workbench page lands in a later platform-IA phase; park on the roster. */
+function WorkbenchPlaceholder() {
+  return <Navigate to="/agents" replace />;
+}
+
 /** Synonym for /acp. Kept for plugins / external links that reference uppercase. */
 function ACPRedirect() {
   return <Navigate to="/acp" replace />;
@@ -105,6 +110,11 @@ function ACPRedirect() {
 
 export const BUILTIN_ROUTES: Route[] = [
   { id: "core.root", path: "/", component: DefaultRedirect },
+  {
+    id: "core.workbench",
+    path: "/workbench",
+    component: WorkbenchPlaceholder,
+  },
   { id: "core.chat", path: "/chat/*", component: Chat },
   { id: "core.files", path: "/files", component: FilesPage },
   { id: "core.channels", path: "/channels", component: ChannelsPage },
