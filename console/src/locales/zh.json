@@ -489,7 +489,13 @@
     "saved": "已保存",
     "unsaved": "未保存"
   },
-    "agentDetail": {
+  "workbench": {
+    "inboxUnread": "收件箱有未读消息",
+    "inboxClear": "收件箱暂无未读",
+    "quickLinks": "快捷入口",
+    "createHint": "入职一位新的数字员工"
+  },
+  "agentDetail": {
     "overview": "概览",
     "chat": "对话",
     "channels": "渠道绑定",
@@ -499,9 +505,8 @@
     "groupCapability": "能力",
     "groupOps": "运维",
     "overviewComingSoon": "概览指标建设中，即将上线"
-  
-},
-"agent": {
+  },
+  "agent": {
     "parent": "设置",
     "agents": "智能体",
     "management": "智能体管理",

@@ -11,8 +11,13 @@ import {
 import { useTranslation } from "react-i18next";
 import { MessageCircle, ChevronDown, Pin } from "lucide-react";
 import Chat from "@/pages/Chat";
+import AgentOverviewTab from "@/pages/Agents/AgentOverviewTab";
 import { lazyImportWithRetry } from "@/utils/lazyWithRetry";
 import { useAgentStore } from "@/stores/agentStore";
+import {
+  filterTabsForAgentCapabilities,
+  type AgentMenuCapabilities,
+} from "@/layouts/registry/capabilities";
 import { AgentStatusIndicator } from "@/components/AgentStatusIndicator";
 import { getAgentDisplayName } from "@/utils/agentDisplayName";
 import type { AgentSummary } from "@/api/types/agents";
@@ -85,6 +90,31 @@ export default function AgentDetailLayout() {
   const currentAgent = useMemo(
     () => agents.find((agent) => agent.id === aid),
     [agents, aid],
+  );
+
+  // 与旧侧栏规则一致：非 qwenpaw 后端强制无工作区 UI，用于过滤工作区类 Tab。
+  const backendCapabilities = useMemo<AgentMenuCapabilities | undefined>(() => {
+    if (!currentAgent) return undefined;
+    return {
+      ...currentAgent.backend_capabilities,
+      workspace_ui:
+        currentAgent.backend === "qwenpaw"
+          ? currentAgent.backend_capabilities?.workspace_ui ?? true
+          : false,
+    };
+  }, [currentAgent]);
+
+  // Tab 能力过滤：无工作区能力的员工隐藏文件/技能/工具等工作区类 Tab。
+  const visibleTabs = useMemo(
+    () => filterTabsForAgentCapabilities(TABS, backendCapabilities),
+    [backendCapabilities],
+  );
+  const visibleGroups = useMemo(
+    () =>
+      GROUP_LABEL_KEYS.filter(([, labelKey]) =>
+        visibleTabs.some((tab) => tab.group === labelKeyGroup(labelKey)),
+      ),
+    [visibleTabs],
   );
 
   // 借壳同步：URL :aid 是数据域唯一事实来源，单向同步到 selectedAgent。
@@ -184,13 +214,13 @@ export default function AgentDetailLayout() {
       </header>
 
       <nav className={styles.tabBar}>
-        {GROUP_LABEL_KEYS.map(([group, labelKey]) => (
+        {visibleGroups.map(([group, labelKey]) => (
           <div className={styles.tabGroup} key={group}>
             <span className={styles.tabGroupLabel}>
               {t(labelKey)}
             </span>
             <div className={styles.tabGroupItems}>
-              {TABS.filter((tab) => tab.group === group).map((tab) => (
+              {visibleTabs.filter((tab) => tab.group === group).map((tab) => (
                 <button
                   key={tab.key}
                   type="button"
@@ -209,8 +239,8 @@ export default function AgentDetailLayout() {
 
       <div className={styles.detailBody}>
         <Routes>
-          <Route index element={<Navigate to="overview" replace />} />
-          <Route path="overview" element={<AgentOverviewPlaceholder aid={aid} />} />
+          <Route index element={<AgentOverviewTab agent={currentAgent} aid={aid} />} />
+          <Route path="overview" element={<AgentOverviewTab agent={currentAgent} aid={aid} />} />
           <Route path="chat/*" element={<Chat />} />
           <Route path="sessions" element={<SessionsPage />} />
           <Route path="cron-jobs" element={<CronJobsPage />} />
@@ -232,15 +262,9 @@ export default function AgentDetailLayout() {
 }
 
 /**
- * 概览 Tab 占位（阶段 4 升级为指标卡 + 资源统计）。
- * 独立组件便于后续无冲突替换。
+ * labelKey → group 的反查（GROUP_LABEL_KEYS 是 [group, labelKey] 对）。
  */
-function AgentOverviewPlaceholder({ aid }: { aid: string }) {
-  const { t } = useTranslation();
-  return (
-    <div className={styles.overviewPlaceholder}>
-      {t("agentDetail.overviewComingSoon", "Overview metrics coming soon")}
-      <code className={styles.overviewAid}>{aid}</code>
-    </div>
-  );
+function labelKeyGroup(labelKey: string): TabGroup {
+  const hit = GROUP_LABEL_KEYS.find(([, key]) => key === labelKey);
+  return hit ? hit[0] : "basic";
 }

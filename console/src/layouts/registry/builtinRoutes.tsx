@@ -23,6 +23,9 @@ import type { Route } from "../../plugins/registry/types";
 
 // Lazy pages (platform-level only — agent-scoped pages are mounted inside
 // AgentDetailLayout's sub-routes; their old top-level URLs are redirects now)
+const WorkbenchPage = lazyImportWithRetry(
+  "../../pages/Workbench/index.tsx",
+);
 const InboxPage = lazyImportWithRetry("../../pages/Inbox");
 const SkillPoolPage = lazyImportWithRetry("../../pages/Settings/SkillPool");
 const ModelsPage = lazyImportWithRetry("../../pages/Settings/Models");
@@ -81,17 +84,9 @@ const AdminWorkforceRunsPage = lazyImportWithRetry(
   "../../pages/Admin/WorkforceRuns.tsx",
 );
 
-/**
- * "/" lands on the platform workbench (placeholder routes to the roster
- * until the workbench page ships in a later platform-IA phase).
- */
+/** "/" lands on the platform workbench. */
 function DefaultRedirect() {
   return <Navigate to="/workbench" replace />;
-}
-
-/** Workbench page lands in a later platform-IA phase; park on the roster. */
-function WorkbenchPlaceholder() {
-  return <Navigate to="/agents" replace />;
 }
 
 /**
@@ -119,7 +114,7 @@ export const BUILTIN_ROUTES: Route[] = [
   {
     id: "core.workbench",
     path: "/workbench",
-    component: WorkbenchPlaceholder,
+    component: WorkbenchPage,
   },
   { id: "core.chat", path: "/chat/*", component: createAgentScopedRedirect("chat") },
   { id: "core.files", path: "/files", component: createAgentScopedRedirect("files") },

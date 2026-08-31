@@ -700,6 +700,12 @@
     "saved": "Saved",
     "unsaved": "Unsaved"
   },
+  "workbench": {
+    "inboxUnread": "You have unread inbox messages",
+    "inboxClear": "Inbox is all caught up",
+    "quickLinks": "Quick links",
+    "createHint": "Onboard a new digital employee"
+  },
   "agentDetail": {
     "overview": "Overview",
     "chat": "Chat",
@@ -710,9 +716,8 @@
     "groupCapability": "Capabilities",
     "groupOps": "Operations",
     "overviewComingSoon": "Overview metrics coming soon"
-  
-},
-"agent": {
+  },
+  "agent": {
     "parent": "Settings",
     "agents": "Agents",
     "management": "Agent Management",
