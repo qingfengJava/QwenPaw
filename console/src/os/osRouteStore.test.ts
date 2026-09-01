@@ -37,4 +37,20 @@ describe("osRouteStore", () => {
     expect(useOsWindows.getState().windows["core.chat"]).toBeDefined();
     expect(useOsWindows.getState().windows["core.inbox"]).toBeDefined();
   });
+
+  it("never opens windows or deep-links for retired apps (loop guard)", () => {
+    // core.chat 已下架（现为重定向 stub）：开窗会立刻重定向到 /agents/:aid/*，
+    // 被桥接解析成另一个目标又弹回自身，形成无限开窗循环（C2）。
+    useOsRoute.getState().navigateTo("core.chat", "/chat/session-1");
+
+    expect(useOsRoute.getState().targets["core.chat"]).toBeUndefined();
+    expect(useOsWindows.getState().windows["core.chat"]).toBeUndefined();
+  });
+
+  it("still routes normal apps while the retired guard is active", () => {
+    useOsRoute.getState().navigateTo("core.inbox", "/inbox");
+
+    expect(useOsRoute.getState().targets["core.inbox"]).toBeDefined();
+    expect(useOsWindows.getState().windows["core.inbox"]).toBeDefined();
+  });
 });

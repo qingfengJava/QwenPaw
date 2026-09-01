@@ -22,7 +22,13 @@ import { useSyncCodingMode } from "../stores/useSyncCodingMode";
 import { useShallow } from "zustand/react/shallow";
 import { useOsWindows } from "./osWindowStore";
 import { useOsPlugins } from "./osPluginStore";
-import { OS_APPS, STORE_APP, SETTINGS_APP, type OsAppDef } from "./osApps";
+import {
+  OS_APPS,
+  STORE_APP,
+  SETTINGS_APP,
+  RETIRED_OS_APP_IDS,
+  type OsAppDef,
+} from "./osApps";
 import { useOsApps, resolveAppDef } from "./osAppRegistry";
 import { useOsStyles, MENUBAR_H } from "./useOsStyles";
 import { useOsNotifyPoller } from "./useOsNotifyPoller";
@@ -30,6 +36,7 @@ import { purgeAppState, purgePluginAppState } from "./osCleanup";
 import WindowFrame from "./WindowFrame";
 import WindowRouter from "./WindowRouter";
 import { baseFromRoutePath } from "./osRouteMap";
+import { useOsRoute } from "./osRouteStore";
 import MenuBar from "./MenuBar";
 import Dock from "./Dock";
 import SpacesPanel from "./SpacesPanel";
@@ -129,6 +136,13 @@ export default function DesktopOS() {
 
   // Poll approvals + unread inbox events → macOS-style notifications.
   useOsNotifyPoller();
+
+  // One-shot cleanup of desktop state persisted for retired catalog apps
+  // (agent-scoped redirect stubs). Without this, users hit by the infinite
+  // window-loop bug keep restoring the stub windows from localStorage.
+  useEffect(() => {
+    purgeAppState(RETIRED_OS_APP_IDS);
+  }, []);
 
   // Load agents once so Mission Control can list them as spaces.
   useEffect(() => {
@@ -485,6 +499,7 @@ export default function DesktopOS() {
                     <WindowRouter
                       routeId={win.id}
                       base={baseFromRoutePath(routeById.get(win.id)?.path)}
+                      initialPath={useOsRoute.getState().targets[win.id]?.path}
                       element={<Component />}
                     />
                   ) : null}

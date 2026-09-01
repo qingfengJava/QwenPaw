@@ -12,6 +12,7 @@
 import { create } from "zustand";
 import { useOsWindows } from "./osWindowStore";
 import { SETTINGS_APP_ID, SETTINGS_ROUTE_IDS } from "./osRouteMap";
+import { RETIRED_OS_APP_IDS } from "./osApps";
 
 /** A pending deep-link for a given window (route id). */
 export interface RouteTarget {
@@ -55,6 +56,10 @@ export const useOsRoute = create<OsRouteStore>((set) => ({
   },
 
   navigateTo: (routeId, path) => {
+    // 已下架 app（现为 agent-scoped 重定向 stub）不再开窗：stub 窗口会立刻
+    // 重定向到 /agents/:aid/*，被桥接解析成另一个目标又弹回自身，形成无限
+    // 开窗循环（C2）。正常跨窗跳转不受影响。
+    if (RETIRED_OS_APP_IDS.has(routeId)) return;
     if (SETTINGS_ROUTE_IDS.has(routeId)) {
       // Settings routes live inside the aggregate System Settings window; the
       // "path" for that window is the target pane's route id.

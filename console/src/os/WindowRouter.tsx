@@ -31,6 +31,13 @@ interface WindowRouterProps {
   routeId: string;
   /** Router base path for this app (e.g. "/chat"). */
   base: string;
+  /**
+   * Optional deep-link path to seed this window's router with (consumed at
+   * mount only). Needed for parameterized routes whose base strips the
+   * params (e.g. /agents/:aid/* → base "/agents"): without it a deep-linked
+   * agent-detail window starts at "/agents" with no :aid and renders blank.
+   */
+  initialPath?: string;
   /** The page component element to render. */
   element: ReactNode;
 }
@@ -79,10 +86,11 @@ function WindowRouterBridge({
 export default function WindowRouter({
   routeId,
   base,
+  initialPath,
   element,
 }: WindowRouterProps) {
   return (
-    <MemoryRouter initialEntries={[base]}>
+    <MemoryRouter initialEntries={[initialPath ?? base]}>
       <WindowRouterBridge routeId={routeId} base={base} />
       <Routes>
         <Route path={`${base}/*`} element={element} />

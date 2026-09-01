@@ -25,6 +25,21 @@ interface PluginStore {
 /** By default every catalog app is pre-installed. */
 const DEFAULT_INSTALLED = OS_APPS.map((a) => a.routeId);
 
+/**
+ * v1→v2 migrate: union → intersection. Keeps the user's uninstall choices,
+ * drops ids retired by the platform IA refactor (redirect stubs) — the old
+ * union migrate resurrected them from localStorage forever.
+ */
+export function migrateInstalledToV2(persisted: unknown): PluginStore {
+  const prev = (persisted ?? {}) as Partial<PluginStore>;
+  const existing = prev.installed ?? [];
+  const valid = new Set(OS_APPS.map((a) => a.routeId));
+  return {
+    ...prev,
+    installed: existing.filter((id) => valid.has(id)),
+  } as PluginStore;
+}
+
 export const useOsPlugins = create<PluginStore>()(
   persist(
     (set) => ({
@@ -39,13 +54,8 @@ export const useOsPlugins = create<PluginStore>()(
     }),
     {
       name: "qwenpaw-os-installed",
-      version: 1,
-      migrate: (persisted) => {
-        const prev = (persisted ?? {}) as Partial<PluginStore>;
-        const existing = prev.installed ?? [];
-        const merged = Array.from(new Set([...existing, ...DEFAULT_INSTALLED]));
-        return { ...prev, installed: merged } as PluginStore;
-      },
+      version: 2,
+      migrate: migrateInstalledToV2,
     },
   ),
 );

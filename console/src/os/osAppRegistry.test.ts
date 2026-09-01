@@ -8,6 +8,8 @@ import type { Disposable } from "../plugins/registry/types";
 // Registry hooks feeding useOsApps: one catalog route + one plugin route.
 vi.mock("../plugins/registry/hooks", () => ({
   useRoutes: () => [
+    { id: "core.agents", path: "/agents", source: "core" },
+    { id: "core.inbox", path: "/inbox", source: "core" },
     { id: "core.chat", path: "/chat/*", source: "core" },
     { id: "core.files", path: "/files", source: "core" },
     { id: "plugin.office", path: "/apps/office", source: "office" },
@@ -29,22 +31,22 @@ afterEach(() => {
 });
 
 describe("resolveAppDef", () => {
-  it("exposes the shared Files workspace as an OS app", () => {
-    expect(findAppDef("core.files")).toMatchObject({
-      routeId: "core.files",
-      labelKey: "nav.files",
-      fallback: "Files",
+  it("exposes the Digital Employees gallery as an OS app", () => {
+    expect(findAppDef("core.agents")).toMatchObject({
+      routeId: "core.agents",
+      labelKey: "nav.employees",
+      fallback: "Digital Employees",
       defaultW: 1180,
       defaultH: 720,
-      minW: 760,
-      minH: 480,
+      minW: 900,
+      minH: 560,
     });
   });
 
   it("resolves system and catalog apps statically", () => {
     expect(resolveAppDef("os.settings")).toBe(SETTINGS_APP);
     expect(resolveAppDef("os.store")).toBe(STORE_APP);
-    expect(resolveAppDef("core.chat")?.defaultW).toBe(880);
+    expect(resolveAppDef("core.agents")?.defaultW).toBe(1180);
   });
 
   it("returns undefined for unknown apps", () => {
@@ -80,11 +82,14 @@ describe("useOsApps", () => {
 
     expect(ids[0]).toBe(STORE_APP.routeId);
     expect(ids[ids.length - 1]).toBe(SETTINGS_APP.routeId);
-    expect(ids).toContain("core.chat");
-    expect(ids).toContain("core.files");
+    expect(ids).toContain("core.agents");
+    expect(ids).toContain("core.inbox");
     expect(ids).toContain("plugin.office");
     // Catalog apps without a registered route are filtered out.
     expect(ids).not.toContain("core.tools");
+    // Retired catalog entries never come back even if their routes exist.
+    expect(ids).not.toContain("core.chat");
+    expect(ids).not.toContain("core.files");
     expect(result.current.appById.get("plugin.office")?.defaultW).toBe(960);
   });
 });

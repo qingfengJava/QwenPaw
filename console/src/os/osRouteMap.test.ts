@@ -62,4 +62,21 @@ describe("osRouteMap", () => {
       ]),
     ).toBeUndefined();
   });
+
+  it("prefers static agent sub-routes over the parameterized detail route", () => {
+    // /agents/manage 静态段必须胜过 /agents/:aid/*（否则管理页被当成员工详情，
+    // 桥接开错窗口；批次6注册 /agents/manage 系路由的前置保障）。
+    const agentRoutes = [
+      { id: "core.agents", path: "/agents", source: "core" },
+      { id: "core.agent-detail", path: "/agents/:aid/*", source: "core" },
+      { id: "core.agents-manage", path: "/agents/manage", source: "core" },
+    ];
+    expect(pathToRouteId("/agents/manage", agentRoutes)).toBe(
+      "core.agents-manage",
+    );
+    expect(pathToRouteId("/agents/ops-1/chat", agentRoutes)).toBe(
+      "core.agent-detail",
+    );
+    expect(pathToRouteId("/agents", agentRoutes)).toBe("core.agents");
+  });
 });
