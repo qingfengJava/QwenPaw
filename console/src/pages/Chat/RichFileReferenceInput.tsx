@@ -274,7 +274,7 @@ function CodeSnippetChip({
     <Popover
       trigger="click"
       placement="topLeft"
-      overlayClassName={styles.codePopover}
+      classNames={{ root: styles.codePopover }}
       content={
         <div className={styles.codePreview}>
           <div className={styles.codePreviewHeader}>{language}</div>
@@ -607,7 +607,10 @@ function EditableSurface({
   );
 }
 
-const RichFileReferenceInput = forwardRef<unknown, TextAreaProps>(
+const RichFileReferenceInput = forwardRef<
+  unknown,
+  TextAreaProps & { onSelectionChange?: unknown }
+>(
   function RichFileReferenceInput(
     {
       value,
@@ -626,6 +629,9 @@ const RichFileReferenceInput = forwardRef<unknown, TextAreaProps>(
       onCompositionEnd,
       autoSize: _autoSize,
       variant: _variant,
+      // SDK-internal state callback; forwarding it to the hidden textarea
+      // triggers React's "unknown event handler property" DOM warning.
+      onSelectionChange: _onSelectionChange,
       ...textareaProps
     },
     ref,

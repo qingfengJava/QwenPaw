@@ -122,12 +122,12 @@ export function BrowserExperimentalToggle({
 /** Configuration modal for tools that require configuration */
 function ToolConfigModal({
   tool,
-  visible,
+  open,
   onClose,
   onSave,
 }: {
   tool: ToolInfo;
-  visible: boolean;
+  open: boolean;
   onClose: () => void;
   onSave: (values: Record<string, unknown>) => Promise<void>;
 }) {
@@ -139,7 +139,7 @@ function ToolConfigModal({
   // Fetch latest config from backend whenever the modal opens.
   // Cleanup cancels stale in-flight requests on rapid tool switches.
   useEffect(() => {
-    if (!visible || !tool) return;
+    if (!open || !tool) return;
     form.resetFields();
     setLoadingConfig(true);
     let cancelled = false;
@@ -157,7 +157,7 @@ function ToolConfigModal({
     return () => {
       cancelled = true;
     };
-  }, [visible, tool.name, form]);
+  }, [open, tool.name, form]);
 
   const handleSave = async () => {
     try {
@@ -177,7 +177,7 @@ function ToolConfigModal({
   return (
     <Modal
       title={`${t("tools.configure")} - ${tool.name}`}
-      open={visible}
+      open={open}
       onCancel={onClose}
       onOk={handleSave}
       confirmLoading={saving || loadingConfig}
@@ -518,7 +518,7 @@ export default function ToolsPage() {
         <ToolConfigModal
           key={currentTool.name}
           tool={currentTool}
-          visible={configModalVisible}
+          open={configModalVisible}
           onClose={() => setConfigModalVisible(false)}
           onSave={handleSaveConfig}
         />

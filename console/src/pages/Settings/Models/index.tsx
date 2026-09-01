@@ -546,7 +546,7 @@ function ModelsPage() {
               title={t("models.defaultLlm")}
               footer={null}
               onCancel={() => setLlmModalOpen(false)}
-              destroyOnClose
+              destroyOnHidden
               width={520}
             >
               <ModelsSection
@@ -586,7 +586,7 @@ function ModelsPage() {
               })}
               footer={null}
               onCancel={() => setVariantSelectGroup(null)}
-              destroyOnClose
+              destroyOnHidden
             >
               <div className={styles.variantList}>
                 {variantSelectGroup?.providers.map((p) => (

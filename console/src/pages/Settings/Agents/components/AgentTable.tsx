@@ -409,6 +409,25 @@ export function AgentTable({
             columns={columns}
             loading={loading}
             rowKey="id"
+            onRow={
+              onOpen
+                ? (record) => ({
+                    style: { cursor: "pointer" },
+                    onClick: (event: React.MouseEvent<HTMLElement>) => {
+                      const target = event.target as HTMLElement;
+                      // 行内交互元素（按钮/链接/输入框/拖拽手柄）不触发导航
+                      if (
+                        target.closest(
+                          "button, a, input, textarea, select, [role='button']",
+                        )
+                      ) {
+                        return;
+                      }
+                      onOpen(record);
+                    },
+                  })
+                : undefined
+            }
             components={{
               body: {
                 row: SortableAgentRow,

@@ -64,7 +64,7 @@ export const ACPCard = React.memo(function ACPCard({
       onMouseEnter={() => setIsHover(true)}
       onMouseLeave={() => setIsHover(false)}
       className={getCardClassNames()}
-      bodyStyle={{ padding: 24 }}
+      styles={{ body: { padding: 24 } }}
     >
       <div className={styles.cardTopSection}>
         <div className={styles.channelIcon}>

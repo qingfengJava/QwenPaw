@@ -650,7 +650,7 @@ function CronJobsPage() {
                 key={job.id}
                 className={styles.mobileJobCard}
                 size="small"
-                bodyStyle={{ padding: 24 }}
+                styles={{ body: { padding: 24 } }}
               >
                 <div className={styles.mobileJobHeader}>
                   <span className={styles.mobileJobName}>{job.name}</span>
@@ -722,7 +722,7 @@ function CronJobsPage() {
             ))}
           </div>
         ) : (
-          <Card className={styles.tableCard} bodyStyle={{ padding: 0 }}>
+          <Card className={styles.tableCard} styles={{ body: { padding: 0 } }}>
             <Table
               columns={columns}
               dataSource={filteredListJobs}
@@ -737,7 +737,7 @@ function CronJobsPage() {
           </Card>
         )
       ) : (
-        <Card className={styles.calendarCard} bodyStyle={{ padding: 0 }}>
+        <Card className={styles.calendarCard} styles={{ body: { padding: 0 } }}>
           <div className={styles.calendarHeader}>
             <Button
               type="text"
@@ -844,7 +844,7 @@ function CronJobsPage() {
                         onOpenChange={(open) =>
                           setActivePopoverDate(open ? dateKey : null)
                         }
-                        overlayClassName={styles.dayJobPopoverOverlay}
+                        classNames={{ root: styles.dayJobPopoverOverlay }}
                         content={popoverContent}
                       >
                         <button className={styles.calendarMoreBtn}>
@@ -883,7 +883,7 @@ function CronJobsPage() {
       />
 
       <Modal
-        visible={historyModalOpen}
+        open={historyModalOpen}
         title={t("cronJobs.historyTitle", { name: historyJobName })}
         footer={null}
         onCancel={() => setHistoryModalOpen(false)}

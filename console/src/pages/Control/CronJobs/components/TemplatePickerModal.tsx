@@ -52,7 +52,7 @@ export function TemplatePickerModal({
 
   return (
     <Modal
-      visible={open}
+      open={open}
       title={t("cronJobs.templateModalTitle")}
       footer={null}
       width={860}

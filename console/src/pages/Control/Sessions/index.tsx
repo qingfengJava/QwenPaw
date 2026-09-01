@@ -282,7 +282,7 @@ function SessionsPage() {
               key={session.id}
               className={styles.mobileSessionCard}
               size="small"
-              bodyStyle={{ padding: 24 }}
+              styles={{ body: { padding: 24 } }}
             >
               <div className={styles.mobileSessionHeader}>
                 <span className={styles.mobileSessionName}>
@@ -354,7 +354,7 @@ function SessionsPage() {
           ))}
         </div>
       ) : (
-        <Card className={styles.tableCard} bodyStyle={{ padding: 0 }}>
+        <Card className={styles.tableCard} styles={{ body: { padding: 0 } }}>
           <Table
             columns={columns}
             dataSource={filteredSessions}
