@@ -6,23 +6,12 @@
  * default window geometry. Adding more apps is a 1-line entry.
  */
 import {
-  MessageSquare,
-  Files,
-  Sparkles,
-  Clock,
-  Plug,
-  Wrench,
-  HeartPulse,
   Wifi,
   Inbox,
   Store,
   Settings,
   Puzzle,
-  History,
-  FolderOpen,
-  Network,
   Bot,
-  BarChart3,
   type LucideIcon,
 } from "lucide-react";
 import type { MenuItem } from "../plugins/registry/types";
@@ -59,69 +48,15 @@ export interface OsAppDef {
  */
 export const OS_APPS: OsAppDef[] = [
   {
-    routeId: "core.chat",
-    labelKey: "nav.chat",
-    fallback: "Chat",
-    Icon: MessageSquare,
-    accent: "#3b82f6",
-    defaultW: 880,
-    defaultH: 640,
-  },
-  {
-    routeId: "core.files",
-    labelKey: "nav.files",
-    fallback: "Files",
-    Icon: Files,
-    accent: "#f36b21",
+    routeId: "core.agents",
+    labelKey: "nav.employees",
+    fallback: "Digital Employees",
+    Icon: Bot,
+    accent: "#7c3aed",
     defaultW: 1180,
     defaultH: 720,
-    minW: 760,
-    minH: 480,
-  },
-  {
-    routeId: "core.skills",
-    labelKey: "nav.skills",
-    fallback: "Skills",
-    Icon: Sparkles,
-    accent: "#8b5cf6",
-    defaultW: 780,
-    defaultH: 560,
-  },
-  {
-    routeId: "core.cron-jobs",
-    labelKey: "nav.cronJobs",
-    fallback: "Cron Jobs",
-    Icon: Clock,
-    accent: "#f97316",
-    defaultW: 720,
-    defaultH: 520,
-  },
-  {
-    routeId: "core.mcp",
-    labelKey: "nav.mcp",
-    fallback: "MCP",
-    Icon: Plug,
-    accent: "#06b6d4",
-    defaultW: 760,
-    defaultH: 540,
-  },
-  {
-    routeId: "core.tools",
-    labelKey: "nav.tools",
-    fallback: "Tools",
-    Icon: Wrench,
-    accent: "#10b981",
-    defaultW: 720,
-    defaultH: 500,
-  },
-  {
-    routeId: "core.heartbeat",
-    labelKey: "nav.heartbeat",
-    fallback: "Heartbeat",
-    Icon: HeartPulse,
-    accent: "#ef4444",
-    defaultW: 560,
-    defaultH: 440,
+    minW: 900,
+    minH: 560,
   },
   {
     routeId: "core.channels",
@@ -141,58 +76,30 @@ export const OS_APPS: OsAppDef[] = [
     defaultW: 640,
     defaultH: 500,
   },
-  {
-    routeId: "core.sessions",
-    labelKey: "nav.sessions",
-    fallback: "Sessions",
-    Icon: History,
-    accent: "#0ea5e9",
-    defaultW: 820,
-    defaultH: 600,
-    minW: 780,
-    minH: 480,
-  },
-  {
-    routeId: "core.workspace",
-    labelKey: "nav.workspace",
-    fallback: "Workspace",
-    Icon: FolderOpen,
-    accent: "#f59e0b",
-    defaultW: 900,
-    defaultH: 640,
-  },
-  {
-    routeId: "core.acp",
-    labelKey: "nav.acp",
-    fallback: "ACP",
-    Icon: Network,
-    accent: "#14b8a6",
-    defaultW: 780,
-    defaultH: 560,
-  },
-  {
-    routeId: "core.agent-config",
-    labelKey: "nav.agentConfig",
-    fallback: "Agent Config",
-    Icon: Bot,
-    accent: "#7c3aed",
-    defaultW: 1020,
-    defaultH: 640,
-    minW: 900,
-    minH: 520,
-  },
-  {
-    routeId: "core.agent-stats",
-    labelKey: "nav.agentStats",
-    fallback: "Agent Stats",
-    Icon: BarChart3,
-    accent: "#ec4899",
-    defaultW: 820,
-    defaultH: 600,
-    minW: 900,
-    minH: 520,
-  },
 ];
+
+/**
+ * Catalog route ids retired by the platform IA refactor. Their routes are
+ * agent-scoped redirect stubs now, so opening a window for them would loop
+ * forever (redirect -> bridge opens another window -> bounce back). Kept as
+ * an explicit blocklist for persisted-state cleanup and navigateTo guarding.
+ */
+export const RETIRED_OS_APP_IDS: ReadonlySet<string> = new Set([
+  "core.chat",
+  "core.files",
+  "core.skills",
+  "core.cron-jobs",
+  "core.mcp",
+  "core.tools",
+  "core.heartbeat",
+  "core.sessions",
+  "core.acp",
+  "core.acp-alias",
+  "core.checkpoints",
+  "core.agent-config",
+  "core.agent-stats",
+  "core.workspace",
+]);
 
 /** Lookup helper (searches catalog + system apps). */
 export function findAppDef(routeId: string): OsAppDef | undefined {

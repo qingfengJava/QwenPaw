@@ -10,7 +10,6 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Spin } from "antd";
 import {
-  Bot,
   Cpu,
   Sparkles,
   Globe,
@@ -37,14 +36,11 @@ interface SettingsItem {
   Icon: LucideIcon;
 }
 
-/** Mirrors the core.settings-group entries in builtinMenu. */
+/**
+ * Mirrors the core settings entries in builtinMenu (data/security/advanced
+ * groups). core.agents is platform-level and opens its own window instead.
+ */
 const SETTINGS_ITEMS: SettingsItem[] = [
-  {
-    routeId: "core.agents",
-    labelKey: "nav.agents",
-    fallback: "Agents",
-    Icon: Bot,
-  },
   {
     routeId: "core.models",
     labelKey: "nav.models",

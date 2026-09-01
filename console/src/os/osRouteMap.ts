@@ -24,7 +24,6 @@ export interface RouteLike {
  * opens System Settings and selects the matching pane.
  */
 export const SETTINGS_ROUTE_IDS = new Set<string>([
-  "core.agents",
   "core.models",
   "core.skill-pool",
   "core.environments",
