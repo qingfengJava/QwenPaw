@@ -6,6 +6,8 @@
  */
 import { describe, expect, it, beforeEach } from "vitest";
 import { BUILTIN_MENU } from "./builtinMenu";
+import { routeRegistry } from "../../plugins/registry/store";
+import "./builtinRoutes"; // 副作用导入：注册内置路由，供 routeRegistry 断言使用
 import {
   useAuthStore,
   AUTH_DISABLED_IDENTITY,
@@ -27,17 +29,31 @@ describe("admin menu role filtering (M5)", () => {
     useAuthStore.getState().clear();
   });
 
-  it("registers the full admin branch", () => {
+  it("registers the full admin branch (strict set)", () => {
+    const ids = adminItems()
+      .map((item) => item.id)
+      .sort();
+    expect(ids).toEqual([
+      "core.admin-agent-grants",
+      "core.admin-audit",
+      "core.admin-group",
+      "core.admin-knowledge",
+      "core.admin-model-grants",
+      "core.admin-organization",
+      "core.admin-pending",
+      "core.admin-quotas",
+      "core.admin-roles",
+      "core.admin-teams",
+      "core.admin-users",
+    ]);
+  });
+
+  it("retired duplicate entries stay out of the admin branch", () => {
     const ids = adminItems().map((item) => item.id);
-    expect(ids).toContain("core.admin-group");
-    expect(ids).toContain("core.admin-users");
-    expect(ids).toContain("core.admin-roles");
-    expect(ids).toContain("core.admin-teams");
-    expect(ids).toContain("core.admin-agent-grants");
-    expect(ids).toContain("core.admin-model-grants");
-    expect(ids).toContain("core.admin-quotas");
-    expect(ids).toContain("core.admin-audit");
-    expect(ids).toContain("core.admin-knowledge");
+    // C1 去重：experts/expert-teams/workforce-runs 已并入 /agents 域，禁止复活
+    expect(ids).not.toContain("core.admin-experts");
+    expect(ids).not.toContain("core.admin-expert-teams");
+    expect(ids).not.toContain("core.admin-workforce-runs");
   });
 
   it("hides the admin branch for anonymous identities", () => {
@@ -102,10 +118,14 @@ describe("admin menu role filtering (M5)", () => {
     }
   });
 
-  it("every admin entry routes to a registered admin route id", () => {
-    const leaves = adminItems().filter((item) => !item.isGroup);
+  it("every menu leaf routes to a registered route id", () => {
+    // 真断言：查 routeRegistry 而非自比 id，防「菜单指向已删路由」的静默死链。
+    // 覆盖全菜单（不只 admin）。
+    const routeIds = new Set(routeRegistry.snapshot().map((r) => r.id));
+    const leaves = BUILTIN_MENU.filter((item) => !item.isGroup);
     for (const item of leaves) {
-      expect(item.route, item.id).toBe(item.id);
+      expect(item.route, item.id).toBeDefined();
+      expect(routeIds.has(item.route!), item.id).toBe(true);
     }
   });
 });

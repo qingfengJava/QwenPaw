@@ -36,7 +36,7 @@ import {
   SparkSaveLine,
   SparkWifiLine,
 } from "@agentscope-ai/icons";
-import { GitBranch, LayoutDashboard } from "lucide-react";
+import { LayoutDashboard } from "lucide-react";
 import i18next from "i18next";
 import {
   BookOpen,
@@ -337,36 +337,6 @@ export const BUILTIN_MENU: MenuItem[] = [
     icon: UsersRound,
     route: "core.admin-organization",
     order: 90,
-    visible: adminOnly,
-  },
-  {
-    id: "core.admin-experts",
-    location: "primary.settings",
-    parentId: "core.admin-group",
-    label: navLabel("nav.adminExperts", "Experts"),
-    icon: Bot,
-    route: "core.admin-experts",
-    order: 100,
-    visible: adminOnly,
-  },
-  {
-    id: "core.admin-expert-teams",
-    location: "primary.settings",
-    parentId: "core.admin-group",
-    label: navLabel("nav.adminExpertTeams", "Expert Teams"),
-    icon: UsersRound,
-    route: "core.admin-expert-teams",
-    order: 110,
-    visible: adminOnly,
-  },
-  {
-    id: "core.admin-workforce-runs",
-    location: "primary.settings",
-    parentId: "core.admin-group",
-    label: navLabel("nav.adminWorkforce", "Team Runs"),
-    icon: GitBranch,
-    route: "core.admin-workforce-runs",
-    order: 120,
     visible: adminOnly,
   },
 ];

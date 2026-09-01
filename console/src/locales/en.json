@@ -150,7 +150,7 @@
     "admin": "Administration",
     "adminUsers": "Users",
     "adminRoles": "Roles",
-    "adminTeams": "Teams",
+    "adminTeams": "User Groups",
     "adminAgentGrants": "Agent Access",
     "adminModelGrants": "Model Access",
     "adminQuotas": "Quotas",
