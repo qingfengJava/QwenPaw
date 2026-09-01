@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Card, Spin } from "antd";
+import { Card, Empty, Spin } from "antd";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { ArrowRight } from "lucide-react";
@@ -27,10 +27,6 @@ export function ChannelsPlatformPage() {
   const [rows, setRows] = useState<Record<string, AgentChannelRow>>({});
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    refreshAgents();
-  }, [refreshAgents]);
-
   // 以员工 id 签名为依赖，避免 refreshAgents 引用变化触发重复拉取
   const agentIdsKey = useMemo(
     () => agents.map((agent) => agent.id).join(","),
@@ -38,35 +34,43 @@ export function ChannelsPlatformPage() {
   );
 
   useEffect(() => {
-    const current = useAgentStore.getState().agents;
-    if (current.length === 0) return;
     let cancelled = false;
     setLoading(true);
-    Promise.all(
-      current.map(async (agent) => {
-        try {
-          const data = await api.listChannels(agent.id);
-          const cfg = (data ?? {}) as unknown as Record<
-            string,
-            Record<string, unknown>
-          >;
-          const enabled = Object.keys(cfg).filter((k) => cfg[k]?.enabled);
-          return [agent.id, { enabledChannels: enabled }] as const;
-        } catch {
-          // 单个员工拉取失败不阻断整体，展示为空
-          return [agent.id, { enabledChannels: [] }] as const;
-        }
-      }),
-    ).then((entries) => {
+    void (async () => {
+      // 等员工列表真正加载完成，再区分「未加载完」与「加载完为空」
+      await refreshAgents();
+      if (cancelled) return;
+      const current = useAgentStore.getState().agents;
+      if (current.length === 0) {
+        // 加载完成且无任何员工：落地空态，避免永久 Spin
+        setLoading(false);
+        return;
+      }
+      const entries = await Promise.all(
+        current.map(async (agent) => {
+          try {
+            const data = await api.listChannels(agent.id);
+            const cfg = (data ?? {}) as unknown as Record<
+              string,
+              Record<string, unknown>
+            >;
+            const enabled = Object.keys(cfg).filter((k) => cfg[k]?.enabled);
+            return [agent.id, { enabledChannels: enabled }] as const;
+          } catch {
+            // 单个员工拉取失败不阻断整体，展示为空
+            return [agent.id, { enabledChannels: [] }] as const;
+          }
+        }),
+      );
       if (!cancelled) {
         setRows(Object.fromEntries(entries));
         setLoading(false);
       }
-    });
+    })();
     return () => {
       cancelled = true;
     };
-  }, [agentIdsKey]);
+  }, [agentIdsKey, refreshAgents]);
 
   return (
     <div className={styles.channelWrap}>
@@ -81,6 +85,10 @@ export function ChannelsPlatformPage() {
       {loading ? (
         <div className={styles.loadingWrap}>
           <Spin />
+        </div>
+      ) : agents.length === 0 ? (
+        <div className={styles.loadingWrap}>
+          <Empty description={t("channels.platformNoAgents")} />
         </div>
       ) : (
         <div className={styles.agentGrid}>

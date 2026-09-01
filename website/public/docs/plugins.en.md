@@ -379,7 +379,7 @@ const data = await resp.json();
   icon?: ReactComponent | ReactNode;
   route?: string;                // Route id to navigate to on click
   parentId?: string;             // Parent group to attach to
-  location?: "primary.agentScoped" | "primary.settings" | "userMenu";
+  location?: "primary.platform" | "primary.agentScoped" | "primary.settings" | "userMenu";
   before?: string;               // Position before a specific id
   after?: string;                // Position after a specific id
   order?: number;                // Lower values appear first

@@ -76,8 +76,8 @@ export interface MenuItem {
   /** Which Sidebar bucket. Defaults to "primary.settings". */
   location?: MenuLocation;
   /**
-   * If set, this item is a CHILD of the named parent (groups: "core.control-group",
-   * "core.agent-group", "core.settings-group", "plugins-group", …).
+   * If set, this item is a CHILD of the named parent (groups: "core.settings-group",
+   * "core.data-group", "core.admin-group", "plugins-group", …).
    * Items without parentId render at top level within their location bucket.
    */
   parentId?: string;

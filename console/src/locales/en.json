@@ -155,7 +155,16 @@
     "adminModelGrants": "Model Access",
     "adminQuotas": "Quotas",
     "adminAudit": "Audit Log",
-    "adminKnowledge": "Knowledge Bases"
+    "adminKnowledge": "Knowledge Bases",
+    "adminOrg": "Organization",
+    "adminExperts": "Experts",
+    "adminExpertTeams": "Expert Teams",
+    "adminWorkforce": "Team Runs",
+    "pawapps": "PawApps",
+    "adminPending": "To-dos",
+    "agentsManage": "Manage Employees",
+    "agentTeams": "Employee Teams",
+    "agentRuns": "Run History"
   },
   "os": {
     "console": "Console",
@@ -1574,6 +1583,7 @@
     "channelSettings": "Channel Settings",
     "platformHint": "Click an employee card to manage its channel bindings",
     "platformEmpty": "No channels enabled for this employee yet",
+    "platformNoAgents": "No digital employees to show yet",
     "pleaseInputDbPath": "Please input DB path",
     "pleaseInputPollInterval": "Please input poll interval",
     "discordBotToken": "Discord bot token",

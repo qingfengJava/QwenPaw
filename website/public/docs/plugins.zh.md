@@ -379,7 +379,7 @@ const data = await resp.json();
   icon?: ReactComponent | ReactNode;
   route?: string;                // 点击时导航到的路由 id
   parentId?: string;             // 挂在哪个分组下
-  location?: "primary.agentScoped" | "primary.settings" | "userMenu";
+  location?: "primary.platform" | "primary.agentScoped" | "primary.settings" | "userMenu";
   before?: string;               // 排在某个 id 之前
   after?: string;                // 排在某个 id 之后
   order?: number;                // 数值越小越靠前

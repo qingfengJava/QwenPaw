@@ -160,7 +160,11 @@
     "adminExperts": "数字员工",
     "adminOrg": "组织管理",
     "adminWorkforce": "团队运行",
-    "pawapps": "轻应用"
+    "pawapps": "轻应用",
+    "adminPending": "待办",
+    "agentsManage": "员工运营",
+    "agentTeams": "员工团",
+    "agentRuns": "运行记录"
   },
   "os": {
     "console": "控制台",
@@ -1420,6 +1424,7 @@
     "channelSettings": "频道设置",
     "platformHint": "点击员工卡片进入该员工的渠道绑定管理",
     "platformEmpty": "该员工尚未启用渠道",
+    "platformNoAgents": "暂无可展示的数字员工",
     "channelNames": {
       "console": "控制台",
       "dingtalk": "钉钉",
