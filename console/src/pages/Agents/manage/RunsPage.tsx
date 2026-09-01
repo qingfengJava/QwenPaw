@@ -19,10 +19,10 @@ import {
 } from "antd";
 import { useTranslation } from "react-i18next";
 import { PageHeader } from "@/components/PageHeader";
-import { useAppMessage } from "../../hooks/useAppMessage";
-import { adminWorkforceApi } from "../../api/modules/admin";
-import type { AdminRunStats, AdminTeamRun } from "../../api/modules/admin";
-import styles from "./admin.module.less";
+import { useAppMessage } from "../../../hooks/useAppMessage";
+import { adminWorkforceApi } from "../../../api/modules/admin";
+import type { AdminRunStats, AdminTeamRun } from "../../../api/modules/admin";
+import styles from "@/pages/Admin/admin.module.less";
 
 /** run 状态 → Tag 颜色（与 xianwork RunDetail 语义一致）。 */
 const STATUS_COLORS: Record<string, string> = {
@@ -85,8 +85,8 @@ function WorkforceRunsPage() {
   return (
     <div className={styles.page}>
       <PageHeader
-        parent={t("nav.admin", "Administration")}
-        current={t("nav.adminWorkforce", "Team Runs")}
+        parent={t("nav.employees", "Digital Employees")}
+        current={t("nav.agentRuns", "Run History")}
       />
 
       {stats && (

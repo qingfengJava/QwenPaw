@@ -22,23 +22,23 @@ import {
 } from "antd";
 import { useTranslation } from "react-i18next";
 import { PageHeader } from "@/components/PageHeader";
-import { useAppMessage } from "../../hooks/useAppMessage";
+import { useAppMessage } from "../../../hooks/useAppMessage";
 import {
   adminExpertTeamsApi,
   adminExpertsApi,
   adminWorkforceApi,
-} from "../../api/modules/admin";
+} from "../../../api/modules/admin";
 import type {
   ExpertRecord,
   ExpertTeamRecord,
-} from "../../api/modules/admin";
+} from "../../../api/modules/admin";
 import WavePreview from "./WavePreview";
 import {
   SampleTasksEditor,
   ShowcaseEditor,
   normalizeShowcase,
 } from "./OperationsFields";
-import styles from "./admin.module.less";
+import styles from "@/pages/Admin/admin.module.less";
 
 /** RunPolicy 数值字段（与后端 contracts.RunPolicy 一致）。 */
 const POLICY_FIELDS: {
@@ -383,8 +383,8 @@ function ExpertTeamsPage() {
   return (
     <div className={styles.page}>
       <PageHeader
-        parent={t("nav.admin", "Administration")}
-        current={t("nav.adminExpertTeams", "Expert Teams")}
+        parent={t("nav.employees", "Digital Employees")}
+        current={t("nav.agentTeams", "Employee Teams")}
         extra={
           <Button type="primary" onClick={() => openEditor("new")}>
             {t("admin.teamsX.create", "New expert team")}

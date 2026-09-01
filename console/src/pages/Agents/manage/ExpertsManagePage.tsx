@@ -23,13 +23,13 @@ import {
   StatCard,
   UnderlineTabs,
 } from "@/components/staffdeck";
-import { useAppMessage } from "../../hooks/useAppMessage";
+import { useAppMessage } from "../../../hooks/useAppMessage";
 import {
   adminExpertsApi,
   expertCapabilityApi,
   type CapabilityCounts,
-} from "../../api/modules/admin";
-import type { ExpertRecord } from "../../api/modules/admin";
+} from "../../../api/modules/admin";
+import type { ExpertRecord } from "../../../api/modules/admin";
 import {
   SampleTasksEditor,
   ShowcaseEditor,
@@ -252,8 +252,8 @@ function ExpertsPage() {
   return (
     <div className="sd-page">
       <PageHeader
-        parent={t("nav.admin", "Administration")}
-        current={t("nav.adminExperts", "Experts")}
+        parent={t("nav.employees", "Digital Employees")}
+        current={t("nav.agentsManage", "Manage Employees")}
       />
 
       {/* 统计卡行 */}
@@ -350,7 +350,7 @@ function ExpertsPage() {
                 sops: c.sops,
                 scheduledTasks: c.scheduled_tasks,
               }}
-              onClick={() => navigate(`/admin/experts/${expert.id}`)}
+              onClick={() => navigate(`/agents/manage/${expert.id}`)}
               extraMenu={cardMenu(expert)}
             />
           );

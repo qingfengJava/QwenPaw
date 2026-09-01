@@ -35,7 +35,7 @@ import {
   expertStatusTone,
   expertStatusLabel,
 } from "@/components/staffdeck";
-import { useAppMessage } from "../../hooks/useAppMessage";
+import { useAppMessage } from "../../../hooks/useAppMessage";
 import {
   adminExpertsApi,
   expertCapabilityApi,
@@ -51,8 +51,8 @@ import {
   type SopRecord,
   type TaskRun,
   type WorkRecord,
-} from "../../api/modules/admin";
-import type { ExpertRecord } from "../../api/modules/admin";
+} from "../../../api/modules/admin";
+import type { ExpertRecord } from "../../../api/modules/admin";
 
 type DetailTab = "work" | "scheduled" | "memories" | "resources" | "logs";
 
@@ -124,7 +124,7 @@ export default function ExpertDetailPage() {
     return (
       <div className="sd-page">
         <PageHeader
-          parent={t("nav.adminExperts", "Experts")}
+          parent={t("nav.agentsManage", "Manage Employees")}
           current={t("staffdeck.detail.title", "员工详情")}
         />
         <Empty description={t("staffdeck.detail.loading", "加载中…")} />
@@ -135,11 +135,11 @@ export default function ExpertDetailPage() {
   return (
     <div className="sd-page">
       <PageHeader
-        parent={t("nav.adminExperts", "Experts")}
+        parent={t("nav.agentsManage", "Manage Employees")}
         current={expert.name}
         extra={
           <Space>
-            <Button onClick={() => navigate("/admin/experts")}>
+            <Button onClick={() => navigate("/agents/manage")}>
               {t("staffdeck.detail.back", "返回列表")}
             </Button>
             <Button onClick={() => setKeysOpen(true)}>

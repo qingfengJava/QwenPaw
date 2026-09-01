@@ -8,6 +8,7 @@ import { agentsApi } from "@/api/modules/agents";
 import { invalidateSkillCache, skillApi } from "@/api/modules/skill";
 import type { AgentSummary, CopyAgentRequest } from "@/api/types/agents";
 import { useAgentStore } from "@/stores/agentStore";
+import { useAuthStore, selectIsAdmin } from "@/stores/authStore";
 import { useAgents } from "@/pages/Settings/Agents/useAgents";
 import { AgentTable, AgentModal, CopyAgentModal } from "@/pages/Settings/Agents/components";
 import { PageHeader } from "@/components/PageHeader";
@@ -35,6 +36,8 @@ export default function AgentsGalleryPage() {
     setAgents,
   } = useAgents();
   const { selectedAgent, setSelectedAgent } = useAgentStore();
+  // 订阅式读取：身份变化时管理入口随渲染期更新
+  const isAdmin = useAuthStore(selectIsAdmin);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingAgent, setEditingAgent] = useState<AgentSummary | null>(null);
   const [copyModalVisible, setCopyModalVisible] = useState(false);
@@ -248,6 +251,11 @@ export default function AgentsGalleryPage() {
         current={t("nav.employees")}
         extra={
           <div className={styles.headerRight}>
+            {isAdmin && (
+              <Button onClick={() => navigate("/agents/manage")}>
+                {t("nav.agentsManage")}
+              </Button>
+            )}
             <Button
               type="primary"
               icon={<PlusOutlined />}

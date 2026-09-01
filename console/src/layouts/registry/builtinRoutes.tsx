@@ -71,20 +71,20 @@ const AdminKnowledgePage = lazyImportWithRetry(
 const AdminOrganizationPage = lazyImportWithRetry(
   "../../pages/Admin/Organization.tsx",
 );
-const AdminExpertsPage = lazyImportWithRetry(
-  "../../pages/Admin/Experts.tsx",
+const AgentsManagePage = lazyImportWithRetry(
+  "../../pages/Agents/manage/ExpertsManagePage.tsx",
 );
-const AdminExpertDetailPage = lazyImportWithRetry(
-  "../../pages/Admin/ExpertDetail.tsx",
+const AgentExpertDetailPage = lazyImportWithRetry(
+  "../../pages/Agents/manage/ExpertDetailPage.tsx",
+);
+const AgentsTeamsPage = lazyImportWithRetry(
+  "../../pages/Agents/manage/TeamsPage.tsx",
+);
+const AgentsRunsPage = lazyImportWithRetry(
+  "../../pages/Agents/manage/RunsPage.tsx",
 );
 const AdminPendingPage = lazyImportWithRetry(
   "../../pages/Admin/Pending.tsx",
-);
-const AdminExpertTeamsPage = lazyImportWithRetry(
-  "../../pages/Admin/ExpertTeams.tsx",
-);
-const AdminWorkforceRunsPage = lazyImportWithRetry(
-  "../../pages/Admin/WorkforceRuns.tsx",
 );
 
 /** "/" lands on the platform workbench. */
@@ -110,6 +110,30 @@ function createAgentScopedRedirect(subPath: string) {
 /** Synonym for /acp. Kept for plugins / external links that reference uppercase. */
 function ACPRedirect() {
   return <Navigate to="/acp" replace />;
+}
+
+/**
+ * Legacy /admin/experts* expert URLs → /agents/* (C1 merge: an expert IS a
+ * digital employee). Query strings are preserved so backend-generated links
+ * (pending.py: ?tab=work / ?runId=…) and bookmarks keep working. Guards live
+ * on the target routes — a redirect itself must not bounce inside OS windows.
+ */
+function AdminExpertsRedirect() {
+  const location = useLocation();
+  return <Navigate to={`/agents/manage${location.search}`} replace />;
+}
+function AdminExpertDetailRedirect() {
+  const location = useLocation();
+  const rest = location.pathname.replace(/^\/admin\/experts/, "");
+  return <Navigate to={`/agents/manage${rest}${location.search}`} replace />;
+}
+function AdminExpertTeamsRedirect() {
+  const location = useLocation();
+  return <Navigate to={`/agents/teams${location.search}`} replace />;
+}
+function AdminWorkforceRunsRedirect() {
+  const location = useLocation();
+  return <Navigate to={`/agents/runs${location.search}`} replace />;
 }
 
 export const BUILTIN_ROUTES: Route[] = [
@@ -227,15 +251,37 @@ export const BUILTIN_ROUTES: Route[] = [
     path: "/admin/organization",
     component: withRequireAdmin(AdminOrganizationPage),
   },
+  // ── Digital-employee management (C1 merge): admin-only, under /agents. ──
+  {
+    id: "core.agents-manage",
+    path: "/agents/manage",
+    component: withRequireAdmin(AgentsManagePage),
+  },
+  {
+    id: "core.agents-manage-detail",
+    path: "/agents/manage/:expertId",
+    component: withRequireAdmin(AgentExpertDetailPage),
+  },
+  {
+    id: "core.agents-teams",
+    path: "/agents/teams",
+    component: withRequireAdmin(AgentsTeamsPage),
+  },
+  {
+    id: "core.agents-runs",
+    path: "/agents/runs",
+    component: withRequireAdmin(AgentsRunsPage),
+  },
+  // Legacy /admin/* expert URLs → /agents/* (see redirect components above).
   {
     id: "core.admin-experts",
     path: "/admin/experts",
-    component: withRequireAdmin(AdminExpertsPage),
+    component: AdminExpertsRedirect,
   },
   {
     id: "core.admin-expert-detail",
     path: "/admin/experts/:expertId",
-    component: withRequireAdmin(AdminExpertDetailPage),
+    component: AdminExpertDetailRedirect,
   },
   {
     id: "core.admin-pending",
@@ -245,12 +291,12 @@ export const BUILTIN_ROUTES: Route[] = [
   {
     id: "core.admin-expert-teams",
     path: "/admin/expert-teams",
-    component: withRequireAdmin(AdminExpertTeamsPage),
+    component: AdminExpertTeamsRedirect,
   },
   {
     id: "core.admin-workforce-runs",
     path: "/admin/workforce-runs",
-    component: withRequireAdmin(AdminWorkforceRunsPage),
+    component: AdminWorkforceRunsRedirect,
   },
 ];
 
