@@ -7,25 +7,8 @@
  */
 import React from "react";
 import { useTranslation } from "react-i18next";
+import { avatarGradient } from "@/utils/avatarGradient";
 import { StatusPill, expertStatusTone, expertStatusLabel } from "./StatusPill";
-
-const AVATAR_TONES = [
-  ["#0f766e", "#14b8a6"],
-  ["#a85d32", "#e29a68"],
-  ["#6f7b42", "#a3b56d"],
-  ["#1a71ff", "#6aa5ff"],
-  ["#7c5cd6", "#a98ef0"],
-  ["#b45309", "#e9a23b"],
-];
-
-function avatarGradient(seed: string): string {
-  let hash = 0;
-  for (let i = 0; i < seed.length; i += 1) {
-    hash = (hash * 31 + seed.charCodeAt(i)) % 997;
-  }
-  const [from, to] = AVATAR_TONES[hash % AVATAR_TONES.length];
-  return `linear-gradient(145deg, ${from}, ${to})`;
-}
 
 export interface EmployeeCardProps {
   expert: {

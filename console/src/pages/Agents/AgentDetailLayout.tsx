@@ -1,5 +1,4 @@
 import { useEffect, useMemo } from "react";
-import { Button, Dropdown, Tag } from "antd";
 import {
   Navigate,
   Route,
@@ -8,19 +7,20 @@ import {
   useNavigate,
   useParams,
 } from "react-router-dom";
-import { useTranslation } from "react-i18next";
-import { MessageCircle, ChevronDown, Pin } from "lucide-react";
 import Chat from "@/pages/Chat";
 import AgentOverviewTab from "@/pages/Agents/AgentOverviewTab";
+import EmployeeProfileAside from "@/pages/Agents/EmployeeProfileAside";
+import type {
+  DetailTab,
+  GroupLabel,
+} from "@/pages/Agents/EmployeeProfileAside";
+import { stashAiTunePrompt } from "@/pages/Agents/aiTunePrefill";
 import { lazyImportWithRetry } from "@/utils/lazyWithRetry";
 import { useAgentStore } from "@/stores/agentStore";
 import {
   filterTabsForAgentCapabilities,
   type AgentMenuCapabilities,
 } from "@/layouts/registry/capabilities";
-import { AgentStatusIndicator } from "@/components/AgentStatusIndicator";
-import { getAgentDisplayName } from "@/utils/agentDisplayName";
-import type { AgentSummary } from "@/api/types/agents";
 import styles from "./detail.module.less";
 
 // 员工域子页面全部复用现有页面组件（借壳策略：数据域由布局同步到
@@ -38,18 +38,11 @@ const AgentConfigPage = lazyImportWithRetry("../../pages/Agent/Config");
 const AgentStatsPage = lazyImportWithRetry("../../pages/Settings/AgentStats");
 const HeartbeatPage = lazyImportWithRetry("../../pages/Control/Heartbeat");
 
-type TabGroup = "basic" | "capability" | "ops";
-
-interface DetailTab {
-  key: string;
-  labelKey: string;
-  fallback: string;
-  group: TabGroup;
-}
-
+// 导航不含 chat：对话入口由档案栏「去对话」主按钮承担，避免双入口。
+// 路由 /agents/:aid/chat 仍保留（按钮跳转 + AI 调优落点），
+// 位于对话页时左栏导航不高亮任何项。
 const TABS: DetailTab[] = [
   { key: "overview", labelKey: "agentDetail.overview", fallback: "Overview", group: "basic" },
-  { key: "chat", labelKey: "agentDetail.chat", fallback: "Chat", group: "basic" },
   { key: "sessions", labelKey: "nav.sessions", fallback: "Sessions", group: "basic" },
   { key: "cron-jobs", labelKey: "nav.cronJobs", fallback: "Scheduled Tasks", group: "basic" },
   { key: "files", labelKey: "nav.files", fallback: "Files", group: "capability" },
@@ -64,13 +57,13 @@ const TABS: DetailTab[] = [
   { key: "config", labelKey: "nav.agentConfig", fallback: "Configuration", group: "ops" },
 ];
 
-const GROUP_LABEL_KEYS: [TabGroup, string][] = [
-  ["basic", "agentDetail.groupBasic"],
-  ["capability", "agentDetail.groupCapability"],
-  ["ops", "agentDetail.groupOps"],
+const GROUP_LABEL_KEYS: GroupLabel[] = [
+  { group: "basic", labelKey: "agentDetail.groupBasic" },
+  { group: "capability", labelKey: "agentDetail.groupCapability" },
+  { group: "ops", labelKey: "agentDetail.groupOps" },
 ];
 
-/** 由当前路径推导激活 Tab（"overview" 为 index）。 */
+/** 由当前路径推导激活 Tab（"overview" 为 index；chat 不在导航中，返回自身以保持无高亮）。 */
 function activeTabFromPathname(pathname: string, aid: string): string {
   const prefix = `/agents/${aid}`;
   const rest = pathname.startsWith(prefix)
@@ -78,11 +71,11 @@ function activeTabFromPathname(pathname: string, aid: string): string {
     : "";
   const first = rest.split("/")[0];
   if (!first || first === "") return "overview";
+  if (first === "chat") return "chat";
   return TABS.some((tab) => tab.key === first) ? first : "overview";
 }
 
 export default function AgentDetailLayout() {
-  const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
   const { aid } = useParams<{ aid: string }>();
@@ -111,8 +104,8 @@ export default function AgentDetailLayout() {
   );
   const visibleGroups = useMemo(
     () =>
-      GROUP_LABEL_KEYS.filter(([, labelKey]) =>
-        visibleTabs.some((tab) => tab.group === labelKeyGroup(labelKey)),
+      GROUP_LABEL_KEYS.filter((group) =>
+        visibleTabs.some((tab) => tab.group === group.group),
       ),
     [visibleTabs],
   );
@@ -149,98 +142,55 @@ export default function AgentDetailLayout() {
     );
   };
 
+  // 「AI 调优」：stash 预填指令后进入对话 Tab，由 Chat 挂载时消费。
+  const handleAiTune = (prompt: string) => {
+    if (!aid) return;
+    stashAiTunePrompt(prompt);
+    navigate(`/agents/${aid}/chat`);
+  };
+
   if (!aid) return null;
   // agents 加载完成且找不到该员工时，上面的 effect 会跳回列表页。
   if (agents.length > 0 && !currentAgent) return null;
 
-
   return (
     <div className={styles.detailPage}>
-      <header className={styles.detailHeader}>
-        <div className={styles.headerMain}>
-          {currentAgent ? (
-            <>
-              <AgentStatusIndicator
-                status={currentAgent.startup_status}
-                enabled={currentAgent.enabled}
-              />
-              <span className={styles.agentName}>
-                {getAgentDisplayName(currentAgent, t)}
-              </span>
-              {(currentAgent.id === "default" || currentAgent.pinned) && (
-                <Pin size={14} className={styles.pinIcon} />
-              )}
-              <Tag
-                className={styles.enabledTag}
-                color={currentAgent.enabled ? "success" : "default"}
-              >
-                {currentAgent.enabled
-                  ? t("agent.status.running", "Running")
-                  : t("agent.status.disabled", "Disabled")}
-              </Tag>
-            </>
-          ) : (
-            <span className={styles.agentName}>{aid}</span>
-          )}
-        </div>
-        {currentAgent?.description ? (
-          <div className={styles.agentDescription}>{currentAgent.description}</div>
-        ) : null}
-        <div className={styles.headerActions}>
-          <Button
-            type="primary"
-            icon={<MessageCircle size={15} />}
-            onClick={() => handleTabClick("chat")}
-          >
-            {t("agentDetail.goChat", "Chat")}
-          </Button>
-          <Dropdown
-            trigger={["click"]}
-            menu={{
-              items: agents
-                .filter((agent) => agent.enabled)
-                .map((agent: AgentSummary) => ({
-                  key: agent.id,
-                  label: getAgentDisplayName(agent, t),
-                })),
-              onClick: ({ key }) => handleSwitchAgent(String(key)),
-            }}
-          >
-            <Button icon={<ChevronDown size={14} />}>
-              {t("agentDetail.switchAgent", "Switch employee")}
-            </Button>
-          </Dropdown>
-        </div>
-      </header>
-
-      <nav className={styles.tabBar}>
-        {visibleGroups.map(([group, labelKey]) => (
-          <div className={styles.tabGroup} key={group}>
-            <span className={styles.tabGroupLabel}>
-              {t(labelKey)}
-            </span>
-            <div className={styles.tabGroupItems}>
-              {visibleTabs.filter((tab) => tab.group === group).map((tab) => (
-                <button
-                  key={tab.key}
-                  type="button"
-                  className={`${styles.tabItem} ${
-                    activeTab === tab.key ? styles.tabItemActive : ""
-                  }`}
-                  onClick={() => handleTabClick(tab.key)}
-                >
-                  {t(tab.labelKey, tab.fallback)}
-                </button>
-              ))}
-            </div>
-          </div>
-        ))}
-      </nav>
+      <EmployeeProfileAside
+        agent={currentAgent}
+        aid={aid}
+        visibleTabs={visibleTabs}
+        visibleGroups={visibleGroups}
+        activeTab={activeTab}
+        agents={agents}
+        onTabClick={handleTabClick}
+        onGoChat={() => handleTabClick("chat")}
+        onAiTune={handleAiTune}
+        onSwitchAgent={handleSwitchAgent}
+      />
 
       <div className={styles.detailBody}>
         <Routes>
-          <Route index element={<AgentOverviewTab agent={currentAgent} aid={aid} />} />
-          <Route path="overview" element={<AgentOverviewTab agent={currentAgent} aid={aid} />} />
+          <Route
+            index
+            element={
+              <AgentOverviewTab
+                agent={currentAgent}
+                aid={aid}
+                visibleTabs={visibleTabs}
+                onAiTune={handleAiTune}
+                onOpenTab={handleTabClick}
+              />
+            }
+          />
+          <Route path="overview" element={
+            <AgentOverviewTab
+              agent={currentAgent}
+              aid={aid}
+              visibleTabs={visibleTabs}
+              onAiTune={handleAiTune}
+              onOpenTab={handleTabClick}
+            />
+          } />
           <Route path="chat/*" element={<Chat />} />
           <Route path="sessions" element={<SessionsPage />} />
           <Route path="cron-jobs" element={<CronJobsPage />} />
@@ -259,12 +209,4 @@ export default function AgentDetailLayout() {
       </div>
     </div>
   );
-}
-
-/**
- * labelKey → group 的反查（GROUP_LABEL_KEYS 是 [group, labelKey] 对）。
- */
-function labelKeyGroup(labelKey: string): TabGroup {
-  const hit = GROUP_LABEL_KEYS.find(([, key]) => key === labelKey);
-  return hit ? hit[0] : "basic";
 }

@@ -47,4 +47,28 @@ describe("agentStatsApi", () => {
       }),
     ).rejects.toThrow("network");
   });
+
+  it("getAgentBriefStats returns the brief and sends X-Agent-Id", async () => {
+    const brief = {
+      today_chats: 1,
+      total_chats: 2,
+      total_messages: 3,
+      total_tokens: 4,
+      active_sessions: 5,
+      recent_daily: [],
+    } as unknown;
+    vi.mocked(request).mockResolvedValue(brief);
+    const result = await agentStatsApi.getAgentBriefStats("agent-a");
+    expect(result).toBe(brief);
+    const opts = vi.mocked(request).mock.calls[0][1];
+    const headers = (opts as { headers: Headers }).headers;
+    expect(headers.get("X-Agent-Id")).toBe("agent-a");
+  });
+
+  it("getAgentBriefStats omits X-Agent-Id when agentId is absent", async () => {
+    vi.mocked(request).mockResolvedValue({} as unknown);
+    await agentStatsApi.getAgentBriefStats();
+    const opts = vi.mocked(request).mock.calls[0][1];
+    expect(opts?.headers).toBeUndefined();
+  });
 });

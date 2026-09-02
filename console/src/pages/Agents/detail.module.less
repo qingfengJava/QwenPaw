@@ -1,193 +1,550 @@
+// detail.module.less — 员工详情「档案中心」布局。
+//
+// 双栏：左 280px 员工档案栏（sticky）+ 右工作区（借壳页面）。
+// 颜色/圆角/阴影全部取自 staffdeck-tokens.css 的 --sd-* 令牌，
+// 暗色主题沿用 :global([data-theme="dark"]) / :global(.dark) 双选择器。
+
 .detailPage {
   display: flex;
-  flex-direction: column;
-  flex: 1;
+  align-items: stretch;
+  gap: 20px;
+  /* 父容器 .page-content 是 display:block，flex:1/min-height:0 不生效，
+     必须显式 height:100% 锁定高度链，否则页面被内容撑开、
+     Chat 输入框会被长消息推走（右栏自滚也失效） */
+  height: 100%;
   min-height: 0;
-  padding: 16px 20px 0;
-  overflow: auto;
+  padding: 20px 24px 0;
+  overflow: hidden;
 }
 
-.detailHeader {
+/* ─── 左栏：员工档案 ─────────────────────────────────────────── */
+
+.profileAside {
+  flex: 0 0 272px;
+  min-width: 0;
+  /* 容器不滚动，左栏自身内部滚动，导航始终可见 */
+  overflow-y: auto;
+}
+
+.profileCard {
+  background: var(--sd-card);
+  border: 0.5px solid var(--sd-line);
+  border-radius: var(--sd-radius-xl);
+  overflow: hidden;
+}
+
+:global([data-theme="dark"]) .profileCard,
+:global(.dark) .profileCard {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.profileBody {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding-bottom: 12px;
+  gap: 10px;
+  padding: 16px 18px 18px;
 }
 
-.headerMain {
+/* 档案头一行：头像左、名称与运行状态同行 */
+
+.profileHeaderRow {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
+  min-width: 0;
 }
 
-.agentName {
-  font-size: 18px;
+.profileAvatar {
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 19px;
   font-weight: 600;
-  line-height: 1.3;
+  user-select: none;
+}
+
+.profileNameRow {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+
+  /* 胶囊/状态点等固定不收缩，长名称由 .profileName 独自省略 */
+  > * {
+    flex-shrink: 0;
+  }
+}
+
+.profileName {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--sd-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:global([data-theme="dark"]) .profileName,
+:global(.dark) .profileName {
+  color: rgba(255, 255, 255, 0.92);
 }
 
 .pinIcon {
   color: #f59e0b;
+  flex-shrink: 0;
 }
 
-.enabledTag {
-  margin-inline-start: 2px;
+.profileDesc {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 19px;
+  color: var(--sd-text-4);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 38px;
 }
 
-.agentDescription {
-  font-size: 13px;
-  color: rgba(0, 0, 0, 0.55);
-  max-width: 720px;
-}
-
-:global([data-theme="dark"]) .agentDescription,
-:global(.dark) .agentDescription {
+:global([data-theme="dark"]) .profileDesc,
+:global(.dark) .profileDesc {
   color: rgba(255, 255, 255, 0.55);
 }
 
-.headerActions {
+.profileMeta {
+  margin: 0;
   display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 4px;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 0.5px solid var(--sd-line);
+  border-radius: var(--sd-radius-lg);
+  background: var(--sd-bg);
 }
 
-.tabBar {
+:global([data-theme="dark"]) .profileMeta,
+:global(.dark) .profileMeta {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.metaRow {
+  display: flex;
+  gap: 10px;
+  font-size: 12px;
+  min-width: 0;
+
+  dt {
+    flex: 0 0 auto;
+    color: var(--sd-text-3);
+  }
+
+  dd {
+    flex: 1;
+    margin: 0;
+    min-width: 0;
+    color: var(--sd-text-4);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.metaWs {
+  cursor: default;
+}
+
+:global([data-theme="dark"]) .metaRow,
+:global(.dark) .metaRow {
+  dt {
+    color: rgba(255, 255, 255, 0.4);
+  }
+
+  dd {
+    color: rgba(255, 255, 255, 0.65);
+  }
+}
+
+.miniStats {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  border: 0.5px solid var(--sd-line);
+  border-radius: var(--sd-radius-lg);
+  overflow: hidden;
+}
+
+:global([data-theme="dark"]) .miniStats,
+:global(.dark) .miniStats {
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.miniStatCell {
+  text-align: center;
+  padding: 10px 0 8px;
+
+  & + & {
+    border-left: 0.5px solid var(--sd-line);
+  }
+}
+
+:global([data-theme="dark"]) .miniStatCell + .miniStatCell,
+:global(.dark) .miniStatCell + .miniStatCell {
+  border-left-color: rgba(255, 255, 255, 0.1);
+}
+
+.miniStatValue {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--sd-ink);
+  line-height: 24px;
+}
+
+.miniStatLabel {
+  font-size: 11px;
+  color: var(--sd-text-2);
+  line-height: 16px;
+}
+
+:global([data-theme="dark"]) .miniStatValue,
+:global(.dark) .miniStatValue {
+  color: rgba(255, 255, 255, 0.92);
+}
+
+:global([data-theme="dark"]) .miniStatLabel,
+:global(.dark) .miniStatLabel {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.profileActions {
   display: flex;
   align-items: stretch;
-  gap: 18px;
-  flex-wrap: wrap;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
-  padding-bottom: 0;
-  margin-bottom: 14px;
-}
-
-:global([data-theme="dark"]) .tabBar,
-:global(.dark) .tabBar {
-  border-bottom-color: rgba(255, 255, 255, 0.12);
-}
-
-.tabGroup {
-  display: flex;
-  align-items: center;
   gap: 8px;
-  padding-bottom: 6px;
 }
 
-.tabGroupLabel {
-  font-size: 11px;
-  color: rgba(0, 0, 0, 0.4);
-  white-space: nowrap;
+.actionBtn {
+  flex: 1;
+  min-width: 0;
+  padding-inline: 4px;
 }
 
-:global([data-theme="dark"]) .tabGroupLabel,
-:global(.dark) .tabGroupLabel {
-  color: rgba(255, 255, 255, 0.4);
+/* 分组竖排导航 */
+
+.asideNav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 2px;
+  border-top: 0.5px solid var(--sd-line);
+  padding-top: 10px;
 }
 
-.tabGroupItems {
+:global([data-theme="dark"]) .asideNav,
+:global(.dark) .asideNav {
+  border-top-color: rgba(255, 255, 255, 0.1);
+}
+
+.asideNavGroup {
+  display: flex;
+  flex-direction: column;
+}
+
+.asideNavGroupHeader {
   display: flex;
   align-items: center;
-  gap: 2px;
-  flex-wrap: wrap;
-}
-
-.tabItem {
+  gap: 5px;
   border: none;
   background: transparent;
-  padding: 5px 10px;
-  border-radius: 8px;
-  font-size: 13px;
-  color: rgba(0, 0, 0, 0.65);
+  padding: 6px 4px;
+  font-size: 11.5px;
+  color: var(--sd-text-3);
   cursor: pointer;
-  white-space: nowrap;
+  text-align: left;
+  border-radius: var(--sd-radius-sm);
+
+  &:hover {
+    background: rgba(0, 0, 0, 0.04);
+  }
+}
+
+:global([data-theme="dark"]) .asideNavGroupHeader,
+:global(.dark) .asideNavGroupHeader {
+  color: rgba(255, 255, 255, 0.4);
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.06);
+  }
+}
+
+.asideNavGroupLabelActive {
+  color: var(--sd-ink);
+  font-weight: 600;
+}
+
+:global([data-theme="dark"]) .asideNavGroupLabelActive,
+:global(.dark) .asideNavGroupLabelActive {
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.asideNavItems {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-left: 6px;
+}
+
+.asideNavItem {
+  position: relative;
+  border: none;
+  background: transparent;
+  text-align: left;
+  padding: 6px 10px 6px 14px;
+  border-radius: var(--sd-radius-sm);
+  font-size: 13px;
+  color: var(--sd-text-4);
+  cursor: pointer;
   transition:
-    background-color 0.2s ease,
-    color 0.2s ease;
+    background-color 0.15s ease,
+    color 0.15s ease;
+
+  &::before {
+    content: "";
+    position: absolute;
+    left: 2px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 3px;
+    height: 0;
+    border-radius: 2px;
+    background: var(--sd-ink);
+    transition: height 0.15s ease;
+  }
 
   &:hover {
     background: rgba(0, 0, 0, 0.05);
-    color: rgba(0, 0, 0, 0.9);
+    color: var(--sd-ink);
   }
 }
 
-:global([data-theme="dark"]) .tabItem,
-:global(.dark) .tabItem {
+:global([data-theme="dark"]) .asideNavItem,
+:global(.dark) .asideNavItem {
   color: rgba(255, 255, 255, 0.65);
 
+  &::before {
+    background: rgba(255, 255, 255, 0.92);
+  }
+
   &:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: rgba(255, 255, 255, 0.9);
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.92);
   }
 }
 
-.tabItemActive {
-  background: #f6f6f6;
-  color: #18181a;
-  font-weight: 500;
+.asideNavItemActive {
+  background: var(--sd-surface);
+  color: var(--sd-ink);
+  font-weight: 600;
+
+  &::before {
+    height: 14px;
+  }
 
   &:hover {
-    background: #f6f6f6 !important;
-    color: #18181a !important;
+    background: var(--sd-surface) !important;
+    color: var(--sd-ink) !important;
   }
 }
 
-:global([data-theme="dark"]) .tabItemActive,
-:global(.dark) .tabItemActive {
-  background: rgba(255, 255, 255, 0.14);
+:global([data-theme="dark"]) .asideNavItemActive,
+:global(.dark) .asideNavItemActive {
+  background: rgba(255, 255, 255, 0.1);
   color: #fff;
 
   &:hover {
-    background: rgba(255, 255, 255, 0.14) !important;
+    background: rgba(255, 255, 255, 0.1) !important;
     color: #fff !important;
   }
 }
 
+.switchWrap {
+  margin-top: 4px;
+}
+
+/* ─── 右栏：工作区 ───────────────────────────────────────────── */
+
 .detailBody {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  flex: 1;
-  min-height: 0;
-  padding-bottom: 16px;
+  /* 右栏自滚：长内容页面在栏内滚动；Chat 等全高页面由其内部
+     滚动区接管，输入框贴底（底部留白由各页面内容自担） */
+  overflow-y: auto;
 }
 
-.overviewPlaceholder {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 24px;
-  font-size: 13px;
-  color: rgba(0, 0, 0, 0.45);
-}
-
-.overviewAid {
-  padding: 2px 6px;
-  border-radius: 6px;
-  background: rgba(0, 0, 0, 0.06);
-  font-size: 12px;
-}
+/* ─── 概览页 ─────────────────────────────────────────────────── */
 
 .overviewWrap {
-  max-width: 760px;
-}
-
-.overviewHead {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  gap: 22px;
+  max-width: 1080px;
+  /* 滚动到底时留出呼吸空间（容器底 padding 已归零给 Chat 贴底） */
+  padding-bottom: 24px;
+}
+
+.statRow {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.overviewSection {
+  display: flex;
+  flex-direction: column;
   gap: 10px;
-  margin-bottom: 12px;
 }
 
-.overviewName {
-  font-size: 16px;
+.sectionTitle {
+  margin: 0;
+  font-size: 14px;
   font-weight: 600;
+  color: var(--sd-ink);
 }
 
-.overviewDescriptions {
-  margin-bottom: 14px;
+:global([data-theme="dark"]) .sectionTitle,
+:global(.dark) .sectionTitle {
+  color: rgba(255, 255, 255, 0.92);
 }
 
-.overviewActions {
+/* 能力资产入口卡 */
+
+.abilityRow {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.abilityCard {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 16px;
+  background: var(--sd-card);
+  border: 0.5px solid var(--sd-line);
+  border-radius: var(--sd-radius-lg);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
+
+  &:hover {
+    box-shadow: var(--sd-shadow-pop);
+    transform: translateY(-1px);
+  }
+}
+
+:global([data-theme="dark"]) .abilityCard,
+:global(.dark) .abilityCard {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.abilityIcon {
+  color: var(--sd-link);
+}
+
+.abilityName {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--sd-ink);
+}
+
+:global([data-theme="dark"]) .abilityName,
+:global(.dark) .abilityName {
+  color: rgba(255, 255, 255, 0.88);
+}
+
+/* 员工档案文档区 */
+
+.profileDocCard {
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.docHeading {
+  margin: 6px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--sd-ink);
+}
+
+:global([data-theme="dark"]) .docHeading,
+:global(.dark) .docHeading {
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.docBody {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 22px;
+  color: var(--sd-text-4);
+  white-space: pre-wrap;
+}
+
+:global([data-theme="dark"]) .docBody,
+:global(.dark) .docBody {
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.chipRow {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
+}
+
+.promptChip {
+  border: 0.5px solid var(--sd-line);
+  background: var(--sd-gray-bg);
+  border-radius: var(--sd-radius-pill);
+  padding: 5px 14px;
+  font-size: 12.5px;
+  color: var(--sd-text-4);
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
+
+  &:hover {
+    background: var(--sd-blue-bg);
+    border-color: var(--sd-link);
+    color: var(--sd-link);
+  }
+}
+
+:global([data-theme="dark"]) .promptChip,
+:global(.dark) .promptChip {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.65);
+
+  &:hover {
+    background: var(--sd-blue-bg);
+    border-color: var(--sd-link);
+    color: var(--sd-link);
+  }
 }
