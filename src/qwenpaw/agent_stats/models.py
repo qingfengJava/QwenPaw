@@ -49,3 +49,26 @@ class AgentStatsSummary(BaseModel):
     agent_prompt_tokens: int = 0
     agent_completion_tokens: int = 0
     agent_llm_calls: int = 0
+
+
+class DailyBrief(BaseModel):
+    """Single-day density row for the profile aside / overview cards."""
+
+    date: str
+    chats: int
+    messages: int
+
+
+class AgentStatsBrief(BaseModel):
+    """Lightweight payload for the employee profile aside and overview cards.
+
+    Unlike the full summary, this drops channel breakdowns and per-day
+    token/llm/tool columns so the sidebar can poll it cheaply.
+    """
+
+    today_chats: int
+    total_chats: int
+    total_messages: int
+    total_tokens: int
+    active_sessions: int
+    recent_daily: list[DailyBrief]
