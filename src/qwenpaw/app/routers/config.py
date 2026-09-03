@@ -16,6 +16,8 @@ from fastapi import (
 from pydantic import BaseModel, Field
 
 from ...agents.acp.core import ACPAgentConfig, ACPConfig
+from ..rbac.deps import require_perm
+from ..rbac.models import PERM_ADMIN_PLATFORM
 from ...agents.acp.node_runtime import (
     ACPNodeRuntimeStatus,
     get_node_runtime_status,
@@ -56,7 +58,13 @@ from .schemas_config import (
     HeartbeatBody,
 )
 
-router = APIRouter(prefix="/config", tags=["config"])
+router = APIRouter(
+    prefix="/config",
+    tags=["config"],
+    # 全局配置面（平台运维）：渠道 token / 应用级配置跨租户共享，
+    # 仅 platform_admin 可读写（enforce 默认跟随认证开关）。
+    dependencies=[Depends(require_perm(PERM_ADMIN_PLATFORM))],
+)
 
 
 def _channel_config_class(name: str) -> Optional[type[BaseModel]]:

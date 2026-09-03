@@ -412,6 +412,23 @@ LLM_STREAM_IDLE_TIMEOUT = EnvVarLoader.get_float(
     min_value=0.0,
 )
 
+# M3 per-user LLM quota: caps one user's concurrent in-flight LLM calls
+# across all models. 0 = disabled (pre-M3 behavior). Anonymous/background
+# turns share the "system" bucket so cron/dream load cannot starve users.
+LLM_USER_MAX_CONCURRENT = EnvVarLoader.get_int(
+    "QWENPAW_USER_LLM_MAX_CONCURRENT",
+    0,
+    min_value=0,
+)
+
+# M3 per-user LLM quota: per-user QPM sliding window across all models.
+# 0 = disabled.
+LLM_USER_MAX_QPM = EnvVarLoader.get_int(
+    "QWENPAW_USER_LLM_MAX_QPM",
+    0,
+    min_value=0,
+)
+
 # Tool guard approval timeout (seconds).
 try:
     TOOL_GUARD_APPROVAL_TIMEOUT_SECONDS = max(

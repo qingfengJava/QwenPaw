@@ -23,6 +23,8 @@ from qwenpaw.exceptions import (
 
 from ..agent_context import get_agent_for_request
 from ..utils import schedule_agent_reload
+from ..rbac.deps import require_perm
+from ..rbac.models import PERM_MODEL_MANAGE
 from ...config.config import (
     AgentProfileConfig,
     load_agent_config,
@@ -46,7 +48,13 @@ from ...config.config import ModelSlotConfig
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/models", tags=["models"])
+# 模型/provider 管理面：provider API key 的增删改查（model:manage 仅
+# team_lead/platform_admin 持有），普通员工只保留调用权（model:invoke）。
+router = APIRouter(
+    prefix="/models",
+    tags=["models"],
+    dependencies=[Depends(require_perm(PERM_MODEL_MANAGE))],
+)
 
 ChatModelName = Literal[
     "OpenAIChatModel",

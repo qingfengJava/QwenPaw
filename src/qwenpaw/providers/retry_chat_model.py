@@ -53,7 +53,11 @@ from .model_capability_cache import get_capability_cache
 from .model_error_policy import (
     is_retryable_same_model,
 )
-from .rate_limiter import LLMRateLimiter, get_rate_limiter
+from .rate_limiter import (
+    LLMRateLimiter,
+    get_rate_limiter,
+    get_user_rate_limiter,
+)
 from .stream_progress import has_meaningful_stream_content
 
 logger = logging.getLogger(__name__)
@@ -361,6 +365,87 @@ def _compute_backoff(attempt: int, retry_config: RetryConfig) -> float:
     )
 
 
+async def _maybe_get_user_limiter() -> LLMRateLimiter | None:
+    """Resolve the M3 per-user LLM quota limiter for the current context.
+
+    The user id comes from the trusted-identity ContextVar populated by
+    AuthMiddleware / channel identity scoping; anonymous or background
+    turns share the ``"system"`` bucket.  Returns ``None`` when per-user
+    quotas are disabled (the default), preserving pre-M3 behavior.
+    """
+    from ..app.agent_context import get_current_user_id
+
+    return await get_user_rate_limiter(get_current_user_id() or "")
+
+
+def _check_quota_gate(model_key: str) -> None:
+    """Evaluate M4 admin-managed quota rules for the current context.
+
+    Raises ``ModelQuotaExceededException`` when a matching rule's window
+    is exhausted; silently no-ops when quotas are unconfigured or the
+    identity context is unavailable (fail open — the M3 limiter remains
+    the hard backstop).
+    """
+    try:
+        from ..app.agent_context import (
+            get_current_agent_id,
+            get_current_user_id,
+        )
+        from ..app.quotas.counter import check_llm_quota
+
+        check_llm_quota(
+            get_current_user_id() or "",
+            get_current_agent_id() or "",
+            model_key,
+        )
+    except Exception as exc:
+        # Quota-trip exceptions must propagate; infrastructure errors
+        # (store unreadable, context missing) must not block the call.
+        from ..exceptions import ModelQuotaExceededException
+
+        if isinstance(exc, ModelQuotaExceededException):
+            raise
+        logger.debug("quota gate skipped: %s", exc, exc_info=True)
+
+
+def _check_model_grant(model_key: str) -> None:
+    """Enforce the M4 model whitelist for the current caller.
+
+    Raises ``UnauthorizedModelAccessException`` when a grant entry exists
+    for this model and the caller matches none of its roles/users/teams.
+    Inert while RBAC enforcement is off; fail open on store errors.
+    """
+    try:
+        from ..app.agent_context import get_current_user_id
+        from ..app.rbac.deps import (
+            _resolve_flat_role,
+            rbac_enforcement_enabled,
+        )
+        from ..app.rbac.store import get_rbac_store
+
+        if not rbac_enforcement_enabled():
+            return
+        user_id = get_current_user_id() or ""
+        flat_role = _resolve_flat_role(user_id) if user_id else ""
+        if not get_rbac_store().model_allowed(
+            user_id,
+            flat_role,
+            model_key,
+        ):
+            from ..exceptions import UnauthorizedModelAccessException
+
+            raise UnauthorizedModelAccessException(
+                model_key,
+                details={"user_id": user_id, "reason": "model grant"},
+            )
+    except Exception as exc:
+        from ..exceptions import UnauthorizedModelAccessException
+
+        if isinstance(exc, UnauthorizedModelAccessException):
+            raise
+        logger.debug("model grant check skipped: %s", exc, exc_info=True)
+
+
 class RetryChatModel(ChatModelBase):
     """Transparent retry wrapper around any :class:`ChatModelBase`.
 
@@ -496,6 +581,7 @@ class RetryChatModel(ChatModelBase):
         stream: AsyncGenerator[ChatResponse, None],
         limiter: LLMRateLimiter,
         acquired_at: float,
+        user_limiter: LLMRateLimiter | None = None,
     ) -> AsyncGenerator[ChatResponse, None]:
         """Yield chunks while managing the slot and upstream idle budget.
 
@@ -554,6 +640,9 @@ class RetryChatModel(ChatModelBase):
                     first_chunk = False
                     # return the slot once the API starts delivering
                     limiter.release()
+                    # M3: release the per-user quota slot at the same time.
+                    if user_limiter is not None:
+                        user_limiter.release()
                     # streaming success: clear any stale 429 pause so
                     # subsequent callers (including user chats) are not
                     # held back by a pause set by a background task.
@@ -575,6 +664,9 @@ class RetryChatModel(ChatModelBase):
                     # Stream failed before producing any chunk;
                     # slot not yet released.
                     limiter.release()
+                    # M3: paired release of the per-user quota slot.
+                    if user_limiter is not None:
+                        user_limiter.release()
 
     async def _next_stream_chunk(
         self,
@@ -795,6 +887,16 @@ class RetryChatModel(ChatModelBase):
         attempts = retries + 1
         last_exc: Exception | None = None
 
+        # M3: per-user quota limiter (None unless QWENPAW_USER_LLM_* is
+        # configured). Acquired after the model slot and released at the
+        # same points, so both lifecycles stay paired.
+        user_limiter = await _maybe_get_user_limiter()
+        # M4: admin-managed quota rules (quotas.json). No rules — no-op.
+        _check_quota_gate(self.model_key)
+        # M4: model whitelist (rbac.json model_grants). Inert unless
+        # QWENPAW_RBAC_ENFORCE=on.
+        _check_model_grant(self.model_key)
+
         for attempt in range(1, attempts + 1):
             # Acquire a semaphore slot, with a timeout to prevent
             # indefinite blocking. `acquired` tracks whether the slot was
@@ -803,6 +905,8 @@ class RetryChatModel(ChatModelBase):
             acquired = False
             owns_semaphore = True
             acquired_at: float = 0.0
+            # M3: whether this attempt holds the per-user quota slot.
+            user_acquired = False
             try:
                 self._ensure_provider_available()
                 try:
@@ -811,6 +915,15 @@ class RetryChatModel(ChatModelBase):
                         timeout=self._rate_limit_config.acquire_timeout,
                     )
                     acquired = True
+                    # M3: model slot first, user quota second — on a user
+                    # acquire timeout the finally below releases the model
+                    # slot (acquired=True) while user_acquired stays False.
+                    if user_limiter is not None:
+                        await asyncio.wait_for(
+                            user_limiter.acquire(),
+                            timeout=self._rate_limit_config.acquire_timeout,
+                        )
+                        user_acquired = True
                 except asyncio.TimeoutError as exc:
                     # Internal acquire timeout — NOT an API 429.
                     # _AcquireTimeoutError is a typed subclass so the outer
@@ -860,6 +973,11 @@ class RetryChatModel(ChatModelBase):
                         attempts,
                         limiter,
                         acquired_at,
+                        # M3: user slot ownership transfers too (it is
+                        # released on the stream's first chunk).
+                        user_limiter=(
+                            user_limiter if user_acquired else None
+                        ),
                     )
 
                 # Non-streaming success: clear any stale rate-limit pause so
@@ -889,6 +1007,9 @@ class RetryChatModel(ChatModelBase):
             finally:
                 if owns_semaphore and acquired:
                     limiter.release()
+                    # M3: paired release of the per-user quota slot.
+                    if user_acquired and user_limiter is not None:
+                        user_limiter.release()
 
         # Should be unreachable, but satisfies the type-checker.
         raise last_exc  # type: ignore[misc]
@@ -903,6 +1024,7 @@ class RetryChatModel(ChatModelBase):
         max_attempts: int,
         limiter: LLMRateLimiter,
         acquired_at: float = 0.0,
+        user_limiter: LLMRateLimiter | None = None,
     ) -> AsyncGenerator[ChatResponse, None]:
         """Yield chunks from *stream*; on transient failure, retry the full
         request and yield from the new stream instead.
@@ -917,6 +1039,9 @@ class RetryChatModel(ChatModelBase):
         pending_acquired_at = acquired_at
         reasoning_injected = False
         emitted = False
+        # M3: the user slot (if any) is currently held for *stream*; each
+        # retry re-acquires and re-transfers it alongside the model slot.
+        pending_user_held = user_limiter is not None
 
         while True:
             try:
@@ -925,6 +1050,9 @@ class RetryChatModel(ChatModelBase):
                         pending_stream,
                         limiter,
                         pending_acquired_at,
+                        user_limiter=(
+                            user_limiter if pending_user_held else None
+                        ),
                     )
                     try:
                         async for chunk in active_stream:
@@ -939,6 +1067,8 @@ class RetryChatModel(ChatModelBase):
                 acquired = False
                 owns_semaphore = True
                 retry_acquired_at: float = 0.0
+                # M3: whether this retry attempt holds the user slot.
+                retry_user_acquired = False
                 try:
                     self._ensure_provider_available()
                     try:
@@ -947,6 +1077,15 @@ class RetryChatModel(ChatModelBase):
                             timeout=self._rate_limit_config.acquire_timeout,
                         )
                         acquired = True
+                        # M3: re-acquire the user quota slot alongside.
+                        if user_limiter is not None:
+                            await asyncio.wait_for(
+                                user_limiter.acquire(),
+                                timeout=(
+                                    self._rate_limit_config.acquire_timeout
+                                ),
+                            )
+                            retry_user_acquired = True
                     except asyncio.TimeoutError as exc:
                         raise _AcquireTimeoutError(
                             operation="LLM execution (stream retry)",
@@ -967,6 +1106,7 @@ class RetryChatModel(ChatModelBase):
                         owns_semaphore = False
                         pending_stream = result
                         pending_acquired_at = retry_acquired_at
+                        pending_user_held = retry_user_acquired
                         continue
 
                     yield result
@@ -974,6 +1114,9 @@ class RetryChatModel(ChatModelBase):
                 finally:
                     if owns_semaphore and acquired:
                         limiter.release()
+                        # M3: paired release of the per-user quota slot.
+                        if retry_user_acquired and user_limiter is not None:
+                            user_limiter.release()
 
             except Exception as retry_exc:
                 pending_stream = None
