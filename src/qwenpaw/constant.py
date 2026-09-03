@@ -111,6 +111,14 @@ else:
         WORKING_DIR = _legacy_copaw_dir.resolve()
     else:
         WORKING_DIR = Path("~/.qwenpaw").expanduser().resolve()
+# Load user-level .env (e.g. ~/.qwenpaw/.env) after WORKING_DIR is resolved.
+# Repo root .env was loaded at the top of this module; it takes precedence
+# over the user-level file because load_dotenv(..., override=False) keeps
+# existing values.
+_user_env_path = WORKING_DIR / ".env"
+if _user_env_path.exists():
+    load_dotenv(_user_env_path)
+
 SECRET_DIR = (
     Path(
         EnvVarLoader.get_str(
@@ -230,6 +238,12 @@ HEARTBEAT_DEFAULT_EVERY = "6h"
 HEARTBEAT_DEFAULT_TARGET = "main"
 HEARTBEAT_DEFAULT_TIMEOUT_SECONDS = 300
 HEARTBEAT_MAX_TIMEOUT_SECONDS = 3600
+
+# Default execution budget for POST /console/chat/task when the request
+# omits ``timeout``. Aligned with Xiaoyi channel task_timeout_ms (1 hour).
+DEFAULT_STREAM_TASK_TIMEOUT_SECONDS = 3600
+# Parent HTTP wait for spawn_subagent foreground (/console/chat).
+DEFAULT_SPAWN_FOREGROUND_TIMEOUT_SECONDS = 600
 HEARTBEAT_TARGET_LAST = "last"
 HEARTBEAT_TARGET_INBOX = "inbox"
 
@@ -382,21 +396,20 @@ LLM_ACQUIRE_TIMEOUT = EnvVarLoader.get_float(
     min_value=10.0,
 )
 
-# M3 per-user LLM quota: caps one user's concurrent in-flight LLM calls
-# across all models. 0 = disabled (pre-M3 behavior). Anonymous/background
-# turns share the "system" bucket so cron/dream load cannot starve users.
-LLM_USER_MAX_CONCURRENT = EnvVarLoader.get_int(
-    "QWENPAW_USER_LLM_MAX_CONCURRENT",
-    0,
-    min_value=0,
+# Maximum upstream wait (seconds) for the first content-bearing stream chunk.
+# Set to 0 to disable the first-content timeout.
+LLM_STREAM_FIRST_CONTENT_TIMEOUT = EnvVarLoader.get_float(
+    "QWENPAW_LLM_STREAM_FIRST_CONTENT_TIMEOUT",
+    30.0,
+    min_value=0.0,
 )
 
-# M3 per-user LLM quota: per-user QPM sliding window across all models.
-# 0 = disabled.
-LLM_USER_MAX_QPM = EnvVarLoader.get_int(
-    "QWENPAW_USER_LLM_MAX_QPM",
-    0,
-    min_value=0,
+# Maximum upstream wait (seconds) between later content-bearing stream chunks.
+# Set to 0 to disable the steady-state idle timeout.
+LLM_STREAM_IDLE_TIMEOUT = EnvVarLoader.get_float(
+    "QWENPAW_LLM_STREAM_IDLE_TIMEOUT",
+    30.0,
+    min_value=0.0,
 )
 
 # Tool guard approval timeout (seconds).

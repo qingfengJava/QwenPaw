@@ -28,7 +28,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Any, AsyncGenerator
+from typing import Any, AsyncGenerator, AsyncIterator
 
 from agentscope.model import ChatModelBase
 from agentscope.model._model_response import ChatResponse
@@ -45,22 +45,55 @@ from ..constant import (
     LLM_MAX_QPM,
     LLM_RATE_LIMIT_JITTER,
     LLM_RATE_LIMIT_PAUSE,
+    LLM_STREAM_FIRST_CONTENT_TIMEOUT,
+    LLM_STREAM_IDLE_TIMEOUT,
 )
 from .error_utils import extract_status_code as _extract_status_code
 from .model_capability_cache import get_capability_cache
-from .rate_limiter import (
-    LLMRateLimiter,
-    get_rate_limiter,
-    get_user_rate_limiter,
+from .model_error_policy import (
+    is_retryable_same_model,
 )
+from .rate_limiter import LLMRateLimiter, get_rate_limiter
+from .stream_progress import has_meaningful_stream_content
 
 logger = logging.getLogger(__name__)
 
-RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504, 529}
+_STREAM_CLEANUP_TIMEOUT = 1.0
+_STREAM_FIRST_CONTENT_TIMEOUT_ENV = "QWENPAW_LLM_STREAM_FIRST_CONTENT_TIMEOUT"
+_STREAM_IDLE_TIMEOUT_ENV = "QWENPAW_LLM_STREAM_IDLE_TIMEOUT"
+_pending_stream_cleanup_tasks: set[asyncio.Future[Any]] = set()
+_pending_provider_cleanup_tasks_by_model: dict[
+    str,
+    set[asyncio.Future[Any]],
+] = {}
 
-_openai_retryable: tuple[type[Exception], ...] | None = None
-_anthropic_retryable: tuple[type[Exception], ...] | None = None
-_httpx_retryable: tuple[type[Exception], ...] | None = None
+
+def _track_stream_cleanup(
+    task: asyncio.Future[Any],
+    description: str,
+) -> None:
+    """Retain deferred cleanup work and report eventual failures."""
+    _pending_stream_cleanup_tasks.add(task)
+
+    def _on_done(completed: asyncio.Future[Any]) -> None:
+        _pending_stream_cleanup_tasks.discard(completed)
+        if completed.cancelled():
+            return
+        try:
+            exc = completed.exception()
+        except asyncio.CancelledError:
+            return
+        if exc is not None:
+            logger.warning(f"Deferred {description} failed: {exc}")
+
+    task.add_done_callback(_on_done)
+
+
+@dataclass(slots=True)
+class _StreamCleanupState:
+    """Record whether stream cleanup was moved off the request path."""
+
+    deferred: bool = False
 
 
 class _AcquireTimeoutError(RateLimitExceededException):
@@ -70,6 +103,40 @@ class _AcquireTimeoutError(RateLimitExceededException):
     ``isinstance`` and raise immediately without calling
     ``report_rate_limit()`` or attempting another retry.
     """
+
+
+class StreamIdleTimeoutError(TimeoutError):
+    """Raised when an LLM stream stops producing content-bearing chunks."""
+
+    def __init__(
+        self,
+        model_key: str,
+        timeout_seconds: float,
+        setting_name: str | None = None,
+        cleanup_deferred: bool = False,
+    ) -> None:
+        self.model_key = model_key
+        self.timeout_seconds = timeout_seconds
+        self.cleanup_deferred = cleanup_deferred
+        setting_hint = (
+            f". Set {setting_name} to adjust this timeout"
+            if setting_name
+            else ""
+        )
+        super().__init__(
+            f"LLM stream for {model_key} produced no content for "
+            f"{timeout_seconds:g}s{setting_hint}",
+        )
+
+
+class StreamCleanupPendingError(TimeoutError):
+    """Raised while a previous stream for the model is still cleaning up."""
+
+    def __init__(self, model_key: str) -> None:
+        self.model_key = model_key
+        super().__init__(
+            f"LLM stream cleanup for {model_key} is still in progress",
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,73 +172,13 @@ class RateLimitConfig:
     acquire_timeout: float = LLM_ACQUIRE_TIMEOUT
 
 
-def _get_openai_retryable() -> tuple[type[Exception], ...]:
-    global _openai_retryable
-    if _openai_retryable is None:
-        try:
-            import openai
-
-            _openai_retryable = tuple(
-                cls
-                for cls in (
-                    openai.RateLimitError,
-                    openai.APITimeoutError,
-                    openai.APIConnectionError,
-                    getattr(openai, "InternalServerError", None),
-                )
-                if cls is not None
-            )
-        except ImportError:
-            _openai_retryable = ()
-    return _openai_retryable
-
-
-def _get_anthropic_retryable() -> tuple[type[Exception], ...]:
-    global _anthropic_retryable
-    if _anthropic_retryable is None:
-        try:
-            import anthropic
-
-            _anthropic_retryable = (
-                anthropic.RateLimitError,
-                anthropic.APITimeoutError,
-                anthropic.APIConnectionError,
-            )
-        except ImportError:
-            _anthropic_retryable = ()
-    return _anthropic_retryable
-
-
-def _get_httpx_retryable() -> tuple[type[Exception], ...]:
-    global _httpx_retryable
-    if _httpx_retryable is None:
-        try:
-            import httpx
-
-            _httpx_retryable = (
-                httpx.RemoteProtocolError,
-                httpx.TimeoutException,
-            )
-        except ImportError:
-            _httpx_retryable = ()
-    return _httpx_retryable
-
-
 def _is_retryable(exc: Exception) -> bool:
     """Return *True* if *exc* should trigger a retry."""
-    retryable = (
-        _get_openai_retryable()
-        + _get_anthropic_retryable()
-        + _get_httpx_retryable()
-    )
-    if retryable and isinstance(exc, retryable):
-        return True
-
-    status = _extract_status_code(exc)
-    if status is not None and status in RETRYABLE_STATUS_CODES:
-        return True
-
-    return False
+    if isinstance(exc, StreamCleanupPendingError):
+        return False
+    if isinstance(exc, StreamIdleTimeoutError) and exc.cleanup_deferred:
+        return False
+    return is_retryable_same_model(exc)
 
 
 def _is_rate_limit(exc: Exception) -> bool:
@@ -354,87 +361,6 @@ def _compute_backoff(attempt: int, retry_config: RetryConfig) -> float:
     )
 
 
-async def _maybe_get_user_limiter() -> LLMRateLimiter | None:
-    """Resolve the M3 per-user LLM quota limiter for the current context.
-
-    The user id comes from the trusted-identity ContextVar populated by
-    AuthMiddleware / channel identity scoping; anonymous or background
-    turns share the ``"system"`` bucket.  Returns ``None`` when per-user
-    quotas are disabled (the default), preserving pre-M3 behavior.
-    """
-    from ..app.agent_context import get_current_user_id
-
-    return await get_user_rate_limiter(get_current_user_id() or "")
-
-
-def _check_quota_gate(model_key: str) -> None:
-    """Evaluate M4 admin-managed quota rules for the current context.
-
-    Raises ``ModelQuotaExceededException`` when a matching rule's window
-    is exhausted; silently no-ops when quotas are unconfigured or the
-    identity context is unavailable (fail open — the M3 limiter remains
-    the hard backstop).
-    """
-    try:
-        from ..app.agent_context import (
-            get_current_agent_id,
-            get_current_user_id,
-        )
-        from ..app.quotas.counter import check_llm_quota
-
-        check_llm_quota(
-            get_current_user_id() or "",
-            get_current_agent_id() or "",
-            model_key,
-        )
-    except Exception as exc:
-        # Quota-trip exceptions must propagate; infrastructure errors
-        # (store unreadable, context missing) must not block the call.
-        from ..exceptions import ModelQuotaExceededException
-
-        if isinstance(exc, ModelQuotaExceededException):
-            raise
-        logger.debug("quota gate skipped: %s", exc, exc_info=True)
-
-
-def _check_model_grant(model_key: str) -> None:
-    """Enforce the M4 model whitelist for the current caller.
-
-    Raises ``UnauthorizedModelAccessException`` when a grant entry exists
-    for this model and the caller matches none of its roles/users/teams.
-    Inert while RBAC enforcement is off; fail open on store errors.
-    """
-    try:
-        from ..app.agent_context import get_current_user_id
-        from ..app.rbac.deps import (
-            _resolve_flat_role,
-            rbac_enforcement_enabled,
-        )
-        from ..app.rbac.store import get_rbac_store
-
-        if not rbac_enforcement_enabled():
-            return
-        user_id = get_current_user_id() or ""
-        flat_role = _resolve_flat_role(user_id) if user_id else ""
-        if not get_rbac_store().model_allowed(
-            user_id,
-            flat_role,
-            model_key,
-        ):
-            from ..exceptions import UnauthorizedModelAccessException
-
-            raise UnauthorizedModelAccessException(
-                model_key,
-                details={"user_id": user_id, "reason": "model grant"},
-            )
-    except Exception as exc:
-        from ..exceptions import UnauthorizedModelAccessException
-
-        if isinstance(exc, UnauthorizedModelAccessException):
-            raise
-        logger.debug("model grant check skipped: %s", exc, exc_info=True)
-
-
 class RetryChatModel(ChatModelBase):
     """Transparent retry wrapper around any :class:`ChatModelBase`.
 
@@ -452,6 +378,10 @@ class RetryChatModel(ChatModelBase):
         inner: ChatModelBase,
         retry_config: RetryConfig | None = None,
         rate_limit_config: RateLimitConfig | None = None,
+        stream_first_content_timeout: float = (
+            LLM_STREAM_FIRST_CONTENT_TIMEOUT
+        ),
+        stream_idle_timeout: float = LLM_STREAM_IDLE_TIMEOUT,
     ) -> None:
         # agentscope 2.0 ChatModelBase requires credential/model/parameters;
         # forward the inner wrapper's own values so attribute access stays
@@ -465,10 +395,35 @@ class RetryChatModel(ChatModelBase):
             context_size=getattr(inner, "context_size", 32768),
         )
         self._inner = inner
+        # AgentScope 2.0.6 reads the formatter from the outermost model
+        # wrapper while normalizing incoming messages.  Keep this retry
+        # layer transparent just like the model metadata forwarded above.
+        formatter = getattr(inner, "formatter", None)
+        if formatter is not None:
+            self.formatter = formatter
         self._retry_config = _normalize_retry_config(retry_config)
         self._rate_limit_config = _normalize_rate_limit_config(
             rate_limit_config,
         )
+        self._stream_idle_timeout = max(
+            0.0,
+            float(stream_idle_timeout),
+        )
+        self._stream_first_content_timeout = max(
+            0.0,
+            float(stream_first_content_timeout),
+        )
+        self._pending_provider_cleanup_tasks: set[asyncio.Future[Any]] = set()
+
+    @property
+    def formatter(self) -> Any:
+        """Expose the wrapped model's formatter to AgentScope."""
+        return self._inner.formatter
+
+    @formatter.setter
+    def formatter(self, value: Any) -> None:
+        """Keep formatter updates synchronized with the wrapped model."""
+        self._inner.formatter = value
 
     # Expose the real model's class so that formatter mapping keeps working
     # when code inspects ``model.__class__`` after wrapping.
@@ -482,6 +437,34 @@ class RetryChatModel(ChatModelBase):
         provider_id = getattr(self._inner, "_provider_id", None)
         name = self._inner.model
         return f"{provider_id}:{name}" if provider_id else name
+
+    def _track_provider_cleanup(
+        self,
+        task: asyncio.Future[Any],
+        description: str,
+    ) -> None:
+        """Quarantine this model until deferred cleanup finishes."""
+        model_key = self.model_key
+        self._pending_provider_cleanup_tasks.add(task)
+        model_tasks = _pending_provider_cleanup_tasks_by_model.setdefault(
+            model_key,
+            set(),
+        )
+        model_tasks.add(task)
+
+        def _clear_quarantine(completed: asyncio.Future[Any]) -> None:
+            self._pending_provider_cleanup_tasks.discard(completed)
+            model_tasks.discard(completed)
+            if not model_tasks:
+                _pending_provider_cleanup_tasks_by_model.pop(model_key, None)
+
+        task.add_done_callback(_clear_quarantine)
+        _track_stream_cleanup(task, description)
+
+    def _ensure_provider_available(self) -> None:
+        """Reject upstream calls while old cleanup is still active."""
+        if _pending_provider_cleanup_tasks_by_model.get(self.model_key):
+            raise StreamCleanupPendingError(self.model_key)
 
     @staticmethod
     async def _handle_rate_limit_exc(
@@ -513,56 +496,276 @@ class RetryChatModel(ChatModelBase):
         stream: AsyncGenerator[ChatResponse, None],
         limiter: LLMRateLimiter,
         acquired_at: float,
-        user_limiter: LLMRateLimiter | None = None,
     ) -> AsyncGenerator[ChatResponse, None]:
-        """Yield all chunks from *stream*, managing the semaphore slot
-        lifecycle.
+        """Yield chunks while managing the slot and upstream idle budget.
 
         Releases the semaphore slot after the first chunk arrives — once the
         API starts streaming the request has been accepted and will not be
         rate-limited mid-flight, so holding the slot for the full streaming
         duration would unnecessarily starve other callers.
 
-        Always closes *stream* on completion or error.  Any exception raised
-        during iteration propagates to the caller's ``async for`` loop
-        (i.e. _wrap_stream), which handles retry decisions.  The exception
-        does not propagate to the final consumer unless all retries are
-        exhausted.
+        Before any content arrives, the first-content budget applies. After
+        the first content-bearing chunk, the shorter steady-state idle budget
+        applies and is restored by each later content-bearing chunk. Empty
+        control chunks do not restore either budget. Both budgets count only
+        time spent waiting for the upstream iterator, excluding time suspended
+        at ``yield`` because of consumer backpressure. A configured timeout of
+        zero disables that phase's watchdog.
+
+        Attempts to close *stream* within a bounded cleanup period on
+        completion or error. Non-cooperative cleanup continues in the
+        background. Any iteration exception propagates to _wrap_stream,
+        which handles retry decisions, and reaches the final consumer only
+        after all retries are exhausted.
 
         Args:
             acquired_at: Timestamp from ``limiter.acquire()``, forwarded to
                 ``on_success()`` so only stale pauses are cleared.
         """
         first_chunk = True
+        loop = asyncio.get_running_loop()
+        active_timeout = self._stream_first_content_timeout
+        timeout_setting = _STREAM_FIRST_CONTENT_TIMEOUT_ENV
+        idle_budget = active_timeout
+        iterator = stream.__aiter__()
+        cleanup_state = _StreamCleanupState()
         try:
-            async for chunk in stream:
+            while True:
+                wait_started_at = loop.time()
+                try:
+                    chunk = await self._next_stream_chunk(
+                        iterator,
+                        stream,
+                        cleanup_state,
+                        idle_budget if active_timeout > 0 else None,
+                        active_timeout,
+                        timeout_setting,
+                    )
+                except StopAsyncIteration:
+                    break
+
+                if active_timeout > 0:
+                    idle_budget = max(
+                        0.0,
+                        idle_budget - (loop.time() - wait_started_at),
+                    )
+
                 if first_chunk:
                     first_chunk = False
                     # return the slot once the API starts delivering
                     limiter.release()
-                    # M3: release the per-user quota slot at the same time.
-                    if user_limiter is not None:
-                        user_limiter.release()
                     # streaming success: clear any stale 429 pause so
                     # subsequent callers (including user chats) are not
                     # held back by a pause set by a background task.
                     await limiter.on_success(acquired_at)
+                if has_meaningful_stream_content(chunk.content):
+                    active_timeout = self._stream_idle_timeout
+                    timeout_setting = _STREAM_IDLE_TIMEOUT_ENV
+                    idle_budget = active_timeout
+                is_last = bool(getattr(chunk, "is_last", False))
                 yield chunk
+                if is_last:
+                    return
         finally:
-            await stream.aclose()
-            if first_chunk:
-                # Stream failed before producing any chunk;
-                # slot not yet released.
-                limiter.release()
-                if user_limiter is not None:
-                    user_limiter.release()
+            try:
+                if not cleanup_state.deferred:
+                    await self._close_stream_bounded(stream)
+            finally:
+                if first_chunk:
+                    # Stream failed before producing any chunk;
+                    # slot not yet released.
+                    limiter.release()
+
+    async def _next_stream_chunk(
+        self,
+        iterator: AsyncIterator[ChatResponse],
+        stream: AsyncGenerator[ChatResponse, None],
+        cleanup_state: _StreamCleanupState,
+        timeout: float | None,
+        timeout_seconds: float,
+        timeout_setting: str,
+    ) -> ChatResponse:
+        """Return the next stream chunk within the upstream idle budget."""
+        # Do not replace this with asyncio.wait_for(). AgentScope may suppress
+        # CancelledError and return an interrupted response. Waiting on an
+        # independent task lets this layer enforce its own timeout even when
+        # the provider converts cancellation into a normal result.
+        next_chunk = asyncio.ensure_future(anext(iterator))
+        try:
+            done, _ = await asyncio.wait(
+                {next_chunk},
+                timeout=timeout,
+            )
+        except BaseException:
+            await self._cancel_stream_read(
+                next_chunk,
+                stream,
+                cleanup_state,
+            )
+            raise
+
+        if done:
+            return next_chunk.result()
+
+        cleanup_deferred = await self._cancel_stream_read(
+            next_chunk,
+            stream,
+            cleanup_state,
+        )
+        raise StreamIdleTimeoutError(
+            self.model_key,
+            timeout_seconds,
+            timeout_setting,
+            cleanup_deferred=cleanup_deferred,
+        )
+
+    async def _cancel_stream_read(
+        self,
+        next_chunk: asyncio.Future[ChatResponse],
+        stream: AsyncGenerator[ChatResponse, None],
+        cleanup_state: _StreamCleanupState,
+    ) -> bool:
+        """Cancel one read without blocking the request indefinitely."""
+        next_chunk.cancel()
+        done, _ = await asyncio.wait(
+            {next_chunk},
+            timeout=_STREAM_CLEANUP_TIMEOUT,
+        )
+        if done:
+            await asyncio.gather(next_chunk, return_exceptions=True)
+            return False
+
+        cleanup_state.deferred = True
+        cleanup_task = asyncio.create_task(
+            self._finish_stream_cleanup(next_chunk, stream),
+        )
+        self._track_provider_cleanup(
+            cleanup_task,
+            f"stream cleanup for {self.model_key}",
+        )
+        logger.warning(
+            f"Stream read for {self.model_key} ignored cancellation for "
+            f"{_STREAM_CLEANUP_TIMEOUT:g}s; cleanup continues in the "
+            f"background",
+        )
+        return True
+
+    async def _finish_stream_cleanup(
+        self,
+        next_chunk: asyncio.Future[ChatResponse],
+        stream: AsyncGenerator[ChatResponse, None],
+    ) -> None:
+        """Close a stream after its non-cooperative read eventually exits."""
+        await asyncio.gather(next_chunk, return_exceptions=True)
+        await self._close_stream_bounded(stream)
+
+    async def _close_stream_bounded(
+        self,
+        stream: AsyncGenerator[ChatResponse, None],
+    ) -> None:
+        """Close a provider stream without blocking the request forever."""
+        close_task = asyncio.ensure_future(stream.aclose())
+        try:
+            done, _ = await asyncio.wait(
+                {close_task},
+                timeout=_STREAM_CLEANUP_TIMEOUT,
+            )
+        except BaseException:
+            self._track_provider_cleanup(
+                close_task,
+                f"stream close for {self.model_key}",
+            )
+            raise
+
+        if not done:
+            self._track_provider_cleanup(
+                close_task,
+                f"stream close for {self.model_key}",
+            )
+            logger.warning(
+                f"Stream close for {self.model_key} exceeded "
+                f"{_STREAM_CLEANUP_TIMEOUT:g}s; cleanup continues in the "
+                f"background",
+            )
+            return
+
+        results = await asyncio.gather(
+            close_task,
+            return_exceptions=True,
+        )
+        if results and isinstance(results[0], BaseException):
+            logger.warning(
+                f"Stream close for {self.model_key} failed: {results[0]}",
+            )
 
     async def generate_structured_output(
         self,
         *args: Any,
         **kwargs: Any,
     ) -> Any:
-        return await self._inner.generate_structured_output(*args, **kwargs)
+        limiter = await get_rate_limiter(
+            limiter_key=self.model_key,
+            max_concurrent=self._rate_limit_config.max_concurrent,
+            max_qpm=self._rate_limit_config.max_qpm,
+            default_pause_seconds=self._rate_limit_config.pause_seconds,
+            jitter_range=self._rate_limit_config.jitter_range,
+        )
+        retries = (
+            self._retry_config.max_retries if self._retry_config.enabled else 0
+        )
+        attempts = retries + 1
+
+        for attempt in range(1, attempts + 1):
+            acquired = False
+            try:
+                self._ensure_provider_available()
+                try:
+                    acquired_at = await asyncio.wait_for(
+                        limiter.acquire(),
+                        timeout=self._rate_limit_config.acquire_timeout,
+                    )
+                    acquired = True
+                except asyncio.TimeoutError as exc:
+                    raise _AcquireTimeoutError(
+                        operation=(
+                            f"LLM structured output for {self.model_key}"
+                        ),
+                        retry_after=int(
+                            self._rate_limit_config.acquire_timeout,
+                        ),
+                        details={
+                            "reason": (
+                                f"Timed out waiting for {self.model_key} "
+                                f"execution slot"
+                            ),
+                        },
+                    ) from exc
+
+                self._ensure_provider_available()
+                result = await self._inner.generate_structured_output(
+                    *args,
+                    **kwargs,
+                )
+                await limiter.on_success(acquired_at)
+                return result
+            except Exception as exc:
+                await self._handle_rate_limit_exc(exc, limiter)
+                if not _is_retryable(exc) or attempt >= attempts:
+                    raise
+                delay = _compute_backoff(attempt, self._retry_config)
+                logger.warning(
+                    f"LLM structured output failed "
+                    f"(attempt {attempt}/{attempts}): {exc}. "
+                    f"Retrying in {delay:.1f}s ...",
+                )
+                await asyncio.sleep(delay)
+            finally:
+                if acquired:
+                    limiter.release()
+
+        raise RuntimeError(
+            f"Structured output retry loop exhausted for {self.model_key}",
+        )
 
     async def __call__(
         self,
@@ -585,15 +788,6 @@ class RetryChatModel(ChatModelBase):
             default_pause_seconds=self._rate_limit_config.pause_seconds,
             jitter_range=self._rate_limit_config.jitter_range,
         )
-        # M3: per-user quota limiter (None unless QWENPAW_USER_LLM_* is
-        # configured). Acquired after the model slot and released at the
-        # same points, so both lifecycles stay paired.
-        user_limiter = await _maybe_get_user_limiter()
-        # M4: admin-managed quota rules (quotas.json). No rules → no-op.
-        _check_quota_gate(self.model_key)
-        # M4: model whitelist (rbac.json model_grants). Inert unless
-        # QWENPAW_RBAC_ENFORCE=on.
-        _check_model_grant(self.model_key)
 
         retries = (
             self._retry_config.max_retries if self._retry_config.enabled else 0
@@ -609,24 +803,14 @@ class RetryChatModel(ChatModelBase):
             acquired = False
             owns_semaphore = True
             acquired_at: float = 0.0
-            # M3: whether this attempt holds the per-user quota slot.
-            user_acquired = False
             try:
+                self._ensure_provider_available()
                 try:
                     acquired_at = await asyncio.wait_for(
                         limiter.acquire(),
                         timeout=self._rate_limit_config.acquire_timeout,
                     )
                     acquired = True
-                    # M3: model slot first, user quota second — on a user
-                    # acquire timeout the finally below releases the model
-                    # slot (acquired=True) while user_acquired stays False.
-                    if user_limiter is not None:
-                        await asyncio.wait_for(
-                            user_limiter.acquire(),
-                            timeout=self._rate_limit_config.acquire_timeout,
-                        )
-                        user_acquired = True
                 except asyncio.TimeoutError as exc:
                     # Internal acquire timeout — NOT an API 429.
                     # _AcquireTimeoutError is a typed subclass so the outer
@@ -641,6 +825,7 @@ class RetryChatModel(ChatModelBase):
                         },
                     ) from exc
 
+                self._ensure_provider_available()
                 try:
                     result = await self._inner(*args, **kwargs)
                 except Exception as inner_exc:
@@ -659,6 +844,7 @@ class RetryChatModel(ChatModelBase):
                         "on every assistant message. Injecting empty "
                         "values and retrying (learned for future calls).",
                     )
+                    self._ensure_provider_available()
                     result = await self._inner(*args, **kwargs)
 
                 if isinstance(result, AsyncGenerator):
@@ -674,11 +860,6 @@ class RetryChatModel(ChatModelBase):
                         attempts,
                         limiter,
                         acquired_at,
-                        # M3: user slot ownership transfers too (it is
-                        # released on the stream's first chunk).
-                        user_limiter=(
-                            user_limiter if user_acquired else None
-                        ),
                     )
 
                 # Non-streaming success: clear any stale rate-limit pause so
@@ -708,9 +889,6 @@ class RetryChatModel(ChatModelBase):
             finally:
                 if owns_semaphore and acquired:
                     limiter.release()
-                    # M3: paired release of the per-user quota slot.
-                    if user_acquired and user_limiter is not None:
-                        user_limiter.release()
 
         # Should be unreachable, but satisfies the type-checker.
         raise last_exc  # type: ignore[misc]
@@ -725,7 +903,6 @@ class RetryChatModel(ChatModelBase):
         max_attempts: int,
         limiter: LLMRateLimiter,
         acquired_at: float = 0.0,
-        user_limiter: LLMRateLimiter | None = None,
     ) -> AsyncGenerator[ChatResponse, None]:
         """Yield chunks from *stream*; on transient failure, retry the full
         request and yield from the new stream instead.
@@ -739,44 +916,37 @@ class RetryChatModel(ChatModelBase):
         pending_stream: AsyncGenerator[ChatResponse, None] | None = stream
         pending_acquired_at = acquired_at
         reasoning_injected = False
-        # M3: the user slot (if any) is currently held for *stream*; each
-        # retry re-acquires and re-transfers it alongside the model slot.
-        pending_user_held = user_limiter is not None
+        emitted = False
 
         while True:
             try:
                 if pending_stream is not None:
-                    async for chunk in self._consume_stream_with_slot(
+                    active_stream = self._consume_stream_with_slot(
                         pending_stream,
                         limiter,
                         pending_acquired_at,
-                        user_limiter=(
-                            user_limiter if pending_user_held else None
-                        ),
-                    ):
-                        yield chunk
+                    )
+                    try:
+                        async for chunk in active_stream:
+                            emitted = emitted or (
+                                has_meaningful_stream_content(chunk.content)
+                            )
+                            yield chunk
+                    finally:
+                        await active_stream.aclose()
                     return  # stream completed without error
 
                 acquired = False
                 owns_semaphore = True
                 retry_acquired_at: float = 0.0
-                # M3: whether this retry holds the per-user quota slot.
-                user_acquired = False
                 try:
+                    self._ensure_provider_available()
                     try:
                         retry_acquired_at = await asyncio.wait_for(
                             limiter.acquire(),
                             timeout=self._rate_limit_config.acquire_timeout,
                         )
                         acquired = True
-                        if user_limiter is not None:
-                            await asyncio.wait_for(
-                                user_limiter.acquire(),
-                                timeout=(
-                                    self._rate_limit_config.acquire_timeout
-                                ),
-                            )
-                            user_acquired = True
                     except asyncio.TimeoutError as exc:
                         raise _AcquireTimeoutError(
                             operation="LLM execution (stream retry)",
@@ -790,13 +960,13 @@ class RetryChatModel(ChatModelBase):
                             },
                         ) from exc
 
+                    self._ensure_provider_available()
                     result = await self._inner(*call_args, **call_kwargs)
 
                     if isinstance(result, AsyncGenerator):
                         owns_semaphore = False
                         pending_stream = result
                         pending_acquired_at = retry_acquired_at
-                        pending_user_held = user_acquired
                         continue
 
                     yield result
@@ -804,11 +974,11 @@ class RetryChatModel(ChatModelBase):
                 finally:
                     if owns_semaphore and acquired:
                         limiter.release()
-                        if user_acquired and user_limiter is not None:
-                            user_limiter.release()
 
             except Exception as retry_exc:
                 pending_stream = None
+                if emitted:
+                    raise
                 if (
                     not reasoning_injected
                     and _is_missing_reasoning_content_error(retry_exc)
@@ -831,10 +1001,7 @@ class RetryChatModel(ChatModelBase):
                     )
                     continue
 
-                if _is_retryable(retry_exc) and _is_rate_limit(retry_exc):
-                    await limiter.report_rate_limit(
-                        _extract_retry_after(retry_exc),
-                    )
+                await self._handle_rate_limit_exc(retry_exc, limiter)
 
                 if not _is_retryable(retry_exc) or attempt >= max_attempts:
                     raise
