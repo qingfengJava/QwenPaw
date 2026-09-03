@@ -35,14 +35,23 @@
 
 ## M2 多项目目录与运行时融合
 上游参考：dd0c65ee(session多项目目录,47文件)、52c33cc2(AgentScope 2.0.7兼容)、c3d06ad9/5072269f(governance安全修复)
-- [ ] [桶2] services/project_directory.py(+718)、config/context.py 新增、hooks/request_setup/contextvars_hook.py
-- [ ] [桶3] app/chats/（api/manager/models/utils）
-- [ ] [桶3] app/agent_context.py、runtime/builder.py、runtime/runtime.py
-- [ ] [桶3] governance/（policy/resource_governor/tool_adapter）
-- [ ] [桶3] agents/tools/（file_io/ast_tool/lsp_tool/shell/send_file/file_search/view_media/agent_management/fork_project）
-- [ ] [桶3] app/workspace/（workspace.py/service_factories.py）、app/routers/console.py、app/routers/workspace.py
+
+**侦察结论（2026-09-03）**：M2 范围内自有改动共 20 文件 +1974/-108 行。关键发现：当前分支在 chats 域有**自有双存储会话层**（6 个自有新文件共 +1105 行）：`chats/dual_session_store.py(+171)`、`chats/factory.py(+105)`、`chats/pg_session_store.py(+213)`、`chats/repo/dual_repo.py(+191)`、`chats/repo/pg_repo.py(+349)`、`chats/session_store.py(+76)`。上游 dd0c65ee 对 chats/api(+294)/manager(+58) 的多项目目录改造与此存储层交织，融合时须保持自有 PG/dual 后端注册链不破坏。
+
+逐文件自有改动量：agent_context.py(+126)、chats/api(+123)、chats/manager(+162)、chats/models(+17)、chats/utils(+54)、routers/console(+196)、workspace×2(+84)、governance policy/tool_adapter(+78)、runtime×2(+131)、modes(+71 估算)、tools 9 文件(小改)。上游无改动的纯自有文件直接保留。
+
+**M2 完成后的消除项**：token_usage 旧测试 4 个失败（升上游测试版，依赖 agent_context.py 的 peek_current_agent_id）。
+
+- [ ] [桶2] config/context.py 上游新增部分、hooks/request_setup/contextvars_hook.py(+415)
+- [ ] [桶3] app/agent_context.py（上游+98 多项目目录 + 自有+126 用户身份/配额上下文）
+- [ ] [桶3] app/chats/（api/manager/models/utils 融合；自有 6 个存储新文件保留）
+- [ ] [桶3] runtime/builder.py(+117上游/+119自有)、runtime/runtime.py
+- [ ] [桶3] governance/policy.py(+165上游/+40自有)、resource_governor.py、tool_adapter.py
+- [ ] [桶3] agents/tools/ 9 文件（多项目目录路径解析接入）
+- [ ] [桶3] app/workspace/×2、routers/console.py(+148上游/+196自有)、routers/workspace.py
+- [ ] [桶3] modes/coding/mixin.py、mission/handler.py、security/tool_guard guardians
 - [ ] 检查 src/qwenpaw/db 上游变更（alembic 协调）
-- [ ] 验证：pytest integration workspace/chats/governance 子集
+- [ ] 验证：QWENPAW_STORAGE_BACKEND=json 下 pytest integration workspace/chats/governance 子集 + token_usage 测试升级转绿
 
 ## M3 前端基建与聊天体验线
 上游参考：e08f2e60(artifacts)、2bfe2b2b(复制不含推理)、75b9a810(自动折叠)、0dd1844f(未读指示)、e730e947(长会话性能)、25af0963(流卡死恢复)、51e58258(删desktop reminder)、9382a623(会话分组)
@@ -102,5 +111,10 @@
 - [ ] 全面回归：pytest 全量 + tsc + vitest 全量 + build + e2e 子集 + 浏览器端到端冒烟
 - [ ] 台账勾销完毕，PR：upstream_port → dev，随后 platform_ia_refactor → dev
 
-## 基线记录
-（待 M0 验证结果填入）
+## 基线记录（M0/M1 实测）
+- console tsc --noEmit：0 错误
+- console vitest：完整跑完（Duration 1092s，npm run test 为 watch 模式须用 `npm run test:run`）
+- pytest tests/unit/providers+governance（基线）：663 passed
+- M1 验收（QWENPAW_STORAGE_BACKEND=json）：providers 全绿；agents+app 2181 passed / 12 failed → 其中 scroll 簇 5 个为本机 .env PG 后端泄漏（设 json 后 45/45 通过，非回归）；config_router 2 个为上游 console-channel-keep-enabled 行为待 M8；token_usage 4 个旧测试待 M2 升级
+- agentscope 已升 2.0.7.post1（含 model-ollama extra）、reme-ai 0.4.1.11、reme-auto-fin/daily-paper 0.1.2、mcp、imap-tools 1.15.0 已安装
+- 提交：a90b452c(M1桶1) → 96d2011b(M1桶3) → 1a666812(M1收尾)
