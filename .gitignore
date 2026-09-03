@@ -18,6 +18,8 @@ sessions_mount_dir/
 
 # testing
 /coverage
+.pytest_cache/
+.pytest_tmp/
 .coverage
 coverage.xml
 htmlcov/
