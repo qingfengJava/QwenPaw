@@ -49,6 +49,7 @@ import type {
   ChatRequestData,
   ChatResponseData,
 } from "../../plugins/registry/types";
+import { MessageFeedbackBar } from "./MessageFeedbackBar";
 import { DownloadableAudios } from "../../components/Chat/MediaDownload";
 import ResponseArtifactList from "../../features/files-workspace/ResponseArtifactList";
 import {
@@ -287,6 +288,7 @@ function DefaultHostResponseCard({
       {AgentScopeRuntimeResponseBuilder.maybeDone(data) ? (
         <ResponseArtifactList messages={messages} />
       ) : null}
+      <MessageFeedbackBar responseId={data.id} />
       <ResponseActions data={data} isLast={isLast} />
     </>
   );

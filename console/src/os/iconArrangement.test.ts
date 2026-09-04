@@ -18,6 +18,8 @@ const translate = ((key: string, fallback: string) =>
   fallback || key) as unknown as TFunction;
 
 describe("iconArrangement", () => {
+  // Fork IA: OS_APPS[0] is "core.agents" (Digital Employees) instead of
+  // upstream's "core.chat"; assertions below follow the fork data.
   it("sorts names using translated labels", () => {
     const result = arrangeApps(
       [OS_APPS[0], pluginApp, STORE_APP],
@@ -28,7 +30,7 @@ describe("iconArrangement", () => {
     expect(result.map((app) => app.fallback)).toEqual([
       "App Store",
       "Calendar",
-      "Chat",
+      "Digital Employees",
     ]);
   });
 
@@ -43,7 +45,7 @@ describe("iconArrangement", () => {
     );
     expect(result.map((app) => app.routeId)).toEqual([
       "os.store",
-      "core.chat",
+      "core.agents",
       "plugin.calendar",
     ]);
   });

@@ -1,4 +1,4 @@
-import { request } from "../request";
+import { request, type RequestOptions } from "../request";
 import { getApiUrl, getApiToken } from "../config";
 import { buildAuthHeaders } from "../authHeaders";
 import type {
@@ -56,12 +56,19 @@ export const chatApi = {
 
     return url;
   },
-  listChats: (params?: {
-    user_id?: string;
-    channel?: string;
-    archived?: boolean;
-    include_app_owned?: boolean;
-  }) => {
+  /**
+   * List chats. `agentId`（可选）作为 X-Agent-Id 显式指定员工（平台页/参数化页用），
+   * 未传时由 request 层回退到 storage 里的 selectedAgent（借壳通道）。
+   */
+  listChats: (
+    params?: {
+      user_id?: string;
+      channel?: string;
+      archived?: boolean;
+      include_app_owned?: boolean;
+    },
+    agentId?: string,
+  ) => {
     const searchParams = new URLSearchParams();
     if (params?.user_id) searchParams.append("user_id", params.user_id);
     if (params?.channel) searchParams.append("channel", params.channel);
@@ -73,7 +80,9 @@ export const chatApi = {
         String(params.include_app_owned),
       );
     const query = searchParams.toString();
-    return request<ChatSpec[]>(`/chats${query ? `?${query}` : ""}`);
+    const opts: RequestOptions = {};
+    if (agentId) opts.headers = new Headers({ "X-Agent-Id": agentId });
+    return request<ChatSpec[]>(`/chats${query ? `?${query}` : ""}`, opts);
   },
 
   createChat: (chat: Partial<ChatSpec>) =>

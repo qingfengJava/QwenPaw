@@ -1,1 +1,2 @@
 *.bat text eol=crlf
+console/src/**/*.txt text eol=lf

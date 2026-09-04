@@ -15,12 +15,13 @@
 
 // ─── Header ───────────────────────────────────────────────────────────────────
 .header {
-  height: 56px;
-  padding: 0 28px;
+  height: 64px;
+  padding: 0 24px 0 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: #f9f8f4;
+  background: #ffffff;
+  border-bottom: 1px solid #e3e7f1;
 
   :global {
     .qwenpaw-space-item {
@@ -38,6 +39,12 @@
 @media (max-width: 768px) {
   .header {
     padding: 0 12px;
+
+    .logoWrapper {
+      width: auto;
+      border-right: none;
+      padding: 0 12px;
+    }
 
     .headerDivider {
       display: none;
@@ -64,7 +71,8 @@
 
 // ─── Sidebar ─────────────────────────────────────────────────────────────────
 .sider {
-  background: #f9f8f4 !important;
+  background: #ffffff !important;
+  box-shadow: inset -1px 0 0 #e3e7f1;
   overflow: auto;
   height: calc(100vh - 64px) !important;
   padding: 0 16px;
@@ -339,7 +347,7 @@
 
   .stickyChatButtonActive {
     background: rgba(255, 127, 22, 0.5);
-    color: #ff7f16;
+    color: #18181a;
   }
 
   :global {
@@ -373,7 +381,7 @@
     /* Selected item */
     .qwenpaw-menu-item-selected {
       background: rgba(255, 127, 22, 0.5) !important;
-      color: #ff7f16 !important;
+      color: #18181a !important;
     }
   }
 }
@@ -424,7 +432,7 @@
 
 .collapseBtn {
   margin: auto;
-  color: #ff7f16;
+  color: #18181a;
 }
 
 // ─── Auth actions (account + logout) ──────────────────────────────────────────
@@ -564,7 +572,7 @@
   align-items: center;
   justify-content: flex-end;
   gap: 4px;
-  background: #f9f8f4; // match sider background so scrolled content is hidden
+  background: #fcfcfc; // match sider background so scrolled content is hidden
 }
 
 .collapseToggle {
@@ -574,12 +582,12 @@
 
   &:hover {
     background: rgba(0, 0, 0, 0.06) !important;
-    color: #ff7f16 !important;
+    color: #18181a !important;
   }
 }
 
 .modeToggleActive {
-  color: #ff7f16 !important;
+  color: #18181a !important;
   background: rgba(255, 127, 22, 0.08);
 }
 
@@ -626,25 +634,25 @@
   &:hover,
   &:focus-visible,
   &[aria-expanded="true"] {
-    color: var(--colorPrimary, #ff7f16);
+    color: var(--colorPrimary, #18181a);
 
     .simpleAgentDisclosureLine {
       background: linear-gradient(
         90deg,
         transparent,
-        color-mix(in srgb, var(--colorPrimary, #ff7f16) 44%, transparent)
+        color-mix(in srgb, var(--colorPrimary, #18181a) 44%, transparent)
       );
     }
 
     .simpleAgentDisclosureHandle {
       border-color: color-mix(
         in srgb,
-        var(--colorPrimary, #ff7f16) 34%,
+        var(--colorPrimary, #18181a) 34%,
         transparent
       );
       background: color-mix(
         in srgb,
-        var(--colorPrimary, #ff7f16) 9%,
+        var(--colorPrimary, #18181a) 9%,
         transparent
       );
       box-shadow: 0 3px 10px rgba(255, 127, 22, 0.12);
@@ -653,7 +661,7 @@
 
   &:focus-visible {
     outline: 2px solid
-      color-mix(in srgb, var(--colorPrimary, #ff7f16) 30%, transparent);
+      color-mix(in srgb, var(--colorPrimary, #18181a) 30%, transparent);
     outline-offset: 1px;
   }
 }
@@ -726,7 +734,7 @@
   border: none;
   border-radius: 8px;
   background: rgba(255, 127, 22, 0.08);
-  color: #ff7f16;
+  color: #18181a;
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
@@ -876,7 +884,7 @@
 }
 
 .simpleSessionActionBtnActive {
-  color: #ff7f16 !important;
+  color: #18181a !important;
 }
 
 .simpleSessionLoading {
@@ -1063,11 +1071,11 @@
   font-weight: 500;
   line-height: 64.78px;
   letter-spacing: normal;
-  color: #ff7f16;
+  color: #18181a;
 }
 
 .updateModalTitle {
-  color: #ff7f16;
+  color: #18181a;
 }
 
 .updateModalBody {
@@ -1086,8 +1094,8 @@
 }
 
 .updateViewReleasesBtn {
-  background: #ff7f16 !important;
-  border-color: #ff7f16 !important;
+  background: #18181a !important;
+  border-color: #18181a !important;
   color: #fff !important;
 
   &:hover {
@@ -1097,8 +1105,8 @@
 }
 
 .updateModalPrimaryBtn {
-  background: #ff7f16;
-  border-color: #ff7f16;
+  background: #18181a;
+  border-color: #18181a;
 }
 
 // ─── Code block inside update modal ──────────────────────────────────────────
@@ -1194,11 +1202,11 @@
   }
 
   .versionBadge {
-    color: #ff7f16;
+    color: #18181a;
   }
 
   .collapseBtn {
-    color: #ff7f16;
+    color: #18181a;
   }
 
   .authActions {
@@ -1242,12 +1250,12 @@
 
     &:hover {
       background: rgba(255, 255, 255, 0.08);
-      color: #ff7f16;
+      color: #18181a;
     }
   }
 
   .modeToggleActive {
-    color: #ff7f16 !important;
+    color: #18181a !important;
     background: rgba(255, 127, 22, 0.12);
   }
 
@@ -1293,7 +1301,7 @@
   border: none;
   border-radius: 8px;
   background: rgba(255, 127, 22, 0.08);
-  color: #ff7f16;
+  color: #18181a;
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
@@ -1443,7 +1451,7 @@
 }
 
 .simpleSessionActionBtnActive {
-  color: #ff7f16 !important;
+  color: #18181a !important;
 }
 
 .simpleSessionLoading {
@@ -1483,7 +1491,7 @@
 
     .simpleNewChat {
       background: rgba(255, 127, 22, 0.12);
-      color: #ff7f16;
+      color: #18181a;
 
       &:hover {
         background: rgba(255, 127, 22, 0.2);
@@ -1501,7 +1509,7 @@
 
     .simpleNavItemActive {
       background: rgba(255, 127, 22, 0.5);
-      color: #ff7f16;
+      color: #18181a;
     }
 
     .simpleSessionHeader {

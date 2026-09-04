@@ -134,24 +134,28 @@ describe("chatApi.listChats", () => {
 
   it("calls /chats with no params", async () => {
     await chatApi.listChats();
-    expect(request).toHaveBeenCalledWith("/chats");
+    expect(request).toHaveBeenCalledWith("/chats", {});
   });
 
   it("builds query string with user_id", async () => {
     await chatApi.listChats({ user_id: "u1" });
-    expect(request).toHaveBeenCalledWith("/chats?user_id=u1");
+    expect(request).toHaveBeenCalledWith("/chats?user_id=u1", {});
   });
 
   it("builds query string with channel", async () => {
     await chatApi.listChats({ channel: "console" });
-    expect(request).toHaveBeenCalledWith("/chats?channel=console");
+    expect(request).toHaveBeenCalledWith("/chats?channel=console", {});
   });
 
   it("both params appear in query when both are provided", async () => {
     await chatApi.listChats({ user_id: "u1", channel: "dingtalk" });
-    expect(request).toHaveBeenCalledWith(expect.stringContaining("user_id=u1"));
+    expect(request).toHaveBeenCalledWith(
+      expect.stringContaining("user_id=u1"),
+      {},
+    );
     expect(request).toHaveBeenCalledWith(
       expect.stringContaining("channel=dingtalk"),
+      {},
     );
   });
 
@@ -162,6 +166,7 @@ describe("chatApi.listChats", () => {
     });
     expect(request).toHaveBeenCalledWith(
       "/chats?archived=false&include_app_owned=false",
+      {},
     );
   });
 });

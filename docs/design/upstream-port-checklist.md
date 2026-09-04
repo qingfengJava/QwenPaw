@@ -60,13 +60,21 @@
 
 ## M3 前端基建与聊天体验线
 上游参考：e08f2e60(artifacts)、2bfe2b2b(复制不含推理)、75b9a810(自动折叠)、0dd1844f(未读指示)、e730e947(长会话性能)、25af0963(流卡死恢复)、51e58258(删desktop reminder)、9382a623(会话分组)
-- [ ] [桶1] console/package.json 依赖升级（@agentscope-ai/chat 1.1.73-beta）+ lock 重装
-- [ ] [桶1] api/error.ts、ChunkErrorBoundary、MediaDownload/、LazyAccordion、HostBubbles.module.less、SessionGroupDnd/、SessionGroupHeader/、SessionDateHeader/、SessionItem.test
-- [ ] [桶1] hooks/（useChatGroups/useCollapsedChatGroups/useRevealActiveChatGroup/useSessionAttention）、ResponseArtifactList*、loadSessionProjectDirs.ts
-- [ ] [桶3] api/modules/chat.ts(.test)、pages/Chat/index.tsx、HostBubbles.tsx、styles/layout.css
-- [ ] [桶5] 删 utils/desktopModeHint* 并清理 Sidebar.tsx Tour 引用
-- [ ] [桶3] 上游 Sidebar 测试按当前 IA 重写断言
-- [ ] 验证：tsc 0 错误 + vitest + 浏览器冒烟
+**侦察补充（2026-09-05）**：实际范围超出原 8 提交，纳入 dd0c65ee/d744922f(console 多项目目录前端+目录浏览)、2982502b(媒体下载)、b4807613(mobile composer)、173c8449/f0d28623(chat 组件库 1.1.73-beta.1787638407498)；Hub(f07a6a01) 污染隔离：api/error.ts、ChunkErrorBoundary、scripts/Hub 耦合部分归 M6。
+
+- [x] [桶1] package.json 依赖升级（main 基底 + 自有 diff devDep 保留）+ scripts 2 个纯 Node 构建辅助脚本提前直取 + npm install 重生成 lock
+- [x] [桶1] 86 文件直取（39 新：SessionGroupDnd/Header/DateHeader、useChatGroups 等 4 hooks、ResponseArtifactList、LazyAccordion、MediaDownload、loadSessionProjectDirs、ApprovalToggle、chatGroups/messageDisplay/longChatPerformance/sessionAttentionStore 等；47 改：ChatSessionDrawer 族、SessionItem、files-workspace 族、sessionListStore、messageScroll、SessionProjectDirectory 族、useIsMobile、ChatHeaderTitle、ChatActionGroup、HarnessApprovalToggle 等）
+- [x] [桶1 追加] tsc 断链驱动直取 10 个上游依赖：chatInputDraft/backgroundQueueRegistry/fallbackNotice/turnUsageStore/sessionTime/profileFileSelection/memoryTree/turnUsage/ApprovalCard×2/console.ts（均自有无改动验证）
+- [x] [桶3] api/modules/chat.ts(.test)（main 基底含 include_app_owned + 自有 agentId/X-Agent-Id）
+- [x] [桶3] pages/Chat/index.tsx（main 基底+自有 AI 调优预填 21 行）、HostBubbles.tsx(+MessageFeedbackBar)、styles/layout.css、LoopModeSelector.tsx(antd classNames API)
+- [x] [桶3] locales ×7 深合并（脚本：main 基底 key 序保持 + 自有 key 追加；zh 3 处品牌冲突保留自有：渠道接入/应用中心/模型配置）
+- [x] [桶3] layouts/index.module.less（main 基底 + 自有主题色 #18181a×26 + header 64px + logoWrapper 移动端 + sider 分隔线）
+- [x] [桶5] 删 utils/desktopModeHint×2 + Sidebar.tsx（保留自有 IA 基底）清理 Tour/desktopModeHint 引用 43 行
+- [x] [决策] Sidebar.tsx/SidebarSessionList 不取上游：自有菜单驱动 IA 与上游会话列表架构分叉，SidebarSessionList 维持删除状态；上游会话分组由直取的 ChatSessionDrawer 消费
+- [x] [决策] sessionApi/index.ts 含 Hub 改动仅 type-import 无害直取
+- [x] [测试] Sidebar.test.tsx 按当前 IA 重写断言（core.app-center+primary.platform；M4 改名时同步回 core.marketplace）；iconArrangement.test.ts 断言对齐自有 osApps（core.agents/Digital Employees）
+- [x] [治本] .gitattributes 补 console/src/**/*.txt eol=lf：replay fixture 被 Windows smudge 成 CRLF 致 `?raw` 解析失败（SSE `\n\n` 分割失效），工作区文件已同步修复
+- [x] 验证：tsc -b --noEmit 0 错误 + vitest 全量（首轮 1974 passed/4 failed → 修复后第二轮 1981 passed/2 failed；剩余 2 个为 AgentLoopCard.render 渲染测试在全量并发下超 15s 默认超时，属 Windows 本机资源竞争，单独跑稳定通过，上游文件保持逐字节一致不改动）
 
 ## M4 Marketplace 统一与 IA 挂接
 上游参考：9bce6fb1(统一marketplace)、c1728668/35d66456(os market已安装标记)、461e65fa(装后免刷新)、5d4c9a34(dark mode+Extension改名)、d376ec5c(skill自动更新)、76ee1381(skill CLI重构)、f31c3594(skill文件缓存)

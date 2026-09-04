@@ -193,6 +193,7 @@ import {
   buildChatPath,
   getSessionIdFromPath,
 } from "../../utils/sessionRoute";
+import { takeAiTunePrompt } from "../Agents/aiTunePrefill";
 import { useUploadLimitStore } from "../../stores/uploadLimitStore";
 import ChatSenderTabsPanel from "./components/ChatSenderTabsPanel";
 import {
@@ -1859,6 +1860,26 @@ export default function ChatPage() {
     window.addEventListener("model-switched", handler);
     return () => window.removeEventListener("model-switched", handler);
   }, [fetchMultimodalCaps]);
+
+  // 「AI 调优」预填：员工档案栏/概览页 stash 的指令，挂载后一次性消费。
+  // Sender 由 SDK 渲染，需短暂轮询等待 textarea 出现。
+  useEffect(() => {
+    const prompt = takeAiTunePrompt();
+    if (!prompt) return undefined;
+    let tries = 0;
+    const timer = window.setInterval(() => {
+      tries += 1;
+      const textarea = getActiveSenderTextarea();
+      if (textarea) {
+        window.clearInterval(timer);
+        setTextareaValue(textarea, prompt);
+        textarea.focus();
+      } else if (tries > 20) {
+        window.clearInterval(timer);
+      }
+    }, 250);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const pendingClearHistoryRef = useRef(false);
   const whisperSpeechRef = useRef<WhisperSpeechButtonRef>(null);
