@@ -32,7 +32,6 @@ export const SETTINGS_ROUTE_IDS = new Set<string>([
   "core.backups",
   "core.voice-transcription",
   "core.debug",
-  "core.plugin-manager",
 ]);
 
 /**

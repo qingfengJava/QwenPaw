@@ -2,16 +2,15 @@
 /**
  * Sidebar.test.tsx — regression for A#84552933 (missing apps nav entry)
  *
- * The "Apps" (应用中心) navigation entry must be present in the sidebar's
- * builtin menu. We test the builtinMenu data directly because the full
- * Sidebar component has heavy dependencies.
+ * The "Extension" (扩展/marketplace) navigation entry must be present in
+ * the sidebar's builtin menu. We test the builtinMenu data directly because
+ * the full Sidebar component has heavy dependencies.
  *
- * Rewritten for the fork IA: the marketplace entry keeps its pre-M4 id
- * "core.app-center" and lives in the "primary.platform" location (M4 will
- * rename it to "core.marketplace" together with the implementation).
+ * M4: the entry id was renamed from "core.app-center" to "core.marketplace"
+ * following upstream 9bce6fb1 (unified marketplace).
  *
  * Strategy:
- *   1. Verify BUILTIN_MENU contains an entry with id "core.app-center".
+ *   1. Verify BUILTIN_MENU contains an entry with id "core.marketplace".
  *   2. Verify its location is "primary.platform" so it shows in sidebar.
  *   3. Verify its label resolves to a non-empty string (i18n).
  *   4. Verify it has a route defined for navigation.
@@ -62,26 +61,26 @@ vi.mock("i18next", () => ({
 import { BUILTIN_MENU } from "./registry/builtinMenu";
 
 describe("Sidebar navigation — A#84552933 应用导航入口", () => {
-  it("contains the app-center entry in platform menu", () => {
+  it("contains the marketplace entry in platform menu", () => {
     const appsEntry = BUILTIN_MENU.find(
-      (item) => item.id === "core.app-center",
+      (item) => item.id === "core.marketplace",
     );
     expect(appsEntry).toBeDefined();
     expect(appsEntry!.location).toBe("primary.platform");
   });
 
-  it("app-center entry has a valid route for navigation", () => {
+  it("marketplace entry has a valid route for navigation", () => {
     const appsEntry = BUILTIN_MENU.find(
-      (item) => item.id === "core.app-center",
+      (item) => item.id === "core.marketplace",
     );
     expect(appsEntry).toBeDefined();
     expect(appsEntry!.route).toBeTruthy();
-    expect(appsEntry!.route).toBe("core.app-center");
+    expect(appsEntry!.route).toBe("core.marketplace");
   });
 
-  it("app-center label resolves to a non-empty string", () => {
+  it("marketplace label resolves to a non-empty string", () => {
     const appsEntry = BUILTIN_MENU.find(
-      (item) => item.id === "core.app-center",
+      (item) => item.id === "core.marketplace",
     );
     expect(appsEntry).toBeDefined();
     // label is a function () => string (navLabel pattern)
@@ -93,9 +92,9 @@ describe("Sidebar navigation — A#84552933 应用导航入口", () => {
     expect(label.length).toBeGreaterThan(0);
   });
 
-  it("app-center entry has an icon defined", () => {
+  it("marketplace entry has an icon defined", () => {
     const appsEntry = BUILTIN_MENU.find(
-      (item) => item.id === "core.app-center",
+      (item) => item.id === "core.marketplace",
     );
     expect(appsEntry).toBeDefined();
     expect(appsEntry!.icon).toBeDefined();
@@ -105,9 +104,9 @@ describe("Sidebar navigation — A#84552933 应用导航入口", () => {
     const platform = BUILTIN_MENU.filter(
       (item) => item.location === "primary.platform",
     );
-    // Must have inbox and app-center at minimum
+    // Must have inbox and marketplace at minimum
     const ids = platform.map((item) => item.id);
     expect(ids).toContain("core.inbox");
-    expect(ids).toContain("core.app-center");
+    expect(ids).toContain("core.marketplace");
   });
 });

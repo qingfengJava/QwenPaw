@@ -64,7 +64,7 @@ const SIMPLE_MODE_WHITELIST = new Set([
   "core.agents",
   "core.channels",
   "core.inbox",
-  "core.app-center",
+  "core.marketplace",
   "core.models",
   "core.skill-pool",
 ]);

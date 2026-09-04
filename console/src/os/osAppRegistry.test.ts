@@ -1,7 +1,12 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { renderHook } from "@testing-library/react";
 import { useOsApps, resolveAppDef, appsBySource } from "./osAppRegistry";
-import { STORE_APP, SETTINGS_APP, findAppDef } from "./osApps";
+import {
+  MARKETPLACE_APP,
+  STORE_APP,
+  SETTINGS_APP,
+  findAppDef,
+} from "./osApps";
 import { routeRegistry } from "../plugins/registry/store";
 import type { Disposable } from "../plugins/registry/types";
 
@@ -46,6 +51,7 @@ describe("resolveAppDef", () => {
   it("resolves system and catalog apps statically", () => {
     expect(resolveAppDef("os.settings")).toBe(SETTINGS_APP);
     expect(resolveAppDef("os.store")).toBe(STORE_APP);
+    expect(resolveAppDef("core.marketplace")).toBe(MARKETPLACE_APP);
     expect(resolveAppDef("core.agents")?.defaultW).toBe(1180);
   });
 
@@ -82,6 +88,7 @@ describe("useOsApps", () => {
 
     expect(ids[0]).toBe(STORE_APP.routeId);
     expect(ids[ids.length - 1]).toBe(SETTINGS_APP.routeId);
+    expect(ids).toContain(MARKETPLACE_APP.routeId);
     expect(ids).toContain("core.agents");
     expect(ids).toContain("core.inbox");
     expect(ids).toContain("plugin.office");

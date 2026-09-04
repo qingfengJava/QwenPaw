@@ -12,6 +12,7 @@ import {
   Settings,
   Puzzle,
   Bot,
+  Blocks,
   type LucideIcon,
 } from "lucide-react";
 import type { MenuItem } from "../plugins/registry/types";
@@ -104,6 +105,7 @@ export const RETIRED_OS_APP_IDS: ReadonlySet<string> = new Set([
 /** Lookup helper (searches catalog + system apps). */
 export function findAppDef(routeId: string): OsAppDef | undefined {
   if (routeId === STORE_APP.routeId) return STORE_APP;
+  if (routeId === MARKETPLACE_APP.routeId) return MARKETPLACE_APP;
   if (routeId === SETTINGS_APP.routeId) return SETTINGS_APP;
   return OS_APPS.find((a) => a.routeId === routeId);
 }
@@ -120,6 +122,23 @@ export const STORE_APP: OsAppDef = {
   accent: "#18181a",
   defaultW: 860,
   defaultH: 600,
+};
+
+/**
+ * Extension — a route-backed system app. It is always available in the
+ * Desktop OS, but intentionally lives outside OS_APPS so it cannot be
+ * installed or uninstalled through the simulated App Store catalog.
+ */
+export const MARKETPLACE_APP: OsAppDef = {
+  routeId: "core.marketplace",
+  labelKey: "nav.marketplace",
+  fallback: "Extension",
+  Icon: Blocks,
+  accent: "#0ea5e9",
+  defaultW: 1180,
+  defaultH: 720,
+  minW: 760,
+  minH: 480,
 };
 
 /**

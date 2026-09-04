@@ -48,10 +48,8 @@ const AgentsPage = lazyImportWithRetry(
 );
 const DebugPage = lazyImportWithRetry("../../pages/Settings/Debug");
 const BackupsPage = lazyImportWithRetry("../../pages/Settings/Backups");
-const PluginManagerPage = lazyImportWithRetry(
-  "../../pages/Settings/PluginManager",
-);
 const AppCenterPage = lazyImportWithRetry("../../pages/AppCenter");
+const MarketplacePage = lazyImportWithRetry("../../pages/Market");
 
 // Admin pages (M5): flat .tsx files, wrapped in the RoleGuard at registration.
 const AdminUsersPage = lazyImportWithRetry("../../pages/Admin/Users.tsx");
@@ -191,12 +189,7 @@ export const BUILTIN_ROUTES: Route[] = [
   },
   { id: "core.debug", path: "/debug", component: DebugPage },
   { id: "core.backups", path: "/backups", component: BackupsPage },
-  {
-    id: "core.plugin-manager",
-    path: "/plugin-manager",
-    component: PluginManagerPage,
-  },
-  { id: "core.app-center", path: "/apps", component: AppCenterPage },
+  { id: "core.marketplace", path: "/market", component: MarketplacePage },
   // Deep-link / refresh target: `/apps/<id>` also lands on the App Center,
   // which opens the app inline (with the “← App Center” bar) from the URL.
   {

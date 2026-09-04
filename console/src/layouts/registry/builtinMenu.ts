@@ -32,7 +32,6 @@ import {
   SparkModePlazaLine,
   SparkMyApplicationLine,
   SparkOtherLine,
-  SparkPluginLine,
   SparkSaveLine,
   SparkWifiLine,
 } from "@agentscope-ai/icons";
@@ -89,11 +88,11 @@ export const BUILTIN_MENU: MenuItem[] = [
   },
 
   {
-    id: "core.app-center",
+    id: "core.marketplace",
     location: "primary.platform",
-    label: navLabel("nav.apps", "Apps"),
+    label: navLabel("nav.marketplace", "Extension"),
     icon: SparkMyApplicationLine,
-    route: "core.app-center",
+    route: "core.marketplace",
     order: 50,
   },
 
@@ -219,15 +218,6 @@ export const BUILTIN_MENU: MenuItem[] = [
     icon: SparkDebugLine,
     route: "core.debug",
     order: 10,
-  },
-  {
-    id: "core.plugin-manager",
-    location: "primary.settings",
-    parentId: "core.advanced-group",
-    label: navLabel("nav.pluginManager", "Plugin Manager"),
-    icon: SparkPluginLine,
-    route: "core.plugin-manager",
-    order: 20,
   },
 
   // ── Admin (Sidebar Menu #2, admin-only display filtering; M5) ──────────
