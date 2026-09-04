@@ -78,12 +78,17 @@
 
 ## M4 Marketplace 统一与 IA 挂接
 上游参考：9bce6fb1(统一marketplace)、c1728668/35d66456(os market已安装标记)、461e65fa(装后免刷新)、5d4c9a34(dark mode+Extension改名)、d376ec5c(skill自动更新)、76ee1381(skill CLI重构)、f31c3594(skill文件缓存)
-- [ ] [桶1] pages/AppCenter/ 重构族、pages/Market/、Settings/Market/、PluginManager 新组件族、Agent/Skills/（useSkillsPage/WebSearchConfigModal）、SkillPool
-- [ ] [桶3] builtinMenu.ts（app-center→marketplace 改名+删 plugin-manager 菜单）、builtinRoutes.tsx
-- [ ] [桶3] os/osApps.ts、os/osRouteMap.ts、os/SettingsApp.tsx、os/osAppRegistry.ts
-- [ ] [桶3] layouts/Sidebar.tsx、SidebarSessionList.tsx、MainLayout/index.tsx、App.tsx
-- [ ] 更新测试：adminMenu.test、osAppRegistry.test、osRouteMap.test、osPluginStore.test
-- [ ] 验证：tsc + vitest + 浏览器实测
+**侦察修正（2026-09-05）**：AgentSelector 组件及样式在自有分支已删除，上游 +10/-10 不跟随；osApps/SettingsApp 等中途被改回净零的提交以 MB..main 终态判定；台账点名的 adminMenu.test/osPluginStore.test 为预估失配，实际为 plugins/registry/__tests__/*（已随 direct 同步）；locales ×7 无需处理（M3 深合并基底为 main 终态已含 M4 key）。
+
+- [x] [桶1] 77+2 文件直取：pages/Market 新页面族、AppCenter 重构族、PluginManager 新组件族、Settings/Market、SkillPool、Agent/Skills、os/AppStore、useOsAppMarket、osCleanup、pawapp-sdk 全目录升级（+1912 行，scope/ui/dependencies/scoping.test 新文件）、registry __tests__×3、utils（marketAppState/skillChangeEvents/skill）、useEdgeReveal（shouldRevealDock）
+- [x] [桶3] builtinMenu.ts：core.app-center→core.marketplace（label nav.marketplace/Extension）+ 删 core.plugin-manager 菜单项与 SparkPluginLine
+- [x] [桶3] builtinRoutes.tsx：/apps→/market 路由（Market 页）+ 删 /plugin-manager 路由，保留 /apps/:appId deep-link
+- [x] [桶3] os/osApps.ts（自有数据基底 + 叠 MARKETPLACE_APP，保留自有 RETIRED_OS_APP_IDS）、os/SettingsApp.tsx（删 plugin-manager 项）、os/osRouteMap.ts（删映射）
+- [x] [桶3] os/DesktopOS.tsx：main 基底（dock reveal/免刷新卸载）+ 叠自有 RETIRED one-shot 清理与 initialPath 传参，回退不存在的 agentVisibility 引用
+- [x] [桶3] layouts/Sidebar.tsx：自有 IA 基底 + SIMPLE_MODE_WHITELIST 同步 core.marketplace（上游仅 1 行）；SidebarSessionList 维持删除（M3 决策延续）
+- [x] 测试更新：Sidebar.test 断言回 core.marketplace（M3 待办闭环）、osRouteMap.test fixture、osAppRegistry.test 叠 MARKETPLACE_APP 断言；AppCenter accent 叠自有主题色 #18181a
+- [x] 验证：tsc -b --noEmit 0 错误 + vitest M4 域回归 108 文件 843 tests 全绿（os/layouts/plugins/api/Market/AppCenter/PluginManager/SkillPool/Skills/utils）
+- [~] [桶4] 浏览器实测顺延 M9 全面回归（与 M3 同口径）；AgentSelector 样式上游小改不跟随（组件已删）
 
 ## M5 模型路由前端（依赖 M1）
 上游参考：006b80a6(agent model routing settings)、81be8cc4(model selector样式)
@@ -150,4 +155,12 @@
 - 首轮 4 个失败全部定位：iconArrangement×2（断言对齐自有 osApps：core.agents/Digital Employees）、replaySdkIntegration（fixture 被 git smudge 成 CRLF 致 `?raw` 解析失败，.gitattributes 补 console/src/**/*.txt eol=lf 治本）、AgentLoopCard（超时，同上）
 - 依赖：@agentscope-ai/chat 1.1.73-beta.1787638407498、antd 5.29.3、vite 6.4.1 已装，npm install 增量 +25/-1/1
 - 待办顺延：api/error.ts 与 ChunkErrorBoundary 归 M6（Hub）；Sidebar.test 断言中 core.app-center 待 M4 改名时同步回 core.marketplace；浏览器冒烟随 M9 全面回归执行
-- 提交：6fc32950(M3桶1,109文件) → b4269271(M3桶3+台账,21文件)
+- 提交：6fc32950(M3桶1,109文件) → b4269271(M3桶3,21文件) → 52abcdb7(M3台账)
+
+## 基线记录（M4 实测）
+- console tsc -b --noEmit：0 错误（pawapp-sdk 全目录升级后断链修复）
+- console vitest M4 域回归：108 文件 843 tests 全绿（os/layouts/plugins/api/Market/AppCenter/PluginManager/SkillPool/Skills/utils）
+- M4 净变化精简：86 个变更文件中 9 个中途改回净零（AgentSelector.less/osApps.ts 中间态等），真融合仅 11 文件 +70/-58
+- pawapp-sdk 升级：api/host/types/index/task 大改 + scope/ui/dependencies/scoping.test 新文件（+1912/-81），自有无改动全目录直取
+- plugin-manager 入口全链路移除（菜单/路由/os 设置项/route-map），页面文件保留（跟随上游统一 marketplace）
+- 提交：ceb06449(M4桶1,79文件) → 0f8a1f83(M4桶3,11文件) → 本提交(M4台账)
