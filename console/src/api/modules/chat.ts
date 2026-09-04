@@ -1,4 +1,4 @@
-import { request, type RequestOptions } from "../request";
+import { request } from "../request";
 import { getApiUrl, getApiToken } from "../config";
 import { buildAuthHeaders } from "../authHeaders";
 import type {
@@ -6,6 +6,7 @@ import type {
   ChatHistory,
   ChatDeleteResponse,
   ChatUpdateRequest,
+  ChatGroup,
   BatchArchiveResult,
   Session,
 } from "../types";
@@ -55,27 +56,24 @@ export const chatApi = {
 
     return url;
   },
-  /**
-   * List chats. `agentId`（可选）作为 X-Agent-Id 显式指定员工（平台页/参数化页用），
-   * 未传时由 request 层回退到 storage 里的 selectedAgent（借壳通道）。
-   */
-  listChats: (
-    params?: {
-      user_id?: string;
-      channel?: string;
-      archived?: boolean;
-    },
-    agentId?: string,
-  ) => {
+  listChats: (params?: {
+    user_id?: string;
+    channel?: string;
+    archived?: boolean;
+    include_app_owned?: boolean;
+  }) => {
     const searchParams = new URLSearchParams();
     if (params?.user_id) searchParams.append("user_id", params.user_id);
     if (params?.channel) searchParams.append("channel", params.channel);
     if (params?.archived !== undefined)
       searchParams.append("archived", String(params.archived));
+    if (params?.include_app_owned !== undefined)
+      searchParams.append(
+        "include_app_owned",
+        String(params.include_app_owned),
+      );
     const query = searchParams.toString();
-    const opts: RequestOptions = {};
-    if (agentId) opts.headers = new Headers({ "X-Agent-Id": agentId });
-    return request<ChatSpec[]>(`/chats${query ? `?${query}` : ""}`, opts);
+    return request<ChatSpec[]>(`/chats${query ? `?${query}` : ""}`);
   },
 
   createChat: (chat: Partial<ChatSpec>) =>
@@ -84,10 +82,24 @@ export const chatApi = {
       body: JSON.stringify(chat),
     }),
 
-  getChat: (chatId: string, options?: { signal?: AbortSignal }) =>
-    request<ChatHistory>(`/chats/${encodeURIComponent(chatId)}`, {
-      signal: options?.signal,
-    }),
+  getChat: (
+    chatId: string,
+    options?: { signal?: AbortSignal; include_app_owned?: boolean },
+  ) => {
+    const searchParams = new URLSearchParams();
+    if (options?.include_app_owned !== undefined)
+      searchParams.append(
+        "include_app_owned",
+        String(options.include_app_owned),
+      );
+    const query = searchParams.toString();
+    return request<ChatHistory>(
+      `/chats/${encodeURIComponent(chatId)}${query ? `?${query}` : ""}`,
+      {
+        signal: options?.signal,
+      },
+    );
+  },
 
   updateChat: (chatId: string, chat: ChatUpdateRequest) =>
     request<ChatSpec>(`/chats/${encodeURIComponent(chatId)}`, {
@@ -130,6 +142,32 @@ export const chatApi = {
       method: "POST",
       body: JSON.stringify({ chat_ids: chatIds }),
     }),
+
+  listGroups: () => request<ChatGroup[]>("/chats/groups"),
+
+  createGroup: (name: string) =>
+    request<ChatGroup>("/chats/groups", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
+
+  updateGroup: (groupId: string, update: { name?: string; pinned?: boolean }) =>
+    request<ChatGroup>(`/chats/groups/${encodeURIComponent(groupId)}`, {
+      method: "PUT",
+      body: JSON.stringify(update),
+    }),
+
+  reorderGroups: (groupIds: string[]) =>
+    request<ChatGroup[]>("/chats/groups/order", {
+      method: "PUT",
+      body: JSON.stringify({ group_ids: groupIds }),
+    }),
+
+  deleteGroup: (groupId: string) =>
+    request<{ success: boolean; group_id: string }>(
+      `/chats/groups/${encodeURIComponent(groupId)}`,
+      { method: "DELETE" },
+    ),
 
   stopChat: (chatId: string) =>
     request<void>(`/console/chat/stop?chat_id=${encodeURIComponent(chatId)}`, {
