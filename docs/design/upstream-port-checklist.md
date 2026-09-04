@@ -142,4 +142,12 @@
 - workspace：52 passed（test_agent_model patch 目标改 qwenpaw.constant.WORKING_DIR 配合 M1 动态读取语义）
 - unit 全量：7310 passed / 21 failed，定性：config_router 2（M8 中间态）+ checkpoint 2（三版本零改动的继承性环境时序，M9 处理）+ cli_task 2 / skill_scanner 5（WinError 1314 symlink 特权 + GBK 编码，Windows 环境限制非移植回归）
 - 已知限制：PG 后端 chats groups 分组持久化走默认值
-- 提交：bcec12a3(M2桶1,55文件) → ee18363b(M2桶3,21文件) → 本提交(台账)
+- 提交：bcec12a3(M2桶1,55文件) → ee18363b(M2桶3,21文件) → 100cfda4(M2台账)
+
+## 基线记录（M3 实测）
+- console tsc -b --noEmit：0 错误（含 96 文件移植后的断链驱动修复）
+- console vitest 全量：第二轮 1981 passed / 2 failed（245 文件，Duration 915s）；2 个失败为 AgentLoopCard.render 渲染测试全量并发下超 15s 默认超时，单独跑稳定通过，属 Windows 本机资源竞争非移植回归，上游文件保持逐字节一致不改动
+- 首轮 4 个失败全部定位：iconArrangement×2（断言对齐自有 osApps：core.agents/Digital Employees）、replaySdkIntegration（fixture 被 git smudge 成 CRLF 致 `?raw` 解析失败，.gitattributes 补 console/src/**/*.txt eol=lf 治本）、AgentLoopCard（超时，同上）
+- 依赖：@agentscope-ai/chat 1.1.73-beta.1787638407498、antd 5.29.3、vite 6.4.1 已装，npm install 增量 +25/-1/1
+- 待办顺延：api/error.ts 与 ChunkErrorBoundary 归 M6（Hub）；Sidebar.test 断言中 core.app-center 待 M4 改名时同步回 core.marketplace；浏览器冒烟随 M9 全面回归执行
+- 提交：6fc32950(M3桶1,109文件) → b4269271(M3桶3+台账,21文件)
