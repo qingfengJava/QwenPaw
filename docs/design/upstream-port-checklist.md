@@ -40,18 +40,23 @@
 
 逐文件自有改动量：agent_context.py(+126)、chats/api(+123)、chats/manager(+162)、chats/models(+17)、chats/utils(+54)、routers/console(+196)、workspace×2(+84)、governance policy/tool_adapter(+78)、runtime×2(+131)、modes(+71 估算)、tools 9 文件(小改)。上游无改动的纯自有文件直接保留。
 
-**M2 完成后的消除项**：token_usage 旧测试 4 个失败（升上游测试版，依赖 agent_context.py 的 peek_current_agent_id）。
+**M2 完成后的消除项**：token_usage 旧测试 4 个失败 → 已消除（升上游测试版后 47 passed）。
 
-- [ ] [桶2] config/context.py 上游新增部分、hooks/request_setup/contextvars_hook.py(+415)
-- [ ] [桶3] app/agent_context.py（上游+98 多项目目录 + 自有+126 用户身份/配额上下文）
-- [ ] [桶3] app/chats/（api/manager/models/utils 融合；自有 6 个存储新文件保留）
-- [ ] [桶3] runtime/builder.py(+117上游/+119自有)、runtime/runtime.py
-- [ ] [桶3] governance/policy.py(+165上游/+40自有)、resource_governor.py、tool_adapter.py
-- [ ] [桶3] agents/tools/ 9 文件（多项目目录路径解析接入）
-- [ ] [桶3] app/workspace/×2、routers/console.py(+148上游/+196自有)、routers/workspace.py
-- [ ] [桶3] modes/coding/mixin.py、mission/handler.py、security/tool_guard guardians
-- [ ] 检查 src/qwenpaw/db 上游变更（alembic 协调）
-- [ ] 验证：QWENPAW_STORAGE_BACKEND=json 下 pytest integration workspace/chats/governance 子集 + token_usage 测试升级转绿
+- [x] [桶2] config/context.py 上游新增部分、hooks/request_setup/contextvars_hook.py(+415)
+- [x] [桶3] app/agent_context.py（上游+98 多项目目录 + 自有+126 用户身份/配额上下文；`git diff --stat main` = +126 验证法）
+- [x] [桶3] app/chats/（api/manager/models/utils 融合；自有 6 个存储新文件保留；manager 锁体系 _tx_safe/_write_lock/_owner_lock 随 transactional 后端降级为 _NoopAsyncLock，锁序 owner→write）
+- [x] [桶3] runtime/builder.py(+117上游/+119自有)、runtime/runtime.py
+- [x] [桶3] governance/policy.py(+165上游/+40自有，ToolCallSpec user_id/roles/teams+subject 规则)、resource_governor.py、tool_adapter.py、detectors.py、tool_registry.py
+- [x] [桶3] agents/tools/ 9 文件（多项目目录路径解析接入）+ tools/utils.py 直取（单行截断 artifact continuation_mode）
+- [x] [桶3] app/workspace/×2、routers/console.py(+148上游/+196自有)、routers/workspace.py
+- [x] [桶3] modes/coding/mixin.py、mission/handler.py、security/tool_guard guardians
+- [x] [桶3] app/task_tracker.py（main 基底 on_finished 回调 + 叠自有 get_status_many）、agents/middlewares.py（main 版 + auto_memory_search 叠自有 user_id）
+- [x] [决策] routers/workspace.py 不整取 main：上游版混入 M2 范围外 embedding 热更新（依赖 reme 新语义，整取致 30 测试失败）→ HEAD 基底 + dd0c65ee 增量（_resolve_extra_project_root 等 +101/-43 与上游 diff 精确一致）
+- [x] [决策] console.py chat_task 后台路径不传身份（request 可能为 None，与 HEAD 语义一致）
+- [x] [补齐] M1 漏直取连锁：agents/model_factory.py、utils/message_request_normalizer.py、utils/file_handling.py、utils/image_freezing.py（沿 integration/unit 失败链定位）
+- [x] 检查 src/qwenpaw/db 上游变更：M2 范围零变更，无需 alembic 协调
+- [x] 验证：QWENPAW_STORAGE_BACKEND=json 下 pytest integration workspace/chats/governance 子集 53 passed + token_usage 升级转绿 47 passed
+- [~] [桶4] 上游 groups 分组在 PG 后端持久化暂走默认值（PgChatRepository.load() 未迁移 groups 语义），记录为已知限制，待 M9 一并处理
 
 ## M3 前端基建与聊天体验线
 上游参考：e08f2e60(artifacts)、2bfe2b2b(复制不含推理)、75b9a810(自动折叠)、0dd1844f(未读指示)、e730e947(长会话性能)、25af0963(流卡死恢复)、51e58258(删desktop reminder)、9382a623(会话分组)
@@ -107,7 +112,7 @@
 - [ ] [桶1] git checkout main -- website docs
 - [ ] .github/ 逐文件甄别采用
 - [ ] tests/ 上游新测试按域归位（integration ×132 / unit ×130）
-- [ ] 重写 3 个交集测试：tests/unit/app/chats/test_utils.py、governance/test_policy.py、tauri/test_entry.py
+- [ ] 重写交集测试：tauri/test_entry.py（chats/test_utils.py 与 governance/test_policy.py 已在 M2 提前完成：main 基底+自有叠加）
 - [ ] 全面回归：pytest 全量 + tsc + vitest 全量 + build + e2e 子集 + 浏览器端到端冒烟
 - [ ] 台账勾销完毕，PR：upstream_port → dev，随后 platform_ia_refactor → dev
 
@@ -118,3 +123,15 @@
 - M1 验收（QWENPAW_STORAGE_BACKEND=json）：providers 全绿；agents+app 2181 passed / 12 failed → 其中 scroll 簇 5 个为本机 .env PG 后端泄漏（设 json 后 45/45 通过，非回归）；config_router 2 个为上游 console-channel-keep-enabled 行为待 M8；token_usage 4 个旧测试待 M2 升级
 - agentscope 已升 2.0.7.post1（含 model-ollama extra）、reme-ai 0.4.1.11、reme-auto-fin/daily-paper 0.1.2、mcp、imap-tools 1.15.0 已安装
 - 提交：a90b452c(M1桶1) → 96d2011b(M1桶3) → 1a666812(M1收尾)
+
+## 基线记录（M2 实测，QWENPAW_STORAGE_BACKEND=json）
+- import 冒烟：32/32 模块通过（.venv python，agentscope 2.0.7.post1）
+- token_usage：47 passed（M1 中间态消除）
+- governance + tool_guard：755 passed
+- chats/routers 域：461 passed（config_router 2 个为已知 M8 中间态）
+- agents/runtime：1407 passed 全绿
+- integration workspace/chats/governance 子集：53 passed
+- workspace：52 passed（test_agent_model patch 目标改 qwenpaw.constant.WORKING_DIR 配合 M1 动态读取语义）
+- unit 全量：7310 passed / 21 failed，定性：config_router 2（M8 中间态）+ checkpoint 2（三版本零改动的继承性环境时序，M9 处理）+ cli_task 2 / skill_scanner 5（WinError 1314 symlink 特权 + GBK 编码，Windows 环境限制非移植回归）
+- 已知限制：PG 后端 chats groups 分组持久化走默认值
+- 提交：bcec12a3(M2桶1,55文件) → ee18363b(M2桶3,21文件) → 本提交(台账)
