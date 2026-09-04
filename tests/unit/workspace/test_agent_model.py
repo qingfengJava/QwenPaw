@@ -32,7 +32,9 @@ def mock_agent_workspace(tmp_path, monkeypatch):
     workspace_dir = tmp_path / "workspaces" / "test_agent"
     workspace_dir.mkdir(parents=True, exist_ok=True)
 
-    monkeypatch.setattr("qwenpaw.config.utils.WORKING_DIR", tmp_path)
+    # config/utils.py reads constant.WORKING_DIR dynamically (M1), so the
+    # workspace-isolation patch must target the source module.
+    monkeypatch.setattr("qwenpaw.constant.WORKING_DIR", tmp_path)
     monkeypatch.setattr("qwenpaw.config.config.WORKING_DIR", tmp_path)
 
     # Create root config with this agent
@@ -137,7 +139,7 @@ def test_agent_model_config_can_be_cleared(
 
 def test_different_agents_have_independent_models(tmp_path, monkeypatch):
     """Test that different agents can have different model configs."""
-    monkeypatch.setattr("qwenpaw.config.utils.WORKING_DIR", tmp_path)
+    monkeypatch.setattr("qwenpaw.constant.WORKING_DIR", tmp_path)
     monkeypatch.setattr("qwenpaw.config.config.WORKING_DIR", tmp_path)
 
     # Create two agents
