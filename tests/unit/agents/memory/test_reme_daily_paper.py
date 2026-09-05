@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from qwenpaw.agents.memory.prompts import build_memory_guidance_prompt
 from qwenpaw.agents.memory.reme_light_memory_manager import (
     ReMeLightMemoryManager,
 )
@@ -58,6 +59,29 @@ async def test_daily_paper_passes_configured_source_preferences() -> None:
         force=False,
         use_hf_mirror=True,
         topics="agent memory",
+    )
+
+
+@pytest.mark.asyncio
+async def test_auto_fin_passes_configured_topics_and_window() -> None:
+    manager = ReMeLightMemoryManager.__new__(ReMeLightMemoryManager)
+    manager._run_reme_job = AsyncMock(
+        return_value=SimpleNamespace(success=True, answer="done"),
+    )
+    manager.get_memory_config = lambda: SimpleNamespace(
+        auto_fin_topics="黄金,AI",
+        auto_fin_window_hours=12,
+    )
+
+    await manager.auto_fin()
+
+    manager._run_reme_job.assert_awaited_once_with(
+        "auto_fin",
+        needs_llm=True,
+        raise_on_error=True,
+        date="",
+        topics="黄金,AI",
+        window_hours=12.0,
     )
 
 
@@ -152,7 +176,6 @@ def test_memory_prompt_omits_disabled_search_tool() -> None:
         language="en",
         running=SimpleNamespace(
             reme_light_memory_config=SimpleNamespace(
-                daily_dir="memory",
                 memory_search_enabled=False,
             ),
         ),
@@ -168,7 +191,8 @@ def test_memory_prompt_omits_disabled_search_tool() -> None:
         prompt = manager.get_memory_prompt()
 
     assert "memory_search" not in prompt
-    assert "memory/YYYY-MM-DD.md" in prompt
+    assert "`MEMORY.md` is your core long-term memory" in prompt
+    assert "`memory/YYYY-MM-DD.md`" in prompt
 
 
 def test_memory_prompt_includes_enabled_search_tool() -> None:
@@ -178,8 +202,9 @@ def test_memory_prompt_includes_enabled_search_tool() -> None:
         language="en",
         running=SimpleNamespace(
             reme_light_memory_config=SimpleNamespace(
-                daily_dir="memory",
                 memory_search_enabled=True,
+                daily_dir="daily-notes",
+                digest_dir="knowledge",
             ),
         ),
     )
@@ -191,7 +216,26 @@ def test_memory_prompt_includes_enabled_search_tool() -> None:
         prompt = manager.get_memory_prompt()
 
     assert "memory_search" in prompt
-    assert "memory/*.md" in prompt
+    assert "personal knowledge base" in prompt
+    assert "`MEMORY.md` is your core long-term memory" in prompt
+    assert "`daily-notes` and `knowledge`" in prompt
+    assert "`daily-notes/YYYY-MM-DD/{topic}.md`" in prompt
+    assert "background asynchronous task" in prompt
+
+
+def test_zh_memory_prompt_describes_the_four_memory_surfaces() -> None:
+    prompt = build_memory_guidance_prompt(
+        "zh",
+        daily_dir="daily-notes",
+        digest_dir="knowledge",
+    )
+
+    assert "`MEMORY.md` 是你的核心长期记忆" in prompt
+    assert "`daily-notes/YYYY-MM-DD.md` 是你的日记本和每日笔记" in prompt
+    assert "`daily-notes/YYYY-MM-DD/{topic}.md`" in prompt
+    assert "`daily-notes` 和 `knowledge` 下的所有 Markdown 文件" in prompt
+    assert "先使用 `memory_search`" in prompt
+    assert "再使用 `read_file` 按路径渐进式展开" in prompt
 
 
 def test_reme_declares_its_enabled_cron_jobs() -> None:
@@ -202,16 +246,20 @@ def test_reme_declares_its_enabled_cron_jobs() -> None:
         dream_cron="0 23 * * *",
         daily_paper_cron_enabled=True,
         daily_paper_cron="0 9 * * *",
+        auto_fin_cron_enabled=True,
+        auto_fin_cron="0 18 * * *",
     )
 
     jobs = manager.list_cron_jobs()
 
-    assert [job.key for job in jobs] == ["dream", "daily-paper"]
+    assert [job.key for job in jobs] == ["dream", "daily-paper", "auto-fin"]
     assert jobs[0].callback.__self__ is manager
     assert jobs[0].callback.__func__ is ReMeLightMemoryManager.dream
     assert jobs[0].jitter_seconds == 60
     assert jobs[1].callback.__self__ is manager
     assert jobs[1].callback.__func__ is ReMeLightMemoryManager.daily_paper
+    assert jobs[2].callback.__self__ is manager
+    assert jobs[2].callback.__func__ is ReMeLightMemoryManager.auto_fin
 
 
 @pytest.mark.asyncio
