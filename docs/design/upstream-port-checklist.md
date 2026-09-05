@@ -91,10 +91,17 @@
 - [~] [桶4] 浏览器实测顺延 M9 全面回归（与 M3 同口径）；AgentSelector 样式上游小改不跟随（组件已删）
 
 ## M5 模型路由前端（依赖 M1）
-上游参考：006b80a6(agent model routing settings)、81be8cc4(model selector样式)
-- [ ] [桶1] pages/Chat/ModelSelector/ 新组件族、Settings/Models/ 新 modals
-- [ ] [桶3] components/AgentSelector/、LoopModeSelector.tsx、HarnessModelSelector.tsx、Settings/Agents/
-- [ ] 验证：tsc + vitest + 模型切换冒烟
+上游参考：434574cb(console部分,M1遗漏)、006b80a6(agent model routing settings)、81be8cc4(model selector样式)
+**侦察修正（2026-09-05）**：实际范围远超原 2 提交——M1 仅直取了 434574cb 后端部分，其 console 前端（ModelSelector 新组件族 8 文件、Settings/Models 重构、api modules/types agent(s)/provider）全部遗漏，本轮一并补齐；后端 config.py 的 FallbackPolicyConfig 与 routers/agents.py 的 CreateAgentRequest 三字段同为 M1 漏网；Settings/Agents/index.tsx 已被自有平台 IA 删除（AgentsGalleryPage 替代），其 model routing 增量改移植到 AgentsGalleryPage；locales ×6 经 3-way 复核 M3 深合并基底已含全部 M5 key，免处理；上游对旧 provider key 的批量删除顺延 M9（避免破坏 M1 遗漏未升级组件引用）。
+
+- [x] [桶1] 45 文件直取：ModelSelector 全目录 12（AgentModelSettings/CandidateModelSection/modelSelectorApi/modelSelectorModels/useModelSelectorData 及测试）、Settings/Models（ModelCapabilityTags/ModelConfigEditor 新 modal、RemoteModelManageModal、ModelsSection、useProviders、index.module.less）、api modules/types（agents/provider/agent 及测试）、AgentModal + mailDomains 族×3、Chat 测试×5（ChatPage/HarnessModelSelector.test/fallbackNotice.test/turnUsage.test/turnUsageStore.test）、providerPlatformLocales.test
+- [x] [桶1 追加] tsc 断链驱动直取 13：ReMe 三件套（ReMeLightMemoryCard/ReMeStatusModal + test）、EmbeddingModelCard、useEmbeddingVerification、embeddingUtils、memoryMaintenanceContext、useReMeRuntimeStatus、embeddingVerificationStore（新）、api agent.ts/types/agent.ts/agent.test.ts
+- [x] [桶3] src/qwenpaw/config/config.py（FallbackPolicyConfig 类 + AgentProfileConfig 三字段）、app/routers/agents.py（CreateAgentRequest 三字段 + create_agent 传参，M1 漏网 8 行）
+- [x] [桶3] pages/Agents/AgentsGalleryPage.tsx 叠上游 model routing 6 处（ModelSettingsDraft/state/handleCreate 重置/createAgent 传参/AgentModal 3 props）
+- [x] [桶3] HarnessModelSelector.tsx（updateBackendSettings 显式 null，保留自有 antd classNames 新 API）、Settings/Models/index.tsx（manageModels URL 参数分支，保留 destroyOnHidden）、Settings/Agents/index.module.less（插 .agentRoutingFormItem）、Agent/Config/index.tsx（main 版 + 恢复自有 destroyOnHidden 1 行）
+- [x] [桶1] tests/integration/test_multi_agent_lifecycle.py（含新 test_create_agent_persists_model_routing）
+- [~] [桶4] 浏览器模型切换实测顺延 M9 全面回归（与 M3/M4 同口径）
+- [x] 验证：tsc -b --noEmit 0 错误 + vitest M5 域 28 文件 278 tests（277 passed，AgentLoopCard.render 1 个为已知 Windows 并发超时，单独跑 4/4 通过）；后端 pytest：lifecycle 23 passed（含新 routing 测试）+ agents_router/config/agent_management 140 passed
 
 ## M6 Hub 自托管多用户（依赖 M3）
 上游参考：f07a6a01(self-hosted Hub)、4e2e9ae2/a756623c(agentscope升级)
@@ -164,3 +171,11 @@
 - pawapp-sdk 升级：api/host/types/index/task 大改 + scope/ui/dependencies/scoping.test 新文件（+1912/-81），自有无改动全目录直取
 - plugin-manager 入口全链路移除（菜单/路由/os 设置项/route-map），页面文件保留（跟随上游统一 marketplace）
 - 提交：ceb06449(M4桶1,79文件) → 0f8a1f83(M4桶3,11文件) → 本提交(M4台账)
+
+## 基线记录（M5 实测）
+- console tsc -b --noEmit：0 错误（断链驱动补齐 M1 遗漏的 ReMe/Embedding 族与 mailDomains 族）
+- console vitest M5 域：28 文件 278 tests，277 passed；唯一失败 AgentLoopCard.render 超时为 M3 已定性 Windows 并发资源竞争（单独跑 4/4 通过）
+- 后端 pytest（QWENPAW_STORAGE_BACKEND=json）：test_multi_agent_lifecycle 23 passed（含 test_create_agent_persists_model_routing 端到端持久化验证）；test_agents_router + unit/config + test_agent_management 140 passed
+- 关键发现：M1 的 434574cb 只直取了后端，console 前端（ModelSelector 12 文件目录/Settings/Models 重构/api types）整体遗漏由 M5 补齐；后端 config.py FallbackPolicyConfig 与 routers/agents.py 三字段同为漏网，本轮补齐；自有无改动验证后直取是安全边界
+- locales ×6：3-way 复核（MB/HEAD/main）确认 M3 深合并基底已含 M5 全部新增 key；上游删除的旧 provider key 顺延 M9 清理
+- 提交：cb587425(M5桶1,49文件,+9426/-1835) → 492835fb(M5桶3,7文件,+77/-5) → 本提交(M5台账)
