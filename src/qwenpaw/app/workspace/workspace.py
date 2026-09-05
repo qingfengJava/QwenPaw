@@ -27,6 +27,7 @@ from .service_factories import (
     create_chat_service,
     create_channel_service,
     create_agent_config_watcher,
+    create_mail_monitor_service,
 )
 from .local_workspace import QwenPawLocalWorkspace
 from ..task_tracker import TaskTracker
@@ -126,6 +127,11 @@ class Workspace:
     def cron_manager(self):
         """Get cron manager instance from ServiceManager."""
         return self._service_manager.services.get("cron_manager")
+
+    @property
+    def mail_monitor(self):
+        """Get mail push monitor instance from ServiceManager."""
+        return self._service_manager.services.get("mail_monitor")
 
     # Non-service state
     @property
@@ -541,8 +547,19 @@ class Workspace:
             ),
         )
 
-        # Priority 45: Mail push monitor — upstream M7 scope (mail family);
-        # not ported in M2, service registration returns with it.
+        # Priority 45: Mail push monitor (conditional: mail.push enabled)
+        sm.register(
+            ServiceDescriptor(
+                name="mail_monitor",
+                service_class=None,
+                post_init=create_mail_monitor_service,
+                start_method="start",
+                stop_method="stop",
+                priority=45,
+                concurrent_init=False,
+                require_clean_stop=True,
+            ),
+        )
 
         # Priority 50: Agent Config Watcher (conditional)
         sm.register(

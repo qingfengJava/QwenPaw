@@ -27,6 +27,13 @@ from .embedding_model import (
 )
 from .prompts import build_memory_guidance_prompt
 from .reme_config import get_reme_app_config
+from .reme_embedding import ReMeEmbedding
+from .reme_inbox import (
+    RESULT_JOB_NAMES,
+    empty_result_body,
+    emit_job_result,
+    result_title,
+)
 from ..model_factory import create_model_and_formatter
 from ...app.inbox_store import append_event as append_inbox_event
 from ...app.crons.contracts import ServiceCronJob
@@ -53,15 +60,7 @@ logger = logging.getLogger(__name__)
 os.environ.setdefault("REME_DISABLE_LOGURU", "true")
 
 NO_MEMORY_RESULTS = "(no memory results)"
-INBOX_RESULT_JOB_NAMES = {"auto_memory", "auto_dream", "daily_paper"}
-INBOX_NOTIFICATION_FIELDS = {
-    "auto_memory": "auto_memory_inbox_push_enabled",
-    "auto_dream": "auto_dream_inbox_push_enabled",
-    "daily_paper": "daily_paper_inbox_push_enabled",
-}
 INBOX_RESULT_HOOK_KEY = "qwenpaw_memory_result_hook"
-INBOX_EMITTED_METADATA_KEY = "_qwenpaw_inbox_emitted"
-MAX_INBOX_BODY_CHARS = 4000
 _REME_SESSION_ID_HASH_PREFIX = "qpsid_sha256_"
 
 
@@ -581,115 +580,25 @@ class ReMeLightMemoryManager(BaseMemoryManager):
         response: "Response",
         kwargs: dict[str, Any],
     ) -> bool:
-        if name not in INBOX_RESULT_JOB_NAMES:
+        if name not in RESULT_JOB_NAMES:
             return False
         memory_config = await run_sync_io(self.get_memory_config)
-        if not getattr(memory_config, INBOX_NOTIFICATION_FIELDS[name]):
-            logger.info(
-                "ReMe job result inbox push disabled: agent_id=%s job_name=%s",
-                self.agent_id,
-                name,
-            )
-            return False
-        response_metadata = getattr(response, "metadata", None)
-        if isinstance(response_metadata, dict) and response_metadata.get(
-            INBOX_EMITTED_METADATA_KEY,
-        ):
-            return False
-        if (
-            name == "auto_memory"
-            and isinstance(response_metadata, dict)
-            and response_metadata.get("modified") is False
-        ):
-            logger.info(
-                "ReMe job result inbox push skipped; no memory change: "
-                "agent_id=%s job_name=%s modified=False",
-                self.agent_id,
-                name,
-            )
-            return False
-
-        answer = str(getattr(response, "answer", "") or "").strip()
-        if len(answer) > MAX_INBOX_BODY_CHARS:
-            answer = f"{answer[:MAX_INBOX_BODY_CHARS].rstrip()}\n..."
-        success = bool(getattr(response, "success", False))
-        title = self._inbox_result_title(name)
-        body = answer or self._empty_inbox_result_body(name)
-        payload: dict[str, Any] = {
-            "job_name": name,
-            "session_id": str(kwargs.get("session_id") or ""),
-            "date": str(kwargs.get("date") or ""),
-            "hint": str(
-                kwargs.get("memory_hint") or kwargs.get("hint") or "",
-            ),
-        }
-        if name == "daily_paper":
-            payload["force"] = bool(kwargs.get("force", False))
-            payload["topics"] = str(kwargs.get("topics") or "")
-            if isinstance(response_metadata, dict):
-                for key in (
-                    "digest_path",
-                    "selected_arxiv_ids",
-                    "note_paths",
-                    "pdf_paths",
-                    "skipped",
-                ):
-                    if key in response_metadata:
-                        payload[key] = response_metadata[key]
-
-        try:
-            event = await append_inbox_event(
-                agent_id=self.agent_id,
-                source_type="memory",
-                source_id=name,
-                event_type=f"{name}_result",
-                status="success" if success else "error",
-                severity="info" if success else "error",
-                title=title,
-                body=body,
-                payload=payload,
-            )
-            if isinstance(response_metadata, dict):
-                response_metadata[INBOX_EMITTED_METADATA_KEY] = True
-            logger.info(
-                "ReMe job result pushed to inbox: "
-                "agent_id=%s job_name=%s event_id=%s status=%s modified=%s",
-                self.agent_id,
-                name,
-                event.get("id"),
-                event.get("status"),
-                (
-                    response_metadata.get("modified")
-                    if isinstance(response_metadata, dict)
-                    else None
-                ),
-            )
-            return True
-        except Exception:  # pylint: disable=broad-except
-            logger.exception(
-                "failed to push ReMe job result to inbox: "
-                "agent_id=%s job_name=%s success=%s",
-                self.agent_id,
-                name,
-                success,
-            )
-            return False
+        return await emit_job_result(
+            agent_id=self.agent_id,
+            memory_config=memory_config,
+            name=name,
+            response=response,
+            kwargs=kwargs,
+            append_event=append_inbox_event,
+        )
 
     @staticmethod
     def _inbox_result_title(name: str) -> str:
-        return {
-            "auto_memory": "Auto-memory result",
-            "auto_dream": "Auto-dream result",
-            "daily_paper": "Daily Paper result",
-        }.get(name, "Memory job result")
+        return result_title(name)
 
     @staticmethod
     def _empty_inbox_result_body(name: str) -> str:
-        return {
-            "auto_memory": "Auto-memory completed with no returned content.",
-            "auto_dream": "Auto-dream completed with no returned content.",
-            "daily_paper": "Daily Paper completed with no returned content.",
-        }.get(name, "Memory job completed with no returned content.")
+        return empty_result_body(name)
 
     async def memory_search(
         self,
@@ -1356,52 +1265,18 @@ class ReMeLightMemoryManager(BaseMemoryManager):
         """Return the complete indexed wikilink graph for the console."""
         return await self._run_reme_job("graph_snapshot")
 
-    async def rebuild_index(self) -> "Response | None":
-        """Clear and rebuild the ReMe search index on explicit request."""
-        if self.is_reindexing:
-            raise RuntimeError("Memory index rebuild is already running")
-        async with self._reindex_lock:
-            async with self._exclusive_reme_lifecycle("reindex"):
-                reindex_fingerprint = (
-                    embedding_vector_space_fingerprint(
-                        self._active_embedding_config,
-                    )
-                    if self._active_embedding_config is not None
-                    else None
-                )
-                response = await self._run_reme_job(
-                    "reindex",
-                    lifecycle_locked=True,
-                )
-            if response is not None and response.success:
+    def _embedding_service(self) -> ReMeEmbedding:
+        return ReMeEmbedding(
+            self,
+            load_agent_config=load_agent_config_async,
+            update_agent_config=update_agent_config_async,
+        )
 
-                def clear_requirement(
-                    agent_config: AgentProfileConfig,
-                ) -> None:
-                    memory_config = (
-                        agent_config.running.reme_light_memory_config
-                    )
-                    persisted_fingerprint = embedding_vector_space_fingerprint(
-                        memory_config.embedding_model_config,
-                    )
-                    active_fingerprint = (
-                        embedding_vector_space_fingerprint(
-                            self._active_embedding_config,
-                        )
-                        if self._active_embedding_config is not None
-                        else None
-                    )
-                    if (
-                        persisted_fingerprint == reindex_fingerprint
-                        and active_fingerprint == reindex_fingerprint
-                    ):
-                        memory_config.needs_reindex = False
+    async def rebuild_index(self, scope: str = "all") -> "Response | None":
+        return await self._embedding_service().rebuild_index(scope)
 
-                await update_agent_config_async(
-                    self.agent_id,
-                    clear_requirement,
-                )
-        return response
+    async def undo_embedding_reindex(self) -> EmbeddingModelConfig:
+        return await self._embedding_service().undo_reindex()
 
     @property
     def is_reindexing(self) -> bool:

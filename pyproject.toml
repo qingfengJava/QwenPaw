@@ -191,6 +191,11 @@ sip-livekit = [
 ]
 
 [tool.pytest.ini_options]
+# Dev-environment import paths: the main editable install on this machine
+# cannot cover packages/qwenpawmail-mcp (non-ASCII path breaks .pth), so
+# pytest injects both source roots directly. Upstream CI installs the
+# packages normally and this list is harmless there.
+pythonpath = ["src", "packages/qwenpawmail-mcp/src"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 markers = [
