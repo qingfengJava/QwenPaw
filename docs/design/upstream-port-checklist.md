@@ -105,12 +105,22 @@
 
 ## M6 Hub 自托管多用户（依赖 M3）
 上游参考：f07a6a01(self-hosted Hub)、4e2e9ae2/a756623c(agentscope升级)
-- [ ] [桶1] src/qwenpaw/hub/ ×22、cli/hub_cmd.py
-- [ ] [桶1] console auth/gate.ts、api/modules/hub.ts、pages/Hub/、pages/Login/、scripts/precompress-assets.mjs、verify-initial-bundle.mjs
-- [ ] [桶3] App.tsx、api/modules/auth.ts、stores/authStore.ts、console/index.html、layouts/index.module.less、MainLayout
-- [ ] [桶4] Hub=部署接入层 与 RBAC=应用权限层并存；Login 衔接 authStore
-- [ ] 检查 src/qwenpaw/db 上游变更
-- [ ] 验证：pytest tests/unit/hub + 登录→桌面全流程
+**侦察修正（2026-09-05）**：hub/ 实际 24 文件（台账 ×22 失配）；agentscope 升级的 pyproject/venv（2.0.7.post1）与 builder.py max_image_num 适配已在 M1/M2 提前就位，本批仅 __version__.py 版本号；4e2e 的 local_workspace/capping_formatter/pruning 测试 SAME-ALREADY 免处理；上游 app/auth.py 为单用户设计与自有 M1 多用户体系全面冲突 → 仅叠 RuntimeBoundaryMiddleware（自有 users.json/argon2id 全保留）；Sidebar/builtinRoutes/main.tsx 上游混入另一条 IA 演化路线不跟随，只摘 Hub 专属增量；less 的 accountIdentity/runtimeRecovery 已提前在位免处理；locales ×7 hub key 族 M3 基底已含免处理；website ×8/.github ×2 顺延 M9、deploy/Dockerfile 顺延 M8；tests/unit/cli/test_hub_cmd.py 台账预估失配不存在；pyproject hub extra（docker）M1 已带入但 venv 未装，本批 pip install docker 7.2.0。
+
+- [x] [桶1] 75 文件直取：src/qwenpaw/hub/ ×24、cli/hub_cmd.py、console auth/gate.ts、api/modules/hub.ts、pages/Hub/ ×4、pages/Login/ 重设计、api/error.ts、ChunkErrorBoundary + test、PluginContext idle 初始化、scripts/precompress-assets + verify-initial-bundle、oauth 回调链路、tests/unit/hub ×15 + runtime_boundary/oauth/client_ip
+- [x] [桶3] App.tsx（上游 BackendModeRouter/RuntimeAvailabilityGuard 骨架 + 自有 StaffDeck tokens/authStore identity 叠层）、api/auth.ts（叠 mode 等三字段 + responseErrorMessage，保留自有 verify/VerifyResponse）、Sidebar（自有基底叠 Hub 六处）、MainLayout（hubMode + canRestartRuntime，保留 workbench fallback）、index.html（boot 启动屏，保留品牌 title）、vite.config（charts/editor vendor）、main.tsx（hostSdk/registerBuiltinCards 移交 PluginContext idle）、app/auth.py + _app.py（RuntimeBoundaryMiddleware）
+- [x] [桶4] Hub=部署接入层 与 RBAC=应用权限层并存落地：标准模式走自有 authApi.verify → authStore identity（M1/M4 RBAC 过滤）；hub 模式（res.mode=="hub"）gate 放行 + hubApi.me/changePassword/restartOwnRuntime 接管账户与 runtime 管理；Login 直取上游版（bootstrap/免责声明 Modal），identity 由 App.tsx AuthGuard 统一衔接 authStore
+- [x] 检查 src/qwenpaw/db 上游变更：f07a/4e2e/a756 均未触及 db/（Hub 自带 sqlite database.py，无 Alembic 变更）
+- [~] [桶4] 浏览器登录→桌面全流程实测顺延 M9 全面回归（与 M3-M5 同口径）
+- [x] 验证：tsc -b --noEmit 0 错误；vitest M6 域 10 文件 139 tests 全绿（hub/gate/ChunkErrorBoundary/Hub 页 ×13/Login/hubLocales/TabbedEditor/layouts/sessionApi/MCP）；pytest：tests/unit/hub 133 passed/4 skipped（process_isolation 2 个 linux 挂载断言失败为 M7 已知中间态：packages/qwenpawmail-mcp 未检出致 editable 挂载集缺路径）+ auth/oauth 33 + users/sandbox 257 + lifecycle 23；Hub e2e 环境门控 skip 预期
+
+## 基线记录（M6 实测）
+- console tsc -b --noEmit：0 错误（仅 1 处 clearAuthToken 未使用，职责已移入 gate.ts）
+- console vitest M6 域：10 文件 139 tests 全绿（8 核心域 70 + layouts 54 + sessionApi/MCP 15）
+- 后端 pytest（QWENPAW_STORAGE_BACKEND=json）：tests/unit/hub + runtime_boundary 133 passed/4 skipped/2 failed（process_isolation linux 挂载断言，M7 已知中间态）；auth+oauth 33 passed；users+auth_users+sandbox 257 passed；lifecycle 23 passed（RuntimeBoundaryMiddleware 叠加零破坏）；tests/e2e/test_hub_local_runtime skip（环境门控）
+- 架构决策：Hub 与自有 RBAC 并存——app/auth.py 保留 M1 多用户体系（users.json/argon2id/UserStore/XianWork share 前缀），仅叠 RuntimeBoundaryMiddleware（QWENPAW_RUNTIME_INTERNAL_TOKEN 环境变量 + x-qwenpaw-runtime-token 头，websocket 4401/HTTP 401）；前端 resolveAuthGate 负责 token 放行，authStore identity 由 AuthGuard verify 后写入，两套体系在标准/hub 双模式下均可用
+- 依赖：venv 补装 docker 7.2.0（pyproject hub extra M1 已带入未安装）
+- 提交：c4fc387c(M6桶1,75文件,+18711/-145) → e7ed0351(M6桶3,9文件,+528/-118) → 本提交(M6台账)
 
 ## M7 mailbox 邮件族（可并行）
 上游参考：f3046db6(邮件助手)、e3b61d71(inbox降噪)、67d5eff7(文档)、4f659968(CLI configurators)、fbca3562(desktop打包mail MCP)
