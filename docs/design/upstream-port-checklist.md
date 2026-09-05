@@ -9,7 +9,7 @@
 ## M0 基线与安全网
 - [x] console tsc --noEmit 0 错误
 - [x] console vitest 全量跑完（首轮 1092s 完整通过）
-- [ ] console npm run build EXIT=0（M9 前补验）
+- [x] console npm run build EXIT=0（M9 补验完成：verify-initial-bundle fork 化 env 覆盖，默认 10/3 MiB 不变）
 - [x] 后端 pytest unit：providers+governance 663 通过；全量 6845 passed（混合态不作基线，M1 后重跑）
 - [x] 切出工作分支 feature/upstream_port_20260903
 
