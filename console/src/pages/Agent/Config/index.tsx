@@ -17,10 +17,12 @@ import {
   MEMORY_MANAGER_BACKEND_MAPPINGS,
 } from "@/constants/backendMappings";
 import api from "@/api";
+import type { AgentsRunningConfig } from "@/api/types";
 import { useAgentStore } from "@/stores/agentStore";
 import styles from "./index.module.less";
 import { MemoryMaintenanceContext } from "./memoryMaintenanceContext";
 import { useReMeRuntimeStatus } from "./useReMeRuntimeStatus";
+import { getEmbeddingConfigFingerprint } from "./components/embeddingUtils";
 
 function AgentConfigPage() {
   const { t } = useTranslation();
@@ -30,14 +32,16 @@ function AgentConfigPage() {
   );
   const [needsReindex, setNeedsReindex] = useState(false);
   const [localReindexing, setLocalReindexing] = useState(false);
-  const [configRevision, setConfigRevision] = useState(0);
-  const syncReindexRequirement = useCallback(
-    (config: { reme_light_memory_config?: { needs_reindex?: boolean } }) => {
-      setNeedsReindex(config.reme_light_memory_config?.needs_reindex === true);
-      setConfigRevision((revision) => revision + 1);
-    },
-    [],
-  );
+  const [persistedEmbeddingFingerprint, setPersistedEmbeddingFingerprint] =
+    useState<string>();
+  const syncReindexRequirement = useCallback((config: AgentsRunningConfig) => {
+    setNeedsReindex(config.reme_light_memory_config.needs_reindex === true);
+    setPersistedEmbeddingFingerprint(
+      getEmbeddingConfigFingerprint(
+        config.reme_light_memory_config.embedding_model_config,
+      ),
+    );
+  }, []);
   const {
     form,
     loading,
@@ -61,12 +65,17 @@ function AgentConfigPage() {
   const memoryBackend =
     Form.useWatch("memory_manager_backend", form) || "remelight";
   const { selectedAgent } = useAgentStore();
-  const { runtimeStatus, checkMemoryStatus } = useReMeRuntimeStatus(
-    memoryBackend === "remelight",
-  );
+  const { runtimeStatus, diagnosticsStatus, checkMemoryStatus } =
+    useReMeRuntimeStatus(memoryBackend === "remelight");
   const remoteReindexing =
-    runtimeStatus.type === "healthy" && runtimeStatus.data.runtime.reindexing;
+    runtimeStatus.type === "healthy" && runtimeStatus.data.reindexing;
   const reindexing = localReindexing || remoteReindexing;
+
+  useEffect(() => {
+    if (runtimeStatus.type === "healthy") {
+      setNeedsReindex(runtimeStatus.data.embedding_reindex_required);
+    }
+  }, [runtimeStatus]);
 
   const [maxInputLength, setMaxInputLength] = useState(131072);
   const refreshEffectiveContextWindow = useCallback(() => {
@@ -310,10 +319,12 @@ function AgentConfigPage() {
             setNeedsReindex,
             reindexing,
             setReindexing: setLocalReindexing,
+            persistedEmbeddingFingerprint,
+            setPersistedEmbeddingFingerprint,
             openMemorySettings: () => setActiveTab("remeLightMemory"),
             runtimeStatus,
+            diagnosticsStatus,
             checkMemoryStatus,
-            configRevision,
           }}
         >
           <Form form={form} layout="vertical" className={styles.form}>
@@ -322,7 +333,7 @@ function AgentConfigPage() {
               activeKey={activeTab}
               onChange={setActiveTab}
               items={dynamicTabs}
-              destroyOnHidden={false}
+              destroyInactiveTabPane={false}
             />
           </Form>
         </MemoryMaintenanceContext.Provider>
