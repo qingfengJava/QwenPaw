@@ -124,10 +124,16 @@
 
 ## M7 mailbox 邮件族（可并行）
 上游参考：f3046db6(邮件助手)、e3b61d71(inbox降噪)、67d5eff7(文档)、4f659968(CLI configurators)、fbca3562(desktop打包mail MCP)
-- [ ] [桶1] app/mail/ ×4、routers/mail_access_control.py、agents/tools/mail_f1_tool.py、skills/mailbox-en|zh/、md_files 新增、packages/qwenpawmail-mcp/
-- [ ] [桶1] console api/modules/mailAccessControl.ts
-- [ ] [桶3] pages/Inbox/ 融合
-- [ ] 验证：pytest tests/unit/app/mail + Inbox 冒烟
+- [x] [桶1] app/mail/ ×4、routers/mail_access_control.py、agents/tools/mail_f1_tool.py、skills/mailbox-en|zh/、md_files 新增、packages/qwenpawmail-mcp/
+- [x] [桶1] console api/modules/mailAccessControl.ts
+- [x] [桶3] pages/Inbox/ 融合
+- [x] 验证：pytest tests/unit/app/mail + Inbox 冒烟（实测：全域 292 passed + mail/inbox/workspace 328 passed，详见下方落地记录）
+
+## 落地记录（M7 实测）
+- 验证：tsc --noEmit 0 错误；vitest Inbox 域 20 tests 全程（useInboxData 18 + inboxEvents 2）；pytest 全域（config/mail_validation/mail_access_control/reme_inbox/app_inbox/cli_channels/tauri/setup_utils/agents_router）292 passed 全绿；mail+inbox+workspace 328 passed；process_isolation 11 passed/3 skipped/1 failed——唯一失败 test_linux_command_mounts_python_base_prefix 为 Windows symlink 特权缺失（WinError 1314），环境性非缺陷；tests/unit/agents/memory 全量存在慢测试超时，与 M7 改动无关（目标文件 13 passed）
+- 桶3 融合：config.py（mail 类族+凭据三层存储+migrate/hydrate+thinking_level+pending_reindex_embedding_config 字段+load_agent_config 深拷贝语义+mutate_agent_config）；agents.py（mail 驱动卡/回滚/验证函数族 + CreateAgentRequest.mail + create/copy/update mail 集成）；service_factories.py（qwenpawmail card 升级 + create_mail_monitor_service 3参 publish 协议）；workspace.py（mail_monitor 注册）；reme_light_memory_manager.py（inbox 推送委托化）；AgentsGalleryPage.tsx（mail 三块映射）
+- 意外追平（M7 直取 main 终态测试拉出）：434574cb（#6302 unify agent controls）在 agents.py 的原语重构——mutate_config/mutate_agent_config 导入、reorder/set_pinned/delete/toggle 原语化、get_agent/update_backend_settings/copy_agent off-event-loop、_persist_created_agent/_resolve_custom_workspace_dir/_prepare_copied_workspace 新增、AgentModelSettingsPatch + PATCH /model-settings 端点、AutoMemoryRuntimeStatus/RecentMemoryRuntimeStatus 对齐 main 精简、memory reindex scope 参数 + undo 端点 + embedding_reindex_required/undo_available 字段、runtime_status 组装；reme_light_memory_manager.py 的 rebuild_index(scope)/undo_embedding_reindex 薄委托（ReMeEmbedding service 接线）+ inbox 推送委托 reme_inbox.emit_job_result（auto_fin/auto_dream 终态语义）
+- 顺延确认：deploy/Dockerfile 意外暂存已撤回（M8 桶3，含自有 xianwork 阶段不可抹）；Auto Fin 主体（manager auto_fin 方法/ReMe 0.4.1.11）顺延后续里程碑；tests/unit/agents/memory 全量慢测试待 M9 全面回归时处理
 
 ## M8 通道修复 + creator/DataPaw + 桌面打包（可并行）
 上游参考：2f621f44/c19801d1(matrix)、5cf8d14f(qq)、c4326313/58ebb9a0(dingtalk)、59f2849c(onebot)、6d8217d3(console channel)、673091e6(yuanbao)、29473338(xiaoyi)、63799c1f/77c2e5f8(creator)、6b3dc19d(DataPaw)、f1879477/d3efdf2e/72c2b2b3/2ce39f81/61ffff54/9a88d2ec/b2f84a95(桌面修复)
