@@ -136,13 +136,22 @@
 - 顺延确认：deploy/Dockerfile 意外暂存已撤回（M8 桶3，含自有 xianwork 阶段不可抹）；Auto Fin 主体（manager auto_fin 方法/ReMe 0.4.1.11）顺延后续里程碑；tests/unit/agents/memory 全量慢测试待 M9 全面回归时处理
 
 ## M8 通道修复 + creator/DataPaw + 桌面打包（可并行）
-上游参考：2f621f44/c19801d1(matrix)、5cf8d14f(qq)、c4326313/58ebb9a0(dingtalk)、59f2849c(onebot)、6d8217d3(console channel)、673091e6(yuanbao)、29473338(xiaoyi)、63799c1f/77c2e5f8(creator)、6b3dc19d(DataPaw)、f1879477/d3efdf2e/72c2b2b3/2ce39f81/61ffff54/9a88d2ec/b2f84a95(桌面修复)
-- [ ] [桶3] app/channels/base.py、console/channel.py、dingtalk/channel.py
-- [ ] [桶1] app/channels/onebot/media.py
-- [ ] [桶1] plugins/apps/qwenpaw-creator/、qwenpaw-data/、plugins/bundle/computer-use/
-- [ ] [桶3] deploy/Dockerfile、console/src-tauri 打包（确认后跟随删 stop-backend-sidecar.ps1）
-- [ ] [桶3] 桌面修复族（WebView2/PyInstaller/杀软/CRLF/envs原子写/截图目录）
-- [ ] 验证：pytest channels/contract + plugins 子集 + 打包干跑
+上游参考：2f621f44/c19801d1(matrix)、5cf8d14f(qq)、c4326313/58ebb9a0(dingtalk)、59f2849c(onebot)、6d8217d3(console channel)、673091e6(yuanbao)、29473338(xiaoyi)、63799c1f/77c2e5f8(creator)、6b3dc19d(DataPaw)+6dd0dd23(改名qwenpaw-data)、f1879477/d3efdf2e/72c2b2b3/2ce39f81/61ffff54/9a88d2ec/b2f84a95(桌面修复)
+**侦察修正（2026-09-05）**：实际 20 提交（台账漏列 6dd0dd23 datapaw→qwenpaw-data 改名+PyPI runtime）；549 变更文件三桶筛查：TAKE 452（含 own无改动 ×大量——M2 融合基底即 main 终态故 6b3dc19d 后端增量多已就位）/MERGE 25/SAME 32/GONE 57（creator 旧测试跟随删）/EVAP 7（datapaw 旧路径改名蒸发免处理）；base.py 的 HEAD..main 307 行差异来自 434574cb 遗漏+37e7f647(#6767 不在任何批次)+0dd1844f(M3 后端遗漏)，M8 一并追平；AgentSelector 复活不跟随（M4 决策延续），但其新增依赖 agentVisibility.ts 直取供 MissionControl/SpacesPanel/DesktopOS 使用；locales ×7 免处理（M3 深合并基底已含）；creator 两提交零越界触碰。
+
+- [x] [桶3] app/channels/base.py（fallback notice 方法族+流内调用×3+send_event 后×1、on_finished=mark_chat_finished、sanitize_log_value×4、OnReplySent→Awaitable+await×2；自有 owner身份/背压/RBAC 异常块全保留）+ console/channel.py（await on_reply_sent）+ channels/manager.py（OnLastDispatch Awaitable）+ dingtalk/channel.py（main 基底+自有 _routing_user_id 叠层；连锁直取 7f825219 的 content_utils/constants 台账漏列）+ dingtalk/console 通道 config.py 字段（OneBot media_dir/media_download_max_mb、Console keep_console_enabled、Matrix/DingTalk share_session_in_group）
+- [x] [桶1] app/channels/onebot/media.py + matrix/qq/xiaoyi/yuanbao channel + qq/cards/tool_guard（own无改动）
+- [x] [桶1] plugins/apps/qwenpaw-creator/（目录覆盖，513 文件）+ qwenpaw-data/（58 文件终态直取，等价 6b3dc19d+6dd0dd23）+ plugins/bundle/computer-use/（7f825219 之外无变更，核对后免处理）+ 桶5 删 creator 旧测试 59 个
+- [x] [桶3] console/src-tauri 直取 webview_recovery.rs/Cargo（WebView2 恢复 f1879477）+ tauri/entry.py+d3efdf2e PyInstaller hook + scripts/verify/desktop_verify.py；桶3 DesktopOS.tsx 叠 isAgentAvailableInChat 过滤；stop-backend-sidecar.ps1 核对：上游未删，保留
+- [x] [桶3] 桌面修复族：2ce39f81 杀软（sandbox/windows_unelevated_sandbox+Security 页面族直取+routers/config.py deny-paths 端点已在）、61ffff54 CRLF（write_bytes 已在）、9a88d2ec envs 原子写、b2f84a95 截图目录、test_entry.py +41（freeze_support abort 测试）；agents.py 补 AgentSummary.managed_by_app/available_in_chat（6b3dc19d）
+- [x] 验证：tsc -b --noEmit 0 错误；pytest channels+pack+pawapp+tauri/config_router/chats 1939 passed（config_router 2 个 M1 遗留中间态正式转绿）+ DingTalkConfig 补字段后 dingtalk 14 passed；integration channels_config+dingtalk_mock_im 11 passed/1 failed（P2 long_reply 为 mock-IM 链路时序，实现 3500 分支已就位，顺延 M9）；pawapp symlink 1 failed 为 WinError 1314 环境性；creator tests 子集验证见下
+
+## 落地记录（M8 实测）
+- 侦察陷阱三则：①提交集含 datapaw 路径但 main 终态已改名 qwenpaw-data，需 EVAP 桶识别蒸发文件+终态路径替换；②git checkout main -- 目录不删除 HEAD 独有文件，GONE 需显式 git rm（漏网 2 个 creator 旧测试靠 plugins 域与 main 残差扫描捕荻）；③PowerShell `>` 重定向 UTF-16 污染文件再次触发（m8_recon 输出），侦察脚本一律内部 open/write。
+- M2 融合基底即 main 终态的结论多次验证：6b3dc19d 对 retry_chat_model/builder/runtime/model_wrapper/chats api+utils 的后端增量在 HEAD 已就位，HEAD..main 残差全为自有方向，MERGE≠需融合；甄别方法=逐 hunk plus>minus 统计+读上下文定性。
+- integration app 子进程不继承 pytest pythonpath，中文路径下 qwenpawmail_mcp 不可导入 → conftest.py env 段显式注入 PYTHONPATH（packages/qwenpawmail-mcp/src）。
+- 桌面修复族的 7 提交共 33 路径中 6 处已在 HEAD（M1/M2/M7 直取 main 终态时顺带入），真正新融合 12 文件。
+- 顺延：Auto Fin 主体继续顺延；tests/integration 缺失 132 文件归 M9 测试扩容（本批仅补 mock_dingtalk_im.py/_coverage_app_main.py 供 M8 通道测试闭合）；deploy/Dockerfile 待桶3 最后一项（M8 收尾或 M9 前置）。
 
 ## M9 website/docs/CI + 测试扩容 + 全面回归
 - [ ] [桶1] git checkout main -- website docs
