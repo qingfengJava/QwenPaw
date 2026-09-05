@@ -154,12 +154,24 @@
 - 顺延：Auto Fin 主体继续顺延；tests/integration 缺失 132 文件归 M9 测试扩容（本批仅补 mock_dingtalk_im.py/_coverage_app_main.py 供 M8 通道测试闭合）；deploy/Dockerfile 待桶3 最后一项（M8 收尾或 M9 前置）。
 
 ## M9 website/docs/CI + 测试扩容 + 全面回归
-- [ ] [桶1] git checkout main -- website docs
-- [ ] .github/ 逐文件甄别采用
-- [ ] tests/ 上游新测试按域归位（integration ×132 / unit ×130）
-- [ ] 重写交集测试：tauri/test_entry.py（chats/test_utils.py 与 governance/test_policy.py 已在 M2 提前完成：main 基底+自有叠加）
-- [ ] 全面回归：pytest 全量 + tsc + vitest 全量 + build + e2e 子集 + 浏览器端到端冒烟
-- [ ] 台账勾销完毕，PR：upstream_port → dev，随后 platform_ia_refactor → dev
+- [x] [桶1] website/docs 归位：website 73 路径直取（plugins.en/zh.md 保留自有——上游删 primary.platform location 值属自有平台 IA 功能）；docs/ 侦察为空（7 个自有设计文档 main 无，免处理）
+- [x] .github/ 逐文件甄别：16+1 全 upstream-only 直取（blob 谱系分类），自有 3 workflows 未受影响
+- [x] tests/ 上游新测试按域归位（integration ×132 / unit ×130 直取）；own-touched 7 个保留（conftest PYTHONPATH 注入、test_console_channel、test_utils/test_policy/test_agent_model 融合版、test_runtime、test_entry）；GONE test_coding_project.py 显式删；决策删自有-only test_config_path_isolation.py（M2 动态读取已回退，前提消失）
+- [x] 交集测试融合：chats/test_api.py main 终态直调适配（list_chats request 可选参数、tracker get_status_many hasattr 回退、get_chat owned 直调回退 mgr 查询）；tauri/test_entry.py 已在 M8 融合
+- [x] 实现面终态收拢：src 64 upstream-only 直取 + config.py/utils.py 反转融合 + media_token_estimate 补齐 + backup/skill_system 域连锁 + Auto Fin 主体（auto_fin/cron/热更新委托化）+ provider 启动 offload to_thread + embedding 热更新事务对齐（force_reload/restores_indexed_space/run_async_to_completion）+ agents.py managed_by_app 组装 + multi_agent_manager main 基底叠自有 LRU/TTL + scroll manager _raise_if_summary_interrupted 补齐 + agent_stats service 直取 + models.py 融合（LlmToolDaily + 自有 brief）
+- [x] 全面回归：pytest unit 分域批跑 ~7500 passed（失败全定性：symlink WinError 1314 ×7 / checkpoints 时序 ×3 实现测试均 main 零 diff / 其余修复转绿）；tsc 0 错误；vitest 全量 2243 passed/4 并发超时（单跑全绿）；npm build EXIT=0；e2e ui_smoke 4 passed；浏览器端到端冒烟 PASS（SPA 渲染 0 console error）
+- [x] 台账勾销完毕，PR：upstream_port → dev，随后 platform_ia_refactor → dev（push 由用户手动执行）
+
+## 落地记录（M9 实测）
+- 残差甄别方法升级：桶1 直取后全仓库三档扫描（src / scripts+e2e+plugins / console），共捕犾 upstream-only 落后 197 文件（src 64 + 全仓 44 + console 89）——桶1 目录级直取无法覆盖跨目录引用链，tsc 断链与 pytest import 错误是两大驱动信号。
+- 反转融合二例：config.py（87 行 own-only 残差全为手工适配版与 main 原版实现差异，非真自有功能）与 utils.py（M2 动态读取决策回退为 main 静态绑定）直接 checkout main 终态；判定标准=自有向残差是否承载可辨识的自有功能语义。
+- FastAPI 签名陷阱：`request: Request | None = None` 触发 FastAPIError（Union 被误判为查询参数），纯 `Request = None` 才走 DI 注入分支且允许直调缺省——自有认证参数与上游测试直调共存的标准解法。
+- pytest-timeout 在 Windows 的 asyncio 挂起测试上 dump 栈后整个 run 中断且丢弃统计输出：全量单进程跑不可行，分域 subprocess 批跑（timeout=150/1500s 双层）是本仓库唯一可靠的全量回归形态。
+- multi_agent_manager 挂起根因：HEAD 保留自有 LRU/TTL 但缺 main 的 reload guard（note_agent_config_changed 代际检查），测试 build_gate 永挂 → 以 main 为基底重叠自有回收器；scroll manager 同型：缺 _raise_if_summary_interrupted 致取消传播测试失败。
+- 环境性失败终态定性：symlink WinError 1314 ×7（cli/security/pawapp/plugins/hub）+ checkpoints 取消传播时序 ×3（实现与测试均与 main 零 diff，Windows 调度敏感）+ vitest 并发超时 ×4（单跑全绿），均不改动上游文件。
+- 陷阱：pip install -e 在中文路径仓库生成 UTF-8 .pth，site.py 以 GBK 读取致整个 venv Python 启动崩溃——删除该 .pth 恢复，qwenpawmail_mcp 改用 PYTHONPATH 注入（与 tests/conftest 同法）。
+- e2e 冒烟链路：QWENPAW_WORKING_DIR 隔离目录 + `python -m qwenpaw app --port 7077`（PYTHONPATH 注入 qwenpawmail-mcp/src）+ Playwright ui_smoke 4 passed + 浏览器加载冒烟（v2.2.1b1 + 自有 IA 菜单完整渲染）。
+- 顺延确认：M5 locales 旧 provider key 清理已闭合（246 stale 全自有 key 无残留）；M2 known limitation（PG 后端 chats groups 默认值）维持已知限制。
 
 ## 基线记录（M0/M1 实测）
 - console tsc --noEmit：0 错误
