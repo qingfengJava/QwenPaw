@@ -4,7 +4,8 @@ import {
   bailianDarkTheme,
   bailianTheme,
 } from "@agentscope-ai/design";
-import { App as AntdApp } from "antd";
+import { App as AntdApp, theme as antdTheme } from "antd";
+import type { ThemeConfig } from "antd";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -14,7 +15,6 @@ import jaJP from "antd/locale/ja_JP";
 import ruRU from "antd/locale/ru_RU";
 import idID from "antd/locale/id_ID";
 import type { Locale } from "antd/es/locale";
-import { theme as antdTheme } from "antd";
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
 import "dayjs/locale/zh-cn";
@@ -24,13 +24,14 @@ import "dayjs/locale/id";
 dayjs.extend(relativeTime);
 import MainLayout from "./layouts/MainLayout";
 import { ThemeProvider, useTheme } from "./contexts/ThemeContext";
-import { PluginProvider, usePlugins } from "./plugins/PluginContext";
+import { PluginProvider } from "./plugins/PluginContext";
 import { ApprovalProvider } from "./contexts/ApprovalContext";
 import { DesktopUpdateProvider } from "./contexts/DesktopUpdateContext";
 import { UpdateTakeoverGate } from "./components/UpdateTakeoverPage";
 import { Suspense, lazy } from "react";
 import { lazyImportWithRetry } from "./utils/lazyWithRetry";
 import {
+  addRouterBasename,
   getLoginHref,
   getLoginPath,
   getRouterBasename,
@@ -38,6 +39,7 @@ import {
 } from "./utils/navigationMode";
 
 const LoginPage = lazyImportWithRetry("./pages/Login/index");
+const HubPage = lazyImportWithRetry("./pages/Hub/index");
 // Desktop OS shell. Uses React.lazy (not lazyImportWithRetry, which only
 // resolves the ./pages/** glob) so it can load from ./os/.
 const DesktopOSPage = lazy(() => import("./os/DesktopOS"));
@@ -48,8 +50,16 @@ import {
   useAuthStore,
   AUTH_DISABLED_IDENTITY,
 } from "./stores/authStore";
-import { getApiToken, clearAuthToken } from "./api/config";
+import { getApiToken } from "./api/config";
 import CloseWindowPrompt from "./tauri/CloseWindowPrompt";
+import BackendLoadingPage from "./tauri/BackendLoadingPage";
+import {
+  resolveAuthGate,
+  resolveBackendInfo,
+  type BackendInfo,
+} from "./auth/gate";
+import type { AuthStatusResponse } from "./api/modules/auth";
+import { hubApi, type HubHealth } from "./api/modules/hub";
 import { isTauri } from "@tauri-apps/api/core";
 import { isDesktopTauriRuntime } from "./utils/openExternalLink";
 import { interceptBlankLinkClicks } from "./utils/interceptBlankLinkClicks";
@@ -82,65 +92,79 @@ const GlobalStyle = createGlobalStyle`
 
 function AuthGuard({
   children,
+  authStatus,
   useHardRedirect = false,
 }: {
   children: React.ReactNode;
+  authStatus: AuthStatusResponse;
   useHardRedirect?: boolean;
 }) {
-  const [status, setStatus] = useState<"loading" | "auth-required" | "ok">(
-    "loading",
-  );
+  const [status, setStatus] = useState<
+    "loading" | "auth-required" | "ok" | "error"
+  >("loading");
+  const [errorMessage, setErrorMessage] = useState("");
+  const [retryKey, setRetryKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      try {
-        const res = await authApi.getStatus();
-        if (cancelled) return;
-        if (!res.enabled) {
-          // Single-user deployment: keep every menu visible (pre-M5 behaviour).
-          useAuthStore.getState().setIdentity(AUTH_DISABLED_IDENTITY);
-          setStatus("ok");
-          return;
-        }
-        const token = getApiToken();
-        if (!token) {
-          setStatus("auth-required");
-          return;
-        }
-        try {
-          const r = await authApi.verify(token);
-          if (cancelled) return;
-          // Record identity for role-based menu/route filtering (M5).
-          // Missing role fields (older backend) degrade to non-admin.
-          useAuthStore.getState().setIdentity({
-            username: r.username ?? "",
-            role: r.role ?? "",
-            roles: Array.isArray(r.roles) ? r.roles : [],
-          });
-          setStatus("ok");
-        } catch {
-          if (!cancelled) {
-            clearAuthToken();
-            useAuthStore.getState().clear();
-            setStatus("auth-required");
+    setStatus("loading");
+    setErrorMessage("");
+    resolveAuthGate(authStatus)
+      .then(async (nextStatus) => {
+        // SmartWork RBAC (M1/M4): record the caller's identity for
+        // role-based menu/route filtering. Hub mode records identity too
+        // -- the hub JWT is verified by the same /auth/verify endpoint --
+        // while the role fields degrade to non-admin when absent.
+        if (nextStatus === "ok" && authStatus.enabled) {
+          const token = getApiToken();
+          if (token) {
+            try {
+              const r = await authApi.verify(token);
+              if (!cancelled) {
+                useAuthStore.getState().setIdentity({
+                  username: r.username ?? "",
+                  role: r.role ?? "",
+                  roles: Array.isArray(r.roles) ? r.roles : [],
+                });
+              }
+            } catch {
+              // Identity lookup failed: degrade to non-admin, do not block.
+            }
           }
-        }
-      } catch {
-        // Status probe failed (backend unreachable / dev mode): preserve the
-        // historical fail-open behaviour.
-        if (!cancelled) {
+        } else if (nextStatus === "auth-required") {
+          useAuthStore.getState().clear();
+        } else if (!authStatus.enabled) {
+          // Single-user deployment: keep every menu visible.
           useAuthStore.getState().setIdentity(AUTH_DISABLED_IDENTITY);
-          setStatus("ok");
         }
-      }
-    })();
+        if (!cancelled) setStatus(nextStatus);
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setErrorMessage(
+          error instanceof Error ? error.message : "Authentication failed",
+        );
+        setStatus("error");
+      });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [authStatus, retryKey]);
 
-  if (status === "loading") return null;
+  if (status === "loading") {
+    return null;
+  }
+  if (status === "error") {
+    return (
+      <BackendLoadingPage
+        status="error"
+        elapsed={0}
+        totalSec={1}
+        errorMessage={errorMessage}
+        onRetry={() => setRetryKey((current) => current + 1)}
+      />
+    );
+  }
   if (status === "auth-required") {
     const loginTo = getLoginPath(window.location);
     if (useHardRedirect) {
@@ -153,11 +177,115 @@ function AuthGuard({
   return <>{children}</>;
 }
 
-function AppInner() {
+function RuntimeAvailabilityGuard({
+  children,
+  enabled,
+}: {
+  children: React.ReactNode;
+  enabled: boolean;
+}) {
+  const { t } = useTranslation();
+  const [health, setHealth] = useState<HubHealth | null>(null);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [restarting, setRestarting] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
+
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    setHealth(null);
+    setErrorMessage("");
+    hubApi
+      .getHealth()
+      .then((nextHealth) => {
+        if (!cancelled) setHealth(nextHealth);
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setErrorMessage(
+          error instanceof Error
+            ? error.message
+            : "Runtime security preflight failed",
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, retryKey]);
+
+  const restartRuntime = async () => {
+    setRestarting(true);
+    setErrorMessage("");
+    try {
+      await hubApi.restartOwnRuntime();
+      setRetryKey((current) => current + 1);
+    } catch (error: unknown) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Runtime restart failed",
+      );
+    } finally {
+      setRestarting(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!enabled || !health || health.runtime_available) return;
+    window.location.replace(
+      addRouterBasename(window.location.pathname, "/hub/admin"),
+    );
+  }, [enabled, health]);
+
+  if (!enabled) return <>{children}</>;
+  if (!health && !errorMessage) return null;
+  if (health?.runtime_desired_state === "stopped") {
+    const ownerCanStart = health.runtime_start_policy === "owner_allowed";
+    return (
+      <BackendLoadingPage
+        status="error"
+        elapsed={0}
+        totalSec={1}
+        statusText={t(
+          ownerCanStart
+            ? "account.runtimeStoppedTitle"
+            : "account.runtimeDisabledTitle",
+        )}
+        hintText={t(
+          ownerCanStart
+            ? "account.runtimeStoppedDescription"
+            : "account.runtimeDisabledDescription",
+        )}
+        errorMessage={errorMessage}
+        onRetry={restartRuntime}
+        retryLabel={
+          restarting
+            ? t("account.runtimeRestarting")
+            : t("account.runtimeRestart")
+        }
+        showRetry={ownerCanStart}
+        retryDisabled={restarting}
+      />
+    );
+  }
+  if (health?.runtime_available) return <>{children}</>;
+
+  if (health) return null;
+
+  return (
+    <BackendLoadingPage
+      status="error"
+      elapsed={0}
+      totalSec={1}
+      errorMessage={errorMessage}
+      onRetry={() => setRetryKey((current) => current + 1)}
+    />
+  );
+}
+
+function AppInner({ backendInfo }: { backendInfo: BackendInfo }) {
+  const hubMode = backendInfo.mode === "hub";
   const basename = getRouterBasename(window.location.pathname);
   const { i18n } = useTranslation();
   const { isDark } = useTheme();
-  const { loading: pluginsLoading } = usePlugins();
   const selectedTheme = isDark ? bailianDarkTheme : bailianTheme;
   const lang = i18n.resolvedLanguage || i18n.language || "en";
   const [antdLocale, setAntdLocale] = useState<Locale>(
@@ -215,21 +343,18 @@ function AppInner() {
     return interceptBlankLinkClicks();
   }, []);
 
-  // Wait for plugins to load before rendering routes that might be patched
-  if (pluginsLoading) {
-    return null;
-  }
-
   const osActive = isOsPath(window.location.pathname);
 
   // The Desktop OS shell renders OUTSIDE any Router: each window supplies its
   // own MemoryRouter (WindowRouter.tsx) and React Router forbids nesting a
   // <Router> inside another. The classic browser layout keeps its BrowserRouter.
   const routedContent = osActive ? (
-    <AuthGuard useHardRedirect>
-      <Suspense fallback={null}>
-        <DesktopOSPage />
-      </Suspense>
+    <AuthGuard authStatus={backendInfo.authStatus} useHardRedirect>
+      <RuntimeAvailabilityGuard enabled={hubMode}>
+        <Suspense fallback={null}>
+          <DesktopOSPage />
+        </Suspense>
+      </RuntimeAvailabilityGuard>
     </AuthGuard>
   ) : (
     <BrowserRouter basename={basename}>
@@ -243,10 +368,26 @@ function AppInner() {
           }
         />
         <Route
+          path="/hub/admin"
+          element={
+            hubMode ? (
+              <AuthGuard authStatus={backendInfo.authStatus}>
+                <Suspense fallback={null}>
+                  <HubPage />
+                </Suspense>
+              </AuthGuard>
+            ) : (
+              <Navigate to="/" replace />
+            )
+          }
+        />
+        <Route
           path="/*"
           element={
-            <AuthGuard>
-              <MainLayout />
+            <AuthGuard authStatus={backendInfo.authStatus}>
+              <RuntimeAvailabilityGuard enabled={hubMode}>
+                <MainLayout hubMode={hubMode} />
+              </RuntimeAvailabilityGuard>
             </AuthGuard>
           }
         />
@@ -263,7 +404,7 @@ function AppInner() {
         prefixCls="qwenpaw"
         locale={antdLocale}
         theme={{
-          ...(selectedTheme as any)?.theme,
+          ...(selectedTheme as { theme?: ThemeConfig }).theme,
           algorithm: isDark
             ? antdTheme.darkAlgorithm
             : antdTheme.defaultAlgorithm,
@@ -313,10 +454,56 @@ function AppInner() {
 function App() {
   return (
     <ThemeProvider>
-      <PluginProvider>
-        <AppInner />
-      </PluginProvider>
+      <BackendModeRouter />
     </ThemeProvider>
+  );
+}
+
+function BackendModeRouter() {
+  const [backendInfo, setBackendInfo] = useState<
+    "loading" | "error" | BackendInfo
+  >("loading");
+  const [errorMessage, setErrorMessage] = useState("");
+  const [retryKey, setRetryKey] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setBackendInfo("loading");
+    setErrorMessage("");
+    resolveBackendInfo()
+      .then((nextInfo) => {
+        if (!cancelled) setBackendInfo(nextInfo);
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setErrorMessage(
+          error instanceof Error ? error.message : "Backend detection failed",
+        );
+        setBackendInfo("error");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [retryKey]);
+
+  if (backendInfo === "loading") {
+    return null;
+  }
+  if (backendInfo === "error") {
+    return (
+      <BackendLoadingPage
+        status="error"
+        elapsed={0}
+        totalSec={1}
+        errorMessage={errorMessage}
+        onRetry={() => setRetryKey((current) => current + 1)}
+      />
+    );
+  }
+  return (
+    <PluginProvider>
+      <AppInner backendInfo={backendInfo} />
+    </PluginProvider>
   );
 }
 

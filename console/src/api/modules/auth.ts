@@ -1,4 +1,5 @@
 import { getApiUrl } from "../config";
+import { responseErrorMessage } from "../error";
 
 export interface LoginResponse {
   token: string;
@@ -9,6 +10,10 @@ export interface LoginResponse {
 export interface AuthStatusResponse {
   enabled: boolean;
   has_users: boolean;
+  /** M6: "hub" when served by the self-hosted Hub control plane. */
+  mode?: "hub";
+  bootstrap_required?: boolean;
+  registration_enabled?: boolean;
 }
 
 /**
@@ -33,8 +38,7 @@ export const authApi = {
       body: JSON.stringify({ username, password }),
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || "Login failed");
+      throw new Error(await responseErrorMessage(res, "Login failed"));
     }
     return res.json();
   },
@@ -49,8 +53,7 @@ export const authApi = {
       body: JSON.stringify({ username, password }),
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || "Registration failed");
+      throw new Error(await responseErrorMessage(res, "Registration failed"));
     }
     return res.json();
   },
@@ -91,8 +94,7 @@ export const authApi = {
       }),
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || "Update failed");
+      throw new Error(await responseErrorMessage(res, "Update failed"));
     }
     return res.json();
   },

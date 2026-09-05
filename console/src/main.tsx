@@ -6,9 +6,7 @@ import "./i18n";
 // any Monaco editor mounts.
 import "./monacoSetup";
 import { installHostExternals } from "./plugins/hostExternals";
-import { installHostSdk } from "./plugins/hostSdk/install";
 import { registerHostModulesDynamic } from "./plugins/dynamicModuleRegistry";
-import { registerBuiltinCards } from "./components/Chat/ToolCards/registerBuiltinCards";
 // Bare side-effect imports: each file self-registers its data into
 // menuRegistry / routeRegistry so consumers' first render sees them.
 import "./layouts/registry/builtinMenu";
@@ -18,13 +16,10 @@ import "./layouts/registry/builtinRoutes.tsx";
 // so that plugin UI modules can use them without bundling their own copies.
 installHostExternals();
 
-// Attach window.QwenPaw.chat (Chat customization), extend
-// window.QwenPaw.host with hooks + fetch, attach window.QwenPaw.audit.
-installHostSdk();
-
-// Register built-in tool card renderers into the PluginSystem
-// so ChatV1 (@agentscope-ai/chat) picks them up via customToolRenderConfig.
-registerBuiltinCards();
+// installHostSdk / registerBuiltinCards moved into PluginContext (M6):
+// they now initialize during browser idle time instead of blocking the
+// first paint. registerHostModulesDynamic stays here -- it is a fork-only
+// pre-warm pass with no upstream counterpart.
 
 // Dynamic module registration — fire-and-forget. Pages register into
 // `moduleRegistry` as they are lazy-loaded; this background pass pre-warms
