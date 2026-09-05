@@ -189,9 +189,12 @@ async def lifespan(  # pylint: disable=too-many-statements,too-many-branches
     # boot path) to speed up startup.
     await _sync_scroll_history_on_startup()
 
-    # Create core managers (instant — no I/O)
-    provider_manager = ProviderManager.get_instance()
-    local_model_manager = LocalModelManager.get_instance()
+    # Provider initialization scans and may migrate persisted configuration;
+    # offload to a worker thread so the event loop never blocks on startup.
+    provider_manager = await asyncio.to_thread(ProviderManager.get_instance)
+    local_model_manager = await asyncio.to_thread(
+        LocalModelManager.get_instance,
+    )
 
     # --- AppServiceManager + WorkspaceRegistry ---
     app_services = None

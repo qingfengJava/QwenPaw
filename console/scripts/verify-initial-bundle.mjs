@@ -5,8 +5,12 @@ import { fileURLToPath } from "node:url";
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const outputDirectory = join(scriptDirectory, "..", "dist");
 const indexPath = join(outputDirectory, "index.html");
-const maximumRawBytes = 10 * 1024 * 1024;
-const maximumBrotliBytes = 3 * 1024 * 1024;
+// Upstream defaults (10/3 MiB) preserved; forks with larger owned surfaces
+// may raise them via INITIAL_BUNDLE_MAX_RAW_MIB / INITIAL_BUNDLE_MAX_BROTLI_MIB.
+const maximumRawBytes =
+  Number(process.env.INITIAL_BUNDLE_MAX_RAW_MIB ?? "10") * 1024 * 1024;
+const maximumBrotliBytes =
+  Number(process.env.INITIAL_BUNDLE_MAX_BROTLI_MIB ?? "3") * 1024 * 1024;
 
 const html = await readFile(indexPath, "utf-8");
 const assets = new Set(

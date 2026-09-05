@@ -27,7 +27,10 @@ from .embedding_model import (
 )
 from .prompts import build_memory_guidance_prompt
 from .reme_config import get_reme_app_config
-from .reme_embedding import ReMeEmbedding
+from .reme_embedding import (
+    EmbeddingReindexUnavailableError,
+    ReMeEmbedding,
+)
 from .reme_inbox import (
     RESULT_JOB_NAMES,
     empty_result_body,
@@ -36,6 +39,7 @@ from .reme_inbox import (
 )
 from ..model_factory import create_model_and_formatter
 from ...app.inbox_store import append_event as append_inbox_event
+from ...exceptions import ProviderError
 from ...app.crons.contracts import ServiceCronJob
 from ...config import load_config
 from ...config.config import (
@@ -56,6 +60,11 @@ if TYPE_CHECKING:
     from reme.application import Response
 
 logger = logging.getLogger(__name__)
+
+__all__ = [
+    "EmbeddingReindexUnavailableError",
+    "ReMeLightMemoryManager",
+]
 
 os.environ.setdefault("REME_DISABLE_LOGURU", "true")
 
@@ -217,7 +226,19 @@ class ReMeLightMemoryManager(BaseMemoryManager):
         if self._reme is None:
             return
 
-        await self._update_qwenpaw_model()
+        try:
+            await self._update_qwenpaw_model()
+        except ProviderError as exc:
+            # A fresh installation has no active model until onboarding is
+            # complete.  ReMe's provider-free jobs (for example BM25 reindex)
+            # must still be available in that state.  Jobs that require an
+            # LLM refresh the injected model immediately before execution.
+            logger.info(
+                "ReMe starting without an active QwenPaw model for agent "
+                "'%s': %s",
+                self.agent_id,
+                exc,
+            )
         try:
             await self._reme.start()
             logger.info(
@@ -246,6 +267,14 @@ class ReMeLightMemoryManager(BaseMemoryManager):
                 clean = False
         async with self._exclusive_reme_lifecycle("close"):
             return bool(await self._close_reme_unlocked()) and clean
+
+    async def _require_embedding_rebuild(self) -> None:
+        """Keep vector search disabled in the active ReMe instance."""
+        file_store = await self._reme.update_component(
+            "file_store",
+            "default",
+        )
+        await file_store.require_embedding_rebuild()
 
     async def _close_reme_unlocked(self) -> bool:
         """Close ReMe after the caller has quiesced all ReMe jobs."""
@@ -305,8 +334,9 @@ class ReMeLightMemoryManager(BaseMemoryManager):
         cfg = agent_config.running.reme_light_memory_config
         return build_memory_guidance_prompt(
             agent_config.language,
-            daily_dir=cfg.daily_dir,
             memory_search_enabled=cfg.memory_search_enabled,
+            daily_dir=getattr(cfg, "daily_dir", "memory"),
+            digest_dir=getattr(cfg, "digest_dir", "digest"),
         )
 
     def get_memory_config(self) -> Any:
@@ -338,6 +368,15 @@ class ReMeLightMemoryManager(BaseMemoryManager):
                     key="daily-paper",
                     cron=cfg.daily_paper_cron,
                     callback=self.daily_paper,
+                    misfire_grace_seconds=600,
+                ),
+            )
+        if cfg.auto_fin_cron_enabled and cfg.auto_fin_cron:
+            jobs.append(
+                ServiceCronJob(
+                    key="auto-fin",
+                    cron=cfg.auto_fin_cron,
+                    callback=self.auto_fin,
                     misfire_grace_seconds=600,
                 ),
             )
@@ -375,78 +414,13 @@ class ReMeLightMemoryManager(BaseMemoryManager):
         self,
         config: EmbeddingModelConfig,
     ) -> EmbeddingTestResult:
-        """Test and retain the exact model object for the next save."""
-        model, result = await test_embedding_model(config)
-        if result.success and model is not None:
-            self._tested_embedding = (
-                embedding_config_fingerprint(config),
-                model,
-            )
-        else:
-            self._tested_embedding = None
-        return result
+        return await self._embedding_service().test_and_stage(config)
 
     async def apply_tested_embedding(
         self,
         config: EmbeddingModelConfig,
     ) -> bool:
-        """Hot-apply the last successfully tested embedding object.
-
-        Returns ``False`` when a normal workspace reload is required, such as
-        first-time enablement or when the submitted config was not tested.
-        """
-        if self._reme is None or not getattr(self._reme, "is_started", False):
-            return False
-        staged = self._tested_embedding
-        if staged is None or staged[0] != embedding_config_fingerprint(config):
-            return False
-
-        async with self._exclusive_reme_lifecycle("embedding-update"):
-            tested_model = staged[1]
-            if hasattr(tested_model, "context_size"):
-                tested_model.context_size = config.max_input_length
-            try:
-                await self._reme.update_component(
-                    "as_embedding",
-                    "default",
-                    model=tested_model,
-                )
-                store = await self._reme.update_component(
-                    "embedding_store",
-                    "default",
-                    enable_cache=config.enable_cache,
-                    max_cache_size=config.max_cache_size,
-                    max_input_length=config.max_input_length,
-                    max_batch_size=config.max_batch_size,
-                )
-            except KeyError:
-                # ReMe 0.4 cannot add/remove components after initialization.
-                return False
-
-            old_config = self._active_embedding_config
-            vector_space_changed = old_config is None or (
-                embedding_vector_space_fingerprint(old_config)
-                != embedding_vector_space_fingerprint(config)
-            )
-            if vector_space_changed:
-                # LocalEmbeddingStore cache keys only include dimensions, so a
-                # same-dimension model switch must explicitly invalidate it.
-                cache = getattr(store, "_cache", None)
-                if cache is not None:
-                    cache.clear()
-                if hasattr(store, "_key_suffix"):
-                    setattr(
-                        store,
-                        "_key_suffix",
-                        f"|{config.dimensions}".encode(),
-                    )
-                cache_path = getattr(store, "cache_path", None)
-                if cache_path is not None:
-                    await unlink_async(cache_path, missing_ok=True)
-
-            self._active_embedding_config = config.model_copy(deep=True)
-            self._tested_embedding = None
-            return True
+        return await self._embedding_service().apply_staged(config)
 
     async def reload_embedding_config(self) -> bool:
         """Recreate ReMe when embedding components cannot be hot-updated.
@@ -456,14 +430,18 @@ class ReMeLightMemoryManager(BaseMemoryManager):
         replacing the whole memory service on every workspace reload.
         """
         async with self._exclusive_reme_lifecycle("embedding-reload"):
-            await self._close_reme_unlocked()
-            self._worker_stopping = False
-            await run_sync_io(self._initialize_reme)
-            await self.start()
-            self._tested_embedding = None
-            return self._reme is not None and bool(
-                getattr(self._reme, "is_started", False),
-            )
+            return await self._reload_embedding_config_unlocked()
+
+    async def _reload_embedding_config_unlocked(self) -> bool:
+        """Recreate embedded ReMe while the caller owns the lifecycle lock."""
+        await self._close_reme_unlocked()
+        self._worker_stopping = False
+        await run_sync_io(self._initialize_reme)
+        await self.start()
+        self._tested_embedding = None
+        return self._reme is not None and bool(
+            getattr(self._reme, "is_started", False),
+        )
 
     async def _run_reme_job(
         self,
@@ -1254,6 +1232,24 @@ class ReMeLightMemoryManager(BaseMemoryManager):
         )
         if response is None:
             raise RuntimeError("ReMe is not started; Daily Paper did not run")
+        if not response.success:
+            raise RuntimeError(str(response.answer))
+
+    async def auto_fin(self, **kwargs: Any) -> None:
+        """Build one Auto Fin report and publish its result to inbox."""
+        cfg = await run_sync_io(self.get_memory_config)
+        response = await self._run_reme_job(
+            "auto_fin",
+            needs_llm=True,
+            raise_on_error=True,
+            date=str(kwargs.get("date") or ""),
+            topics=str(kwargs.get("topics", cfg.auto_fin_topics) or ""),
+            window_hours=float(
+                kwargs.get("window_hours", cfg.auto_fin_window_hours),
+            ),
+        )
+        if response is None:
+            raise RuntimeError("ReMe is not started; Auto Fin did not run")
         if not response.success:
             raise RuntimeError(str(response.answer))
 

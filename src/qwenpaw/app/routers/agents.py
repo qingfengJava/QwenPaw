@@ -441,6 +441,12 @@ async def list_agents(request: Request = None) -> AgentListResponse:
                     description = profile_desc
 
             active_model = agent_config.active_model
+            template_id = agent_config.template_id or ""
+            managed_by_app = (
+                template_id.removeprefix("pawapp:")
+                if template_id.startswith("pawapp:")
+                else None
+            )
             if agent_config.backend == "qwenpaw":
                 backend_capabilities = {"workspace_ui": True}
             else:
@@ -469,6 +475,8 @@ async def list_agents(request: Request = None) -> AgentListResponse:
                         )
                     ),
                     active_model=active_model,
+                    managed_by_app=managed_by_app,
+                    available_in_chat=managed_by_app is None,
                 ),
             )
         except Exception:  # noqa: E722

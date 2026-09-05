@@ -6,7 +6,21 @@ export interface GetAgentStatsParams {
   end_date: string;
 }
 
-/** 概览卡/档案栏共用的轻量统计 brief。 */
+export interface LlmToolDaily {
+  date: string;
+  agent_llm_calls: number;
+  tool_calls: number;
+}
+
+function dateQuery(params: GetAgentStatsParams): string {
+  const search = new URLSearchParams({
+    start_date: params.start_date,
+    end_date: params.end_date,
+  });
+  return `?${search.toString()}`;
+}
+
+/** 概览与档案栏共用的轻量统计 brief。 */
 export interface AgentBriefDaily {
   date: string;
   chats: number;
@@ -22,7 +36,7 @@ export interface AgentBriefStats {
   recent_daily: AgentBriefDaily[];
 }
 
-/** 与 listChannels 同模式：显式 agentId 作 X-Agent-Id，未传走借壳通道。 */
+/** 与 listChannels 同模式：显式 agentId 走 X-Agent-Id，未传走借壳通道。 */
 function agentOpts(agentId?: string): RequestOptions {
   const opts: RequestOptions = {};
   if (agentId) opts.headers = new Headers({ "X-Agent-Id": agentId });
@@ -31,12 +45,15 @@ function agentOpts(agentId?: string): RequestOptions {
 
 export const agentStatsApi = {
   getAgentStats: (params: GetAgentStatsParams) =>
-    request<AgentStatsSummary>(
-      `/agent-stats?start_date=${encodeURIComponent(
-        params.start_date,
-      )}&end_date=${encodeURIComponent(params.end_date)}`,
-    ),
-
+    request<AgentStatsSummary>(`/agent-stats${dateQuery(params)}`),
+  getGlobalLlmToolTrend: (
+    params: GetAgentStatsParams,
+    options?: { signal?: AbortSignal },
+  ) =>
+    request<LlmToolDaily[]>(`/agent-stats/llm-tool-trend${dateQuery(params)}`, {
+      timeout: 60_000,
+      signal: options?.signal,
+    }),
   getAgentBriefStats: (agentId?: string) =>
     request<AgentBriefStats>("/agent-stats/summary-brief", agentOpts(agentId)),
 };

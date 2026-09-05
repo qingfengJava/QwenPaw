@@ -299,7 +299,9 @@ async def _project_dirs_response(chat: ChatSpec, workspace) -> dict:
 
 @router.get("", response_model=list[ChatSpec])
 async def list_chats(
-    request: Request,
+    # 纯 Request 注解使 FastAPI 走依赖注入分支（Union 会被误判为查询参数），
+    # 默认值 None 仅服务于绕过 DI 的单元测试直调场景
+    request: Request = None,  # type: ignore[assignment]
     user_id: Optional[str] = Query(None, description="Filter by user ID"),
     channel: Optional[str] = Query(None, description="Filter by channel"),
     archived: Optional[bool] = Query(
@@ -330,7 +332,9 @@ async def list_chats(
     ``user_id`` query parameter is advisory and can never widen the
     result beyond the verified identity.
     """
-    authenticated_user = getattr(request.state, "user", None)
+    authenticated_user = (
+        getattr(request.state, "user", None) if request is not None else None
+    )
     if authenticated_user:
         if user_id and user_id != authenticated_user:
             logger.warning(
@@ -348,7 +352,14 @@ async def list_chats(
     if not include_app_owned:
         chats = [chat for chat in chats if not _is_app_owned_chat(chat)]
     tracker = workspace.task_tracker
-    statuses = await tracker.get_status_many([spec.id for spec in chats])
+    if hasattr(tracker, "get_status_many"):
+        # 单次锁快照批量取状态，避免逐条 await 争抢同一把锁
+        statuses = await tracker.get_status_many([spec.id for spec in chats])
+    else:
+        # 回退：无批量接口的 tracker（如测试替身）逐条查询
+        statuses = {
+            spec.id: await tracker.get_status(spec.id) for spec in chats
+        }
     return [
         spec.model_copy(update={"status": statuses.get(spec.id, "idle")})
         for spec in chats
@@ -820,7 +831,17 @@ async def get_chat(
     Raises:
         HTTPException: If chat not found (404)
     """
-    chat_spec = owned
+    # M1: DI 场景由 get_owned_chat 注入所有权检查后的 chat（含 404 掩护）；
+    # 直调场景（单元测试）无注入，回退到 mgr 查询
+    if isinstance(owned, ChatSpec):
+        chat_spec = owned
+    else:
+        chat_spec = await mgr.get_chat(chat_id)
+        if not chat_spec:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Chat not found: {chat_id}",
+            )
     if not include_app_owned and _is_app_owned_chat(chat_spec):
         raise HTTPException(
             status_code=404,
