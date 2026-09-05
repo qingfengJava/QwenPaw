@@ -6,7 +6,11 @@ import { PlusOutlined } from "@ant-design/icons";
 import { useTranslation } from "react-i18next";
 import { agentsApi } from "@/api/modules/agents";
 import { invalidateSkillCache, skillApi } from "@/api/modules/skill";
-import type { AgentSummary, CopyAgentRequest } from "@/api/types/agents";
+import type {
+  AgentProfileConfig,
+  AgentSummary,
+  CopyAgentRequest,
+} from "@/api/types/agents";
 import { useAgentStore } from "@/stores/agentStore";
 import { useAuthStore, selectIsAdmin } from "@/stores/authStore";
 import { useAgents } from "@/pages/Settings/Agents/useAgents";
@@ -14,6 +18,17 @@ import { AgentTable, AgentModal, CopyAgentModal } from "@/pages/Settings/Agents/
 import { PageHeader } from "@/components/PageHeader";
 import { reorderAgents } from "@/pages/Settings/Agents/reorder";
 import styles from "@/pages/Settings/Agents/index.module.less";
+
+type ModelSettingsDraft = Pick<
+  AgentProfileConfig,
+  "fallback_models" | "fallback_policy" | "subagent_model"
+>;
+
+const EMPTY_MODEL_SETTINGS: ModelSettingsDraft = {
+  fallback_models: [],
+  fallback_policy: { enabled: true, target_scope: "configured" },
+  subagent_model: null,
+};
 
 /**
  * 数字员工列表主页（平台 IA）。
@@ -46,11 +61,16 @@ export default function AgentsGalleryPage() {
   const [reordering, setReordering] = useState(false);
   const [form] = Form.useForm();
   const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
+  const [modelSettings, setModelSettings] =
+    useState<ModelSettingsDraft>(EMPTY_MODEL_SETTINGS);
+  const [modelSettingsResetToken, setModelSettingsResetToken] = useState(0);
   const installedSkillsRef = useRef<string[]>([]);
   const { message } = useAppMessage();
 
   const handleCreate = () => {
     setEditingAgent(null);
+    setModelSettings(EMPTY_MODEL_SETTINGS);
+    setModelSettingsResetToken((token) => token + 1);
     form.resetFields();
     form.setFieldsValue({
       workspace_dir: "",
@@ -202,6 +222,7 @@ export default function AgentsGalleryPage() {
       } else {
         const result = await agentsApi.createAgent({
           ...payload,
+          ...(values.backend === "qwenpaw" ? modelSettings : {}),
           language: i18n.language,
           skill_names: values.backend === "qwenpaw" ? selectedSkills : [],
         });
@@ -289,6 +310,9 @@ export default function AgentsGalleryPage() {
         selectedSkills={selectedSkills}
         onSelectedSkillsChange={setSelectedSkills}
         onInstalledSkillsLoaded={handleInstalledSkillsLoaded}
+        modelSettings={editingAgent ? undefined : modelSettings}
+        modelSettingsResetToken={modelSettingsResetToken}
+        onModelSettingsChange={(settings) => setModelSettings(settings)}
         onSave={handleSubmit}
         onCancel={() => setModalVisible(false)}
       />
