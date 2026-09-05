@@ -26,6 +26,10 @@ FROM ${UV_IMAGE} AS uv-src
 # -----------------------------------------------------------------------------
 FROM ${NODE_IMAGE}
 
+ARG QWENPAW_MANAGED_RUNTIME_BOUNDARY_VERSION
+LABEL io.qwenpaw.managed-runtime-boundary.version=\
+${QWENPAW_MANAGED_RUNTIME_BOUNDARY_VERSION}
+
 # ENV variables
 ENV NODE_ENV=production
 ENV WORKSPACE_DIR=/app
@@ -100,6 +104,7 @@ ENV PATH="/app/venv/bin:$PATH"
 
 COPY pyproject.toml setup.py README.md ./
 COPY src ./src
+COPY packages/qwenpawmail-mcp/src/qwenpawmail_mcp ./packages/qwenpawmail-mcp/src/qwenpawmail_mcp
 COPY website/public/docs/ ./src/qwenpaw/docs/
 # Inject console dist from build stage (repo does not commit dist).
 COPY --from=console-builder /app/console/dist/ ./src/qwenpaw/console/
@@ -107,7 +112,11 @@ COPY --from=console-builder /app/console/dist/ ./src/qwenpaw/console/
 COPY --from=xianwork-builder /app/xianwork/dist/ ./src/qwenpaw/xianwork/
 # Speed up Python package installation with uv.
 COPY --from=uv-src /uv /bin/uv
-RUN uv pip install --no-cache-dir . && rm -rf ./build
+# Pin setuptools <82: lark-oapi still calls pkg_resources.declare_namespace
+# at import time; setuptools >= 82 removes pkg_resources wholesale on fresh
+# installs and can half-remove it on in-place upgrades, crashing the Feishu
+# channel. The pin keeps every environment in the known-good state.
+RUN uv pip install --no-cache-dir . "setuptools<82" && rm -rf ./build
 
 
 # QwenPaw app port (default 8088). Override at runtime with -e QWENPAW_PORT=3000.

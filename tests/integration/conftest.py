@@ -354,6 +354,11 @@ def app_server(  # pylint: disable=too-many-statements,too-many-branches
     # _tee_stream reader on Windows where the default console encoding
     # is cp1252.
     env["PYTHONIOENCODING"] = "utf-8"
+    # The app subprocess must import qwenpawmail_mcp (mail driver config);
+    # on this machine the editable install is unavailable (non-ASCII repo
+    # path breaks .pth), so mirror pytest's pythonpath into the child.
+    _mail_mcp_src = str(Path(__file__).resolve().parents[2] / "packages" / "qwenpawmail-mcp" / "src")
+    env["PYTHONPATH"] = _mail_mcp_src + os.pathsep + env.get("PYTHONPATH", "")
 
     if _integration_coverage_requested():
         if _INTEGRATION_COVERAGE_DIR is None:

@@ -81,6 +81,8 @@ class AgentSummary(BaseModel):
     backend_model: str | None = None
     backend_reasoning_effort: str | None = None
     active_model: ModelSlotConfig | None = None
+    managed_by_app: str | None = None
+    available_in_chat: bool = True
 
 
 class AgentListResponse(BaseModel):

@@ -272,6 +272,9 @@ class DingTalkConfig(BaseChannelConfig):
     card_auto_layout: bool = False
     at_sender_on_reply: bool = False
     streaming_enabled: bool = False
+    # if True, all group members share one session; if False (default),
+    # each member gets an independent session.
+    share_session_in_group: bool = False
     endpoint: str = ""
 
 
@@ -326,8 +329,10 @@ class OneBotConfig(BaseChannelConfig):
     ws_port: int = 6199
     access_token: str = ""
     share_session_in_group: bool = False
+    media_dir: Optional[str] = None
     media_base64: bool = False
     media_base64_max_mb: int = Field(default=10, gt=0)
+    media_download_max_mb: int = Field(default=50, gt=0)
 
 
 class TelegramConfig(BaseChannelConfig):
@@ -370,6 +375,14 @@ class ConsoleConfig(BaseChannelConfig):
 
     enabled: bool = True
     media_dir: Optional[str] = None
+
+    @field_validator("enabled")
+    @classmethod
+    def keep_console_enabled(cls, value: bool) -> bool:
+        """Keep the required console channel enabled."""
+        if not value:
+            return True
+        return value
 
 
 class WecomConfig(BaseChannelConfig):
@@ -417,6 +430,8 @@ class MatrixConfig(BaseChannelConfig):
     # When True, apply m.mentions + optional pill on outbound messages.
     outbound_structured_mentions: bool = True
     streaming_enabled: bool = False
+    # Keep the legacy room-wide session unless isolation is requested.
+    share_session_in_group: bool = True
 
 
 class VoiceChannelConfig(BaseChannelConfig):
