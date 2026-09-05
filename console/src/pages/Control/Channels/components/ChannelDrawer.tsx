@@ -319,6 +319,14 @@ export function ChannelDrawer({
             >
               <Switch />
             </Form.Item>
+            <Form.Item
+              name="share_session_in_group"
+              label={t("channels.shareSessionInGroup")}
+              valuePropName="checked"
+              tooltip={t("channels.shareSessionInGroupTooltip")}
+            >
+              <Switch />
+            </Form.Item>
           </>
         );
 
@@ -482,15 +490,23 @@ export function ChannelDrawer({
                       <Input placeholder="content" />
                     </Form.Item>
                     <Form.Item
-                      name="robot_code"
-                      label="Robot Code"
-                      tooltip="Recommended to configure explicitly for group chats"
+                      name="card_auto_layout"
+                      label={t("channels.cardAutoLayout")}
+                      tooltip={t("channels.cardAutoLayoutTooltip")}
+                      valuePropName="checked"
                     >
-                      <Input placeholder="robot code (default client_id)" />
+                      <Switch />
                     </Form.Item>
                   </>
                 );
               }}
+            </Form.Item>
+            <Form.Item
+              name="robot_code"
+              label="Robot Code"
+              tooltip="Recommended to configure explicitly for group chats"
+            >
+              <Input placeholder="robot code (default client_id)" />
             </Form.Item>
             <Form.Item
               name="endpoint"
@@ -504,6 +520,14 @@ export function ChannelDrawer({
               label={t("channels.atSenderOnReply")}
               tooltip={t("channels.atSenderOnReplyTooltip")}
               valuePropName="checked"
+            >
+              <Switch />
+            </Form.Item>
+            <Form.Item
+              name="share_session_in_group"
+              label={t("channels.shareSessionInGroup")}
+              valuePropName="checked"
+              tooltip={t("channels.shareSessionInGroupTooltip")}
             >
               <Switch />
             </Form.Item>
@@ -1374,6 +1398,36 @@ export function ChannelDrawer({
               <Input.Password placeholder="Access token for authentication" />
             </Form.Item>
             <Form.Item
+              name="media_dir"
+              label={t("channels.onebotMediaDir")}
+              tooltip={t("channels.onebotMediaDirTooltip")}
+            >
+              <Input placeholder={defaultMediaDir} />
+            </Form.Item>
+            <Form.Item
+              name="media_download_max_mb"
+              label={t("channels.onebotMediaDownloadMaxMb")}
+              tooltip={t("channels.onebotMediaDownloadMaxMbTooltip")}
+              rules={[
+                {
+                  required: true,
+                  message: t("channels.onebotMediaDownloadMaxMbRequired"),
+                },
+                {
+                  type: "number",
+                  min: 1,
+                  message: t("channels.onebotMediaDownloadMaxMbMin"),
+                },
+              ]}
+            >
+              <InputNumber
+                min={1}
+                precision={0}
+                style={{ width: "100%" }}
+                addonAfter="MB"
+              />
+            </Form.Item>
+            <Form.Item
               name="media_base64"
               label={t("channels.onebotMediaBase64")}
               valuePropName="checked"
@@ -1674,7 +1728,7 @@ export function ChannelDrawer({
             label={t("common.enabled")}
             valuePropName="checked"
           >
-            <Switch />
+            <Switch disabled={activeKey === "console"} />
           </Form.Item>
 
           {activeKey !== "voice" && (
