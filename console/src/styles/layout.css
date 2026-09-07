@@ -951,11 +951,9 @@ html.dark-mode .qwenpaw-sender-content {
   border-color: rgba(255, 255, 255, 0.15) !important;
 }
 
-/* Menu background in light mode */
-.qwenpaw-menu,
-.ant-menu {
-  background: #f9f8f4 !important;
-}
+/* Menu background follows the antd Menu tokens (itemBg #ffffff in light
+   mode); no global override — submenu <ul> elements share the .qwenpaw-menu
+   class and a global background leaks onto expanded submenus. */
 
 /* Menu selected item in light mode */
 .qwenpaw-menu-item-selected,
@@ -964,27 +962,28 @@ html.dark-mode .qwenpaw-sender-content {
   color: inherit !important;
 }
 
-/* Submenu arrow in light mode (collapsible group indicator) */
+/* Submenu arrow (collapsible group indicator) */
 .qwenpaw-menu-submenu-arrow,
 .ant-menu-submenu-arrow {
-  color: rgba(26, 23, 22, 0.25) !important;
+  color: rgba(26, 23, 22, 0.45) !important;
 }
 
-/* Group title (一级菜单) in light mode */
+/* Group title (accordion parent menu) — normal menu typography,
+   theme-default hover; only pin the text color for light mode */
 .qwenpaw-menu-submenu-title,
 .ant-menu-submenu-title {
-  font-family: "PingFang SC", sans-serif !important;
-  font-size: 12px !important;
-  font-weight: 500 !important;
-  line-height: 32px !important;
-  letter-spacing: normal !important;
-  color: rgba(26, 23, 22, 0.25) !important;
+  color: rgba(26, 23, 22, 0.88) !important;
 }
 
-/* Remove submenu indent - align with parent in light mode */
-.qwenpaw-menu-submenu .qwenpaw-menu-item,
-.ant-menu-submenu .ant-menu-item {
-  padding-left: 12px !important;
+/* Dark mode: parent titles & arrows follow the dark theme */
+html.dark-mode .qwenpaw-menu-submenu-title,
+html.dark-mode .ant-menu-submenu-title {
+  color: rgba(255, 255, 255, 0.85) !important;
+}
+
+html.dark-mode .qwenpaw-menu-submenu-arrow,
+html.dark-mode .ant-menu-submenu-arrow {
+  color: rgba(255, 255, 255, 0.45) !important;
 }
 
 /* Selected submenu item - keep text color unchanged in light mode */

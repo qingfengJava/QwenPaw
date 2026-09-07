@@ -36,8 +36,8 @@ import { useTheme } from "../contexts/ThemeContext";
 import { useMenuItems, useRoutes } from "../plugins/registry/hooks";
 import { Slot } from "../plugins/registry/Slot";
 import {
-  deriveOpenKeys,
   findMenuItem,
+  findParentGroupId,
   flattenMenu,
   renderIcon,
   routeIdToPath,
@@ -173,26 +173,38 @@ export default function Sidebar({
     [rawSettingsMenu, sidebarMode],
   );
 
-  // Collapsible groups: start fully expanded; the user can collapse each
-  // group by clicking its title (see handleOpenChange below).
-  const [openKeys, setOpenKeys] = useState<string[]>(() => [
-    ...deriveOpenKeys(rawPlatformMenu),
-    ...deriveOpenKeys(rawSettingsMenu),
-  ]);
+  // Accordion groups: at most one group stays open. On startup only the
+  // group holding the active item expands (fully collapsed when the active
+  // item is top-level, e.g. the workbench).
+  const [openKeys, setOpenKeys] = useState<string[]>(() => {
+    const initialGroup = findParentGroupId(
+      [...rawPlatformMenu, ...rawSettingsMenu],
+      selectedKey,
+    );
+    return initialGroup ? [initialGroup] : [];
+  });
 
-  // Groups registered later (plugins, async agent capabilities) should also
-  // start expanded; merging only adds missing keys so user-collapsed groups
-  // are left untouched between menu recomputations.
+  // Deep links / back-forward navigation switch the open group to the one
+  // containing the newly active leaf. User-initiated collapses are left
+  // untouched because this only runs when the selection (or menu snapshot)
+  // actually changes.
   useEffect(() => {
-    const defaults = [
-      ...deriveOpenKeys(agentMenu),
-      ...deriveOpenKeys(settingsMenu),
-    ];
+    const group = findParentGroupId(
+      [...agentMenu, ...settingsMenu],
+      selectedKey,
+    );
+    if (!group) return;
+    setOpenKeys((prev) => (prev.includes(group) ? prev : [group]));
+  }, [agentMenu, settingsMenu, selectedKey]);
+
+  // Accordion behavior: opening a group collapses the previously open one;
+  // clicking the open group's title collapses everything.
+  const handleOpenChange = useCallback((keys: string[]) => {
     setOpenKeys((prev) => {
-      const merged = new Set([...prev, ...defaults]);
-      return merged.size === prev.length ? prev : [...merged];
+      const latestOpen = keys.find((key) => !prev.includes(key));
+      return latestOpen ? [latestOpen] : [];
     });
-  }, [agentMenu, settingsMenu]);
+  }, []);
 
   // Flat nav entries for simple mode (icon + label + path)
   const simpleFlatNav = useMemo(() => {
@@ -605,7 +617,7 @@ export default function Sidebar({
               mode="inline"
               selectedKeys={[selectedKey]}
               openKeys={openKeys}
-              onOpenChange={(keys) => setOpenKeys(keys as string[])}
+              onOpenChange={handleOpenChange}
               onClick={({ key }) => handleMenuClick(String(key), agentMenu)}
               items={agentMenuItems}
               theme={isDark ? "dark" : "light"}
@@ -618,7 +630,7 @@ export default function Sidebar({
             mode="inline"
             selectedKeys={[selectedKey]}
             openKeys={openKeys}
-            onOpenChange={(keys) => setOpenKeys(keys as string[])}
+            onOpenChange={handleOpenChange}
             onClick={({ key }) => handleMenuClick(String(key), settingsMenu)}
             items={settingsMenuItems}
             theme={isDark ? "dark" : "light"}

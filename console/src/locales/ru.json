@@ -117,6 +117,8 @@
     "description": "Описание"
   },
   "nav": {
+    "staffChannels": "Сотрудники и каналы",
+    "capabilityCenter": "Возможности и расширения",
     "chat": "Чат",
     "files": "Файлы",
     "control": "Управление",

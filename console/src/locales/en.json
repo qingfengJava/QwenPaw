@@ -119,6 +119,8 @@
     "cliAuthenticated": "{{type}} CLI authenticated"
   },
   "nav": {
+    "staffChannels": "Staff & Channels",
+    "capabilityCenter": "Capabilities & Extensions",
     "chat": "Chat",
     "files": "Files",
     "control": "Control",

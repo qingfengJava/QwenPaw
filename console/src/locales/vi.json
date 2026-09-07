@@ -119,6 +119,8 @@
     "description": "Mô tả"
   },
   "nav": {
+    "staffChannels": "Nhân sự & Kênh",
+    "capabilityCenter": "Năng lực & Tiện ích",
     "chat": "Trò chuyện",
     "files": "Tệp",
     "control": "Điều khiển",

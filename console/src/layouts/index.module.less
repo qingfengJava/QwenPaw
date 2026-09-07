@@ -72,10 +72,31 @@
 // ─── Sidebar ─────────────────────────────────────────────────────────────────
 .sider {
   background: #ffffff !important;
-  box-shadow: inset -1px 0 0 #e3e7f1;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   height: calc(100vh - 64px) !important;
   padding: 0 16px;
+
+  // antd wraps Sider children in .qwenpaw-layout-sider-children (block by
+  // default); every sidebar mode needs it as a flex column. It is the
+  // whole-column scroll container: menu sections stack contiguously from
+  // the top, and the footer (margin-top:auto + sticky bottom) pins to the
+  // bottom when content is short and sticks while scrolling when tall.
+  :global {
+    .qwenpaw-layout-sider-children {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      overflow-y: auto;
+      scrollbar-width: none;
+
+      &::-webkit-scrollbar {
+        display: none;
+      }
+    }
+  }
 
   // Hide scrollbar in browser
   &::-webkit-scrollbar {
@@ -98,13 +119,12 @@
   -ms-overflow-style: none;
   /* IE and Edge */
 
-  // Agent-scoped section: selector + Chat + Control + Workspace
+  // Agent-scoped section: selector + Chat + Control + Workspace.
+  // Classic admin-menu look: no card chrome, plain white; all menu
+  // sections stack contiguously (no flex-grow gap) and the whole column
+  // scrolls via the children wrapper above.
   .agentScopedSection {
-    flex-shrink: 0;
-    background: rgba(43, 18, 0, 0.02);
-    border-radius: 12px;
-    border: 1px solid rgba(0, 0, 0, 0.06);
-    padding: 4px;
+    flex: 0 0 auto;
 
     :global {
       .qwenpaw-menu {
@@ -149,10 +169,22 @@
     background: rgba(43, 18, 0, 0.08);
   }
 
-  // Menu takes remaining space
+  // Menu: settings instance is a direct Sider child (outside the agent
+  // section scope), so both instances go transparent here. It must keep
+  // its full height (no shrink) so submenu expansion never hides items —
+  // overflow is absorbed by the agent section above.
   .sideMenu {
-    flex: 1;
+    flex: 0 0 auto;
+    background: transparent !important;
     overflow-y: auto;
+
+    // Inline submenu panels inherit antd's elevated surface; keep them on
+    // the sidebar base colour so light/dark themes always stay seamless.
+    :global {
+      .qwenpaw-menu-sub {
+        background: transparent !important;
+      }
+    }
 
     // Hide scrollbar for menu too
     &::-webkit-scrollbar {
@@ -255,42 +287,16 @@
       border-inline-end: 0 !important;
     }
 
-    /* Group title (一级菜单分组) */
+    /* 手风琴父菜单标题：正文字号/颜色，保留 antd 默认 hover 与展开箭头；
+       仅压缩左内边距与顶级项对齐 */
     .qwenpaw-menu-submenu-title {
-      font-family: "PingFang SC", sans-serif !important;
-      font-size: 12px !important;
-      font-weight: 500 !important;
-      line-height: 32px !important;
-      letter-spacing: normal !important;
-      color: rgba(26, 23, 22, 0.25) !important;
-      padding-left: 8px !important;
-
-      /* No hover effect for group titles */
-      &:hover {
-        background: transparent !important;
-        color: rgba(26, 23, 22, 0.25) !important;
-      }
-    }
-
-    /* Hide submenu arrow */
-    .qwenpaw-menu-submenu-arrow {
-      display: none !important;
-    }
-
-    /* Always expand submenus */
-    .qwenpaw-menu-submenu {
-      > .qwenpaw-menu {
-        display: block !important;
-      }
-    }
-
-    /* Menu item padding - align all items */
-    .qwenpaw-menu-item {
       padding-left: 8px !important;
     }
 
-    /* Remove submenu indent - align with parent */
-    .qwenpaw-menu-submenu .qwenpaw-menu-item {
+    /* Menu item padding - top-level items only; submenu children keep
+       antd's per-level inline indent (the :not() guard keeps this rule
+       from flattening nested ul.qwenpaw-menu-sub items back to 8px) */
+    .qwenpaw-menu:not(.qwenpaw-menu-sub) > .qwenpaw-menu-item {
       padding-left: 8px !important;
     }
 
@@ -317,13 +323,6 @@
 
 .siderDark {
   background: #1a1a1a !important;
-  border-right-color: rgba(255, 255, 255, 0.08) !important;
-
-  // Agent-scoped section (dark mode)
-  .agentScopedSection {
-    background: rgba(255, 255, 255, 0.04);
-    border-color: rgba(255, 255, 255, 0.08);
-  }
 
   // Sticky container background (dark mode)
   .agentSelectorContainer {
@@ -356,17 +355,7 @@
       border-inline-end: 0 !important;
     }
 
-    /* Group title (sub-menu label) */
-    .qwenpaw-menu-submenu-title {
-      color: rgba(255, 255, 255, 0.45) !important;
-
-      /* No hover effect for group titles in dark mode */
-      &:hover {
-        background: transparent !important;
-        color: rgba(255, 255, 255, 0.45) !important;
-      }
-    }
-
+    /* 手风琴父菜单标题：交由 antd dark theme 默认色与 hover */
     /* Regular menu item */
     .qwenpaw-menu-item {
       color: rgba(255, 255, 255, 0.75) !important;
@@ -390,6 +379,26 @@
   display: flex;
   align-items: center;
   gap: 0;
+  width: 240px;
+  height: 100%;
+  padding: 0 20px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+.brandText {
+  font-family: "PingFang SC", "Helvetica Neue", sans-serif;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  line-height: 1;
+  color: #1a1716;
+  user-select: none;
+  white-space: nowrap;
+}
+
+:global(.dark-mode) .brandText {
+  color: rgba(255, 255, 255, 0.92);
 }
 
 .logoImg {
@@ -438,8 +447,7 @@
 // ─── Auth actions (account + logout) ──────────────────────────────────────────
 .authActions {
   flex-shrink: 0;
-  padding: 12px 16px;
-  border-top: 1px solid #f0f0f0;
+  padding: 8px 16px 12px;
 }
 
 .authBtn {
@@ -566,13 +574,13 @@
   bottom: 0;
   z-index: 10;
   width: calc(100% + 32px);
-  margin: 0 -16px;
+  margin: auto -16px 0; // auto top: pin to bottom when content is short
   padding: 8px 16px;
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 4px;
-  background: #fcfcfc; // match sider background so scrolled content is hidden
+  background: #ffffff; // match sider background so scrolled content is hidden
 }
 
 .collapseToggle {
@@ -1202,7 +1210,7 @@
   }
 
   .versionBadge {
-    color: #18181a;
+    color: rgba(255, 255, 255, 0.45);
   }
 
   .collapseBtn {

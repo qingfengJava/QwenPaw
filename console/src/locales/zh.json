@@ -119,6 +119,8 @@
     "cliAuthenticated": "{{type}} CLI 已认证"
   },
   "nav": {
+    "staffChannels": "员工与通道",
+    "capabilityCenter": "能力与扩展",
     "chat": "聊天",
     "files": "文件",
     "control": "控制",

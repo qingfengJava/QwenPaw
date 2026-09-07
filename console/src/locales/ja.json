@@ -117,6 +117,8 @@
     "description": "説明"
   },
   "nav": {
+    "staffChannels": "スタッフとチャネル",
+    "capabilityCenter": "機能と拡張",
     "chat": "チャット",
     "files": "ファイル",
     "control": "コントロール",

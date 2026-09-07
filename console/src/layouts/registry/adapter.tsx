@@ -158,6 +158,27 @@ export function findMenuItem(
   return undefined;
 }
 
+/**
+ * Find the id of the ancestor group that contains the given item id.
+ * Used by the sidebar accordion: the open group is the one holding the
+ * currently selected leaf (undefined when the item is top-level).
+ */
+export function findParentGroupId(
+  items: MenuItem[],
+  targetId: string,
+): string | undefined {
+  for (const rawItem of items) {
+    const i = rawItem as ItemWithChildren;
+    if (!i.__children) continue;
+    if (i.__children.some((child) => child.id === targetId)) {
+      return i.id;
+    }
+    const nested = findParentGroupId(i.__children, targetId);
+    if (nested) return nested;
+  }
+  return undefined;
+}
+
 /** Derive openKeys: all top-level items marked isGroup or that have children. */
 export function deriveOpenKeys(items: MenuItem[]): string[] {
   return items

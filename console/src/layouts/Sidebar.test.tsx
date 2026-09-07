@@ -43,12 +43,17 @@ vi.mock("lucide-react", () => {
   return {
     BookOpen: stub,
     Bot: stub,
+    Building2: stub,
+    Database: stub,
     Gauge: stub,
     KeyRound: stub,
+    Layers: stub,
     LayoutDashboard: stub,
     ListTodo: stub,
     ScrollText: stub,
+    Settings2: stub,
     ShieldCheck: stub,
+    SlidersHorizontal: stub,
     Users: stub,
     UsersRound: stub,
   };

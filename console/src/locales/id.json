@@ -119,6 +119,8 @@
     "description": "Deskripsi"
   },
   "nav": {
+    "staffChannels": "Staf & Saluran",
+    "capabilityCenter": "Kapabilitas & Ekstensi",
     "chat": "Chat",
     "files": "File",
     "control": "Kontrol",

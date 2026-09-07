@@ -119,6 +119,8 @@
     "description": "Descrição"
   },
   "nav": {
+    "staffChannels": "Equipe & Canais",
+    "capabilityCenter": "Capacidades e Extensões",
     "chat": "Chat",
     "files": "Arquivos",
     "control": "Controle",

@@ -128,4 +128,30 @@ describe("admin menu role filtering (M5)", () => {
       expect(routeIds.has(item.route!), item.id).toBe(true);
     }
   });
+
+  it("platform groups keep the accordion IA (staff/channels + capability)", () => {
+    // 手风琴 IA：两个 platform 分组存在且标记为 group，叶子按域挂载。
+    // 防复活断言：叶子被改回顶级平铺（parentId 丢失）时立刻报错。
+    const byId = new Map(BUILTIN_MENU.map((item) => [item.id, item]));
+    expect(byId.get("core.staff-channels-group")?.isGroup).toBe(true);
+    expect(byId.get("core.capability-group")?.isGroup).toBe(true);
+    expect(byId.get("core.agents")?.parentId).toBe(
+      "core.staff-channels-group",
+    );
+    expect(byId.get("core.channels")?.parentId).toBe(
+      "core.staff-channels-group",
+    );
+    expect(byId.get("core.inbox")?.parentId).toBe(
+      "core.staff-channels-group",
+    );
+    expect(byId.get("core.models")?.parentId).toBe("core.capability-group");
+    expect(byId.get("core.skill-pool")?.parentId).toBe(
+      "core.capability-group",
+    );
+    expect(byId.get("core.marketplace")?.parentId).toBe(
+      "core.capability-group",
+    );
+    // 工作台保持顶级直达（门户不折叠）。
+    expect(byId.get("core.workbench")?.parentId).toBeUndefined();
+  });
 });

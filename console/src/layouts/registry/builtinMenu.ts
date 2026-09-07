@@ -35,13 +35,20 @@ import {
   SparkSaveLine,
   SparkWifiLine,
 } from "@agentscope-ai/icons";
-import { LayoutDashboard } from "lucide-react";
+import {
+  Building2,
+  Database,
+  LayoutDashboard,
+  Settings2,
+  SlidersHorizontal,
+} from "lucide-react";
 import i18next from "i18next";
 import {
   BookOpen,
   Bot,
   Gauge,
   KeyRound,
+  Layers,
   ListTodo,
   ScrollText,
   ShieldCheck,
@@ -78,58 +85,82 @@ export const BUILTIN_MENU: MenuItem[] = [
     order: 10,
   },
 
+  // 员工与通道组（手风琴父菜单）：数字员工 / 渠道接入 / 收件箱
   {
-    id: "core.inbox",
+    id: "core.staff-channels-group",
     location: "primary.platform",
-    label: navLabel("nav.inbox"),
-    icon: SparkEmailLine,
-    route: "core.inbox",
-    order: 40,
+    label: navLabel("nav.staffChannels", "Staff & Channels"),
+    icon: UsersRound,
+    isGroup: true,
+    order: 20,
   },
-
   {
-    id: "core.marketplace",
+    id: "core.agents",
     location: "primary.platform",
-    label: navLabel("nav.marketplace", "Extension"),
-    icon: SparkMyApplicationLine,
-    route: "core.marketplace",
-    order: 50,
+    parentId: "core.staff-channels-group",
+    label: navLabel("nav.employees", "Digital Employees"),
+    icon: SparkAgentLine,
+    route: "core.agents",
+    order: 10,
   },
 
   {
     id: "core.channels",
     location: "primary.platform",
+    parentId: "core.staff-channels-group",
     label: navLabel("nav.channels"),
     icon: SparkWifiLine,
     route: "core.channels",
-    order: 30,
-  },
-
-  {
-    id: "core.agents",
-    location: "primary.platform",
-    label: navLabel("nav.employees", "Digital Employees"),
-    icon: SparkAgentLine,
-    route: "core.agents",
     order: 20,
   },
 
   {
+    id: "core.inbox",
+    location: "primary.platform",
+    parentId: "core.staff-channels-group",
+    label: navLabel("nav.inbox"),
+    icon: SparkEmailLine,
+    route: "core.inbox",
+    order: 30,
+  },
+
+  // 能力与扩展组（手风琴父菜单）：模型配置 / 技能池 / 扩展
+  {
+    id: "core.capability-group",
+    location: "primary.platform",
+    label: navLabel("nav.capabilityCenter", "Capabilities & Extensions"),
+    icon: Layers,
+    isGroup: true,
+    order: 30,
+  },
+  {
     id: "core.models",
     location: "primary.platform",
+    parentId: "core.capability-group",
     label: navLabel("nav.models"),
     icon: SparkModePlazaLine,
     route: "core.models",
-    order: 60,
+    order: 10,
   },
 
   {
     id: "core.skill-pool",
     location: "primary.platform",
+    parentId: "core.capability-group",
     label: navLabel("nav.skillPool", "Skill Pool"),
     icon: SparkOtherLine,
     route: "core.skill-pool",
-    order: 70,
+    order: 20,
+  },
+
+  {
+    id: "core.marketplace",
+    location: "primary.platform",
+    parentId: "core.capability-group",
+    label: navLabel("nav.marketplace", "Extension"),
+    icon: SparkMyApplicationLine,
+    route: "core.marketplace",
+    order: 30,
   },
 
   // ── Settings (Sidebar Menu #2) ───────────────────────────────────────────
@@ -137,6 +168,7 @@ export const BUILTIN_MENU: MenuItem[] = [
     id: "core.settings-group",
     location: "primary.settings",
     label: navLabel("nav.settings"),
+    icon: Settings2,
     isGroup: true,
     order: 10,
   },
@@ -154,6 +186,7 @@ export const BUILTIN_MENU: MenuItem[] = [
     id: "core.data-group",
     location: "primary.settings",
     label: navLabel("nav.dataSecurity", "Data & Security"),
+    icon: Database,
     isGroup: true,
     order: 15,
   },
@@ -207,6 +240,7 @@ export const BUILTIN_MENU: MenuItem[] = [
     id: "core.advanced-group",
     location: "primary.settings",
     label: navLabel("nav.advanced", "Advanced"),
+    icon: SlidersHorizontal,
     isGroup: true,
     order: 20,
   },
@@ -225,6 +259,7 @@ export const BUILTIN_MENU: MenuItem[] = [
     id: "core.admin-group",
     location: "primary.settings",
     label: navLabel("nav.admin", "Administration"),
+    icon: Building2,
     isGroup: true,
     order: 30,
     visible: adminOnly,
