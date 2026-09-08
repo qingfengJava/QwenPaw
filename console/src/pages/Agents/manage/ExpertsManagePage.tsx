@@ -18,12 +18,14 @@ import {
 } from "antd";
 import { useTranslation } from "react-i18next";
 import { PageHeader } from "@/components/PageHeader";
+import ExpertAvatarPicker from "@/components/ExpertAvatarPicker";
 import {
   EmployeeCard,
   StatCard,
   UnderlineTabs,
 } from "@/components/staffdeck";
 import { useAppMessage } from "../../../hooks/useAppMessage";
+import { openAgentWorkbench } from "@/utils/openAgentWorkbench";
 import {
   adminExpertsApi,
   expertCapabilityApi,
@@ -49,6 +51,8 @@ function ExpertsPage() {
   const [filter, setFilter] = useState<StatusFilter>("all");
   const [keyword, setKeyword] = useState("");
   const [form] = Form.useForm();
+  // 形象选择器预览用实时名称（新建/编辑时随输入变化）
+  const editingName = Form.useWatch("name", form) as string | undefined;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -350,7 +354,15 @@ function ExpertsPage() {
                 sops: c.sops,
                 scheduledTasks: c.scheduled_tasks,
               }}
-              onClick={() => navigate(`/agents/manage/${expert.id}`)}
+              onClick={() => {
+                // 已发布员工进工作台（运行时 agent id = expert_{id}，
+                // 新标签页打开）；草稿无运行时实例，仍进管理详情页。
+                if (expert.status === "published") {
+                  openAgentWorkbench(`expert_${expert.id}`);
+                  return;
+                }
+                navigate(`/agents/manage/${expert.id}`);
+              }}
               extraMenu={cardMenu(expert)}
             />
           );
@@ -393,8 +405,20 @@ function ExpertsPage() {
             <Input />
           </Form.Item>
           <Space size="middle" style={{ display: "flex" }}>
-            <Form.Item name="icon" label={t("admin.experts.icon", "Icon")}>
-              <Input placeholder="🧑‍💼" style={{ width: 120 }} />
+            <Form.Item
+              name="icon"
+              label={t("admin.experts.icon", "形象")}
+              tooltip={t(
+                "admin.experts.iconHint",
+                "选择形象风格；恢复自动则按员工 ID 稳定分配",
+              )}
+            >
+              <ExpertAvatarPicker
+                expertId={
+                  editing !== "new" && editing ? editing.id : undefined
+                }
+                name={editingName}
+              />
             </Form.Item>
             <Form.Item
               name="title"

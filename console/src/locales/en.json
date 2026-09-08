@@ -1960,13 +1960,23 @@
       "overview": "Run Overview",
       "userInput": "User Input",
       "llmThinking": "LLM Thinking",
+      "systemContext": "System Context",
+      "intent": "Intent",
       "input": "Input",
       "output": "Output",
       "copy": "Copy",
       "empty": "(empty)",
       "triggeredBy": "via",
       "inEnv": "in",
-      "envTriggered": "environment"
+      "envTriggered": "environment",
+      "toolCall": "Tool Call",
+      "logicEnd": "Finish",
+      "jsonToggle": "JSON view",
+      "backToList": "Back to run logs"
+    },
+    "filter": {
+      "reset": "Reset filters",
+      "columns": "Columns"
     }
   },
   "environments": {

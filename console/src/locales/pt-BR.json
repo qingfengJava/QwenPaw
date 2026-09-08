@@ -1765,13 +1765,23 @@
       "overview": "Visão geral da execução",
       "userInput": "Entrada do usuário",
       "llmThinking": "Raciocínio do LLM",
+      "systemContext": "Contexto do sistema",
+      "intent": "Identificação de intenção",
       "input": "Input",
       "output": "Output",
       "copy": "Copiar",
       "empty": "（vazio）",
       "triggeredBy": "via",
       "inEnv": "no",
-      "envTriggered": "ambiente"
+      "envTriggered": "ambiente",
+      "toolCall": "Chamada de ferramenta",
+      "logicEnd": "Conclusão",
+      "jsonToggle": "Visualização JSON",
+      "backToList": "Voltar aos logs de execução"
+    },
+    "filter": {
+      "reset": "Limpar filtros",
+      "columns": "Colunas"
     }
   },
   "environments": {

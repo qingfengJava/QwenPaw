@@ -2626,13 +2626,23 @@
       "overview": "Tổng quan lần chạy",
       "userInput": "Đầu vào người dùng",
       "llmThinking": "LLM suy luận",
+      "systemContext": "Ngữ cảnh hệ thống",
+      "intent": "Nhận diện ý định",
       "input": "Input",
       "output": "Output",
       "copy": "Sao chép",
       "empty": "（Trống）",
       "triggeredBy": "qua",
       "inEnv": "trong",
-      "envTriggered": "môi trường"
+      "envTriggered": "môi trường",
+      "toolCall": "Gọi công cụ",
+      "logicEnd": "Kết thúc",
+      "jsonToggle": "Xem JSON",
+      "backToList": "Quay lại nhật ký chạy"
+    },
+    "filter": {
+      "reset": "Đặt lại bộ lọc",
+      "columns": "Cột"
     }
   },
   "loop": {

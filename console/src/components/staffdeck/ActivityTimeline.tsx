@@ -69,8 +69,11 @@ export function ActivityTimeline({
       end.setDate(end.getDate() + 6);
       return `${fmt(weekStart)} ~ ${fmt(end)}`;
     }
-    return `${anchor.getFullYear()} 年 ${anchor.getMonth() + 1} 月`;
-  }, [mode, anchor, weekStart]);
+    return t("staffdeck.timeline.monthLabel", "{{year}} 年 {{month}} 月", {
+      year: anchor.getFullYear(),
+      month: anchor.getMonth() + 1,
+    });
+  }, [mode, anchor, weekStart, t]);
 
   const shift = (dir: 1 | -1) => {
     const next = new Date(anchor);

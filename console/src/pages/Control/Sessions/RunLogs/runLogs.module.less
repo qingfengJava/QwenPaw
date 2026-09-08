@@ -1,4 +1,4 @@
-/* Run-logs list & detail drawer styles (Sessions/RunLogs). */
+/* Run-logs list & detail page styles (Sessions/RunLogs). */
 
 .runLogsPage {
   display: flex;
@@ -84,7 +84,202 @@
   font-size: 12px;
 }
 
-/* ---- detail drawer ---- */
+/* 环境 tag：调试黄底 / 线上绿底（竞品色板）。 */
+.envTagDebug {
+  background: #fdf3d8;
+  color: #9c6f14;
+}
+
+.envTagOnline {
+  background: #e3f5e9;
+  color: #237a45;
+}
+
+/* 状态圆圈图标（竞品样式：绿✓/红✗/蓝转圈）。 */
+.statusIcon {
+  display: inline-flex;
+  align-items: center;
+}
+
+.statusIconSuccess {
+  color: #23a55a;
+}
+
+.statusIconFailed {
+  color: #d5423a;
+}
+
+.statusIconRunning {
+  color: #3f7ef7;
+}
+
+.statusSpin {
+  animation: runlogSpin 1.2s linear infinite;
+}
+
+@keyframes runlogSpin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 用户列：DiceBear 头像 + 名字。 */
+.userCell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.userAvatar {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.userAvatarFallback {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #e8f0fe;
+  color: #3f7ef7;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.userName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 筛选行右侧图标按钮组。 */
+.filterActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.filterIconBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid #ececea;
+  border-radius: 6px;
+  background: #fff;
+  color: #6b6b66;
+  cursor: pointer;
+
+  &:hover {
+    color: #333;
+    background: #f7f7f5;
+  }
+}
+
+.columnMenuItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  cursor: pointer;
+
+  &:hover {
+    background: #f7f7f5;
+  }
+}
+
+.columnMenu {
+  max-height: 320px;
+  overflow: auto;
+  padding: 6px 0;
+}
+
+/* ---- detail page ---- */
+
+.detailPage {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  height: 100%;
+  min-height: 0;
+}
+
+.detailTopbar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.detailBack {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid #ececea;
+  border-radius: 6px;
+  background: #fff;
+  color: #6b6b66;
+  cursor: pointer;
+
+  &:hover {
+    color: #333;
+    background: #f7f7f5;
+  }
+}
+
+.detailBreadcrumbLink {
+  color: #3f7ef7;
+  cursor: pointer;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.detailChevron {
+  color: #c9c9c4;
+}
+
+.detailAvatar {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.detailAvatarFallback {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #e8f0fe;
+  color: #3f7ef7;
+  font-size: 12px;
+  font-weight: 600;
+}
 
 .detailHeader {
   display: flex;
@@ -140,7 +335,7 @@
 .chainRow {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
   padding: 6px 12px;
   margin-bottom: 2px;
@@ -155,6 +350,39 @@
   &:hover {
     background: #f2f2ef;
   }
+}
+
+.chainCaret {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: #a0a09b;
+  cursor: pointer;
+
+  &:hover {
+    color: #333;
+  }
+}
+
+.chainCaretPlaceholder {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+}
+
+.chainKindIcon {
+  flex: 0 0 auto;
+  color: #7a7a74;
+}
+
+.chainKindIconTool {
+  color: #c08a1e;
 }
 
 .chainRowActive {
@@ -194,6 +422,71 @@
   flex-direction: column;
   gap: 16px;
   min-width: 0;
+}
+
+.nodeHead {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+}
+
+.nodeTitle {
+  color: #333;
+  font-weight: 600;
+}
+
+.nodeStatusIcon {
+  color: #23a55a;
+}
+
+.nodeMeta {
+  color: #8a8a85;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ioActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ioIconBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: #8a8a85;
+  cursor: pointer;
+
+  &:hover {
+    color: #333;
+  }
+}
+
+.ioIconBtnActive {
+  color: #3f7ef7;
+}
+
+.ioRoleTag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  align-self: flex-start;
+  padding: 3px 10px;
+  border: 1px solid #ececea;
+  border-radius: 6px 6px 0 0;
+  border-bottom: none;
+  background: #fcfcfb;
+  color: #444;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .ioSection {

@@ -5,6 +5,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDeferredValue } from "react";
+import dayjs from "dayjs";
 import { runLogsApi, type RunLogItem } from "../../../../api/modules/runLogs";
 
 export type RunStatusFilter = "" | "running" | "success" | "failed";
@@ -22,7 +23,7 @@ export interface RunLogQuery {
   pageSize: number;
 }
 
-const DEFAULT_QUERY: RunLogQuery = {
+const BASE_QUERY: RunLogQuery = {
   status: "",
   environment: "",
   channel: "",
@@ -33,8 +34,18 @@ const DEFAULT_QUERY: RunLogQuery = {
   pageSize: 20,
 };
 
+/** Default window: the last 7 days including today (competitor default). */
+function defaultQuery(): RunLogQuery {
+  const now = dayjs();
+  return {
+    ...BASE_QUERY,
+    start: now.subtract(6, "day").startOf("day").unix(),
+    end: now.endOf("day").unix(),
+  };
+}
+
 export function useRunLogs(agentId: string | undefined) {
-  const [query, setQuery] = useState<RunLogQuery>(DEFAULT_QUERY);
+  const [query, setQuery] = useState<RunLogQuery>(defaultQuery);
   const [items, setItems] = useState<RunLogItem[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -101,7 +112,7 @@ export function useRunLogs(agentId: string | undefined) {
     setQuery((prev) => ({ ...prev, page, pageSize }));
   }, []);
 
-  const reset = useCallback(() => setQuery(DEFAULT_QUERY), []);
+  const reset = useCallback(() => setQuery(defaultQuery()), []);
 
   return {
     items,

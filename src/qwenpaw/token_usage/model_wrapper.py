@@ -220,6 +220,16 @@ class TokenRecordingModelWrapper(ChatModelBase):
     def pop_usage_for_session(cls, session_id: str) -> dict[str, Any] | None:
         return cls._usage_by_session.pop(session_id, None)
 
+    @classmethod
+    def peek_usage_for_session(cls, session_id: str) -> dict[str, Any] | None:
+        """Non-destructive read of the staged usage for one session.
+
+        Observability hooks use this to learn the actually-used model and
+        token totals before the channel layer commits (and pops) the
+        staged record. Never mutate or pop the returned dict.
+        """
+        return cls._usage_by_session.get(session_id)
+
     def _store_usage(self, usage: dict[str, Any] | None) -> None:
         from ..app.agent_context import get_current_session_id
 

@@ -2171,13 +2171,23 @@
       "overview": "Ringkasan Eksekusi",
       "userInput": "Input Pengguna",
       "llmThinking": "Proses LLM",
+      "systemContext": "Konteks Sistem",
+      "intent": "Deteksi Intensi",
       "input": "Input",
       "output": "Output",
       "copy": "Salin",
       "empty": "（Kosong）",
       "triggeredBy": "melalui",
       "inEnv": "di",
-      "envTriggered": "lingkungan"
+      "envTriggered": "lingkungan",
+      "toolCall": "Panggilan Alat",
+      "logicEnd": "Selesai",
+      "jsonToggle": "Tampilan JSON",
+      "backToList": "Kembali ke log run"
+    },
+    "filter": {
+      "reset": "Atur ulang filter",
+      "columns": "Kolom"
     }
   },
   "environments": {

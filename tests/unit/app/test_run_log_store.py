@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -121,6 +122,40 @@ async def test_update_falls_back_to_yesterday_shard(
     assert rows[0]["error"] == "boom"
 
 
+@pytest.mark.asyncio
+async def test_update_uses_run_day_shard(index_dir: Path):
+    """Rows finalized long after midnight are patched via ``run_day``."""
+    index_dir.mkdir(parents=True, exist_ok=True)
+    run_day = store.date.today() - timedelta(days=3)
+    shard = index_dir / store._shard_name(run_day)
+    shard.write_text(
+        json.dumps(_row("run-mid"), ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    # Without the run day the patch cannot reach the 3-day-old shard.
+    await store.update_run_index("run-mid", status="failed")
+    rows = [
+        json.loads(l)
+        for l in shard.read_text(encoding="utf-8").splitlines()
+    ]
+    assert rows[0]["status"] == "running"
+
+    # With run_day the stale row is patched in place.
+    await store.update_run_index(
+        "run-mid",
+        run_day=run_day,
+        status="failed",
+        error="late",
+    )
+    rows = [
+        json.loads(l)
+        for l in shard.read_text(encoding="utf-8").splitlines()
+    ]
+    assert rows[0]["status"] == "failed"
+    assert rows[0]["error"] == "late"
+
+
 # ---------------------------------------------------------------------------
 # query
 # ---------------------------------------------------------------------------
@@ -189,6 +224,53 @@ async def test_query_environment_and_channel_filters(index_dir: Path):
 
     items, _ = await store.query_run_logs(channel="feishim")
     assert [i["run_id"] for i in items] == ["run-on"]
+
+
+@pytest.mark.asyncio
+async def test_query_prunes_shards_outside_time_window(
+    index_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Whole shards outside the window are never read at all."""
+    index_dir.mkdir(parents=True, exist_ok=True)
+    today = store.date.today()
+    old_day = today - timedelta(days=7)
+    old_shard = index_dir / store._shard_name(old_day)
+    old_shard.write_text(
+        json.dumps(
+            _row("run-old", started_at=time.mktime(old_day.timetuple())),
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    fresh_shard = index_dir / store._shard_name(today)
+    fresh_shard.write_text(
+        json.dumps(_row("run-new", started_at=time.time()), ensure_ascii=False)
+        + "\n",
+        encoding="utf-8",
+    )
+
+    read_calls: list[str] = []
+    real_read = store._read_shard_rows
+
+    def _spy(path):
+        read_calls.append(path.name)
+        return real_read(path)
+
+    monkeypatch.setattr(store, "_read_shard_rows", _spy)
+
+    # Window: since today 00:00 local — the 7-day-old shard is pruned.
+    day_start = datetime.combine(today, datetime.min.time()).timestamp()
+    items, total = await store.query_run_logs(start_ts=day_start)
+    assert [i["run_id"] for i in items] == ["run-new"]
+    assert total == 1
+    assert old_shard.name not in read_calls
+
+    # No window → both shards are read as before.
+    _, total_all = await store.query_run_logs()
+    assert total_all == 2
+    assert old_shard.name in read_calls
 
 
 # ---------------------------------------------------------------------------

@@ -35,6 +35,8 @@ import { getAgentDisplayName } from "../../../../utils/agentDisplayName";
 import { SortableAgentRow, DragHandle } from "./SortableAgentRow";
 import { providerIcon } from "../../Models/components/providerIcon";
 import { AgentStatusIndicator } from "@/components/AgentStatusIndicator";
+import ExpertAvatar from "@/components/ExpertAvatar";
+import { isExpertAgentId } from "@/api/modules/xianFeedback";
 import styles from "../index.module.less";
 
 const THIRD_PARTY_AGENT_NAMES: Record<string, string> = {
@@ -46,6 +48,8 @@ interface AgentTableProps {
   agents: AgentSummary[];
   loading: boolean;
   reordering: boolean;
+  /** 数字员工形象映射（expertId → experts.icon 原始值）；缺省时组件内自动分配。 */
+  expertIcons?: Record<string, string>;
   /** 当提供时，名称可点击且操作列首位出现「进入」按钮，跳转员工详情页。 */
   onOpen?: (agent: AgentSummary) => void;
   onEdit: (agent: AgentSummary) => void;
@@ -60,6 +64,7 @@ export function AgentTable({
   agents,
   loading,
   reordering,
+  expertIcons,
   onOpen,
   onEdit,
   onCopy,
@@ -140,12 +145,28 @@ export function AgentTable({
             status={record.startup_status}
             enabled={record.enabled}
           />
-          <RobotOutlined
-            style={{
-              fontSize: 16,
-              opacity: record.enabled ? 1 : 0.5,
-            }}
-          />
+          {(() => {
+            const expertId = isExpertAgentId(record.id);
+            if (!expertId) {
+              return (
+                <RobotOutlined
+                  style={{
+                    fontSize: 16,
+                    opacity: record.enabled ? 1 : 0.5,
+                  }}
+                />
+              );
+            }
+            return (
+              <ExpertAvatar
+                icon={expertIcons?.[expertId]}
+                expertId={expertId}
+                name={getAgentDisplayName(record, t)}
+                size={22}
+                style={{ opacity: record.enabled ? 1 : 0.5 }}
+              />
+            );
+          })()}
           <span
             style={{
               opacity: record.enabled ? 1 : 0.5,

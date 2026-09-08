@@ -9,11 +9,12 @@ import {
 } from "react-router-dom";
 import Chat from "@/pages/Chat";
 import AgentOverviewTab from "@/pages/Agents/AgentOverviewTab";
+import AgentActivityTab from "@/pages/Agents/AgentActivityTab";
 import EmployeeProfileAside from "@/pages/Agents/EmployeeProfileAside";
 import type {
-  DetailTab,
   GroupLabel,
 } from "@/pages/Agents/EmployeeProfileAside";
+import { TABS } from "@/pages/Agents/detailTabs";
 import { stashAiTunePrompt } from "@/pages/Agents/aiTunePrefill";
 import { lazyImportWithRetry } from "@/utils/lazyWithRetry";
 import { useAgentStore } from "@/stores/agentStore";
@@ -26,6 +27,9 @@ import styles from "./detail.module.less";
 // 员工域子页面全部复用现有页面组件（借壳策略：数据域由布局同步到
 // selectedAgent，页面 hooks 零改动）。Chat 保持 eager 以保证首屏对话体验。
 const SessionsPage = lazyImportWithRetry("../../pages/Control/Sessions");
+const RunLogDetailPage = lazyImportWithRetry(
+  "../../pages/Control/Sessions/RunLogs/RunLogDetailPage",
+);
 const CronJobsPage = lazyImportWithRetry("../../pages/Control/CronJobs");
 const FilesPage = lazyImportWithRetry("../../pages/Files");
 const SkillsPage = lazyImportWithRetry("../../pages/Agent/Skills");
@@ -41,21 +45,7 @@ const HeartbeatPage = lazyImportWithRetry("../../pages/Control/Heartbeat");
 // 导航不含 chat：对话入口由档案栏「去对话」主按钮承担，避免双入口。
 // 路由 /agents/:aid/chat 仍保留（按钮跳转 + AI 调优落点），
 // 位于对话页时左栏导航不高亮任何项。
-const TABS: DetailTab[] = [
-  { key: "overview", labelKey: "agentDetail.overview", fallback: "Overview", group: "basic" },
-  { key: "sessions", labelKey: "nav.sessions", fallback: "Sessions", group: "basic" },
-  { key: "cron-jobs", labelKey: "nav.cronJobs", fallback: "Scheduled Tasks", group: "basic" },
-  { key: "files", labelKey: "nav.files", fallback: "Files", group: "capability" },
-  { key: "skills", labelKey: "nav.skills", fallback: "Skills", group: "capability" },
-  { key: "tools", labelKey: "nav.tools", fallback: "Tools", group: "capability" },
-  { key: "mcp", labelKey: "nav.mcp", fallback: "MCP", group: "capability" },
-  { key: "acp", labelKey: "nav.acp", fallback: "ACP", group: "capability" },
-  { key: "checkpoints", labelKey: "checkpoints.nav", fallback: "Checkpoints", group: "ops" },
-  { key: "channels", labelKey: "agentDetail.channels", fallback: "Channel Bindings", group: "ops" },
-  { key: "stats", labelKey: "nav.agentStats", fallback: "Usage Stats", group: "ops" },
-  { key: "heartbeat", labelKey: "nav.heartbeat", fallback: "Heartbeat", group: "ops" },
-  { key: "config", labelKey: "nav.agentConfig", fallback: "Configuration", group: "ops" },
-];
+// Tab 定义唯一来源在 detailTabs.ts（与工作台共享）。
 
 const GROUP_LABEL_KEYS: GroupLabel[] = [
   { group: "basic", labelKey: "agentDetail.groupBasic" },
@@ -176,9 +166,8 @@ export default function AgentDetailLayout() {
               <AgentOverviewTab
                 agent={currentAgent}
                 aid={aid}
-                visibleTabs={visibleTabs}
+                showHeader={false}
                 onAiTune={handleAiTune}
-                onOpenTab={handleTabClick}
               />
             }
           />
@@ -186,13 +175,17 @@ export default function AgentDetailLayout() {
             <AgentOverviewTab
               agent={currentAgent}
               aid={aid}
-              visibleTabs={visibleTabs}
+              showHeader={false}
               onAiTune={handleAiTune}
-              onOpenTab={handleTabClick}
             />
           } />
           <Route path="chat/*" element={<Chat />} />
+          <Route path="activity" element={<AgentActivityTab aid={aid} />} />
           <Route path="sessions" element={<SessionsPage />} />
+          <Route
+            path="sessions/runs/:runId"
+            element={<RunLogDetailPage />}
+          />
           <Route path="cron-jobs" element={<CronJobsPage />} />
           <Route path="files" element={<FilesPage />} />
           <Route path="skills" element={<SkillsPage />} />

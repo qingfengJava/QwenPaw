@@ -1,0 +1,282 @@
+// workbench.module.less — 数字员工工作台（/studio/:aid，独立浏览器标签）。
+//
+// 全屏三段：顶栏（身份 + 调试开关 + 发布）+ 左固定聊天面板 + 右信息 Tab。
+// 颜色/圆角沿用 staffdeck-tokens.css 的 --sd-* 令牌，暗色主题用
+// :global([data-theme="dark"]) / :global(.dark) 双选择器（同 detail.module.less）。
+
+.workbench {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--sd-bg);
+}
+
+:global([data-theme="dark"]) .workbench,
+:global(.dark) .workbench {
+  background: #141414;
+}
+
+/* ─── 顶栏 ───────────────────────────────────────────────────── */
+
+.topBar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 0 0 auto;
+  height: 52px;
+  padding: 0 16px;
+  background: var(--sd-card);
+  border-bottom: 0.5px solid var(--sd-line);
+}
+
+:global([data-theme="dark"]) .topBar,
+:global(.dark) .topBar {
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom-color: rgba(255, 255, 255, 0.1);
+}
+
+.homeBtn {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--sd-text-3);
+  display: flex;
+  align-items: center;
+  padding: 6px;
+  border-radius: var(--sd-radius-sm);
+
+  &:hover {
+    background: rgba(0, 0, 0, 0.05);
+    color: var(--sd-ink);
+  }
+}
+
+:global([data-theme="dark"]) .homeBtn,
+:global(.dark) .homeBtn {
+  color: rgba(255, 255, 255, 0.55);
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
+  }
+}
+
+.crumb {
+  font-size: 12.5px;
+  color: var(--sd-text-3);
+  white-space: nowrap;
+}
+
+.agentName {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--sd-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:global([data-theme="dark"]) .agentName,
+:global(.dark) .agentName {
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.topSpacer {
+  flex: 1;
+  min-width: 0;
+}
+
+.debugSwitch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--sd-text-3);
+  white-space: nowrap;
+}
+
+.publishBtn {
+  flex: 0 0 auto;
+}
+
+/* ─── 主体：左聊天 + 右信息 ─────────────────────────────────── */
+
+.workbenchBody {
+  display: flex;
+  align-items: stretch;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.chatPanel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  min-height: 0;
+  background: var(--sd-card);
+  border-right: 0.5px solid var(--sd-line);
+  overflow: hidden;
+}
+
+:global([data-theme="dark"]) .chatPanel,
+:global(.dark) .chatPanel {
+  background: rgba(255, 255, 255, 0.04);
+  border-right-color: rgba(255, 255, 255, 0.1);
+}
+
+/* 调试模式：左栏顶部描边提示当前会话跑在草稿实例上 */
+.chatPanelDebug {
+  border-top: 2px solid #f59e0b;
+}
+
+.chatPanelHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  height: 40px;
+  padding: 0 10px 0 14px;
+  border-bottom: 0.5px solid var(--sd-line);
+}
+
+:global([data-theme="dark"]) .chatPanelHeader,
+:global(.dark) .chatPanelHeader {
+  border-bottom-color: rgba(255, 255, 255, 0.1);
+}
+
+.modeBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--sd-text-3);
+  white-space: nowrap;
+}
+
+.modeDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--sd-text-3);
+}
+
+.modeDotDebug {
+  background: #f59e0b;
+}
+
+.headerSpacer {
+  flex: 1;
+  min-width: 0;
+}
+
+.headerBtn {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--sd-text-3);
+  display: flex;
+  align-items: center;
+  padding: 5px;
+  border-radius: var(--sd-radius-sm);
+
+  &:hover {
+    background: rgba(0, 0, 0, 0.05);
+    color: var(--sd-ink);
+  }
+}
+
+:global([data-theme="dark"]) .headerBtn,
+:global(.dark) .headerBtn {
+  color: rgba(255, 255, 255, 0.55);
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
+  }
+}
+
+.chatHost {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+
+  /* Chat 组件根节点撑满宿主（其内部自滚，输入框贴底） */
+  > * {
+    flex: 1;
+    min-height: 0;
+  }
+}
+
+/* 折叠态：44px 竖条 + 展开按钮 */
+.chatRail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding-top: 10px;
+}
+
+/* 拖拽手柄：贴右缘 6px 热区 */
+.resizeHandle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 10;
+
+  &:hover {
+    background: rgba(26, 113, 255, 0.18);
+  }
+}
+
+/* ─── 右侧：Tab 条 + 内容 ───────────────────────────────────── */
+
+.detailPane {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.tabBar {
+  flex: 0 0 auto;
+  padding: 6px 20px 0;
+  background: var(--sd-card);
+  border-bottom: 0.5px solid var(--sd-line);
+}
+
+:global([data-theme="dark"]) .tabBar,
+:global(.dark) .tabBar {
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom-color: rgba(255, 255, 255, 0.1);
+}
+
+.tabContent {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px 24px 0;
+
+  /* Chat 等全高页面（右栏子页面不含 Chat，这里统一自滚） */
+}
+
+.subTabBar {
+  padding: 0 0 12px;
+}
+
+.emptyWrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-top: 18vh;
+}

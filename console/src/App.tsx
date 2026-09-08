@@ -36,6 +36,7 @@ import {
   getLoginPath,
   getRouterBasename,
   isOsPath,
+  isStudioPath,
 } from "./utils/navigationMode";
 
 const LoginPage = lazyImportWithRetry("./pages/Login/index");
@@ -43,6 +44,12 @@ const HubPage = lazyImportWithRetry("./pages/Hub/index");
 // Desktop OS shell. Uses React.lazy (not lazyImportWithRetry, which only
 // resolves the ./pages/** glob) so it can load from ./os/.
 const DesktopOSPage = lazy(() => import("./os/DesktopOS"));
+// 数字员工工作台（/studio/:aid）：独立浏览器标签页，脱离 MainLayout 侧栏。
+// 与页面路由一致走 glob 懒加载；注：其依赖几乎全部已在 entry，
+// Rollup 会将其内联进 entry chunk（实测增量 ~15KB，可忽略）。
+const AgentWorkbenchLayout = lazyImportWithRetry(
+  "./pages/Agents/workbench/AgentWorkbenchLayout",
+);
 import { authApi } from "./api/modules/auth";
 import { languageApi } from "./api/modules/language";
 import { useUploadLimitStore } from "./stores/uploadLimitStore";
@@ -344,11 +351,23 @@ function AppInner({ backendInfo }: { backendInfo: BackendInfo }) {
   }, []);
 
   const osActive = isOsPath(window.location.pathname);
+  const studioActive = isStudioPath(window.location.pathname);
 
-  // The Desktop OS shell renders OUTSIDE any Router: each window supplies its
-  // own MemoryRouter (WindowRouter.tsx) and React Router forbids nesting a
-  // <Router> inside another. The classic browser layout keeps its BrowserRouter.
-  const routedContent = osActive ? (
+  // The Desktop OS shell and the agent workbench render OUTSIDE any Router:
+  // both supply their own MemoryRouter (WindowRouter.tsx / WorkbenchLayout)
+  // and React Router forbids nesting a <Router> inside another. The classic
+  // browser layout keeps its BrowserRouter.
+  const routedContent = studioActive ? (
+    // 数字员工工作台：全屏三段（顶栏 + 左固定聊天 + 右信息 Tab），
+    // 不进 MainLayout（新标签页无侧栏）；Router 由工作台自挂。
+    <AuthGuard authStatus={backendInfo.authStatus} useHardRedirect>
+      <RuntimeAvailabilityGuard enabled={hubMode}>
+        <Suspense fallback={null}>
+          <AgentWorkbenchLayout />
+        </Suspense>
+      </RuntimeAvailabilityGuard>
+    </AuthGuard>
+  ) : osActive ? (
     <AuthGuard authStatus={backendInfo.authStatus} useHardRedirect>
       <RuntimeAvailabilityGuard enabled={hubMode}>
         <Suspense fallback={null}>

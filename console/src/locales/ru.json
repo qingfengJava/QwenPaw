@@ -1538,13 +1538,23 @@
       "overview": "Обзор запуска",
       "userInput": "Ввод пользователя",
       "llmThinking": "Размышление LLM",
+      "systemContext": "Системный контекст",
+      "intent": "Распознавание интента",
       "input": "Input",
       "output": "Output",
       "copy": "Копировать",
       "empty": "（пусто）",
       "triggeredBy": "через",
       "inEnv": "в",
-      "envTriggered": "среде"
+      "envTriggered": "среде",
+      "toolCall": "Вызов инструмента",
+      "logicEnd": "Завершение",
+      "jsonToggle": "Просмотр JSON",
+      "backToList": "К журналам запусков"
+    },
+    "filter": {
+      "reset": "Сбросить фильтры",
+      "columns": "Столбцы"
     }
   },
   "environments": {

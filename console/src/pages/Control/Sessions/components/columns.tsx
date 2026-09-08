@@ -6,10 +6,9 @@ import { CHANNEL_COLORS } from "../../../../constants/channel";
 import styles from "../index.module.less";
 
 interface ColumnHandlers {
-  onEdit: (session: Session) => void;
   onDelete: (sessionId: string) => void;
-  onView: (session: Session) => void;
   onArchiveToggle: (session: Session) => void;
+  /** 列表当前只服务归档视图（运行日志见 RunLogs/）。 */
   isArchivedTab?: boolean;
 }
 
@@ -17,7 +16,7 @@ interface ColumnHandlers {
 const toUTCTime = (ts: string | null | undefined): number => {
   if (!ts) return 0;
   const normalized =
-    /[Z+\-]\d{2}:?\d{2}$/.test(ts) || ts.endsWith("Z") ? ts : ts + "Z";
+    /[Z+-]\d{2}:?\d{2}$/.test(ts) || ts.endsWith("Z") ? ts : ts + "Z";
   return new Date(normalized).getTime();
 };
 
@@ -98,62 +97,25 @@ export const createColumns = (
   cols.push({
     title: "Action",
     key: "action",
-    width: isArchived ? 160 : 200,
+    width: 160,
     fixed: "right",
     render: (_: unknown, record: Session) => (
       <div className={styles.actionColumn}>
-        {isArchived ? (
-          <>
-            <Button
-              type="link"
-              size="small"
-              onClick={() => handlers.onArchiveToggle(record)}
-            >
-              {t("sessions.archive.unaction", "Unarchive")}
-            </Button>
-            <Button
-              type="link"
-              size="small"
-              danger
-              onClick={() => handlers.onDelete(record.id)}
-            >
-              {t("common.delete")}
-            </Button>
-          </>
-        ) : (
-          <>
-            <Button
-              type="link"
-              size="small"
-              onClick={() => handlers.onEdit(record)}
-            >
-              {t("common.edit")}
-            </Button>
-            <Button
-              type="link"
-              size="small"
-              style={{ color: "#52c41a" }}
-              onClick={() => handlers.onView(record)}
-            >
-              {t("common.view")}
-            </Button>
-            <Button
-              type="link"
-              size="small"
-              onClick={() => handlers.onArchiveToggle(record)}
-            >
-              {t("sessions.archive.action", "Archive")}
-            </Button>
-            <Button
-              type="link"
-              size="small"
-              danger
-              onClick={() => handlers.onDelete(record.id)}
-            >
-              {t("common.delete")}
-            </Button>
-          </>
-        )}
+        <Button
+          type="link"
+          size="small"
+          onClick={() => handlers.onArchiveToggle(record)}
+        >
+          {t("sessions.archive.unaction", "Unarchive")}
+        </Button>
+        <Button
+          type="link"
+          size="small"
+          danger
+          onClick={() => handlers.onDelete(record.id)}
+        >
+          {t("common.delete")}
+        </Button>
       </div>
     ),
   });

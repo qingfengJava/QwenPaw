@@ -25,6 +25,7 @@ from qwenpaw.hooks.observability.run_log_hook import (
     _sum_delta_tokens,
 )
 from qwenpaw.runtime.hooks import HookContext
+from qwenpaw.token_usage.model_wrapper import TokenRecordingModelWrapper
 
 
 class _FakeSession:
@@ -53,8 +54,14 @@ def _make_ctx(
     agent_id: str = "agent-a",
     session_messages: list[dict] | None = None,
     error: BaseException | None = None,
+    agent_config: object | None = None,
 ) -> HookContext:
     """Build a minimal HookContext for hook unit tests."""
+    if agent_config is None:
+        agent_config = SimpleNamespace(
+            version="1.2.3",
+            active_model=SimpleNamespace(model="qwen-max"),
+        )
     return HookContext(
         request=SimpleNamespace(
             user_id="u-1",
@@ -70,6 +77,7 @@ def _make_ctx(
         app_services=None,
         input_msgs=[],
         error=error,
+        agent_config=agent_config,
     )
 
 
@@ -79,6 +87,8 @@ def store_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(trace_store, "_TRACE_DIR", tmp_path / "inbox_traces")
     monkeypatch.setattr(log_store, "_INDEX_DIR", tmp_path / "run_logs")
     monkeypatch.setattr(log_store, "_last_purge_at", time.time())
+    # Keep cross-test leakage out of the staged usage table.
+    TokenRecordingModelWrapper._usage_by_session.pop("s-1", None)
     return tmp_path
 
 
@@ -127,6 +137,13 @@ async def test_start_hook_writes_trace_and_index_row(store_dirs: Path):
     assert row["status"] == "running"
     assert row["source"] == "chat"
     assert row["channel"] == "feishim"
+    # Agent labels advertised by the config land in both stores.
+    assert row["version"] == "1.2.3"
+    assert row["model"] == "qwen-max"
+    assert row["app_version"]
+    trace = await trace_store.get_trace(run_id)
+    assert trace["meta"]["model"] == "qwen-max"
+    assert trace["meta"]["version"] == "1.2.3"
 
 
 @pytest.mark.asyncio
@@ -198,3 +215,25 @@ async def test_finish_hook_noop_without_start(store_dirs: Path):
     ctx = _make_ctx()
     result = await RunLogFinishHook().run(ctx)
     assert result.action.value == "continue"
+
+
+@pytest.mark.asyncio
+async def test_finish_hook_prefers_staged_usage(store_dirs: Path):
+    """Staged usage (written pre-channel-commit) wins over the delta scan."""
+    ctx = _make_ctx(session_messages=[_assistant_msg(tokens=0)])
+    await RunLogStartHook().run(ctx)
+    run_id = ctx.extras["_qp_runlog_ctx"]["run_id"]
+    TokenRecordingModelWrapper._usage_by_session["s-1"] = {
+        "model_name": "qwen-plus",
+        "total_tokens": 4321,
+    }
+
+    await RunLogFinishHook().run(ctx)
+
+    shard = next((log_store._INDEX_DIR).glob("index-*.jsonl"))
+    row = json.loads(shard.read_text(encoding="utf-8").splitlines()[0])
+    assert row["total_tokens"] == 4321
+    # Actually-used model overrides the config prediction.
+    assert row["model"] == "qwen-plus"
+    # Peek must not pop: the channel layer still owns the record.
+    assert "s-1" in TokenRecordingModelWrapper._usage_by_session

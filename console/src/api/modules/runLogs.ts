@@ -22,7 +22,12 @@ export interface RunLogItem {
   finished_at?: number | null;
   duration_ms?: number | null;
   total_tokens?: number;
+  /** Actually-used model name (fallback-corrected by the finish hook). */
+  model?: string;
+  /** Agent publish version (AgentProfileConfig.version). */
   version?: string;
+  /** QwenPaw app version (legacy rows may only carry this). */
+  app_version?: string;
   error?: string | null;
 }
 
@@ -53,7 +58,10 @@ export interface RunLogTrace {
     channel?: string;
     environment?: string;
     query?: string | null;
+    model?: string;
+    /** Agent publish version. */
     version?: string;
+    app_version?: string;
   };
   events: RunLogTraceEvent[];
 }

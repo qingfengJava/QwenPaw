@@ -1,13 +1,21 @@
 /**
  * Build the execution-chain tree from a run trace's flat session events.
  *
- * Mapping (competitor-style run detail):
- *   运行总览 (total duration)
- *   ├─ 用户输入            — user message
- *   ├─ LLM 思考 10.2s      — assistant message (Output panel = full content)
- *   │   └─ tool_name       — tool_use block, paired with the next tool msg
- *   └─ …
+ * Competitor-style skeleton, mapped onto real data only (no fabricated
+ * payloads):
  *
+ *   运行总览 (total duration)
+ *   ├─ 系统上下文 (0 ms)     — trace.meta (environment / channel / model…)
+ *   ├─ 用户输入              — user messages
+ *   ├─ 意图识别              — first assistant message (input = first user text)
+ *   ├─ Agent 节点            — container for the mid-loop assistant messages
+ *   │   ├─ LLM 思考          — assistant message
+ *   │   │   └─ tool_name     — tool_use block, paired with the next tool msg
+ *   │   └─ …
+ *   └─ 逻辑结束              — trailing plain-text assistant reply
+ *
+ * Payloads stay RAW here; ``truncateDetail`` is applied lazily by the
+ * detail page for the selected node only (cheap builds for big traces).
  * Pure functions only, so the pairing logic stays unit-testable.
  */
 import type {
@@ -20,8 +28,21 @@ export interface TraceNodeDetail {
   output?: unknown;
 }
 
+export type TraceNodeKind =
+  | "root"
+  | "system"
+  | "user"
+  | "intent"
+  | "agent"
+  | "llm"
+  | "toolCall"
+  | "tool"
+  | "end";
+
 export interface TraceNode {
   key: string;
+  kind: TraceNodeKind;
+  /** Tool name for tool nodes; otherwise the kind key (i18n-mapped). */
   title: string;
   /** Wall time to the next event, in ms; null when unknown. */
   durationMs: number | null;
@@ -101,7 +122,7 @@ function eventAt(event: RunLogTraceEvent): number | null {
   return typeof event.at === "number" ? event.at : null;
 }
 
-/** Truncate oversized JSON payloads before rendering them in the panel. */
+/** Truncate oversized payloads before rendering them in the panel. */
 export function truncateDetail(value: unknown, maxChars = 16000): unknown {
   if (typeof value === "string") {
     return value.length > maxChars ? `${value.slice(0, maxChars)}…` : value;
@@ -126,6 +147,7 @@ export function truncateDetail(value: unknown, maxChars = 16000): unknown {
  */
 export function buildTraceTree(trace: RunLogTrace): TraceNode {
   const events = trace.events || [];
+  const meta = trace.meta ?? ({} as RunLogTrace["meta"]);
   const rootDuration =
     typeof trace.completed_at === "number" &&
     typeof trace.created_at === "number"
@@ -134,30 +156,48 @@ export function buildTraceTree(trace: RunLogTrace): TraceNode {
 
   const root: TraceNode = {
     key: "root",
+    kind: "root",
     title: "root",
     durationMs: rootDuration,
-    detail: { input: trace.meta?.query ?? undefined },
+    detail: { input: meta?.query ?? undefined },
     children: [],
   };
 
-  // Pending tool children waiting for their output message.
-  let openToolNodes: TraceNode[] = [];
-  let nodeSeq = 0;
+  // 系统上下文：本次运行的真实元信息（环境/渠道/模型/会话等）。
+  if (meta && Object.keys(meta).length > 0) {
+    root.children.push({
+      key: "node-system",
+      kind: "system",
+      title: "system",
+      durationMs: 0,
+      detail: { input: meta },
+      children: [],
+    });
+  }
 
+  let nodeSeq = 0;
   const makeNode = (
-    title: string,
+    kind: TraceNodeKind,
     detail: TraceNodeDetail,
-    children: TraceNode[] = [],
+    title?: string,
   ): TraceNode => {
     nodeSeq += 1;
     return {
       key: `node-${nodeSeq}`,
-      title,
+      kind,
+      title: title ?? kind,
       durationMs: null,
       detail,
-      children,
+      children: [],
     };
   };
+
+  // Pending tool children waiting for their output message.
+  let openToolNodes: TraceNode[] = [];
+  const loopChildren: TraceNode[] = [];
+  let firstUserText: string | null = null;
+  let intentSeen = false;
+  let trailingTextNode: TraceNode | null = null;
 
   events.forEach((event: RunLogTraceEvent, index: number) => {
     const msg = (event.event || {}) as Msg;
@@ -170,7 +210,11 @@ export function buildTraceTree(trace: RunLogTrace): TraceNode {
         : null;
 
     if (role === "user") {
-      const node = makeNode("user", { input: truncateDetail(textOf(msg)) });
+      const text = textOf(msg);
+      if (firstUserText === null) {
+        firstUserText = text;
+      }
+      const node = makeNode("user", { input: text });
       node.durationMs = durationMs;
       root.children.push(node);
       return;
@@ -181,23 +225,45 @@ export function buildTraceTree(trace: RunLogTrace): TraceNode {
       const toolBlocks = blocks.filter((block) =>
         isToolCallType(String(block.type || "")),
       );
-      const node = makeNode("assistant", {
-        output: truncateDetail(textOf(msg)),
-      });
+      const output = textOf(msg);
+
+      if (!intentSeen) {
+        // 首条 assistant 响应 = 意图识别（输入即首条用户提问）；
+        // 它触发的工具调用同样作为子节点配对展示。
+        intentSeen = true;
+        const node = makeNode("intent", {
+          input: firstUserText ?? undefined,
+          output,
+        });
+        node.durationMs = durationMs;
+        node.children = toolBlocks.map((block) => {
+          const rawInput = block.raw_input ?? block.input;
+          return makeNode("tool", { input: rawInput }, toolNameOf(block, msg));
+        });
+        openToolNodes = node.children;
+        root.children.push(node);
+        return;
+      }
+
+      const node = makeNode("llm", { output });
       node.durationMs = durationMs;
       node.children = toolBlocks.map((block) => {
         const rawInput = block.raw_input ?? block.input;
-        return makeNode(toolNameOf(block, msg), {
-          input: truncateDetail(rawInput),
-        });
+        return makeNode("tool", { input: rawInput }, toolNameOf(block, msg));
       });
       openToolNodes = node.children;
-      root.children.push(node);
+
+      if (toolBlocks.length === 0 && index === events.length - 1) {
+        // 末条纯文本回复暂存，收尾时作为「逻辑结束」挂到 root。
+        trailingTextNode = node;
+      } else {
+        loopChildren.push(node);
+      }
       return;
     }
 
     if (role === "tool") {
-      const output = truncateDetail(textOf(msg));
+      const output = textOf(msg);
       // Pair in order with the assistant's unfilled tool children.
       const target = openToolNodes.find(
         (node) => node.detail.output === undefined,
@@ -207,6 +273,36 @@ export function buildTraceTree(trace: RunLogTrace): TraceNode {
       }
     }
   });
+
+  if (loopChildren.length > 0) {
+    const agentNode = makeNode(
+      "agent",
+      {},
+      String(meta?.agent_id || "") || "Agent",
+    );
+    const summed = loopChildren.reduce(
+      (sum, child) => sum + (child.durationMs ?? 0),
+      0,
+    );
+    agentNode.durationMs = summed > 0 ? summed : null;
+    agentNode.children = loopChildren;
+    root.children.push(agentNode);
+  }
+
+  if (trailingTextNode) {
+    const endNode = trailingTextNode as TraceNode;
+    endNode.kind = "end";
+    endNode.title = "end";
+    const lastAt = eventAt(events[events.length - 1] ?? ({} as RunLogTraceEvent));
+    if (
+      lastAt !== null &&
+      typeof trace.completed_at === "number" &&
+      trace.completed_at >= lastAt
+    ) {
+      endNode.durationMs = Math.round((trace.completed_at - lastAt) * 1000);
+    }
+    root.children.push(endNode);
+  }
 
   return root;
 }

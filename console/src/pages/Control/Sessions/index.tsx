@@ -1,6 +1,6 @@
 import { useEffect, useState, useDeferredValue } from "react";
-import { useNavigate, useParams } from "react-router-dom";
-import { Card, Form, Modal, Table, Button, Tabs } from "@agentscope-ai/design";
+import { useParams } from "react-router-dom";
+import { Card, Modal, Table, Button, Tabs } from "@agentscope-ai/design";
 import { Suspense } from "react";
 import { lazyImportWithRetry } from "../../../utils/lazyWithRetry";
 import { useAppMessage } from "../../../hooks/useAppMessage";
@@ -8,7 +8,6 @@ import { useTranslation } from "react-i18next";
 import {
   createColumns,
   FilterBar,
-  SessionDrawer,
   formatTime,
   type Session,
 } from "./components";
@@ -25,29 +24,20 @@ const LazyRunLogs = lazyImportWithRetry(
 
 function SessionsPage() {
   const { t } = useTranslation();
-  const navigate = useNavigate();
   // 详情页内时 :aid 显式指定数据域；旧路径/独立挂载时回退 selectedAgent（借壳）
   const { aid } = useParams<{ aid: string }>();
   const {
     sessions,
     loading,
-    updateSession,
     deleteSession,
-    batchDeleteSessions,
-    archiveSession,
     unarchiveSession,
-    batchArchiveSessions,
+    batchDeleteSessions,
     batchUnarchiveSessions,
     activeTab,
     setActiveTab,
-    activeCount,
     archivedCount,
   } = useSessions(aid);
   const [filteredSessions, setFilteredSessions] = useState<Session[]>([]);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [editingSession, setEditingSession] = useState<Session | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [form] = Form.useForm<Session>();
 
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
 
@@ -114,12 +104,6 @@ function SessionsPage() {
     setSelectedRowKeys([]);
   }, [activeTab]);
 
-  const handleEdit = (session: Session) => {
-    setEditingSession(session);
-    form.setFieldsValue(session as any);
-    setDrawerOpen(true);
-  };
-
   const handleDelete = (sessionId: string) => {
     Modal.confirm({
       title: t("sessions.confirmDelete"),
@@ -133,16 +117,8 @@ function SessionsPage() {
     });
   };
 
-  const handleView = (session: Session) => {
-    navigate(`/chat/${encodeURIComponent(session.id)}`);
-  };
-
-  const handleArchiveToggle = async (session: Session) => {
-    if (activeTab === "archived") {
-      await unarchiveSession(session.id);
-    } else {
-      await archiveSession(session.id);
-    }
+  const handleUnarchive = async (session: Session) => {
+    await unarchiveSession(session.id);
   };
 
   const handleBatchDelete = () => {
@@ -168,14 +144,6 @@ function SessionsPage() {
     });
   };
 
-  const handleBatchArchive = async () => {
-    if (selectedRowKeys.length === 0) return;
-    const success = await batchArchiveSessions(selectedRowKeys as string[]);
-    if (success) {
-      setSelectedRowKeys([]);
-    }
-  };
-
   const handleBatchUnarchive = async () => {
     if (selectedRowKeys.length === 0) return;
     const success = await batchUnarchiveSessions(selectedRowKeys as string[]);
@@ -184,36 +152,10 @@ function SessionsPage() {
     }
   };
 
-  const handleDrawerClose = () => {
-    setDrawerOpen(false);
-    setEditingSession(null);
-  };
-
-  const handleSubmit = async (values: Session) => {
-    if (editingSession) {
-      setSaving(true);
-      try {
-        const updated = {
-          name: values.name,
-        };
-        const success = await updateSession(editingSession.id, updated);
-        if (success) {
-          setDrawerOpen(false);
-        }
-      } finally {
-        setSaving(false);
-      }
-    }
-  };
-
-  const isArchivedTab = activeTab === "archived";
-
   const columns = createColumns({
-    onEdit: handleEdit,
     onDelete: handleDelete,
-    onView: handleView,
-    onArchiveToggle: handleArchiveToggle,
-    isArchivedTab,
+    onArchiveToggle: handleUnarchive,
+    isArchivedTab: true,
   });
 
   const rowSelection = {
@@ -230,48 +172,41 @@ function SessionsPage() {
       <PageHeader
         items={[{ title: t("nav.control") }, { title: t("sessions.title") }]}
         extra={
-          <div className={styles.headerRight}>
-            <FilterBar
-              isMobile={isMobile}
-              filterUserId={filterUserId}
-              filterChannel={filterChannel}
-              filterTitle={filterTitle}
-              uniqueChannels={availableChannels}
-              onUserIdChange={setFilterUserId}
-              onChannelChange={setFilterChannel}
-              onTitleChange={setFilterTitle}
-            />
-            {selectedRowKeys.length > 0 && (
-              <>
-                {isArchivedTab ? (
+          activeTab === "archived" ? (
+            <div className={styles.headerRight}>
+              <FilterBar
+                isMobile={isMobile}
+                filterUserId={filterUserId}
+                filterChannel={filterChannel}
+                filterTitle={filterTitle}
+                uniqueChannels={availableChannels}
+                onUserIdChange={setFilterUserId}
+                onChannelChange={setFilterChannel}
+                onTitleChange={setFilterTitle}
+              />
+              {selectedRowKeys.length > 0 && (
+                <>
                   <Button onClick={handleBatchUnarchive}>
                     {t("sessions.archive.batchUnaction", "Batch Unarchive")} (
                     {selectedRowKeys.length})
                   </Button>
-                ) : (
-                  <Button onClick={handleBatchArchive}>
-                    {t("sessions.archive.batchAction", "Batch Archive")} (
-                    {selectedRowKeys.length})
+                  <Button type="primary" danger onClick={handleBatchDelete}>
+                    {t("sessions.batchDeleteButton")} ({selectedRowKeys.length})
                   </Button>
-                )}
-                <Button type="primary" danger onClick={handleBatchDelete}>
-                  {t("sessions.batchDeleteButton")} ({selectedRowKeys.length})
-                </Button>
-              </>
-            )}
-          </div>
+                </>
+              )}
+            </div>
+          ) : undefined
         }
       />
 
       <Tabs
         activeKey={activeTab}
-        onChange={(key) =>
-          setActiveTab(key as "active" | "archived" | "runs")
-        }
+        onChange={(key) => setActiveTab(key as "runs" | "archived")}
         items={[
           {
-            key: "active",
-            label: `${t("sessions.activeTab", "Active")} (${activeCount})`,
+            key: "runs",
+            label: t("sessions.runLogs.tab", "运行日志"),
           },
           {
             key: "archived",
@@ -280,15 +215,11 @@ function SessionsPage() {
               "Archived",
             )} (${archivedCount})`,
           },
-          {
-            key: "runs",
-            label: t("sessions.runLogs.tab", "运行日志"),
-          },
         ]}
         style={{ padding: "0 16px" }}
       />
 
-      {activeTab === "runs" ? (
+      {activeTab !== "archived" ? (
         <Suspense fallback={null}>
           <LazyRunLogs />
         </Suspense>
@@ -315,57 +246,21 @@ function SessionsPage() {
                 <span>Created: {formatTime(session.created_at)}</span>
               </div>
               <div className={styles.mobileSessionActions}>
-                {isArchivedTab ? (
-                  <>
-                    <Button
-                      size="small"
-                      className={styles.mobileActionBtn}
-                      onClick={() => handleArchiveToggle(session)}
-                    >
-                      {t("sessions.archive.unaction", "Unarchive")}
-                    </Button>
-                    <Button
-                      size="small"
-                      className={styles.mobileActionBtn}
-                      danger
-                      onClick={() => handleDelete(session.id)}
-                    >
-                      {t("common.delete")}
-                    </Button>
-                  </>
-                ) : (
-                  <>
-                    <Button
-                      size="small"
-                      className={styles.mobileActionBtn}
-                      onClick={() => handleEdit(session)}
-                    >
-                      {t("common.edit")}
-                    </Button>
-                    <Button
-                      size="small"
-                      className={styles.mobileActionBtn}
-                      onClick={() => handleView(session)}
-                    >
-                      {t("common.view")}
-                    </Button>
-                    <Button
-                      size="small"
-                      className={styles.mobileActionBtn}
-                      onClick={() => handleArchiveToggle(session)}
-                    >
-                      {t("sessions.archive.action", "Archive")}
-                    </Button>
-                    <Button
-                      size="small"
-                      className={styles.mobileActionBtn}
-                      danger
-                      onClick={() => handleDelete(session.id)}
-                    >
-                      {t("common.delete")}
-                    </Button>
-                  </>
-                )}
+                <Button
+                  size="small"
+                  className={styles.mobileActionBtn}
+                  onClick={() => handleUnarchive(session)}
+                >
+                  {t("sessions.archive.unaction", "Unarchive")}
+                </Button>
+                <Button
+                  size="small"
+                  className={styles.mobileActionBtn}
+                  danger
+                  onClick={() => handleDelete(session.id)}
+                >
+                  {t("common.delete")}
+                </Button>
               </div>
             </Card>
           ))}
@@ -389,15 +284,6 @@ function SessionsPage() {
           />
         </Card>
       )}
-
-      <SessionDrawer
-        open={drawerOpen}
-        editingSession={editingSession}
-        form={form}
-        saving={saving}
-        onClose={handleDrawerClose}
-        onSubmit={handleSubmit}
-      />
     </div>
   );
 }

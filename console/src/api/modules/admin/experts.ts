@@ -72,6 +72,39 @@ export interface ExpertUpdateBody {
   hire_date_clear?: boolean;
 }
 
+/** 草稿调试实例启停结果（preview/start | preview/stop）。 */
+export interface ExpertPreviewInstance {
+  expert_id: string;
+  agent_id: string;
+  workspace_dir?: string;
+  running: boolean;
+}
+
+/** 调试实例状态 + 草稿是否有未发布变更（工作台徽标数据源）。 */
+export interface ExpertPreviewStatus {
+  expert_id: string;
+  agent_id: string;
+  running: boolean;
+  has_unpublished_changes: boolean;
+  expert_status: ExpertRecord["status"];
+  published_version: number | null;
+  version: number;
+}
+
+/** 一条不可变发布快照（版本历史）。 */
+export interface ExpertVersionInfo {
+  version: number;
+  published_by: string;
+  published_at: string | null;
+}
+
+/** 版本恢复结果（快照 spec 写回草稿，需再次发布才影响线上）。 */
+export interface ExpertVersionRestoreResult {
+  expert_id: string;
+  restored_version: number;
+  agent_spec: Record<string, unknown>;
+}
+
 const enc = encodeURIComponent;
 
 export const adminExpertsApi = {
@@ -107,4 +140,36 @@ export const adminExpertsApi = {
     request<ExpertRecord>(`/admin/experts/${enc(expertId)}/archive`, {
       method: "POST",
     }),
+
+  // ── 草稿调试实例（与线上 expert_{id} 完全隔离，发布联动销毁）──
+
+  previewStart: (expertId: string) =>
+    request<ExpertPreviewInstance>(
+      `/admin/experts/${enc(expertId)}/preview/start`,
+      { method: "POST" },
+    ),
+
+  previewStop: (expertId: string) =>
+    request<ExpertPreviewInstance>(
+      `/admin/experts/${enc(expertId)}/preview/stop`,
+      { method: "POST" },
+    ),
+
+  previewStatus: (expertId: string) =>
+    request<ExpertPreviewStatus>(
+      `/admin/experts/${enc(expertId)}/preview/status`,
+    ),
+
+  // ── 版本历史（published_experts 不可变快照链，只增）──
+
+  listVersions: (expertId: string) =>
+    request<{ versions: ExpertVersionInfo[] }>(
+      `/admin/experts/${enc(expertId)}/versions`,
+    ),
+
+  restoreVersion: (expertId: string, version: number) =>
+    request<ExpertVersionRestoreResult>(
+      `/admin/experts/${enc(expertId)}/versions/${version}/restore`,
+      { method: "POST" },
+    ),
 };

@@ -5,6 +5,7 @@
  * swaps the summon row for status + edit/delete actions.
  */
 import type { Expert } from "../../api/modules";
+import ExpertDiceAvatar from "./ExpertDiceAvatar";
 
 export interface ExpertCardProps {
   expert: Expert;
@@ -41,7 +42,16 @@ export default function ExpertCard({
       ) : null}
       <div className="expert-card-head">
         <div className="expert-avatar">
-          <i className={expert.icon || "fa-solid fa-user-tie"} />
+          {/* dicebear:// 显式配置 → 形象头像；FA 类名旧值保持原渲染 */}
+          {expert.icon?.trim().startsWith("dicebear://") ? (
+            <ExpertDiceAvatar
+              icon={expert.icon}
+              expertId={expert.id}
+              name={expert.name}
+            />
+          ) : (
+            <i className={expert.icon || "fa-solid fa-user-tie"} />
+          )}
         </div>
         <div className="expert-card-head-text">
           <div className="expert-title">

@@ -42,6 +42,9 @@ RETENTION_DAYS = 30
 _PURGE_INTERVAL_SECONDS = 24 * 3600
 _last_purge_at: float = 0.0
 
+# Shard-file dates are local days; one shard covers this many seconds.
+_SECONDS_PER_DAY = 86400
+
 # Long free-text fields are truncated before they hit the index.
 _PREVIEW_MAX_CHARS = 200
 _ERROR_MAX_CHARS = 500
@@ -245,16 +248,26 @@ async def append_run_index(entry: dict[str, Any]) -> None:
     await _maybe_purge(time.time())
 
 
-async def update_run_index(run_id: str, **updates: Any) -> None:
-    """Patch the matching row (today's shard, falling back to yesterday)."""
+async def update_run_index(
+    run_id: str,
+    *,
+    run_day: date | None = None,
+    **updates: Any,
+) -> None:
+    """Patch the matching row (run day, falling back to today/yesterday)."""
     if not run_id or not updates:
         return
     row = normalize_index_entry(updates)
     today = date.fromtimestamp(time.time())
+    candidates = [today, today - timedelta(days=1)]
+    # Runs finalized after midnight (or after a restart) may live in an
+    # older shard; the caller knows the start day, so try it first.
+    if run_day is not None and run_day not in candidates:
+        candidates.insert(0, run_day)
     async with _LOCK:
         await run_sync_io(
             _update_shard_blocking,
-            [today, today - timedelta(days=1)],
+            candidates,
             run_id,
             row,
         )
@@ -290,6 +303,16 @@ async def query_run_logs(
 
     matches: list[dict[str, Any]] = []
     for path in shard_paths:
+        # Shard names encode the local day, so whole files outside the
+        # requested window can be skipped without parsing any line.
+        day = _shard_day(path)
+        if day is not None:
+            day_start = datetime(day.year, day.month, day.day).timestamp()
+            day_end = day_start + _SECONDS_PER_DAY
+            if start_ts is not None and day_end <= start_ts:
+                break
+            if end_ts is not None and day_start > end_ts:
+                continue
         rows = await run_sync_io(_read_shard_rows, path)
         for row in reversed(rows):
             if _matches(

@@ -1,49 +1,86 @@
 /**
  * RunLogs — competitor-style run-log list for the Sessions page.
- * Columns: status / environment / query preview / user / start time /
- * channel / trace id / session id / tokens / duration / version.
- * Mounted inside SessionsPage's Tabs (key="runs") and lazy-loaded.
+ * Toolbar mirrors the competitor: retention hint, search / status /
+ * environment / date-range (default last 7 days) filters plus reset,
+ * column-settings and refresh icon buttons. Clicking a row (or its id)
+ * navigates to the full detail page at runs/:runId.
  */
 import { useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Button, Input, Select, Table } from "@agentscope-ai/design";
-import { DatePicker } from "antd";
+import { Input, Select, Table, Tag } from "@agentscope-ai/design";
+import { Checkbox, DatePicker, Popover } from "antd";
 import type { Dayjs } from "dayjs";
-import { StatusPill } from "@/components/staffdeck";
+import dayjs from "dayjs";
+import {
+  CircleCheck,
+  CircleX,
+  LoaderCircle,
+  RotateCcw,
+  Settings2,
+} from "lucide-react";
 import { useAgentStore } from "../../../../stores/agentStore";
-import { ChannelIcon } from "../../Channels/components";
+import { useExpertAvatarUri } from "../../../../hooks/useExpertAvatarUri";
+import { CHANNEL_COLORS } from "../../../../constants/channel";
 import type { RunLogItem } from "../../../../api/modules/runLogs";
 import {
   useRunLogs,
   type RunEnvironmentFilter,
   type RunStatusFilter,
 } from "./useRunLogs";
-import { RunLogDetailDrawer, formatClock, formatDuration } from "./RunLogDetailDrawer";
+import { formatClock, formatDuration } from "./format";
 import styles from "./runLogs.module.less";
 
 const { RangePicker } = DatePicker;
 
-/** 76b3e9a2f1c8… — short copyable trace id cell. */
-function TraceIdCell({ runId }: { runId: string }) {
-  const short = runId.length > 14 ? `${runId.slice(0, 14)}…` : runId;
+/** Green ✓ / red ✗ / blue spinner, competitor-style status column. */
+function StatusIcon({ status }: { status: string }) {
+  if (status === "success") {
+    return (
+      <span
+        className={`${styles.statusIcon} ${styles.statusIconSuccess}`}
+        title={status}
+      >
+        <CircleCheck size={16} />
+      </span>
+    );
+  }
+  if (status === "failed") {
+    return (
+      <span
+        className={`${styles.statusIcon} ${styles.statusIconFailed}`}
+        title={status}
+      >
+        <CircleX size={16} />
+      </span>
+    );
+  }
   return (
-    <button
-      type="button"
-      className={styles.traceId}
-      title={runId}
-      onClick={(event) => {
-        event.stopPropagation();
-        navigator.clipboard?.writeText(runId).catch(() => undefined);
-      }}
+    <span
+      className={`${styles.statusIcon} ${styles.statusIconRunning}`}
+      title={status}
     >
-      {short}
-    </button>
+      <LoaderCircle size={16} className={styles.statusSpin} />
+    </span>
+  );
+}
+
+/** DiceBear avatar for the chatting user (stable seed = user_id). */
+function RunUserAvatar({ userId }: { userId: string }) {
+  const avatar = useExpertAvatarUri(null, userId);
+  if (avatar) {
+    return <img className={styles.userAvatar} src={avatar} alt="" />;
+  }
+  return (
+    <span className={styles.userAvatarFallback}>
+      {(userId || "?").slice(0, 1).toUpperCase()}
+    </span>
   );
 }
 
 export default function RunLogsPage() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   // 详情页/工作台内时 :aid 显式指定数据域；独立挂载时回退 selectedAgent（借壳）。
   const { aid } = useParams<{ aid: string }>();
   const { selectedAgent } = useAgentStore();
@@ -56,48 +93,32 @@ export default function RunLogsPage() {
     query,
     patchQuery,
     setPage,
+    reset,
     refresh,
   } = useRunLogs(effectiveAgent);
-  const [detailRun, setDetailRun] = useState<RunLogItem | null>(null);
+  // Column visibility (competitor's column-settings popover).
+  const [visibleKeys, setVisibleKeys] = useState<string[]>([]);
 
-  const statusLabel = (status: string) => {
-    if (status === "success") {
-      return t("runLogs.status.success", "成功");
-    }
-    if (status === "failed") {
-      return t("runLogs.status.failed", "失败");
-    }
-    return t("runLogs.status.running", "运行中");
-  };
-
-  const statusTone = (status: string) => {
-    if (status === "success") {
-      return "green" as const;
-    }
-    if (status === "failed") {
-      return "red" as const;
-    }
-    return "blue" as const;
-  };
-
-  const columns = useMemo(
+  const allColumns = useMemo(
     () => [
       {
+        key: "status",
         title: t("runLogs.column.status", "状态"),
         dataIndex: "status",
-        key: "status",
-        width: 90,
-        render: (status: string) => (
-          <StatusPill tone={statusTone(status)}>{statusLabel(status)}</StatusPill>
-        ),
+        width: 64,
+        render: (status: string) => <StatusIcon status={status} />,
       },
       {
+        key: "environment",
         title: t("runLogs.column.environment", "环境"),
         dataIndex: "environment",
-        key: "environment",
-        width: 80,
+        width: 76,
         render: (env: string) => (
-          <span className={styles.envTag}>
+          <span
+            className={`${styles.envTag} ${
+              env === "debug" ? styles.envTagDebug : styles.envTagOnline
+            }`}
+          >
             {env === "debug"
               ? t("runLogs.env.debug", "调试")
               : t("runLogs.env.online", "线上")}
@@ -105,54 +126,79 @@ export default function RunLogsPage() {
         ),
       },
       {
+        key: "query_preview",
         title: t("runLogs.column.query", "对话内容"),
         dataIndex: "query_preview",
-        key: "query_preview",
-        width: 260,
+        width: 240,
         ellipsis: true,
-        render: (text: string) => text || "—",
+        render: (text: string) => (
+          <span title={text}>{text || "—"}</span>
+        ),
       },
       {
+        key: "user_id",
         title: t("runLogs.column.user", "用户"),
         dataIndex: "user_id",
-        key: "user_id",
-        width: 120,
+        width: 140,
         ellipsis: true,
-        render: (text: string) => text || "—",
-      },
-      {
-        title: t("runLogs.column.startedAt", "开始时间"),
-        dataIndex: "started_at",
-        key: "started_at",
-        width: 170,
-        render: (value: number) => formatClock(value),
-      },
-      {
-        title: t("runLogs.column.channel", "渠道"),
-        dataIndex: "channel",
-        key: "channel",
-        width: 130,
-        render: (channel: string) =>
-          channel ? (
-            <span className={styles.channelCell}>
-              <ChannelIcon channelKey={channel} size={16} />
-              <span>{channel}</span>
+        render: (text: string) =>
+          text ? (
+            <span className={styles.userCell} title={text}>
+              <RunUserAvatar userId={text} />
+              <span className={styles.userName}>{text}</span>
             </span>
           ) : (
             "—"
           ),
       },
       {
-        title: "Trace ID",
-        dataIndex: "run_id",
-        key: "run_id",
-        width: 150,
-        render: (runId: string) => <TraceIdCell runId={runId} />,
+        key: "started_at",
+        title: t("runLogs.column.startedAt", "开始时间"),
+        dataIndex: "started_at",
+        width: 160,
+        render: (value: number) => formatClock(value),
       },
       {
+        key: "channel",
+        title: t("runLogs.column.channel", "渠道"),
+        dataIndex: "channel",
+        width: 130,
+        render: (channel: string) =>
+          channel ? (
+            <Tag color={CHANNEL_COLORS[channel] || "default"}>{channel}</Tag>
+          ) : (
+            "—"
+          ),
+      },
+      {
+        key: "run_id",
+        title: "Trace ID",
+        dataIndex: "run_id",
+        width: 150,
+        render: (runId: string) => (
+          <span
+            className={styles.sessionId}
+            title={runId}
+            onClick={(event) => {
+              event.stopPropagation();
+              navigate(`runs/${runId}`);
+            }}
+            role="link"
+            tabIndex={0}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                navigate(`runs/${runId}`);
+              }
+            }}
+          >
+            {runId.length > 14 ? `${runId.slice(0, 14)}…` : runId}
+          </span>
+        ),
+      },
+      {
+        key: "session_id",
         title: t("runLogs.column.sessionId", "会话 ID"),
         dataIndex: "session_id",
-        key: "session_id",
         width: 150,
         ellipsis: true,
         render: (text: string) => (
@@ -162,38 +208,64 @@ export default function RunLogsPage() {
         ),
       },
       {
+        key: "total_tokens",
         title: t("runLogs.column.tokens", "额度"),
         dataIndex: "total_tokens",
-        key: "total_tokens",
         width: 90,
         render: (value: number) =>
           typeof value === "number" && value > 0 ? value : "—",
       },
       {
+        key: "duration_ms",
         title: t("runLogs.column.duration", "耗时"),
         dataIndex: "duration_ms",
-        key: "duration_ms",
         width: 100,
         render: (value: number | null) => formatDuration(value),
       },
       {
+        key: "version",
         title: t("runLogs.column.version", "版本"),
         dataIndex: "version",
-        key: "version",
-        width: 90,
-        render: (text: string) => text || "—",
+        width: 110,
+        ellipsis: true,
+        render: (_text: string, record: RunLogItem) => {
+          // Prefer the model name; fall back to agent/app version labels.
+          const label =
+            record.model || record.version || record.app_version || "—";
+          const tip = [record.model, record.version]
+            .filter(Boolean)
+            .join(" · ");
+          return (
+            <span title={tip || undefined} className={styles.sessionId}>
+              {label}
+            </span>
+          );
+        },
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [t],
+    [t, navigate],
   );
+
+  const columns = useMemo(
+    () => allColumns.filter((column) => visibleKeys.includes(column.key)),
+    [allColumns, visibleKeys],
+  );
+
+  const rangeValue =
+    query.start && query.end
+      ? ([dayjs.unix(query.start), dayjs.unix(query.end)] as [
+          Dayjs,
+          Dayjs,
+        ])
+      : null;
 
   return (
     <div className={styles.runLogsPage}>
       <div className={styles.retentionHint}>
         {t(
           "runLogs.retentionHint",
-          "运行日志仅保留近 30 天，如需更长周期请及时备份",
+          "运行日志仅存储智能体近 30 天的运行日志，如需更长周期请及时备份",
         )}
       </div>
 
@@ -234,6 +306,7 @@ export default function RunLogsPage() {
         />
         <RangePicker
           className={styles.rangePicker}
+          value={rangeValue}
           onChange={(dates: [Dayjs | null, Dayjs | null] | null) => {
             if (dates && dates[0] && dates[1]) {
               patchQuery({
@@ -245,7 +318,56 @@ export default function RunLogsPage() {
             }
           }}
         />
-        <Button onClick={() => refresh()}>{t("common.refresh", "刷新")}</Button>
+        <span className={styles.filterActions}>
+          <button
+            type="button"
+            className={styles.filterIconBtn}
+            title={t("runLogs.filter.reset", "重置筛选")}
+            onClick={reset}
+          >
+            <RotateCcw size={14} />
+          </button>
+          <Popover
+            trigger="click"
+            placement="bottomRight"
+            content={
+              <div className={styles.columnMenu}>
+                {allColumns.map((column) => (
+                  <label key={column.key} className={styles.columnMenuItem}>
+                    <Checkbox
+                      checked={visibleKeys.includes(column.key)}
+                      onChange={(event) =>
+                        setVisibleKeys((prev) =>
+                          event.target.checked
+                            ? [...prev, column.key]
+                            : prev.filter((key) => key !== column.key),
+                        )
+                      }
+                    >
+                      {column.title as string}
+                    </Checkbox>
+                  </label>
+                ))}
+              </div>
+            }
+          >
+            <button
+              type="button"
+              className={styles.filterIconBtn}
+              title={t("runLogs.filter.columns", "列设置")}
+            >
+              <Settings2 size={14} />
+            </button>
+          </Popover>
+          <button
+            type="button"
+            className={styles.filterIconBtn}
+            title={t("common.refresh", "刷新")}
+            onClick={() => refresh()}
+          >
+            <RotateCcw size={14} />
+          </button>
+        </span>
       </div>
 
       {error && <div className={styles.loadError}>{error}</div>}
@@ -258,7 +380,7 @@ export default function RunLogsPage() {
         size="middle"
         onRow={(record) => ({
           className: styles.clickableRow,
-          onClick: () => setDetailRun(record),
+          onClick: () => navigate(`runs/${record.run_id}`),
         })}
         pagination={{
           current: query.page,
@@ -269,12 +391,6 @@ export default function RunLogsPage() {
             t("runLogs.totalCount", "共 {{count}} 条", { count }),
           onChange: (page, pageSize) => setPage(page, pageSize),
         }}
-      />
-
-      <RunLogDetailDrawer
-        open={detailRun !== null}
-        run={detailRun}
-        onClose={() => setDetailRun(null)}
       />
     </div>
   );

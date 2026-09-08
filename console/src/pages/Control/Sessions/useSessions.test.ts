@@ -36,10 +36,17 @@ import { chatApi } from "../../../api/modules/chat";
 type Session = { id: string; name: string; [key: string]: unknown };
 
 describe("useSessions", () => {
+  // 默认 Tab 为 "runs"（运行日志）；会话管理断言统一切到归档视图。
   const mockSessions: Session[] = [
-    { id: "s1", name: "Session 1" },
-    { id: "s2", name: "Session 2" },
+    { id: "s1", name: "Session 1", archived: true },
+    { id: "s2", name: "Session 2", archived: true },
   ];
+
+  function renderSessionsOnArchivedTab() {
+    const utils = renderHook(() => useSessions());
+    act(() => utils.result.current.setActiveTab("archived"));
+    return utils;
+  }
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -61,7 +68,7 @@ describe("useSessions", () => {
 
   // 2. 初始挂载时调用 listSessions，sessions 被设置
   it("初始挂载时调用 listSessions，sessions 被设置", async () => {
-    const { result } = renderHook(() => useSessions());
+    const { result } = renderSessionsOnArchivedTab();
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false);
@@ -73,12 +80,16 @@ describe("useSessions", () => {
 
   // 3. updateSession 成功时更新 sessions 列表并调用 message.success
   it("updateSession 成功时更新 sessions 列表并调用 message.success", async () => {
-    const updatedSession: Session = { id: "s1", name: "Updated Session 1" };
+    const updatedSession: Session = {
+      id: "s1",
+      name: "Updated Session 1",
+      archived: true,
+    };
     (api.updateSession as ReturnType<typeof vi.fn>).mockResolvedValue(
       updatedSession,
     );
 
-    const { result } = renderHook(() => useSessions());
+    const { result } = renderSessionsOnArchivedTab();
 
     // 等待初始数据加载完成
     await waitFor(() => {
@@ -125,7 +136,7 @@ describe("useSessions", () => {
       undefined,
     );
 
-    const { result } = renderHook(() => useSessions());
+    const { result } = renderSessionsOnArchivedTab();
 
     await waitFor(() => {
       expect(result.current.sessions).toEqual(mockSessions);
@@ -169,7 +180,7 @@ describe("useSessions", () => {
       undefined,
     );
 
-    const { result } = renderHook(() => useSessions());
+    const { result } = renderSessionsOnArchivedTab();
 
     await waitFor(() => {
       expect(result.current.sessions).toEqual(mockSessions);

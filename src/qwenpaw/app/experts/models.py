@@ -74,6 +74,16 @@ def expert_agent_id(expert_id: str) -> str:
     return f"expert_{expert_id}"
 
 
+#: 草稿调试实例后缀：与线上 ``expert_{id}`` 严格区分，保证调试会话、
+#: 工作区与前端业务（X-Agent-Id 直连线上）完全隔离。
+DRAFT_AGENT_SUFFIX = "__draft"
+
+
+def expert_draft_agent_id(expert_id: str) -> str:
+    """Runtime agent id for one expert's draft preview (debug) instance."""
+    return f"{expert_agent_id(expert_id)}{DRAFT_AGENT_SUFFIX}"
+
+
 def expert_team_agent_id(team_id: str) -> str:
     """Runtime agent id for one published expert team supervisor."""
     return f"team_{team_id}"

@@ -7,13 +7,14 @@
  */
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { avatarGradient } from "@/utils/avatarGradient";
+import ExpertAvatar from "@/components/ExpertAvatar";
 import { StatusPill, expertStatusTone, expertStatusLabel } from "./StatusPill";
 
 export interface EmployeeCardProps {
   expert: {
     id: string;
     name: string;
+    icon?: string;
     title?: string;
     description?: string;
     status?: string;
@@ -84,23 +85,14 @@ export function EmployeeCard({
           padding: "0 18px",
         }}
       >
-        <div
-          style={{
-            width: 52,
-            height: 52,
-            borderRadius: "50%",
-            background: avatarGradient(expert.id + expert.name),
-            color: "#fff",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: 20,
-            fontWeight: 600,
-            flexShrink: 0,
-          }}
-        >
-          {(expert.name || "?").slice(0, 1)}
-        </div>
+        {/* 形象头像：dicebear:// 配置生效，空值自动分配，旧值回退渐变 */}
+        <ExpertAvatar
+          icon={expert.icon}
+          expertId={expert.id}
+          name={expert.name}
+          size={52}
+          style={{ fontSize: 20 }}
+        />
         <div style={{ minWidth: 0, flex: 1 }}>
           <div
             style={{

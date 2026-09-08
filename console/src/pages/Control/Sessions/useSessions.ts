@@ -15,10 +15,8 @@ export function useSessions(agentId?: string) {
   const { t } = useTranslation();
   const [allSessions, setAllSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
-  // "runs" 渲染运行日志视图（SessionsPage 内部消费，不影响会话数据）。
-  const [activeTab, setActiveTab] = useState<
-    "active" | "archived" | "runs"
-  >("active");
+  // "runs"（默认）渲染运行日志视图；"archived" 为归档会话管理。
+  const [activeTab, setActiveTab] = useState<"runs" | "archived">("runs");
   const { selectedAgent } = useAgentStore();
   const effectiveAgent = agentId ?? selectedAgent;
   const { message } = useAppMessage();
@@ -51,7 +49,7 @@ export function useSessions(agentId?: string) {
     [allSessions],
   );
 
-  const sessions = activeTab === "active" ? activeSessions : archivedSessions;
+  const sessions = activeTab === "archived" ? archivedSessions : [];
   const activeCount = activeSessions.length;
   const archivedCount = archivedSessions.length;
 

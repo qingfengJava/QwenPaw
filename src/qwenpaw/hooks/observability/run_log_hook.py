@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from datetime import date
 
 from ..base import LifecycleHook
 from ...runtime.hooks import HookContext, HookResult
@@ -34,6 +35,29 @@ def _resolve_environment(agent_id: str | None) -> str:
     if agent_id and agent_id.endswith(_DRAFT_SUFFIX):
         return "debug"
     return "online"
+
+
+def _read_agent_labels(ctx: HookContext) -> tuple[str, str]:
+    """Return ``(agent_version, model)`` advertised by the agent config."""
+    config = getattr(ctx, "agent_config", None)
+    agent_version = (getattr(config, "version", "") or "")[:32]
+    active_model = getattr(config, "active_model", None)
+    model = getattr(active_model, "model", "") or ""
+    return agent_version, model
+
+
+def _peek_staged_usage(session_id: str) -> dict | None:
+    """Non-destructive look at the staged LLM usage for this session.
+
+    The channel layer persists (and pops) this record only after the
+    runner finishes, so the FINALLY hook must peek instead of pop.
+    """
+    try:
+        from ...token_usage.model_wrapper import TokenRecordingModelWrapper
+
+        return TokenRecordingModelWrapper.peek_usage_for_session(session_id)
+    except Exception:  # pylint: disable=broad-except
+        return None
 
 
 def _sum_delta_tokens(delta: list[dict]) -> int:
@@ -82,6 +106,7 @@ class RunLogStartHook(LifecycleHook):
             channel = getattr(ctx.request, "channel", None) or ""
             chat_id = getattr(ctx.request, "chat_id", None) or ""
             environment = _resolve_environment(ctx.agent_id)
+            agent_version, model = _read_agent_labels(ctx)
 
             # Baseline snapshot: only messages created during this run
             # become trace events (same technique as the cron executor).
@@ -103,7 +128,9 @@ class RunLogStartHook(LifecycleHook):
                     "channel": channel,
                     "environment": environment,
                     "query": _get_last_user_text(ctx.input_msgs),
-                    "version": __version__,
+                    "model": model,
+                    "version": agent_version,
+                    "app_version": __version__,
                 },
             )
             await append_run_index(
@@ -122,7 +149,9 @@ class RunLogStartHook(LifecycleHook):
                     "finished_at": None,
                     "duration_ms": None,
                     "total_tokens": 0,
-                    "version": __version__,
+                    "model": model,
+                    "version": agent_version,
+                    "app_version": __version__,
                     "error": None,
                 },
             )
@@ -176,13 +205,35 @@ class RunLogFinishHook(LifecycleHook):
             )
             finished_at = time.time()
             await finalize_trace(run_id, status=status, error=error)
+
+            # The channel layer writes usage meta only after the runner
+            # returns, so the delta scan below usually sees zero; prefer
+            # the staged record (actual model + summed tokens) instead.
+            staged = _peek_staged_usage(ctx.session_id)
+            staged_tokens = 0
+            staged_model = ""
+            if isinstance(staged, dict):
+                try:
+                    staged_tokens = int(staged.get("total_tokens", 0) or 0)
+                except (TypeError, ValueError):
+                    staged_tokens = 0
+                staged_model = str(staged.get("model_name") or "")
+
+            updates: dict = {
+                "status": status,
+                "finished_at": finished_at,
+                "duration_ms": int((finished_at - started_at) * 1000),
+                "total_tokens": staged_tokens or _sum_delta_tokens(delta),
+                "error": error,
+            }
+            # Fallback scenarios may switch models mid-run; trust the
+            # actually-used model over the config prediction.
+            if staged_model:
+                updates["model"] = staged_model
             await update_run_index(
                 run_id,
-                status=status,
-                finished_at=finished_at,
-                duration_ms=int((finished_at - started_at) * 1000),
-                total_tokens=_sum_delta_tokens(delta),
-                error=error,
+                run_day=date.fromtimestamp(started_at),
+                **updates,
             )
         except Exception:  # pylint: disable=broad-except
             logger.warning("run log finish hook failed", exc_info=True)

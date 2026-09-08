@@ -330,6 +330,7 @@ async def list_resources(expert_id: str) -> Dict[str, Any]:
 async def replace_resources(
     expert_id: str,
     body: ResourceBindingsPutBody,
+    request: Request,
 ) -> Dict[str, Any]:
     """Replace all bindings (PUT empty list = clear; idempotent).
 
@@ -360,16 +361,20 @@ async def replace_resources(
         expert_id,
         enriched,
     )
-    # 已发布专家即时重建 PROFILE.md（直聊会话感知新绑定，P1 收尾；
-    # best-effort：未发布/无 workspace 静默跳过）
+    # 发布边界收紧（20260908）：绑定变更只落草稿域。若调试实例正在
+    # 运行，仅重写草稿 PROFILE.md（调试会话即时感知）；线上 PROFILE.md
+    # 由发布流程物化，后台调试期的绑定变更不再泄漏到线上。
     try:
-        from ...experts.publish import materialize_expert_profile
+        from ...experts.preview import refresh_expert_preview_profile
 
-        await materialize_expert_profile(expert_id)
+        await refresh_expert_preview_profile(
+            expert_id,
+            manager=_manager(request),
+        )
     except Exception:  # pylint: disable=broad-except
         logger.warning(
-            "expert %s binding changed but profile re-materialization "
-            "failed (next publish will refresh)",
+            "expert %s binding changed but preview profile refresh "
+            "failed (next preview start / publish will refresh)",
             expert_id,
             exc_info=True,
         )

@@ -15,6 +15,11 @@ from ...experts.models import (
     ExpertUpdateBody,
     expert_agent_id,
 )
+from ...experts.preview import (
+    preview_status,
+    start_expert_preview,
+    stop_expert_preview,
+)
 from ...experts.publish import archive_expert, publish_expert
 from ...experts.store import get_expert_store
 from ...rbac import PERM_ADMIN_EXPERTS, require_perm
@@ -152,4 +157,108 @@ async def runtime_agent_id(expert_id: str) -> dict:
         "agent_id": expert_agent_id(expert_id),
         "status": record.status,
         "published": record.status == EXPERT_STATUS_PUBLISHED,
+    }
+
+
+# ----------------------------------------------------------------------
+# Draft preview (debug) instance: 与线上 expert_{id} 完全隔离的草稿运行时。
+# 前端工作台调试开关经这三个接口启停；发布成功后 publish_expert 联动销毁。
+# ----------------------------------------------------------------------
+
+
+def _preview_http_error(exc: ValueError) -> HTTPException:
+    """Map preview ValueError to 404 (missing) / 400 (state conflict)."""
+    detail = str(exc)
+    return HTTPException(
+        status_code=404 if "not found" in detail else 400,
+        detail=detail,
+    )
+
+
+@router.post("/{expert_id}/preview/start")
+async def preview_start(expert_id: str, request: Request) -> dict:
+    """Materialize the draft as an isolated debug agent and hot-load it."""
+    try:
+        return await start_expert_preview(
+            expert_id,
+            manager=_manager(request),
+        )
+    except ValueError as exc:
+        raise _preview_http_error(exc) from exc
+
+
+@router.post("/{expert_id}/preview/stop")
+async def preview_stop(expert_id: str, request: Request) -> dict:
+    """Unload the debug agent and remove its draft workspace."""
+    try:
+        return await stop_expert_preview(
+            expert_id,
+            manager=_manager(request),
+        )
+    except ValueError as exc:
+        raise _preview_http_error(exc) from exc
+
+
+@router.get("/{expert_id}/preview/status")
+async def preview_state(expert_id: str) -> dict:
+    """Debug instance state + whether the draft has unpublished changes."""
+    try:
+        return await preview_status(expert_id)
+    except ValueError as exc:
+        raise _preview_http_error(exc) from exc
+
+
+# ----------------------------------------------------------------------
+# Version history: published_experts 不可变快照链（只增）。
+# 回滚 = 快照 spec 写回草稿，需再次发布才影响线上。
+# ----------------------------------------------------------------------
+
+#: 快照 spec 内嵌的运行时字段，写回草稿时剥离（属于物化产物而非源配置）。
+_SPEC_RUNTIME_KEYS = {"id", "name", "description", "workspace_dir"}
+
+
+@router.get("/{expert_id}/versions")
+async def list_versions(expert_id: str) -> dict:
+    """All published snapshots of one expert (newest first)."""
+    store = get_expert_store()
+    if await store.get_expert(expert_id) is None:
+        raise HTTPException(status_code=404, detail="Expert not found")
+    snapshots = await store.list_snapshots(expert_id)
+    return {
+        "versions": [
+            {
+                "version": s.version,
+                "published_by": s.published_by,
+                "published_at": (
+                    s.published_at.isoformat() if s.published_at else None
+                ),
+            }
+            for s in snapshots
+        ]
+    }
+
+
+@router.post("/{expert_id}/versions/{version}/restore")
+async def restore_version(expert_id: str, version: int) -> dict:
+    """Restore one snapshot's spec into the draft (publish again to go live).
+
+    快照只增不可变：恢复仅覆盖草稿 agent_spec（剥离运行时字段），
+    线上与已发布版本均不受影响；工作台随后显示「有未发布变更」。
+    """
+    store = get_expert_store()
+    snapshot = await store.get_snapshot(expert_id, version)
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+    draft_spec = {
+        key: value
+        for key, value in (snapshot.spec or {}).items()
+        if key not in _SPEC_RUNTIME_KEYS
+    }
+    record = await store.update_expert(expert_id, agent_spec=draft_spec)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Expert not found")
+    return {
+        "expert_id": expert_id,
+        "restored_version": version,
+        "agent_spec": draft_spec,
     }

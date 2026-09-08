@@ -470,6 +470,73 @@ class ExpertStore:
                 published_at=row.published_at,
             )
 
+    async def list_snapshots(
+        self,
+        expert_id: str,
+        limit: int = 50,
+    ) -> list[PublishedSnapshot]:
+        """All immutable published snapshots of one expert (newest first).
+
+        版本历史 UI 数据源：只增不可变，回滚 = 快照 spec 写回草稿。
+        """
+        engine = require_enterprise_engine()
+        async with engine.connect() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT expert_id, version, spec, published_by, "
+                    "published_at FROM published_experts "
+                    "WHERE tenant_id = :tid AND expert_id = :eid "
+                    "ORDER BY version DESC LIMIT :lim"
+                ),
+                {
+                    "tid": current_tenant_id(),
+                    "eid": expert_id,
+                    "lim": limit,
+                },
+            )
+            return [
+                PublishedSnapshot(
+                    expert_id=row.expert_id,
+                    version=row.version,
+                    spec=row.spec or {},
+                    published_by=row.published_by,
+                    published_at=row.published_at,
+                )
+                for row in result.all()
+            ]
+
+    async def get_snapshot(
+        self,
+        expert_id: str,
+        version: int,
+    ) -> Optional[PublishedSnapshot]:
+        """One immutable snapshot by version (回滚数据源)。"""
+        engine = require_enterprise_engine()
+        async with engine.connect() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT expert_id, version, spec, published_by, "
+                    "published_at FROM published_experts "
+                    "WHERE tenant_id = :tid AND expert_id = :eid "
+                    "AND version = :ver"
+                ),
+                {
+                    "tid": current_tenant_id(),
+                    "eid": expert_id,
+                    "ver": version,
+                },
+            )
+            row = result.first()
+            if row is None:
+                return None
+            return PublishedSnapshot(
+                expert_id=row.expert_id,
+                version=row.version,
+                spec=row.spec or {},
+                published_by=row.published_by,
+                published_at=row.published_at,
+            )
+
     # ------------------------------------------------------------------
     # expert teams
     # ------------------------------------------------------------------

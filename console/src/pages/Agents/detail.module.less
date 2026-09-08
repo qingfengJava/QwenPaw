@@ -397,15 +397,32 @@
   display: flex;
   flex-direction: column;
   gap: 22px;
-  max-width: 1080px;
+  /* 自适应屏幕：不限宽，卡片随容器拉伸（大屏不再右侧留白） */
+  width: 100%;
+  /* 作为容器查询上下文：统计卡列数按右栏实际宽度断（聊天面板
+     拖宽时右栏变窄，视口媒体查询无法感知） */
+  container-type: inline-size;
   /* 滚动到底时留出呼吸空间（容器底 padding 已归零给 Chat 贴底） */
   padding-bottom: 24px;
 }
 
 .statRow {
-  display: flex;
+  /* 恒定 4 列：四张统计卡永远同行（右栏过窄降为 2×2，见下方容器查询） */
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 14px;
-  flex-wrap: wrap;
+
+  /* StatCard 内联 minWidth:140 会让窄格子里的卡片溢出重叠，
+     容器内一律允许收缩（important 覆盖内联样式） */
+  > * {
+    min-width: 0 !important;
+  }
+}
+
+@container (max-width: 480px) {
+  .statRow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .overviewSection {
@@ -426,54 +443,251 @@
   color: rgba(255, 255, 255, 0.92);
 }
 
-/* 能力资产入口卡 */
+/* Hero 档案头（工作台右栏顶部：形象 + 名称 + 状态 + 简介） */
 
-.abilityRow {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 12px;
+.heroCard {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 20px 24px;
 }
 
-.abilityCard {
+.heroAvatar {
+  width: 56px;
+  height: 56px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  color: #fff;
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  font-weight: 600;
+  overflow: hidden;
+}
+
+.heroInfo {
+  flex: 1;
+  min-width: 0;
+}
+
+.heroNameRow {
+  display: flex;
+  align-items: center;
   gap: 10px;
-  padding: 16px;
-  background: var(--sd-card);
+  min-width: 0;
+}
+
+.heroName {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--sd-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.heroPin {
+  color: var(--sd-text-3);
+  flex-shrink: 0;
+}
+
+.heroDesc {
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--sd-text-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+:global([data-theme="dark"]) .heroName,
+:global(.dark) .heroName {
+  color: rgba(255, 255, 255, 0.92);
+}
+
+:global([data-theme="dark"]) .heroDesc,
+:global(.dark) .heroDesc {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+/* 基础配置：文件 chip 切换 + Markdown / JSON 内容区 */
+
+.configFileRow {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.configChip {
   border: 0.5px solid var(--sd-line);
-  border-radius: var(--sd-radius-lg);
+  background: transparent;
+  border-radius: var(--sd-radius-pill);
+  padding: 4px 14px;
+  font-size: 12.5px;
+  font-family: var(--sd-font-mono, ui-monospace, monospace);
+  color: var(--sd-text-3);
   cursor: pointer;
-  text-align: left;
   transition:
-    box-shadow 0.15s ease,
-    transform 0.15s ease;
+    background-color 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
 
   &:hover {
-    box-shadow: var(--sd-shadow-pop);
-    transform: translateY(-1px);
+    color: var(--sd-link);
+    border-color: var(--sd-link);
   }
 }
 
-:global([data-theme="dark"]) .abilityCard,
-:global(.dark) .abilityCard {
-  background: rgba(255, 255, 255, 0.04);
-  border-color: rgba(255, 255, 255, 0.1);
-}
-
-.abilityIcon {
+.configChipActive,
+:global([data-theme="dark"]) .configChipActive,
+:global(.dark) .configChipActive {
+  background: var(--sd-blue-bg);
+  border-color: var(--sd-link);
   color: var(--sd-link);
 }
 
-.abilityName {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--sd-ink);
+:global([data-theme="dark"]) .configChip,
+:global(.dark) .configChip {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.6);
+
+  &:hover {
+    color: var(--sd-link);
+    border-color: var(--sd-link);
+  }
 }
 
-:global([data-theme="dark"]) .abilityName,
-:global(.dark) .abilityName {
-  color: rgba(255, 255, 255, 0.88);
+.configJson {
+  margin: 0;
+  padding: 12px 16px;
+  background: var(--sd-gray-bg);
+  border: 0.5px solid var(--sd-line);
+  border-radius: var(--sd-radius-md);
+  font-size: 12.5px;
+  line-height: 20px;
+  color: var(--sd-text-4);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+:global([data-theme="dark"]) .configJson,
+:global(.dark) .configJson {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.7);
+}
+
+/* Markdown 正文排版（PROFILE.md / AGENTS.md 渲染区） */
+
+.mdBody {
+  font-size: 13.5px;
+  line-height: 22px;
+  color: var(--sd-text-4);
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    margin: 14px 0 6px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--sd-ink);
+
+    &:first-child {
+      margin-top: 0;
+    }
+  }
+
+  p {
+    margin: 6px 0;
+  }
+
+  ul,
+  ol {
+    margin: 6px 0;
+    padding-left: 22px;
+  }
+
+  li {
+    margin: 2px 0;
+  }
+
+  code {
+    padding: 1px 6px;
+    border-radius: var(--sd-radius-sm);
+    background: var(--sd-gray-bg);
+    font-size: 12.5px;
+    font-family: var(--sd-font-mono, ui-monospace, monospace);
+  }
+
+  pre {
+    margin: 8px 0;
+    padding: 12px 16px;
+    background: var(--sd-gray-bg);
+    border: 0.5px solid var(--sd-line);
+    border-radius: var(--sd-radius-md);
+    overflow-x: auto;
+
+    code {
+      padding: 0;
+      background: none;
+    }
+  }
+
+  blockquote {
+    margin: 8px 0;
+    padding: 4px 14px;
+    border-left: 3px solid var(--sd-line);
+    color: var(--sd-text-3);
+  }
+
+  a {
+    color: var(--sd-link);
+  }
+
+  table {
+    margin: 8px 0;
+    border-collapse: collapse;
+
+    th,
+    td {
+      padding: 5px 12px;
+      border: 0.5px solid var(--sd-line);
+      font-size: 12.5px;
+    }
+  }
+
+  hr {
+    margin: 12px 0;
+    border: none;
+    border-top: 0.5px solid var(--sd-line);
+  }
+}
+
+:global([data-theme="dark"]) .mdBody,
+:global(.dark) .mdBody {
+  color: rgba(255, 255, 255, 0.65);
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    color: rgba(255, 255, 255, 0.92);
+  }
+
+  code {
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  pre {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.1);
+  }
 }
 
 /* 员工档案文档区 */

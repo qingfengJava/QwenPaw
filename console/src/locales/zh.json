@@ -1790,7 +1790,7 @@
   },
   "runLogs": {
     "title": "运行日志",
-    "retentionHint": "运行日志仅保留近 30 天，如需更长周期请及时备份",
+    "retentionHint": "运行日志仅存储智能体近 30 天的运行日志，如需更长周期请及时备份",
     "searchPlaceholder": "通过对话内容或 Trace ID 搜索",
     "totalCount": "共 {{count}} 条",
     "column": {
@@ -1818,13 +1818,23 @@
       "overview": "运行总览",
       "userInput": "用户输入",
       "llmThinking": "LLM 思考",
+      "systemContext": "系统上下文",
+      "intent": "意图识别",
       "input": "Input",
       "output": "Output",
       "copy": "复制",
       "empty": "（空）",
       "triggeredBy": "通过",
       "inEnv": "在",
-      "envTriggered": "环境触发"
+      "envTriggered": "环境触发",
+      "toolCall": "工具调用",
+      "logicEnd": "逻辑结束",
+      "jsonToggle": "JSON 视图",
+      "backToList": "返回运行日志"
+    },
+    "filter": {
+      "reset": "重置筛选",
+      "columns": "列设置"
     }
   },
   "environments": {

@@ -444,6 +444,20 @@ async def publish_expert(
                 agent_id,
                 exc_info=True,
             )
+
+    # 发布成功后销毁草稿调试实例（若有）：线上已与草稿一致，
+    # 调试通道完成使命（best-effort，不阻断发布结果）。
+    try:
+        from .preview import stop_expert_preview
+
+        await stop_expert_preview(expert_id, manager=manager)
+    except Exception:  # pylint: disable=broad-except
+        logger.warning(
+            "expert %s published but preview stop failed",
+            expert_id,
+            exc_info=True,
+        )
+
     logger.info(
         "Expert %s published as agent %s by %s (v%s)",
         expert_id,
@@ -503,6 +517,16 @@ async def archive_expert(
             await manager.stop_agent(agent_id)
         except Exception:  # pylint: disable=broad-except
             logger.debug("stop agent on archive failed", exc_info=True)
+    # 归档同时销毁草稿调试实例（若有，best-effort）。
+    try:
+        from .preview import stop_expert_preview
+
+        await stop_expert_preview(expert_id, manager=manager)
+    except Exception:  # pylint: disable=broad-except
+        logger.debug(
+            "stop preview on archive failed",
+            exc_info=True,
+        )
     await asyncio.to_thread(_unregister_agent_profile, agent_id)
     return await store.set_expert_status(expert_id, EXPERT_STATUS_ARCHIVED)
 

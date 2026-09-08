@@ -2312,6 +2312,10 @@ class AgentProfileConfig(BaseModel):
         default=None,
         description="Mailbox management configuration",
     )
+    version: str = Field(
+        default="",
+        description="Agent publish version shown in run logs",
+    )
 
 
 class AgentsConfig(BaseModel):

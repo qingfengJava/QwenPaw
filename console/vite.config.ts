@@ -130,7 +130,18 @@ export default defineConfig(({ command, mode }) => {
       },
     },
     optimizeDeps: {
-      include: ["diff"],
+      include: [
+        "diff",
+        // 数字员工头像（动态 import 但仍需预优化，避免 dev 运行时发现
+        // 新依赖导致的 504 Outdated Optimize Dep / 二次 full-reload）
+        "@dicebear/core",
+        "@dicebear/lorelei",
+        "@dicebear/adventurer",
+        "@dicebear/personas",
+        "@dicebear/notionists",
+        "@dicebear/avataaars",
+        "@dicebear/big-smile",
+      ],
     },
     build: {
       // Output to QwenPaw's console directory,

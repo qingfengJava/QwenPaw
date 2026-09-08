@@ -26,6 +26,10 @@ export type {
   ExpertRecord,
   ExpertCreateBody,
   ExpertUpdateBody,
+  ExpertPreviewInstance,
+  ExpertPreviewStatus,
+  ExpertVersionInfo,
+  ExpertVersionRestoreResult,
 } from "./experts";
 export { adminExpertTeamsApi } from "./expertTeams";
 export type {

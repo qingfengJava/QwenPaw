@@ -38,6 +38,10 @@ import { agentApi } from "../../api/modules/agent";
 import { skillApi } from "../../api/modules/skill";
 import { getApiUrl } from "../../api/config";
 import { buildAuthHeaders } from "../../api/authHeaders";
+import { isExpertAgentId } from "../../api/modules/xianFeedback";
+import { useExpertIcons } from "../../hooks/useExpertIcons";
+import { useExpertAvatarUri } from "../../hooks/useExpertAvatarUri";
+import { getAgentDisplayName } from "../../utils/agentDisplayName";
 import { providerApi } from "../../api/modules/provider";
 import type { ProviderInfo, ModelInfo, SkillSpec } from "../../api/types";
 import ModelSelector from "./ModelSelector";
@@ -1156,6 +1160,26 @@ export default function ChatPage() {
   const location = useLocation();
   const { isDark } = useTheme();
   const { selectedAgent, agents } = useAgentStore();
+
+  // ── 欢迎屏人格化：当前智能体自己的形象 / 名称 / 简介 ──
+  // 专家走 experts.icon 显式配置（管理端形象选择器），其余按 agentId
+  // 稳定自动分配 DiceBear 形象；插件扩展（extScalar）仍具最高优先级。
+  const welcomeExpertId = isExpertAgentId(selectedAgent);
+  const expertIcons = useExpertIcons();
+  const welcomeAgent = useMemo(
+    () => agents.find((agent) => agent.id === selectedAgent),
+    [agents, selectedAgent],
+  );
+  const welcomeAvatarUri = useExpertAvatarUri(
+    welcomeExpertId ? expertIcons[welcomeExpertId] : undefined,
+    // 种子必须与 ExpertAvatar 组件一致：专家用剥离 expert_ 前缀后的
+    // 真实 id（同一专家在列表/档案/欢迎屏永远同一形象），普通智能体
+    // 用 agentId。
+    welcomeExpertId || selectedAgent || "default",
+  );
+  const welcomeAgentName = welcomeAgent
+    ? getAgentDisplayName(welcomeAgent, t)
+    : "";
   const chatId = useMemo(
     () => getSessionIdFromPath(location.pathname),
     [location.pathname],
@@ -3173,12 +3197,28 @@ export default function ChatPage() {
       },
       welcome: {
         ...i18nConfig.welcome,
-        nick: extNick ?? "QwenPaw",
-        avatar: extAvatar ?? "/qwenpaw.png",
-        ...(extGreeting !== undefined ? { greeting: extGreeting } : {}),
+        // 人格化：插件扩展 > 智能体自身信息 > 平台默认。
+        // avatar 用 DiceBear dataUri 字符串（ExpertAvatar 同源解析），
+        // 未就绪时回退平台吉祥物。
+        avatar:
+          extAvatar ?? (welcomeAvatarUri ? welcomeAvatarUri : "/qwenpaw.png"),
+        nick: extNick ?? (welcomeAgentName || "QwenPaw"),
+        ...(extGreeting !== undefined
+          ? { greeting: extGreeting }
+          : welcomeAgentName
+            ? {
+                greeting: t("chat.welcomeAgentGreeting", {
+                  defaultValue:
+                    "你好，我是{{name}}，今天能帮你做什么？",
+                    name: welcomeAgentName,
+                }),
+              }
+            : {}),
         ...(extDescription !== undefined
           ? { description: extDescription }
-          : {}),
+          : welcomeAgent?.description
+            ? { description: welcomeAgent.description }
+            : {}),
         ...(extPrompts !== undefined ? { prompts: extPrompts } : {}),
         // SDK uses `render` if present and ignores the other fields.
         ...(wrappedWelcomeRender ? { render: wrappedWelcomeRender } : {}),
@@ -3597,6 +3637,9 @@ export default function ChatPage() {
     bgTaskCount,
     bgBackendSessionId,
     queueSessionId,
+    welcomeAgent,
+    welcomeAgentName,
+    welcomeAvatarUri,
   ]);
 
   const filesDrawerClass =

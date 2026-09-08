@@ -32,6 +32,16 @@ export function isOsPath(path: string): boolean {
   return pathname === "/os" || pathname.startsWith("/os/");
 }
 
+/**
+ * 数字员工工作台（/studio/:aid）：同 /os 一样渲染在所有 Router 之外，
+ * 页面自挂沙箱 Router（React Router 禁止 Router 嵌套，聊天面板的
+ * MemoryRouter 会话沙箱依赖这一点）。
+ */
+export function isStudioPath(path: string): boolean {
+  const pathname = stripRouterBasename(pathnameOnly(path));
+  return pathname === "/studio" || pathname.startsWith("/studio/");
+}
+
 export function isLoginPath(pathname: string): boolean {
   return stripRouterBasename(pathname) === "/login";
 }

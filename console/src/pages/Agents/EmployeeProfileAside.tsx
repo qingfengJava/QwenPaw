@@ -16,7 +16,10 @@ import {
   Sparkles,
 } from "lucide-react";
 import { StatusPill } from "@/components/staffdeck";
+import ExpertAvatar from "@/components/ExpertAvatar";
 import { avatarGradient } from "@/utils/avatarGradient";
+import { isExpertAgentId } from "@/api/modules/xianFeedback";
+import { useExpertIcons } from "@/hooks/useExpertIcons";
 import { getAgentDisplayName } from "@/utils/agentDisplayName";
 import type { AgentSummary } from "@/api/types/agents";
 import { useBriefStats } from "./useBriefStats";
@@ -69,6 +72,10 @@ export default function EmployeeProfileAside({
     ? getAgentDisplayName(agent, t)
     : aid;
 
+  // 数字员工形象：expert_ 前缀 agent 才有；普通 agent 回退渐变首字符
+  const expertId = isExpertAgentId(aid);
+  const expertIcon = useExpertIcons()[expertId];
+
   const modelText = useMemo(() => {
     if (agent?.active_model) {
       return `${agent.active_model.provider_id} / ${agent.active_model.model}`;
@@ -93,12 +100,22 @@ export default function EmployeeProfileAside({
         <div className={styles.profileBody}>
           {/* 档案头一行：头像 + 名称与运行状态同行 */}
           <div className={styles.profileHeaderRow}>
-            <div
-              className={styles.profileAvatar}
-              style={{ background: avatarGradient(aid + displayName) }}
-            >
-              {(displayName || "?").slice(0, 1)}
-            </div>
+            {expertId ? (
+              <ExpertAvatar
+                icon={expertIcon}
+                expertId={expertId}
+                name={displayName}
+                size={48}
+                className={styles.profileAvatar}
+              />
+            ) : (
+              <div
+                className={styles.profileAvatar}
+                style={{ background: avatarGradient(aid + displayName) }}
+              >
+                {(displayName || "?").slice(0, 1)}
+              </div>
+            )}
             <div className={styles.profileNameRow}>
               <span className={styles.profileName} title={displayName}>
                 {displayName}

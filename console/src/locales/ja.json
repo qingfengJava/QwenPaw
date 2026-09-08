@@ -1538,13 +1538,23 @@
       "overview": "実行サマリー",
       "userInput": "ユーザー入力",
       "llmThinking": "LLM 思考",
+      "systemContext": "システムコンテキスト",
+      "intent": "意図识别",
       "input": "Input",
       "output": "Output",
       "copy": "コピー",
       "empty": "（空）",
       "triggeredBy": "経由",
       "inEnv": "で",
-      "envTriggered": "環境で実行"
+      "envTriggered": "環境で実行",
+      "toolCall": "ツール呼び出し",
+      "logicEnd": "論理終了",
+      "jsonToggle": "JSON 表示",
+      "backToList": "実行ログに戻る"
+    },
+    "filter": {
+      "reset": "フィルターをリセット",
+      "columns": "列設定"
     }
   },
   "environments": {

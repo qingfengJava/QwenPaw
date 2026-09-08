@@ -14,9 +14,11 @@ import type {
 import { useAgentStore } from "@/stores/agentStore";
 import { useAuthStore, selectIsAdmin } from "@/stores/authStore";
 import { useAgents } from "@/pages/Settings/Agents/useAgents";
+import { useExpertIcons } from "@/hooks/useExpertIcons";
 import { AgentTable, AgentModal, CopyAgentModal } from "@/pages/Settings/Agents/components";
 import { PageHeader } from "@/components/PageHeader";
 import { reorderAgents } from "@/pages/Settings/Agents/reorder";
+import { openAgentWorkbench } from "@/utils/openAgentWorkbench";
 import styles from "@/pages/Settings/Agents/index.module.less";
 import { MAIL_DOMAIN_WHITELIST } from "@/pages/Settings/Agents/components/mailDomains";
 
@@ -52,6 +54,8 @@ export default function AgentsGalleryPage() {
     setAgents,
   } = useAgents();
   const { selectedAgent, setSelectedAgent } = useAgentStore();
+  // 数字员工形象映射（无权限/未加载时为空表，行内回退自动分配）
+  const expertIcons = useExpertIcons();
   // 订阅式读取：身份变化时管理入口随渲染期更新
   const isAdmin = useAuthStore(selectIsAdmin);
   const [modalVisible, setModalVisible] = useState(false);
@@ -128,12 +132,10 @@ export default function AgentsGalleryPage() {
     }
   };
 
-  const handleOpen = useCallback(
-    (agent: AgentSummary) => {
-      navigate(`/agents/${agent.id}`);
-    },
-    [navigate],
-  );
+  const handleOpen = useCallback((agent: AgentSummary) => {
+    // 员工详情已升级为工作台：新标签页打开（桌面端降级为当前标签）。
+    openAgentWorkbench(agent.id);
+  }, []);
 
   const handleDelete = async (agentId: string) => {
     try {
@@ -165,7 +167,7 @@ export default function AgentsGalleryPage() {
       setCopyModalVisible(false);
       setCopyingAgent(null);
       await loadAgents();
-      navigate(`/agents/${result.id}`);
+      openAgentWorkbench(result.id);
     } catch (error: unknown) {
       console.error("Failed to copy agent:", error);
       message.error(
@@ -340,7 +342,7 @@ export default function AgentsGalleryPage() {
         message.success(`${t("agent.createSuccess")} (ID: ${result.id})`);
         setModalVisible(false);
         await loadAgents();
-        navigate(`/agents/${result.id}`);
+        openAgentWorkbench(result.id);
         return;
       }
 
@@ -404,6 +406,7 @@ export default function AgentsGalleryPage() {
           agents={agents}
           loading={loading || reordering}
           reordering={reordering}
+          expertIcons={expertIcons}
           onOpen={handleOpen}
           onEdit={handleEdit}
           onCopy={handleOpenCopy}
