@@ -1484,6 +1484,9 @@
     "sessionNamePlaceholder": "セッション名",
     "activeTab": "アクティブ",
     "archivedTab": "アーカイブ済み",
+    "runLogs": {
+      "tab": "実行ログ"
+    },
     "archivedAtColumn": "アーカイブ日時",
     "archive": {
       "action": "アーカイブ",
@@ -1503,6 +1506,45 @@
       "modalTitle": "アーカイブ済みのチャット",
       "unarchiveAll": "すべてアーカイブ解除",
       "noArchived": "アーカイブ済みのチャットはありません"
+    }
+  },
+  "runLogs": {
+    "title": "実行ログ",
+    "retentionHint": "実行ログは過去30日間のみ保持されます。より長い期間が必要な場合は早めにバックアップしてください",
+    "searchPlaceholder": "会話内容または Trace ID で検索",
+    "totalCount": "全 {{count}} 件",
+    "column": {
+      "status": "状態",
+      "environment": "環境",
+      "query": "会話内容",
+      "user": "ユーザー",
+      "startedAt": "開始時刻",
+      "channel": "チャネル",
+      "sessionId": "セッション ID",
+      "tokens": "トークン",
+      "duration": "所要時間",
+      "version": "バージョン"
+    },
+    "status": {
+      "success": "成功",
+      "failed": "失敗",
+      "running": "実行中"
+    },
+    "env": {
+      "online": "本番",
+      "debug": "デバッグ"
+    },
+    "detail": {
+      "overview": "実行サマリー",
+      "userInput": "ユーザー入力",
+      "llmThinking": "LLM 思考",
+      "input": "Input",
+      "output": "Output",
+      "copy": "コピー",
+      "empty": "（空）",
+      "triggeredBy": "経由",
+      "inEnv": "で",
+      "envTriggered": "環境で実行"
     }
   },
   "environments": {

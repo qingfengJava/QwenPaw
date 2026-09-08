@@ -2572,6 +2572,9 @@
     "sessionNamePlaceholder": "Tên phiên",
     "activeTab": "Đang hoạt động",
     "archivedTab": "Đã lưu trữ",
+    "runLogs": {
+      "tab": "Nhật ký chạy"
+    },
     "archivedAtColumn": "Thời gian lưu trữ",
     "archive": {
       "action": "Lưu trữ",
@@ -2591,6 +2594,45 @@
       "modalTitle": "Cuộc trò chuyện đã lưu trữ",
       "unarchiveAll": "Bỏ lưu trữ tất cả",
       "noArchived": "Không có cuộc trò chuyện đã lưu trữ"
+    }
+  },
+  "runLogs": {
+    "title": "Nhật ký chạy",
+    "retentionHint": "Nhật ký chạy chỉ được lưu trong 30 ngày gần nhất; hãy sao lưu kịp thời nếu cần giữ lâu hơn",
+    "searchPlaceholder": "Tìm theo nội dung hội thoại hoặc Trace ID",
+    "totalCount": "Tổng cộng {{count}} bản ghi",
+    "column": {
+      "status": "Trạng thái",
+      "environment": "Môi trường",
+      "query": "Nội dung hội thoại",
+      "user": "Người dùng",
+      "startedAt": "Thời gian bắt đầu",
+      "channel": "Kênh",
+      "sessionId": "ID phiên",
+      "tokens": "Token",
+      "duration": "Thời gian",
+      "version": "Phiên bản"
+    },
+    "status": {
+      "success": "Thành công",
+      "failed": "Thất bại",
+      "running": "Đang chạy"
+    },
+    "env": {
+      "online": "Trực tuyến",
+      "debug": "Gỡ lỗi"
+    },
+    "detail": {
+      "overview": "Tổng quan lần chạy",
+      "userInput": "Đầu vào người dùng",
+      "llmThinking": "LLM suy luận",
+      "input": "Input",
+      "output": "Output",
+      "copy": "Sao chép",
+      "empty": "（Trống）",
+      "triggeredBy": "qua",
+      "inEnv": "trong",
+      "envTriggered": "môi trường"
     }
   },
   "loop": {

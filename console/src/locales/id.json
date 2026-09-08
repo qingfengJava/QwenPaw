@@ -2117,6 +2117,9 @@
     "sessionNamePlaceholder": "Nama sesi",
     "activeTab": "Aktif",
     "archivedTab": "Diarsipkan",
+    "runLogs": {
+      "tab": "Log Eksekusi"
+    },
     "archivedAtColumn": "Waktu Arsip",
     "archive": {
       "action": "Arsipkan",
@@ -2136,6 +2139,45 @@
       "modalTitle": "Obrolan yang Diarsipkan",
       "unarchiveAll": "Batalkan Semua Arsip",
       "noArchived": "Tidak ada obrolan yang diarsipkan"
+    }
+  },
+  "runLogs": {
+    "title": "Log Eksekusi",
+    "retentionHint": "Log eksekusi hanya disimpan selama 30 hari terakhir; lakukan pencadangan tepat waktu jika perlu disimpan lebih lama",
+    "searchPlaceholder": "Cari berdasarkan konten percakapan atau Trace ID",
+    "totalCount": "Total {{count}} entri",
+    "column": {
+      "status": "Status",
+      "environment": "Lingkungan",
+      "query": "Konten Percakapan",
+      "user": "Pengguna",
+      "startedAt": "Waktu Mulai",
+      "channel": "Kanal",
+      "sessionId": "ID Sesi",
+      "tokens": "Token",
+      "duration": "Durasi",
+      "version": "Versi"
+    },
+    "status": {
+      "success": "Berhasil",
+      "failed": "Gagal",
+      "running": "Sedang Berjalan"
+    },
+    "env": {
+      "online": "Produksi",
+      "debug": "Debug"
+    },
+    "detail": {
+      "overview": "Ringkasan Eksekusi",
+      "userInput": "Input Pengguna",
+      "llmThinking": "Proses LLM",
+      "input": "Input",
+      "output": "Output",
+      "copy": "Salin",
+      "empty": "（Kosong）",
+      "triggeredBy": "melalui",
+      "inEnv": "di",
+      "envTriggered": "lingkungan"
     }
   },
   "environments": {

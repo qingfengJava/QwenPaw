@@ -1764,6 +1764,9 @@
     "sessionNamePlaceholder": "会话名称",
     "activeTab": "活跃",
     "archivedTab": "已归档",
+    "runLogs": {
+      "tab": "运行日志"
+    },
     "archivedAtColumn": "归档时间",
     "archive": {
       "action": "归档",
@@ -1783,6 +1786,45 @@
       "modalTitle": "已归档的聊天记录",
       "unarchiveAll": "全部取消归档",
       "noArchived": "暂无已归档的会话"
+    }
+  },
+  "runLogs": {
+    "title": "运行日志",
+    "retentionHint": "运行日志仅保留近 30 天，如需更长周期请及时备份",
+    "searchPlaceholder": "通过对话内容或 Trace ID 搜索",
+    "totalCount": "共 {{count}} 条",
+    "column": {
+      "status": "状态",
+      "environment": "环境",
+      "query": "对话内容",
+      "user": "用户",
+      "startedAt": "开始时间",
+      "channel": "渠道",
+      "sessionId": "会话 ID",
+      "tokens": "额度",
+      "duration": "耗时",
+      "version": "版本"
+    },
+    "status": {
+      "success": "成功",
+      "failed": "失败",
+      "running": "运行中"
+    },
+    "env": {
+      "online": "线上",
+      "debug": "调试"
+    },
+    "detail": {
+      "overview": "运行总览",
+      "userInput": "用户输入",
+      "llmThinking": "LLM 思考",
+      "input": "Input",
+      "output": "Output",
+      "copy": "复制",
+      "empty": "（空）",
+      "triggeredBy": "通过",
+      "inEnv": "在",
+      "envTriggered": "环境触发"
     }
   },
   "environments": {
@@ -3162,6 +3204,7 @@
     "description": "我是一个智能助手，可以帮助你解答问题。",
     "prompt1": "让我们开启一段新的旅程吧！",
     "prompt2": "能告诉我你有哪些技能吗？",
+    "welcomeAgentGreeting": "你好，我是{{name}}，今天能帮你做什么？",
     "inputPlaceholder": "\"↑↓\" 浏览消息 · \"/\" 快捷指令",
     "longTextUploadPrompt": "请读取已上传的提示词文件，并根据文件内容回答。",
     "emptyOutputError": "助手返回了空响应。",
@@ -4570,10 +4613,44 @@
     "inboxUnread": "收件箱有未读消息",
     "inboxClear": "收件箱暂无未读",
     "quickLinks": "快捷入口",
-    "createHint": "入职一位新的数字员工"
+    "createHint": "入职一位新的数字员工",
+    "backToConsole": "返回控制台",
+    "expandChat": "展开对话",
+    "collapseChat": "折叠对话",
+    "modeDraft": "调试草稿",
+    "modeLive": "线上版本",
+    "debug": "调试",
+    "debugHint": "调试模式：会话跑在独立草稿实例上，线上业务不受影响",
+    "publish": "发布",
+    "publishSuccess": "已发布，线上已更新",
+    "tabProfile": "档案",
+    "tabCapability": "能力",
+    "tabSessions": "会话",
+    "tabActivity": "动态",
+    "tabOps": "运维",
+    "tabVersions": "版本",
+    "statusDraft": "草稿",
+    "statusHasChanges": "有未发布变更",
+    "statusPublished": "已发布 v{{v}}",
+    "statusRunning": "运行中",
+    "statusDisabled": "已停用",
+    "neverPublished": "该员工尚未发布过",
+    "liveVersion": "线上版本 v{{v}}",
+    "hasDraftChanges": "草稿有未发布变更",
+    "noDraftChanges": "草稿与线上一致",
+    "versionsEmpty": "暂无发布记录（发布后每次生成不可变快照）",
+    "colVersion": "版本",
+    "colPublisher": "发布人",
+    "colTime": "发布时间",
+    "colActions": "操作",
+    "restore": "回滚",
+    "restoreConfirm": "回滚到 v{{version}}？",
+    "restoreHint": "仅写回草稿，点「发布」后才会影响线上",
+    "restoreSuccess": "已回滚到 v{{version}}（写入草稿），请检查后点「发布」生效"
   },
   "agentDetail": {
     "overview": "概览",
+    "activity": "动态",
     "chat": "对话",
     "channels": "渠道绑定",
     "goChat": "去对话",
@@ -4591,6 +4668,9 @@
     "statActiveSessions": "活跃会话",
     "statTokens": "Token 用量",
     "abilityAssets": "能力资产",
+    "baseConfig": "基础配置",
+    "baseConfigLoading": "配置加载中…",
+    "baseConfigEmpty": "工作区暂无配置文件（PROFILE.md / AGENTS.md 等）",
     "rolePosition": "角色定位",
     "rolePositionPlaceholder": "暂无描述，编辑员工档案补充。",
     "quickPrompts": "快捷指令",
@@ -4600,6 +4680,17 @@
     "recentActivity": "近期活动",
     "aiTune": "AI 调优",
     "aiTuneDefault": "帮我优化这位数字员工：完善档案描述，并建议合适的技能与工具。"
+  },
+  "staffdeck": {
+    "timeline": {
+      "day": "日",
+      "week": "周",
+      "month": "月",
+      "today": "今天",
+      "dayEvents": "当日事件",
+      "empty": "当日暂无活动记录",
+      "monthLabel": "{{year}} 年 {{month}} 月"
+    }
   },
   "admin": {
     "experts": {

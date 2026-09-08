@@ -1,6 +1,8 @@
 import { useEffect, useState, useDeferredValue } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Card, Form, Modal, Table, Button, Tabs } from "@agentscope-ai/design";
+import { Suspense } from "react";
+import { lazyImportWithRetry } from "../../../utils/lazyWithRetry";
 import { useAppMessage } from "../../../hooks/useAppMessage";
 import { useTranslation } from "react-i18next";
 import {
@@ -15,6 +17,11 @@ import api from "../../../api";
 import { PageHeader } from "@/components/PageHeader";
 import { ChannelIcon } from "../Channels/components";
 import styles from "./index.module.less";
+
+// 运行日志视图懒加载：不进首屏 bundle（体积门禁 + 循环依赖检查）。
+const LazyRunLogs = lazyImportWithRetry(
+  "../../pages/Control/Sessions/RunLogs",
+);
 
 function SessionsPage() {
   const { t } = useTranslation();
@@ -258,7 +265,9 @@ function SessionsPage() {
 
       <Tabs
         activeKey={activeTab}
-        onChange={(key) => setActiveTab(key as "active" | "archived")}
+        onChange={(key) =>
+          setActiveTab(key as "active" | "archived" | "runs")
+        }
         items={[
           {
             key: "active",
@@ -271,11 +280,19 @@ function SessionsPage() {
               "Archived",
             )} (${archivedCount})`,
           },
+          {
+            key: "runs",
+            label: t("sessions.runLogs.tab", "运行日志"),
+          },
         ]}
         style={{ padding: "0 16px" }}
       />
 
-      {isMobile ? (
+      {activeTab === "runs" ? (
+        <Suspense fallback={null}>
+          <LazyRunLogs />
+        </Suspense>
+      ) : isMobile ? (
         <div className={styles.mobileCardList}>
           {filteredSessions.map((session) => (
             <Card

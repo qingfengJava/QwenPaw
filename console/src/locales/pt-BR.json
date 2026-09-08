@@ -1711,6 +1711,9 @@
     "sessionNamePlaceholder": "Session Nome",
     "activeTab": "Ativas",
     "archivedTab": "Arquivadas",
+    "runLogs": {
+      "tab": "Logs de Execução"
+    },
     "archivedAtColumn": "Arquivado em",
     "archive": {
       "action": "Arquivar",
@@ -1730,6 +1733,45 @@
       "modalTitle": "Conversas Arquivadas",
       "unarchiveAll": "Desarquivar Todas",
       "noArchived": "Nenhuma conversa arquivada"
+    }
+  },
+  "runLogs": {
+    "title": "Logs de Execução",
+    "retentionHint": "Os logs de execução são mantidos apenas pelos últimos 30 dias; faça backup em tempo hábil se precisar de um período maior",
+    "searchPlaceholder": "Pesquisar por conteúdo da conversa ou Trace ID",
+    "totalCount": "{{count}} registros no total",
+    "column": {
+      "status": "Status",
+      "environment": "Ambiente",
+      "query": "Conteúdo da conversa",
+      "user": "Usuário",
+      "startedAt": "Hora de início",
+      "channel": "Canal",
+      "sessionId": "ID da sessão",
+      "tokens": "Tokens",
+      "duration": "Duração",
+      "version": "Versão"
+    },
+    "status": {
+      "success": "Sucesso",
+      "failed": "Falha",
+      "running": "Em execução"
+    },
+    "env": {
+      "online": "Produção",
+      "debug": "Depuração"
+    },
+    "detail": {
+      "overview": "Visão geral da execução",
+      "userInput": "Entrada do usuário",
+      "llmThinking": "Raciocínio do LLM",
+      "input": "Input",
+      "output": "Output",
+      "copy": "Copiar",
+      "empty": "（vazio）",
+      "triggeredBy": "via",
+      "inEnv": "no",
+      "envTriggered": "ambiente"
     }
   },
   "environments": {

@@ -133,6 +133,18 @@ class WorkspaceBootstrapFactory:
             logger.debug("Langfuse hooks not available", exc_info=True)
 
         try:
+            from ...hooks.observability.run_log_hook import (
+                RunLogFinishHook,
+                RunLogStartHook,
+            )
+
+            kwargs.setdefault("builtin_hook_clses", []).extend(
+                [RunLogStartHook, RunLogFinishHook],
+            )
+        except Exception:
+            logger.debug("Run-log hooks not available", exc_info=True)
+
+        try:
             from ...runtime.prompt_contributors import _ALL_CONTRIBUTORS
 
             kwargs["builtin_contributor_clses"] = _ALL_CONTRIBUTORS

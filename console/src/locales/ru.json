@@ -1484,6 +1484,9 @@
     "sessionNamePlaceholder": "Название сессии",
     "activeTab": "Активные",
     "archivedTab": "Архив",
+    "runLogs": {
+      "tab": "Журналы запусков"
+    },
     "archivedAtColumn": "Дата архивации",
     "archive": {
       "action": "Архивировать",
@@ -1503,6 +1506,45 @@
       "modalTitle": "Архивированные чаты",
       "unarchiveAll": "Разархивировать все",
       "noArchived": "Нет архивированных чатов"
+    }
+  },
+  "runLogs": {
+    "title": "Журналы запусков",
+    "retentionHint": "Журналы запусков хранятся только за последние 30 дней; при необходимости более длительного срока своевременно делайте резервные копии",
+    "searchPlaceholder": "Поиск по содержимому диалога или Trace ID",
+    "totalCount": "Всего {{count}} записей",
+    "column": {
+      "status": "Статус",
+      "environment": "Среда",
+      "query": "Содержимое диалога",
+      "user": "Пользователь",
+      "startedAt": "Время начала",
+      "channel": "Канал",
+      "sessionId": "ID сессии",
+      "tokens": "Токены",
+      "duration": "Длительность",
+      "version": "Версия"
+    },
+    "status": {
+      "success": "Успешно",
+      "failed": "Ошибка",
+      "running": "Выполняется"
+    },
+    "env": {
+      "online": "Продуктивная",
+      "debug": "Отладка"
+    },
+    "detail": {
+      "overview": "Обзор запуска",
+      "userInput": "Ввод пользователя",
+      "llmThinking": "Размышление LLM",
+      "input": "Input",
+      "output": "Output",
+      "copy": "Копировать",
+      "empty": "（пусто）",
+      "triggeredBy": "через",
+      "inEnv": "в",
+      "envTriggered": "среде"
     }
   },
   "environments": {

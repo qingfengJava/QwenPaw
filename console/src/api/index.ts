@@ -28,6 +28,7 @@ import { languageApi } from "./modules/language";
 import { backupApi } from "./modules/backup";
 import { consoleApi } from "./modules/console";
 import { accessControlApi } from "./modules/accessControl";
+import { runLogsApi } from "./modules/runLogs";
 
 export const api = {
   // Root
@@ -99,6 +100,9 @@ export const api = {
 
   // Access Control
   ...accessControlApi,
+
+  // Run Logs (agent execution traces)
+  ...runLogsApi,
 };
 
 export default api;

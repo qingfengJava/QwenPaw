@@ -1906,6 +1906,9 @@
     "sessionNamePlaceholder": "Session name",
     "activeTab": "Active",
     "archivedTab": "Archived",
+    "runLogs": {
+      "tab": "Run Logs"
+    },
     "archivedAtColumn": "Archived At",
     "archive": {
       "action": "Archive",
@@ -1925,6 +1928,45 @@
       "modalTitle": "Archived Chats",
       "unarchiveAll": "Unarchive All",
       "noArchived": "No archived chats"
+    }
+  },
+  "runLogs": {
+    "title": "Run Logs",
+    "retentionHint": "Run logs are kept for the last 30 days only; back up in time if you need a longer period",
+    "searchPlaceholder": "Search by conversation content or Trace ID",
+    "totalCount": "{{count}} runs in total",
+    "column": {
+      "status": "Status",
+      "environment": "Environment",
+      "query": "Conversation",
+      "user": "User",
+      "startedAt": "Start Time",
+      "channel": "Channel",
+      "sessionId": "Session ID",
+      "tokens": "Tokens",
+      "duration": "Duration",
+      "version": "Version"
+    },
+    "status": {
+      "success": "Success",
+      "failed": "Failed",
+      "running": "Running"
+    },
+    "env": {
+      "online": "Online",
+      "debug": "Debug"
+    },
+    "detail": {
+      "overview": "Run Overview",
+      "userInput": "User Input",
+      "llmThinking": "LLM Thinking",
+      "input": "Input",
+      "output": "Output",
+      "copy": "Copy",
+      "empty": "(empty)",
+      "triggeredBy": "via",
+      "inEnv": "in",
+      "envTriggered": "environment"
     }
   },
   "environments": {
@@ -3305,6 +3347,7 @@
     "description": "I am a helpful assistant that can help you with your questions.",
     "prompt1": "Let's start a new journey!",
     "prompt2": "Can you tell me what skills you have?",
+    "welcomeAgentGreeting": "Hi, I'm {{name}}. What can I do for you today?",
     "inputPlaceholder": "\"↑↓\" for message navigation · \"/\" for quick commands",
     "longTextUploadPrompt": "Please read the uploaded prompt file and answer it.",
     "emptyOutputError": "The assistant returned an empty response.",
@@ -4552,10 +4595,44 @@
     "inboxUnread": "You have unread inbox messages",
     "inboxClear": "Inbox is all caught up",
     "quickLinks": "Quick links",
-    "createHint": "Onboard a new digital employee"
+    "createHint": "Onboard a new digital employee",
+    "backToConsole": "Back to console",
+    "expandChat": "Expand chat",
+    "collapseChat": "Collapse chat",
+    "modeDraft": "Debug draft",
+    "modeLive": "Live version",
+    "debug": "Debug",
+    "debugHint": "Debug mode: sessions run on an isolated draft instance; live traffic is unaffected",
+    "publish": "Publish",
+    "publishSuccess": "Published; the live version is updated",
+    "tabProfile": "Profile",
+    "tabCapability": "Capabilities",
+    "tabSessions": "Sessions",
+    "tabActivity": "Activity",
+    "tabOps": "Operations",
+    "tabVersions": "Versions",
+    "statusDraft": "Draft",
+    "statusHasChanges": "Unpublished changes",
+    "statusPublished": "Published v{{v}}",
+    "statusRunning": "Running",
+    "statusDisabled": "Disabled",
+    "neverPublished": "This employee has never been published",
+    "liveVersion": "Live version v{{v}}",
+    "hasDraftChanges": "Draft has unpublished changes",
+    "noDraftChanges": "Draft matches live",
+    "versionsEmpty": "No releases yet (each publish creates an immutable snapshot)",
+    "colVersion": "Version",
+    "colPublisher": "Published by",
+    "colTime": "Published at",
+    "colActions": "Actions",
+    "restore": "Restore",
+    "restoreConfirm": "Restore to v{{version}}?",
+    "restoreHint": "Writes to the draft only; click Publish to affect live",
+    "restoreSuccess": "Restored to v{{version}} (into draft). Review and click Publish to apply"
   },
   "agentDetail": {
     "overview": "Overview",
+    "activity": "Activity",
     "chat": "Chat",
     "channels": "Channel Bindings",
     "goChat": "Chat",
@@ -4573,6 +4650,9 @@
     "statActiveSessions": "Active sessions",
     "statTokens": "Token usage",
     "abilityAssets": "Capability Assets",
+    "baseConfig": "Base Configuration",
+    "baseConfigLoading": "Loading configuration…",
+    "baseConfigEmpty": "No configuration files (PROFILE.md / AGENTS.md etc.) in the workspace yet.",
     "rolePosition": "Role & Positioning",
     "rolePositionPlaceholder": "No description yet. Edit the employee profile to add one.",
     "quickPrompts": "Quick Prompts",
@@ -4582,5 +4662,16 @@
     "recentActivity": "Recent Activity",
     "aiTune": "AI Tuning",
     "aiTuneDefault": "Help me optimize this digital employee: refine the profile and suggest suitable skills and tools."
+  },
+  "staffdeck": {
+    "timeline": {
+      "day": "Day",
+      "week": "Week",
+      "month": "Month",
+      "today": "Today",
+      "dayEvents": "Events of the day",
+      "empty": "No activity recorded for this day.",
+      "monthLabel": "{{month}} {{year}}"
+    }
   }
 }

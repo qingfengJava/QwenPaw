@@ -1,0 +1,192 @@
+# -*- coding: utf-8 -*-
+"""Run-log lifecycle hooks.
+
+A PRE_EXECUTE / FINALLY hook pair that records every chat run into the
+run-log infrastructure:
+
+* ``inbox_trace_store`` — per-run detail file (meta + session-delta events);
+* ``run_log_store``     — append-only JSONL index powering the list API.
+
+Mirrors :mod:`langfuse_hook`: run-scoped state travels through
+``ctx.extras`` and every failure is logged and swallowed — run logging
+must never break the conversation itself.
+"""
+from __future__ import annotations
+
+import logging
+import time
+import uuid
+
+from ..base import LifecycleHook
+from ...runtime.hooks import HookContext, HookResult
+from ...runtime.phases import Phase
+
+logger = logging.getLogger(__name__)
+
+_RUNLOG_CTX_KEY = "_qp_runlog_ctx"
+
+# Draft instances (workbench debug) carry a ``__draft`` agent-id suffix.
+_DRAFT_SUFFIX = "__draft"
+
+
+def _resolve_environment(agent_id: str | None) -> str:
+    """Map the agent id to the display environment (online / debug)."""
+    if agent_id and agent_id.endswith(_DRAFT_SUFFIX):
+        return "debug"
+    return "online"
+
+
+def _sum_delta_tokens(delta: list[dict]) -> int:
+    """Sum ``qwenpaw_turn_usage`` totals across the session delta."""
+    total = 0
+    for msg in delta:
+        if not isinstance(msg, dict):
+            continue
+        if msg.get("role") != "assistant":
+            continue
+        metadata = msg.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        payload = metadata.get("qwenpaw_turn_usage")
+        if not isinstance(payload, dict):
+            continue
+        usage = payload.get("usage")
+        if isinstance(usage, dict):
+            total += int(usage.get("total_tokens", 0) or 0)
+    return total
+
+
+class RunLogStartHook(LifecycleHook):
+    """Open the run trace + index row before agent execution."""
+
+    phase = Phase.PRE_EXECUTE
+    name = "run_log_start"
+    # Right after LangfuseTraceHook(12): same metadata assumptions, and
+    # before BootstrapHook(20) which mutates messages.
+    priority = 13
+
+    async def run(self, ctx: HookContext) -> HookResult:
+        try:
+            from ...runtime.message_convert import _get_last_user_text
+
+            from ...app.inbox_trace_store import (
+                create_trace,
+                read_session_messages,
+            )
+            from ...app.run_log_store import append_run_index
+            from ...__version__ import __version__
+
+            run_id = uuid.uuid4().hex
+            started_at = time.time()
+            user_id = getattr(ctx.request, "user_id", None) or ""
+            channel = getattr(ctx.request, "channel", None) or ""
+            chat_id = getattr(ctx.request, "chat_id", None) or ""
+            environment = _resolve_environment(ctx.agent_id)
+
+            # Baseline snapshot: only messages created during this run
+            # become trace events (same technique as the cron executor).
+            baseline = await read_session_messages(
+                runner=ctx.workspace,
+                session_id=ctx.session_id,
+                user_id=user_id,
+                channel=channel,
+            )
+
+            await create_trace(
+                run_id,
+                meta={
+                    "source": "chat",
+                    "session_id": ctx.session_id,
+                    "root_session_id": ctx.root_session_id,
+                    "agent_id": ctx.agent_id,
+                    "user_id": user_id,
+                    "channel": channel,
+                    "environment": environment,
+                    "query": _get_last_user_text(ctx.input_msgs),
+                    "version": __version__,
+                },
+            )
+            await append_run_index(
+                {
+                    "run_id": run_id,
+                    "agent_id": ctx.agent_id,
+                    "session_id": ctx.session_id,
+                    "chat_id": chat_id,
+                    "user_id": user_id,
+                    "channel": channel,
+                    "source": "chat",
+                    "environment": environment,
+                    "query_preview": _get_last_user_text(ctx.input_msgs) or "",
+                    "status": "running",
+                    "started_at": started_at,
+                    "finished_at": None,
+                    "duration_ms": None,
+                    "total_tokens": 0,
+                    "version": __version__,
+                    "error": None,
+                },
+            )
+            ctx.extras[_RUNLOG_CTX_KEY] = {
+                "run_id": run_id,
+                "baseline_count": len(baseline),
+                "started_at": started_at,
+            }
+        except Exception:  # pylint: disable=broad-except
+            logger.warning("run log start hook failed", exc_info=True)
+        return HookResult()
+
+
+class RunLogFinishHook(LifecycleHook):
+    """Append session delta, finalize trace and close the index row."""
+
+    phase = Phase.FINALLY
+    name = "run_log_finish"
+    # After LangfuseTraceCleanupHook(50); independent of other cleanups.
+    priority = 51
+
+    async def run(self, ctx: HookContext) -> HookResult:
+        data = ctx.extras.pop(_RUNLOG_CTX_KEY, None)
+        if not isinstance(data, dict):
+            return HookResult()
+        try:
+            from ...app.inbox_trace_store import (
+                append_trace_from_session_delta,
+                finalize_trace,
+            )
+            from ...app.run_log_store import update_run_index
+
+            run_id = str(data.get("run_id") or "")
+            baseline_count = int(data.get("baseline_count", 0) or 0)
+            started_at = float(data.get("started_at", 0.0) or 0.0)
+            if not run_id:
+                return HookResult()
+
+            user_id = getattr(ctx.request, "user_id", None) or ""
+            channel = getattr(ctx.request, "channel", None) or ""
+            status = "failed" if ctx.error is not None else "success"
+            error = repr(ctx.error) if ctx.error is not None else None
+
+            delta = await append_trace_from_session_delta(
+                run_id=run_id,
+                runner=ctx.workspace,
+                session_id=ctx.session_id,
+                user_id=user_id,
+                channel=channel,
+                baseline_count=baseline_count,
+            )
+            finished_at = time.time()
+            await finalize_trace(run_id, status=status, error=error)
+            await update_run_index(
+                run_id,
+                status=status,
+                finished_at=finished_at,
+                duration_ms=int((finished_at - started_at) * 1000),
+                total_tokens=_sum_delta_tokens(delta),
+                error=error,
+            )
+        except Exception:  # pylint: disable=broad-except
+            logger.warning("run log finish hook failed", exc_info=True)
+        return HookResult()
+
+
+__all__ = ["RunLogFinishHook", "RunLogStartHook"]
