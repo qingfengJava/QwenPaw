@@ -534,6 +534,7 @@ export default function DesktopOS() {
           open
           trigger={[]}
           placement="bottomLeft"
+          // Dropdown 在 antd 5.29 尚无 classNames API，仍用 overlayClassName
           overlayClassName={styles.desktopContextMenu}
           menu={{ items: desktopMenuItems }}
           popupRender={(menu) => (

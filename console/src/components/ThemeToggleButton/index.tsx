@@ -41,6 +41,8 @@ export default function ThemeToggleButton() {
     <Dropdown
       menu={{ items, selectedKeys: [themeMode] }}
       placement="bottomRight"
+      // Dropdown 在 antd 5.29 尚无 classNames API，仍用 overlayClassName；
+      // 其透传 Tooltip 触发的弃用误报已在 main.tsx 统一过滤
       overlayClassName={styles.themeDropdown}
     >
       <Button className={styles.toggleBtn} type="text" icon={icon} />

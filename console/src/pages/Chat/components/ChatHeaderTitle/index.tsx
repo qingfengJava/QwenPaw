@@ -111,6 +111,8 @@ const ChatHeaderTitle: React.FC = () => {
       onOpenChange={setOpen}
       trigger={["click"]}
       placement="bottomLeft"
+      // Dropdown 在 antd 5.29 尚无 classNames API，仍用 overlayClassName；
+      // 其透传 Tooltip 触发的弃用误报已在 main.tsx 统一过滤
       overlayClassName={styles.sessionDropdown}
     >
       <button

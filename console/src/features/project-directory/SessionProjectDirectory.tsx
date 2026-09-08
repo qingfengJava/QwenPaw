@@ -1071,7 +1071,7 @@ export default function SessionProjectDirectory({
         open={open}
         onOpenChange={handleOpenChange}
         placement={isAgentScope ? "rightTop" : "topRight"}
-        overlayClassName={styles.desktopPopover}
+        classNames={{ root: styles.desktopPopover }}
       >
         <span className={styles.hiddenAnchor} aria-hidden="true" />
       </Popover>
@@ -1085,7 +1085,7 @@ export default function SessionProjectDirectory({
       open={open}
       onOpenChange={handleOpenChange}
       placement={isAgentScope ? "rightTop" : "topRight"}
-      overlayClassName={styles.desktopPopover}
+      classNames={{ root: styles.desktopPopover }}
     >
       {trigger}
     </Popover>

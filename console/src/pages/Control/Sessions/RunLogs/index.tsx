@@ -16,6 +16,7 @@ import {
   CircleCheck,
   CircleX,
   LoaderCircle,
+  RefreshCw,
   RotateCcw,
   Settings2,
 } from "lucide-react";
@@ -243,22 +244,30 @@ export default function RunLogsPage() {
         },
       },
     ],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [t, navigate],
   );
 
+  // 列可见性：空数组 = 默认全部显示；用户取消勾选后才记录“白名单”。
+  const isColumnVisible = (key: string) =>
+    visibleKeys.length === 0 || visibleKeys.includes(key);
+
   const columns = useMemo(
-    () => allColumns.filter((column) => visibleKeys.includes(column.key)),
+    () => allColumns.filter((column) => isColumnVisible(column.key)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [allColumns, visibleKeys],
   );
 
-  const rangeValue =
-    query.start && query.end
-      ? ([dayjs.unix(query.start), dayjs.unix(query.end)] as [
-          Dayjs,
-          Dayjs,
-        ])
-      : null;
+  // 受控 value 必须用 useMemo 稳定引用：每次 render 新建数组会让 rc-picker
+  // 内部依赖 value 引用的 effect 反复触发 setState，造成无限更新循环。
+  const rangeValue = useMemo(() => {
+    if (!query.start || !query.end) {
+      return null;
+    }
+    return [dayjs.unix(query.start), dayjs.unix(query.end)] as [
+      Dayjs,
+      Dayjs,
+    ];
+  }, [query.start, query.end]);
 
   return (
     <div className={styles.runLogsPage}>
@@ -335,14 +344,18 @@ export default function RunLogsPage() {
                 {allColumns.map((column) => (
                   <label key={column.key} className={styles.columnMenuItem}>
                     <Checkbox
-                      checked={visibleKeys.includes(column.key)}
-                      onChange={(event) =>
-                        setVisibleKeys((prev) =>
+                      checked={isColumnVisible(column.key)}
+                      onChange={(event) => {
+                        const base =
+                          visibleKeys.length === 0
+                            ? allColumns.map((c) => c.key)
+                            : visibleKeys;
+                        setVisibleKeys(
                           event.target.checked
-                            ? [...prev, column.key]
-                            : prev.filter((key) => key !== column.key),
-                        )
-                      }
+                            ? [...base, column.key]
+                            : base.filter((key) => key !== column.key),
+                        );
+                      }}
                     >
                       {column.title as string}
                     </Checkbox>
@@ -365,7 +378,7 @@ export default function RunLogsPage() {
             title={t("common.refresh", "刷新")}
             onClick={() => refresh()}
           >
-            <RotateCcw size={14} />
+            <RefreshCw size={14} />
           </button>
         </span>
       </div>

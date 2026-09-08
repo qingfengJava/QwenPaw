@@ -80,7 +80,8 @@ class ModuleRegistryImpl implements ModuleRegistry {
   get(moduleKey: string, exportName: string): unknown {
     const mod = this.modules.get(moduleKey);
     if (!mod) {
-      console.warn(`[moduleRegistry] Module not found: ${moduleKey}`);
+      // 未命中属正常路径（多数页面无插件覆盖），降级为 debug 避免控制台噪音。
+      console.debug(`[moduleRegistry] Module not found: ${moduleKey}`);
       return undefined;
     }
     return mod[exportName];

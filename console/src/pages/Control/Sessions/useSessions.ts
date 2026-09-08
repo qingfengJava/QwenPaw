@@ -7,6 +7,10 @@ import type { Session } from "./components/constants";
 import { useAgentStore } from "../../../stores/agentStore";
 import { useTranslation } from "react-i18next";
 
+// 模块级常量空数组：非归档 tab 下 sessions 返回值必须引用稳定，
+// 否则消费方以 sessions 为依赖的 effect/useMemo 每次都会重新触发。
+const EMPTY_SESSIONS: Session[] = [];
+
 /**
  * Sessions data hook. `agentId`（可选）显式指定员工时优先，
  * 否则沿用全局 selectedAgent（详情页借壳数据域）。
@@ -49,7 +53,8 @@ export function useSessions(agentId?: string) {
     [allSessions],
   );
 
-  const sessions = activeTab === "archived" ? archivedSessions : [];
+  const sessions =
+    activeTab === "archived" ? archivedSessions : EMPTY_SESSIONS;
   const activeCount = activeSessions.length;
   const archivedCount = archivedSessions.length;
 
