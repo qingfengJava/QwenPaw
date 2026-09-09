@@ -118,6 +118,18 @@ export const providerApi = {
       },
     ),
 
+  /** 启用/禁用开关：禁用的模型保留配置但从所有选择器隐藏。 */
+  setModelEnabled: (providerId: string, modelId: string, enabled: boolean) =>
+    request<ProviderInfo>(
+      `/models/${encodeURIComponent(providerId)}/models/${encodeURIComponent(
+        modelId,
+      )}/enabled`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ enabled }),
+      },
+    ),
+
   configureModel: (
     providerId: string,
     modelId: string,

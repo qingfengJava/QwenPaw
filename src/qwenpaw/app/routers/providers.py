@@ -457,6 +457,16 @@ class ModelVisibilityRequest(BaseModel):
     hidden: bool = Field(..., description="Whether to hide the model")
 
 
+class ModelEnabledRequest(BaseModel):
+    enabled: bool = Field(
+        ...,
+        description=(
+            "Whether the configured model is enabled; disabled models "
+            "stay configured but are excluded from every selector."
+        ),
+    )
+
+
 class DiscoverModelsRequest(BaseModel):
     api_key: Optional[str] = Field(
         default=None,
@@ -688,6 +698,28 @@ async def set_model_visibility(
             provider_id,
             model_id,
             hidden=body.hidden,
+        )
+    except (ValueError, AppBaseException) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.put(
+    "/{provider_id}/models/{model_id:path}/enabled",
+    response_model=ProviderInfo,
+    summary="Enable or disable a configured model",
+)
+async def set_model_enabled(
+    manager: ProviderManager = Depends(get_provider_manager),
+    provider_id: str = Path(...),
+    model_id: str = Path(...),
+    body: ModelEnabledRequest = Body(...),
+) -> ProviderInfo:
+    """启用/禁用开关：禁用的模型保留配置但从所有选择器隐藏。"""
+    try:
+        return await manager.set_model_disabled(
+            provider_id,
+            model_id,
+            disabled=not body.enabled,
         )
     except (ValueError, AppBaseException) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

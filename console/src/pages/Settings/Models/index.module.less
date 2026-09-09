@@ -1968,6 +1968,16 @@
   }
 }
 
+/* 禁用态模型行：整体降透明度，配合"已禁用"标签 */
+.modelListItemDisabled {
+  opacity: 0.55;
+
+  .modelListItemName {
+    text-decoration: line-through;
+    text-decoration-color: rgba(0, 0, 0, 0.35);
+  }
+}
+
 .modelListItemInfo {
   display: flex;
   flex-direction: column;

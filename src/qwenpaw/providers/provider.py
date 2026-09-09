@@ -364,6 +364,14 @@ class ProviderInfo(BaseModel):
         default_factory=list,
         description="Model IDs explicitly removed by the user.",
     )
+    disabled_model_ids: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Configured model IDs disabled by the user; they stay "
+            "configured but are excluded from every model selector "
+            "until re-enabled."
+        ),
+    )
     discovery_strategy: Literal[
         "openai_models",
         "anthropic_models",
@@ -713,8 +721,14 @@ class Provider(ProviderInfo, ABC):  # pylint: disable=too-many-public-methods
         return Provider.configured_models(self)
 
     def configured_models(self) -> List[ModelInfo]:
-        """Return the effective configured model list."""
+        """Return the effective configured model list.
+
+        ``removed_model_ids`` entries are deleted from the user's view;
+        ``disabled_model_ids`` entries stay configured but are hidden
+        from every selector until re-enabled (启用/禁用开关).
+        """
         removed = set(getattr(self, "removed_model_ids", []))
+        disabled = set(getattr(self, "disabled_model_ids", []))
         ordered_ids: list[str] = []
         by_id: dict[str, ModelInfo] = {}
         for collection in (
@@ -728,7 +742,7 @@ class Provider(ProviderInfo, ABC):  # pylint: disable=too-many-public-methods
         return [
             by_id[model_id]
             for model_id in ordered_ids
-            if model_id not in removed
+            if model_id not in removed and model_id not in disabled
         ]
 
     def discovery_candidates(self) -> List[ModelInfo]:
@@ -1237,6 +1251,7 @@ class Provider(ProviderInfo, ABC):  # pylint: disable=too-many-public-methods
             models_syncing=self.models_syncing,
             hidden_model_ids=list(self.hidden_model_ids),
             removed_model_ids=list(self.removed_model_ids),
+            disabled_model_ids=list(self.disabled_model_ids),
             discovery_strategy=self.discovery_strategy,
             discovery_support_reason=self.discovery_support_reason,
             discovery_requires_auth=self.discovery_requires_auth,

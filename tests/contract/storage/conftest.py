@@ -43,7 +43,8 @@ def pg_dsn() -> str:
                 await conn.execute(
                     text(
                         "TRUNCATE chats, session_states, history_entries, "
-                        "agent_runs, agent_run_spans",
+                        "agent_runs, agent_run_spans, provider_configs, "
+                        "provider_models, model_active_slots",
                     ),
                 )
         finally:

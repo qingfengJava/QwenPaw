@@ -2356,6 +2356,13 @@
     "removeModel": "Remove",
     "removeModelConfirm": "Remove model \"{{name}}\" from {{provider}}?",
     "modelRemoved": "Model \"{{name}}\" removed",
+    "disabledTag": "Disabled",
+    "enableModel": "Enable model",
+    "disableModel": "Disable model",
+    "modelEnabled": "Enabled {{name}}",
+    "modelDisabled": "Disabled {{name}} (config kept, hidden from selectors)",
+    "modelUpdateFailed": "Operation failed, please retry",
+    "removeBuiltinModelHint": "Remove built-in model (re-addable via auto discovery)",
     "modelRemoveFailed": "Failed to remove model",
     "loadMore": "Load more ({{count}})",
     "modelsCount": "{{count}} models",
@@ -2498,7 +2505,8 @@
     "modalityVideo": "Video",
     "modalityFile": "File",
     "perMillionIn": "/1M in",
-    "perMillionOut": "/1M out"
+    "perMillionOut": "/1M out",
+    "providerKeyRequiredHint": "This provider has no API key configured yet; all models are unavailable. Configure the key in provider settings first."
   },
   "files": {
     "title": "Files",

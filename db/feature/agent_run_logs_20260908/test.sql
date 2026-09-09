@@ -631,3 +631,79 @@ COMMENT ON TABLE agent_run_spans IS
 'Agent 运行执行 span（system/llm/tool/reply，parent_span_id 组树）';
 COMMENT ON COLUMN agent_run_spans.kind IS
 'span 类型: system, llm, tool, reply';
+
+-- ============================================================================
+-- 20260909/05 模型提供商配置落库平面（provider_configs + model_active_slots）
+-- ============================================================================
+
+-- 模型提供商配置表（api_key 密文提升列 + 整包快照 JSONB）
+CREATE TABLE IF NOT EXISTS provider_configs (
+    tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
+    provider_id VARCHAR(64) NOT NULL,
+    name TEXT NOT NULL DEFAULT '',
+    base_url TEXT NOT NULL DEFAULT '',
+    api_key_encrypted TEXT NOT NULL DEFAULT '',
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    is_builtin BOOLEAN NOT NULL DEFAULT FALSE,
+    is_custom BOOLEAN NOT NULL DEFAULT FALSE,
+    snapshot JSONB NOT NULL DEFAULT '{}',
+    snapshot_schema_version INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT pk_provider_configs PRIMARY KEY (tenant_id, provider_id)
+);
+
+-- 模型槽位表（承接 active_llm；slot_name 现阶段固定 llm）
+CREATE TABLE IF NOT EXISTS model_active_slots (
+    tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
+    slot_name VARCHAR(32) NOT NULL,
+    provider_id VARCHAR(64) NOT NULL DEFAULT '',
+    model VARCHAR(128) NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT pk_model_active_slots PRIMARY KEY (tenant_id, slot_name)
+);
+
+COMMENT ON TABLE provider_configs IS
+'模型提供商配置落库平面（api_key 以 ENC: 密文存储，snapshot 为整包 provider 快照 JSONB）';
+COMMENT ON COLUMN provider_configs.api_key_encrypted IS
+'Fernet 加密后的 API Key（ENC: 前缀，主密钥见 secret_store）';
+COMMENT ON COLUMN provider_configs.enabled IS
+'厂商启用状态（镜像控制台语义：需要 key 且未配置即停用）';
+COMMENT ON COLUMN provider_configs.snapshot IS
+'整包 provider 快照（extra_models/discovered_models/hidden_model_ids/removed_model_ids 等，不含 api_key 明文）';
+COMMENT ON TABLE model_active_slots IS
+'模型槽位表（承接 active_llm；slot_name 现阶段固定 llm）';
+COMMENT ON COLUMN model_active_slots.slot_name IS
+'槽位名: llm（预留 embedding 等）';
+
+-- ============================================================================
+-- 20260909/06 供应商模型行级表（provider_models）
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS provider_models (
+    tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
+    provider_id VARCHAR(64) NOT NULL,
+    model_id VARCHAR(128) NOT NULL,
+    name TEXT NOT NULL DEFAULT '',
+    source VARCHAR(16) NOT NULL DEFAULT 'builtin',
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    is_free BOOLEAN NOT NULL DEFAULT FALSE,
+    supports_multimodal BOOLEAN,
+    config JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT pk_provider_models
+        PRIMARY KEY (tenant_id, provider_id, model_id)
+);
+
+COMMENT ON TABLE provider_models IS
+'供应商模型行级表（每厂商每模型一行，参数独立；由 provider_configs.snapshot 每次变更自动投影同步）';
+COMMENT ON COLUMN provider_models.model_id IS
+'模型 ID（如 qwen3.7-max）';
+COMMENT ON COLUMN provider_models.source IS
+'模型来源: builtin(内置目录), user(用户添加), discovered(自动发现)';
+COMMENT ON COLUMN provider_models.enabled IS
+'启用开关（false=已禁用：保留配置但从所有选择器隐藏）';
+COMMENT ON COLUMN provider_models.config IS
+'模型级参数（generate_kwargs/config_overrides/thinking/max_input_length 等全部其余字段）';

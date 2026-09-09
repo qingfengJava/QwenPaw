@@ -1868,6 +1868,13 @@
     "removeModel": "Удалить",
     "removeModelConfirm": "Удалить модель «{{name}}» из {{provider}}?",
     "modelRemoved": "Модель «{{name}}» удалена",
+    "disabledTag": "Отключена",
+    "enableModel": "Включить модель",
+    "disableModel": "Отключить модель",
+    "modelEnabled": "Модель {{name}} включена",
+    "modelDisabled": "Модель {{name}} отключена (конфигурация сохранена, скрыта из селекторов)",
+    "modelUpdateFailed": "Не удалось выполнить, повторите попытку",
+    "removeBuiltinModelHint": "Удалить встроенную модель (можно вернуть автопоиском)",
     "modelRemoveFailed": "Не удалось удалить модель",
     "loadMore": "Загрузить ещё ({{count}})",
     "modelsCount": "{{count}} моделей",
@@ -2019,7 +2026,8 @@
     "modalityFile": "Файл",
     "modalityText": "Только текст",
     "perMillionIn": "/1M вх.",
-    "perMillionOut": "/1M исх."
+    "perMillionOut": "/1M исх.",
+    "providerKeyRequiredHint": "У этого провайдера не настроен API-ключ, все модели недоступны. Сначала настройте ключ в настройках провайдера."
   },
   "files": {
     "title": "Файлы",

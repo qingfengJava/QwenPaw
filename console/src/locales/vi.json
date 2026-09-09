@@ -2218,7 +2218,15 @@
     "filterFreeOnly": "Chỉ mô hình miễn phí:",
     "selectAllProviders": "Chọn tất cả",
     "clearProviderSelection": "Bỏ chọn tất cả",
-    "noMatchingProviders": "Không có nhà cung cấp phù hợp"
+    "noMatchingProviders": "Không có nhà cung cấp phù hợp",
+    "disabledTag": "Đã tắt",
+    "enableModel": "Bật mô hình",
+    "disableModel": "Tắt mô hình",
+    "modelEnabled": "Đã bật {{name}}",
+    "modelDisabled": "Đã tắt {{name}} (giữ cấu hình, ẩn khỏi bộ chọn)",
+    "modelUpdateFailed": "Thao tác thất bại, vui lòng thử lại",
+    "removeBuiltinModelHint": "Xóa mô hình dựng sẵn (có thể thêm lại bằng tự động phát hiện)",
+    "providerKeyRequiredHint": "Nhà cung cấp này chưa cấu hình API Key nên mọi mô hình đều không khả dụng; hãy cấu hình Key trong cài đặt nhà cung cấp trước."
   },
   "security": {
     "parent": "Cài đặt",

@@ -2091,6 +2091,13 @@
     "removeModel": "Remover",
     "removeModelConfirm": "Remove model \"{{name}}\" from {{provider}}?",
     "modelRemoved": "Modelo \"{{name}}\" removed",
+    "disabledTag": "Desativado",
+    "enableModel": "Ativar modelo",
+    "disableModel": "Desativar modelo",
+    "modelEnabled": "{{name}} ativado",
+    "modelDisabled": "{{name}} desativado (configuração mantida, oculto dos seletores)",
+    "modelUpdateFailed": "Falha na operação, tente novamente",
+    "removeBuiltinModelHint": "Remover modelo embutido (re adicionável via descoberta automática)",
     "modelRemoveFailed": "Falhou to Remover Modelo",
     "loadMore": "Carregar mais ({{count}})",
     "modelsCount": "{{count}} Modelos",
@@ -2242,7 +2249,8 @@
     "modalityFile": "File",
     "modalityText": "Text only",
     "perMillionIn": "/1M in",
-    "perMillionOut": "/1M out"
+    "perMillionOut": "/1M out",
+    "providerKeyRequiredHint": "Este provedor ainda não tem uma API Key configurada; todos os modelos ficam indisponíveis. Configure a chave nas configurações do provedor primeiro."
   },
   "files": {
     "title": "Arquivos",

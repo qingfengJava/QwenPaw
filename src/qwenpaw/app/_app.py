@@ -404,6 +404,23 @@ async def lifespan(  # pylint: disable=too-many-statements,too-many-branches
                     exc_info=True,
                 )
 
+            # ---- Provider 配置平面（模型配置落库） ----
+            # dual/pg 后端：把文件快照与 env 中的 API Key 一次性灌入 PG
+            # （api_key 加密入列），pg 后端再从 PG 刷回内存（权威读）。
+            # 幂等（manifest 防重）；失败不阻塞启动，文件平面仍可用。
+            try:
+                from ..providers.provider_env_migration import (
+                    run_provider_config_migration,
+                )
+
+                await run_provider_config_migration(provider_manager)
+            except Exception:
+                logger.warning(
+                    "Provider config plane bootstrap skipped; file plane "
+                    "remains authoritative this run.",
+                    exc_info=True,
+                )
+
             # ---- Workforce run recovery (XianWork team tasks) ----
             # Mark still-active team runs as interrupted so users can
             # resume them from RunDetail (engine resumes past done nodes).

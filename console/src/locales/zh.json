@@ -2214,6 +2214,13 @@
     "removeModel": "移除",
     "removeModelConfirm": "确定从 {{provider}} 中移除模型 \"{{name}}\"？",
     "modelRemoved": "模型 \"{{name}}\" 已移除",
+    "disabledTag": "已禁用",
+    "enableModel": "启用模型",
+    "disableModel": "禁用模型",
+    "modelEnabled": "已启用 {{name}}",
+    "modelDisabled": "已禁用 {{name}}，模型保留配置但不再出现在选择器中",
+    "modelUpdateFailed": "操作失败，请重试",
+    "removeBuiltinModelHint": "移除内置模型（可通过自动发现重新添加）",
     "modelRemoveFailed": "移除模型失败",
     "loadMore": "加载更多 ({{count}})",
     "modelsCount": "{{count}} 个模型",
@@ -2356,7 +2363,8 @@
     "modalityVideo": "视频",
     "modalityFile": "文件",
     "perMillionIn": "/1M 输入",
-    "perMillionOut": "/1M 输出"
+    "perMillionOut": "/1M 输出",
+    "providerKeyRequiredHint": "该提供商尚未配置 API Key，所有模型均不可用；请先在提供商设置中配置 Key"
   },
   "files": {
     "title": "文件",

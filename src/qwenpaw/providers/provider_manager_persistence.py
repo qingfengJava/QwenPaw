@@ -34,12 +34,14 @@ from .provider_discovery import (
     DISCOVERY_MODEL_FIELDS as _DISCOVERY_MODEL_FIELDS,
 )
 from .provider_model_state import (
+    PROVIDER_SNAPSHOT_SCHEMA_VERSION,
     migrate_provider_snapshot,
     restore_model_state,
     serialize_model_state,
 )
 from .provider_discovery_policy import apply_custom_discovery_policy
 from . import provider_persistence
+from . import provider_store
 from .provider_update_fields import (
     AVAILABILITY_MODEL_FIELDS as _AVAILABILITY_MODEL_FIELDS,
     CAPABILITY_MODEL_FIELDS as _CAPABILITY_MODEL_FIELDS,
@@ -339,6 +341,9 @@ class ProviderManagerPersistenceMixin(
         snapshot: Provider,
     ) -> None:
         """Commit a successfully persisted snapshot on the event loop."""
+        # PG 影子双写（dual/pg 后端）：fire-and-forget，失败仅告警，
+        # 文件平面与内存提交不受影响。
+        provider_store.mirror_provider_snapshot(self._pg_mirror_dump(snapshot))
         if provider_id in self.plugin_providers:
             self.plugin_providers[provider_id]["info"] = ProviderInfo(
                 **snapshot.model_dump(),
@@ -355,6 +360,15 @@ class ProviderManagerPersistenceMixin(
             )
         elif current is not None:
             self._copy_provider_state(current, snapshot)
+
+    def _pg_mirror_dump(self, snapshot: Provider) -> Dict:
+        """Serialize one snapshot for the PG shadow plane (with schema ver)."""
+        dump = snapshot.model_dump(exclude={"models_syncing"})
+        dump.setdefault(
+            "snapshot_schema_version",
+            PROVIDER_SNAPSHOT_SCHEMA_VERSION,
+        )
+        return dump
 
     @staticmethod
     def _copy_provider_state(target: Provider, source: Provider) -> None:
@@ -909,6 +923,11 @@ class ProviderManagerPersistenceMixin(
             async with lock:
                 await run_sync_io(self.save_active_model, snapshot)
                 self.active_model = snapshot
+                # PG 影子双写 active_llm 槽位（dual/pg 后端）
+                provider_store.mirror_active_slot(
+                    snapshot.provider_id,
+                    snapshot.model,
+                )
 
         await run_async_to_completion(save_and_commit())
 
@@ -939,6 +958,8 @@ class ProviderManagerPersistenceMixin(
                 active_path = self.root_path / "active_model.json"
                 await run_sync_io(active_path.unlink, missing_ok=True)
                 self.active_model = None
+                # PG 影子同步清除槽位（dual/pg 后端）
+                provider_store.mirror_active_slot(None, None)
                 return True
 
         return await run_async_to_completion(clear_model())
@@ -954,6 +975,51 @@ class ProviderManagerPersistenceMixin(
                 return ModelSlotConfig.model_validate(data)
         except Exception:
             return None
+
+    async def load_providers_from_pg(self) -> int:
+        """Restore in-memory provider state from the PG config plane.
+
+        pg 后端权威读路径：启动迁移层先把文件快照灌入 PG，再调本方法
+        把 PG 状态刷回内存（内置/自定义/插件 provider + active 槽位）。
+        返回恢复的 provider 数量；PG 不可用时抛出由调用方兑底。
+        """
+        snapshots = await provider_store.load_provider_snapshots_pg()
+        restored = 0
+        for data in snapshots:
+            provider_id = self._normalize_provider_id(
+                str(data.get("id") or ""),
+            )
+            if not provider_id:
+                continue
+            try:
+                provider = self._provider_from_data(data)
+            except Exception:
+                logger.warning(
+                    "Failed to restore provider '%s' from PG; skipped.",
+                    provider_id,
+                    exc_info=True,
+                )
+                continue
+            provider.models_syncing = False
+            if provider_id in self.plugin_providers:
+                self.plugin_providers[provider_id]["info"] = ProviderInfo(
+                    **provider.model_dump(),
+                )
+            elif provider_id in self.builtin_providers:
+                self._restore_builtin_provider(
+                    self.builtin_providers[provider_id],
+                    provider,
+                )
+            else:
+                self.custom_providers[provider_id] = provider
+            restored += 1
+
+        slot = await provider_store.load_active_slot_pg(
+            provider_store.ACTIVE_SLOT_LLM,
+        )
+        if slot and slot.get("provider_id") and slot.get("model"):
+            self.active_model = ModelSlotConfig.model_validate(slot)
+        return restored
 
     def _migrate_copaw_config(self) -> None:
         """Migrate copaw-local provider config to qwenpaw-local."""

@@ -32,6 +32,7 @@ from .provider import (
 )
 from . import provider_catalog as _provider_catalog
 from . import model_catalog
+from . import provider_store
 from .capability_baseline import ExpectedCapabilityRegistry
 from .provider_catalog import (
     BUILTIN_PROVIDERS,
@@ -500,6 +501,8 @@ class ProviderManager(
             provider_path = self._provider_config_path(provider_id)
             if provider_path.exists():
                 os.remove(provider_path)
+            # PG 影子同步删除（dual/pg 后端；无事件循环时走守护线程）
+            provider_store.mirror_provider_delete(provider_id)
             return True
         return False
 
@@ -521,6 +524,8 @@ class ProviderManager(
                 await run_sync_io(provider_path.unlink, missing_ok=True)
                 self._bump_provider_revision(provider_id)
                 del self.custom_providers[provider_id]
+                # PG 影子同步删除（dual/pg 后端）
+                provider_store.mirror_provider_delete(provider_id)
                 return True
 
         return await run_async_to_completion(remove_provider())
@@ -718,6 +723,57 @@ class ProviderManager(
             candidate.hidden_model_ids = sorted(hidden_ids)
 
         await self._mutate_provider_async(provider_id, set_hidden)
+        provider = self.get_provider(provider_id)
+        if provider is None:
+            raise ProviderError(
+                message=f"Provider '{provider_id}' not found.",
+            )
+        return await provider.get_info()
+
+    async def set_model_disabled(
+        self,
+        provider_id: str,
+        model_id: str,
+        *,
+        disabled: bool,
+    ) -> ProviderInfo:
+        """Enable/disable one configured model (启用/禁用开关).
+
+        Disabled models stay configured (config preserved) but are
+        excluded from every model selector until re-enabled; the flag
+        persists inside the provider snapshot (PG provider_configs).
+        """
+        provider_id = self._normalize_provider_id(provider_id)
+        if self.get_provider(provider_id) is None:
+            raise ProviderError(
+                message=f"Provider '{provider_id}' not found.",
+            )
+        model_id = model_id.strip()
+        if not model_id:
+            raise ProviderError(message="Model ID cannot be empty.")
+
+        async def set_disabled(candidate: Provider) -> None:
+            # 启用方向守卫：厂商需要 Key 且未配置时，模型不可启用（
+            # 避免“无 Key 厂商下模型显示已启用”的误导状态）
+            if (
+                not disabled
+                and getattr(candidate, "require_api_key", False)
+                and not str(getattr(candidate, "api_key", "") or "").strip()
+            ):
+                raise ProviderError(
+                    message=(
+                        f"Cannot enable model '{model_id}': provider "
+                        f"'{provider_id}' has no API key configured."
+                    ),
+                )
+            disabled_ids = set(candidate.disabled_model_ids)
+            if disabled:
+                disabled_ids.add(model_id)
+            else:
+                disabled_ids.discard(model_id)
+            candidate.disabled_model_ids = sorted(disabled_ids)
+
+        await self._mutate_provider_async(provider_id, set_disabled)
         provider = self.get_provider(provider_id)
         if provider is None:
             raise ProviderError(

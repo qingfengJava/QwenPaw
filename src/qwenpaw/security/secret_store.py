@@ -32,6 +32,11 @@ _KEYRING_SERVICE = "qwenpaw"
 _KEYRING_SERVICE_LEGACY = "copaw"
 _KEYRING_ACCOUNT = "master_key"
 
+# 显式主密钥环境变量：最高优先级。可通过控制台「环境变量」菜单配置
+# （启动时 load_envs_into_environ 注入 os.environ 后即生效）。
+# 注意：主密钥一经用于加密便不可更换，否则既有 ENC: 密文无法解密。
+MASTER_KEY_ENV = "QWENPAW_MASTER_KEY"
+
 
 def _get_secret_dir() -> Path:
     """Lazy import to avoid circular dependency with ``constant.py``."""
@@ -284,6 +289,32 @@ def _generate_master_key() -> str:
     return secrets.token_hex(32)
 
 
+def _explicit_env_master_key() -> Optional[bytes]:
+    """Return the master key from ``QWENPAW_MASTER_KEY`` when valid.
+
+    Resolution order puts this first so operators can pin the key via
+    the Console env-var menu (values are injected into ``os.environ``
+    at startup). Invalid values are ignored with a warning rather than
+    silently degrading to the keychain, which would make future
+    ``encrypt()`` calls unreadable to replicas that do set the env.
+    """
+    key_hex = EnvVarLoader.get_str(MASTER_KEY_ENV, "").strip()
+    if not key_hex:
+        return None
+    try:
+        if len(key_hex) != 64:
+            raise ValueError("expected 64 hex chars")
+        raw = bytes.fromhex(key_hex)
+    except ValueError:
+        logger.warning(
+            "%s is set but invalid (expected 64 hex chars); "
+            "falling back to keychain/file master key",
+            MASTER_KEY_ENV,
+        )
+        return None
+    return raw
+
+
 def _get_master_key() -> bytes:
     """Return the 32-byte master key, creating one if it does not exist.
 
@@ -293,9 +324,16 @@ def _get_master_key() -> bytes:
 
     Resolution order:
     1. In-process cache (fast path, no lock)
-    2. OS keychain (via ``keyring``)
-    3. File ``SECRET_DIR/.master_key``
-    4. Generate new → store in keychain (preferred) and file (fallback)
+    2. ``QWENPAW_MASTER_KEY`` env var (Console env-var menu; pinned key,
+       takes precedence so replicas share one deterministic key)
+    3. OS keychain (via ``keyring``)
+    4. File ``SECRET_DIR/.master_key``
+    5. Generate new → store in keychain (preferred) and file (fallback)
+
+    Note:
+        The key is never rotated automatically: any value already used
+        for encryption must stay stable, otherwise existing ``ENC:``
+        ciphertexts cannot be decrypted.
     """
     global _cached_master_key
     if _cached_master_key is not None:
@@ -303,6 +341,13 @@ def _get_master_key() -> bytes:
 
     with _master_key_lock:
         if _cached_master_key is not None:
+            return _cached_master_key
+
+        # Explicit env key wins: deterministic across replicas and
+        # configurable from the Console env-var menu at runtime.
+        explicit_raw = _explicit_env_master_key()
+        if explicit_raw is not None:
+            _cached_master_key = explicit_raw
             return _cached_master_key
 
         key_hex = _try_keyring_get()

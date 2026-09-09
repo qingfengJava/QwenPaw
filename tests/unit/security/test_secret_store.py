@@ -249,3 +249,55 @@ class TestKeyringAccountIsolation:
         monkeypatch.setenv("QWENPAW_SECRET_DIR", "set-to-mark-relocated")
         monkeypatch.setattr(mod, "_get_secret_dir", lambda: tmp_path / "x")
         assert mod._keyring_account() == mod._keyring_account()
+
+
+class TestExplicitEnvMasterKey:
+    """QWENPAW_MASTER_KEY 环境变量最高优先级（控制台环境变量菜单下发）。"""
+
+    _ENV_HEX = (
+        "1234567890abcdef1234567890abcdef"
+        "1234567890abcdef1234567890abcdef"
+    )
+
+    def test_env_master_key_wins(self, monkeypatch):
+        import qwenpaw.security.secret_store as mod
+
+        monkeypatch.setenv("QWENPAW_MASTER_KEY", self._ENV_HEX)
+        monkeypatch.setattr(mod, "_cached_master_key", None)
+
+        def _forbidden():
+            raise AssertionError("must not consult keychain/file")
+
+        monkeypatch.setattr(mod, "_try_keyring_get", _forbidden)
+        monkeypatch.setattr(mod, "_read_key_file", _forbidden)
+        assert mod._get_master_key() == bytes.fromhex(self._ENV_HEX)
+
+    def test_invalid_env_key_falls_back_to_keyring(self, monkeypatch):
+        import qwenpaw.security.secret_store as mod
+
+        monkeypatch.setenv("QWENPAW_MASTER_KEY", "not-hex")
+        monkeypatch.setattr(mod, "_cached_master_key", None)
+        fallback_hex = "ab" * 32
+        monkeypatch.setattr(mod, "_try_keyring_get", lambda: fallback_hex)
+        monkeypatch.setattr(mod, "_read_key_file", lambda: None)
+        assert mod._get_master_key() == bytes.fromhex(fallback_hex)
+
+    def test_wrong_length_env_key_falls_back(self, monkeypatch):
+        import qwenpaw.security.secret_store as mod
+
+        monkeypatch.setenv("QWENPAW_MASTER_KEY", "abcd")
+        monkeypatch.setattr(mod, "_cached_master_key", None)
+        fallback_hex = "cd" * 32
+        monkeypatch.setattr(mod, "_try_keyring_get", lambda: fallback_hex)
+        monkeypatch.setattr(mod, "_read_key_file", lambda: None)
+        assert mod._get_master_key() == bytes.fromhex(fallback_hex)
+
+    def test_unset_env_uses_keyring(self, monkeypatch):
+        import qwenpaw.security.secret_store as mod
+
+        monkeypatch.delenv("QWENPAW_MASTER_KEY", raising=False)
+        monkeypatch.setattr(mod, "_cached_master_key", None)
+        fallback_hex = "ef" * 32
+        monkeypatch.setattr(mod, "_try_keyring_get", lambda: fallback_hex)
+        monkeypatch.setattr(mod, "_read_key_file", lambda: None)
+        assert mod._get_master_key() == bytes.fromhex(fallback_hex)

@@ -4,6 +4,7 @@ import {
   Form,
   Input,
   Modal,
+  Switch,
   Tag,
   Tooltip,
 } from "@agentscope-ai/design";
@@ -93,6 +94,10 @@ export function RemoteModelManageModal({
   // For custom providers ALL models are deletable.
   // For built-in providers only extra_models are deletable.
   const extraModelIds = new Set((provider.extra_models || []).map((m) => m.id));
+
+  // 厂商可用性：需要 Key 但未配置时，所有模型均不可启用（开关锁定为关）
+  const providerReady =
+    !provider.require_api_key || !!provider.api_key?.trim();
 
   const doAddModel = async (id: string, name: string) => {
     const candidate = discoveredModels.find((model) => model.id === id);
@@ -264,6 +269,26 @@ export function RemoteModelManageModal({
         }
       },
     });
+  };
+
+  const handleToggleModelEnabled = async (
+    modelId: string,
+    modelName: string,
+    enabled: boolean,
+  ) => {
+    try {
+      await api.setModelEnabled(provider.id, modelId, enabled);
+      message.success(
+        enabled
+          ? t("models.modelEnabled", { name: modelName })
+          : t("models.modelDisabled", { name: modelName }),
+      );
+      await onSaved();
+    } catch (error) {
+      const errMsg =
+        error instanceof Error ? error.message : t("models.modelUpdateFailed");
+      message.error(errMsg);
+    }
   };
 
   const handleClose = () => {
@@ -618,6 +643,30 @@ export function RemoteModelManageModal({
         </div>
       )}
 
+      {/* 厂商未配置 Key：模型全部不可用的全局提示 */}
+      {!providerReady && (
+        <div
+          style={{
+            marginTop: 8,
+            padding: "8px 12px",
+            borderRadius: 8,
+            fontSize: 13,
+            color: isDark ? "#d4a72c" : "#ad6800",
+            background: isDark
+              ? "rgba(212, 167, 44, 0.12)"
+              : "rgba(255, 197, 61, 0.16)",
+            border: `1px solid ${
+              isDark ? "rgba(212, 167, 44, 0.35)" : "#ffe58f"
+            }`,
+          }}
+        >
+          {t(
+            "models.providerKeyRequiredHint",
+            "该提供商尚未配置 API Key，所有模型均不可用；请先在提供商设置中配置 Key",
+          )}
+        </div>
+      )}
+
       {/* Model list */}
       <div className={styles.modelList}>
         {filteredModels.length === 0 ? (
@@ -649,11 +698,21 @@ export function RemoteModelManageModal({
         ) : (
           <>
             {filteredModels.slice(0, visibleCount).map((m) => {
-              const isDeletable = provider.is_custom || extraModelIds.has(m.id);
+              const isUserAdded =
+                provider.is_custom || extraModelIds.has(m.id);
+              // 有效启用 = 厂商已配置 Key 且未被用户显式禁用
+              const isExplicitlyDisabled = (
+                provider.disabled_model_ids ?? []
+              ).includes(m.id);
+              const isModelDisabled = !providerReady || isExplicitlyDisabled;
               const isConfigOpen = configOpenModelId === m.id;
               return (
                 <div key={m.id}>
-                  <div className={styles.modelListItem}>
+                  <div
+                    className={`${styles.modelListItem} ${
+                      isModelDisabled ? styles.modelListItemDisabled ?? "" : ""
+                    }`}
+                  >
                     <div className={styles.modelListItemInfo}>
                       <span className={styles.modelListItemName}>{m.name}</span>
                       <span className={styles.modelListItemId}>{m.id}</span>
@@ -679,10 +738,10 @@ export function RemoteModelManageModal({
                         style={{
                           fontSize: 11,
                           marginRight: 4,
-                          ...(isDeletable ? colors.userAdded : colors.builtin),
+                          ...(isUserAdded ? colors.userAdded : colors.builtin),
                         }}
                       >
-                        {isDeletable ? (
+                        {isUserAdded ? (
                           <User
                             size={14}
                             style={{ marginRight: 4, verticalAlign: "-3px" }}
@@ -694,13 +753,29 @@ export function RemoteModelManageModal({
                           />
                         )}
                         {t(
-                          isDeletable
+                          isUserAdded
                             ? "models.userAdded"
                             : m.source === "discovered"
                             ? "models.discovered"
                             : "models.builtin",
                         )}
                       </Tag>
+                      {isExplicitlyDisabled && (
+                        <Tag
+                          style={{
+                            fontSize: 11,
+                            marginRight: 4,
+                            color: isDark
+                              ? "rgba(255,255,255,0.45)"
+                              : "rgba(0,0,0,0.45)",
+                            borderColor: isDark
+                              ? "rgba(255,255,255,0.25)"
+                              : "#d9d9d9",
+                          }}
+                        >
+                          {t("models.disabledTag", "已禁用")}
+                        </Tag>
+                      )}
                       <span
                         className={styles.modelListItemActionDivider}
                         style={{
@@ -726,6 +801,28 @@ export function RemoteModelManageModal({
                           onClick={() => handleProbeMultimodal(m.id)}
                           loading={probingModelId === m.id}
                           style={darkBtnStyle}
+                        />
+                      </Tooltip>
+                      <Tooltip
+                        title={
+                          !providerReady
+                            ? t(
+                                "models.providerKeyRequiredHint",
+                                "该提供商尚未配置 API Key，所有模型均不可用；请先在提供商设置中配置 Key",
+                              )
+                            : isModelDisabled
+                            ? t("models.enableModel", "启用模型")
+                            : t("models.disableModel", "禁用模型")
+                        }
+                      >
+                        <Switch
+                          size="small"
+                          checked={!isModelDisabled}
+                          disabled={!providerReady}
+                          onChange={(checked: boolean) =>
+                            handleToggleModelEnabled(m.id, m.name, checked)
+                          }
+                          style={{ marginRight: 4 }}
                         />
                       </Tooltip>
                       <Tooltip title={t("models.testConnection")}>
@@ -759,19 +856,26 @@ export function RemoteModelManageModal({
                           style={darkBtnStyle}
                         />
                       </Tooltip>
-                      {isDeletable && (
-                        <Tooltip title={t("models.removeModel")}>
-                          <Button
-                            type="text"
-                            size="small"
-                            danger
-                            className={styles.modelListActionButton}
-                            aria-label={t("models.removeModel")}
-                            icon={<Trash2 size={18} />}
-                            onClick={() => handleRemoveModel(m.id, m.name)}
-                          />
-                        </Tooltip>
-                      )}
+                      <Tooltip
+                        title={
+                          isUserAdded
+                            ? t("models.removeModel")
+                            : t(
+                                "models.removeBuiltinModelHint",
+                                "移除后可通过自动发现重新添加",
+                              )
+                        }
+                      >
+                        <Button
+                          type="text"
+                          size="small"
+                          danger
+                          className={styles.modelListActionButton}
+                          aria-label={t("models.removeModel")}
+                          icon={<Trash2 size={18} />}
+                          onClick={() => handleRemoveModel(m.id, m.name)}
+                        />
+                      </Tooltip>
                     </div>
                   </div>
                   {isConfigOpen && (

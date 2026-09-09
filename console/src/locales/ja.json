@@ -1868,6 +1868,13 @@
     "removeModel": "削除",
     "removeModelConfirm": "{{provider}} からモデル \"{{name}}\" を削除しますか？",
     "modelRemoved": "モデル \"{{name}}\" を削除しました",
+    "disabledTag": "無効",
+    "enableModel": "モデルを有効化",
+    "disableModel": "モデルを無効化",
+    "modelEnabled": "{{name}} を有効にしました",
+    "modelDisabled": "{{name}} を無効にしました（設定は保持、セレクターから非表示）",
+    "modelUpdateFailed": "操作に失敗しました。再試行してください",
+    "removeBuiltinModelHint": "組み込みモデルを削除（自動検出で再追加可能）",
     "modelRemoveFailed": "モデルの削除に失敗しました",
     "loadMore": "もっと読み込む ({{count}})",
     "modelsCount": "{{count}} モデル",
@@ -2004,7 +2011,8 @@
     "selectAllProviders": "すべて選択",
     "clearProviderSelection": "すべて解除",
     "noMatchingProviders": "一致するプロバイダーがありません",
-    "filterFreeOnly": "無料モデルのみ"
+    "filterFreeOnly": "無料モデルのみ",
+    "providerKeyRequiredHint": "このプロバイダーにはAPIキーが未設定のため、すべてのモデルは利用できません。先にプロバイダー設定でキーを設定してください。"
   },
   "files": {
     "title": "ファイル",

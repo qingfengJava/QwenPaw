@@ -55,6 +55,8 @@ export interface ProviderInfo {
   models_last_sync_error?: string | null;
   models_syncing?: boolean;
   hidden_model_ids?: string[];
+  /** 配置中但被用户禁用的模型 id（保留配置，从选择器隐藏）。 */
+  disabled_model_ids?: string[];
   is_custom: boolean;
   is_local: boolean;
   /** Whether this provider supports fetching available models from the provider's API. */
