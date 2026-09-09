@@ -92,11 +92,59 @@ def _manifest_path() -> Path:
     return SECRET_DIR / MANIFEST_NAME
 
 
+def _file_snapshot_path(provider_id: str) -> Path | None:
+    """Locate the file-plane snapshot json for one provider (or None)."""
+    for sub in ("builtin", "custom", "plugin"):
+        candidate = SECRET_DIR / "providers" / sub / f"{provider_id}.json"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _file_plane_key_fallback(provider_id: str) -> str:
+    """Return the decrypted API key from the file plane ("" if absent).
+
+    兕底防御：内存 dump 丢失 key（如 PG 权威读后又被意外清空）时，
+    文件平面往往仍保有最后一次正确密文；导入时用它补空，避免把空
+    key 覆盖进 PG 造成凭据丢失。
+    """
+    path = _file_snapshot_path(provider_id)
+    if path is None:
+        return ""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    cipher = str(data.get("api_key") or "")
+    if not cipher.strip():
+        return ""
+    from ..security.secret_store import decrypt
+
+    try:
+        return decrypt(cipher)
+    except Exception:  # noqa: BLE001 - 解密失败视为无 key
+        return ""
+
+
 async def _import_file_plane_to_pg(manager: "ProviderManager") -> int:
     """Upsert every in-memory provider snapshot + model rows + slot into PG."""
     count = 0
     for provider, is_builtin in _iter_all_providers(manager):
         dump = _provider_dump(provider, is_builtin=is_builtin)
+        # 兕底：内存丢 key 而文件平面仍有时，用文件值补空（绝不覆盖已有）
+        pid = str(dump.get("id") or "")
+        if (
+            dump.get("require_api_key", True)
+            and not str(dump.get("api_key") or "").strip()
+        ):
+            fallback = _file_plane_key_fallback(pid)
+            if fallback:
+                dump["api_key"] = fallback
+                logger.info(
+                    "Provider config plane: restored missing API key for "
+                    "'%s' from the file plane fallback.",
+                    pid,
+                )
         await provider_store.upsert_provider_snapshot_pg(dump)
         # 行级模型投影：每厂商每模型一行（参数独立）
         await provider_store.sync_provider_models_pg(
