@@ -707,3 +707,32 @@ COMMENT ON COLUMN provider_models.enabled IS
 '启用开关（false=已禁用：保留配置但从所有选择器隐藏）';
 COMMENT ON COLUMN provider_models.config IS
 '模型级参数（generate_kwargs/config_overrides/thinking/max_input_length 等全部其余字段）';
+
+-- 数字员工默认模型槽位表（每员工每槽位一行，slot_name 现阶段固定 llm）
+CREATE TABLE IF NOT EXISTS agent_model_slots (
+    tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
+    agent_id VARCHAR(64) NOT NULL,
+    slot_name VARCHAR(32) NOT NULL DEFAULT 'llm',
+    provider_id VARCHAR(64) NOT NULL DEFAULT '',
+    model VARCHAR(128) NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT pk_agent_model_slots PRIMARY KEY (tenant_id, agent_id, slot_name)
+);
+
+COMMENT ON TABLE agent_model_slots IS
+'数字员工默认模型槽位表（后台档案区为每个员工配置的默认运行模型；agent.json active_model 的 PG 落库平面，运行时解析优先级：本表 → agent.json → 全局 active_llm）';
+COMMENT ON COLUMN agent_model_slots.tenant_id IS
+'租户 ID（多租户预留，现阶段固定 default）';
+COMMENT ON COLUMN agent_model_slots.agent_id IS
+'数字员工 ID（智能体档案 ID，如 python-fullstack）';
+COMMENT ON COLUMN agent_model_slots.slot_name IS
+'槽位名: llm（预留 embedding 等槽位）';
+COMMENT ON COLUMN agent_model_slots.provider_id IS
+'模型提供商 ID（如 aliyun-codingplan；空串视为未配置，解析时跳过本表回退 agent.json）';
+COMMENT ON COLUMN agent_model_slots.model IS
+'模型 ID（如 GLM-5.3-Flash；空串视为未配置）';
+COMMENT ON COLUMN agent_model_slots.created_at IS
+'创建时间（首次配置默认模型时写入）';
+COMMENT ON COLUMN agent_model_slots.updated_at IS
+'更新时间（每次切换默认模型时刷新）';
