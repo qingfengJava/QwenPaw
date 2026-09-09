@@ -56,6 +56,8 @@ async def get_agent_statistics(
         workspace_dir=workspace.workspace_dir,
         start_date=start_d,
         end_date=end_d,
+        # pg 后端按 agent_id 隔离 chats/session_states，必须随请求传入
+        agent_id=getattr(workspace, "agent_id", "default"),
     )
 
 
@@ -85,6 +87,8 @@ async def get_agent_stats_brief(
         workspace_dir=workspace.workspace_dir,
         start_date=start_d,
         end_date=end_d,
+        # pg 后端按 agent_id 隔离 chats/session_states，必须随请求传入
+        agent_id=getattr(workspace, "agent_id", "default"),
     )
     # 今天无会话时 by_date 可能缺行，取不到则今日为 0。
     today_iso = end_d.isoformat()

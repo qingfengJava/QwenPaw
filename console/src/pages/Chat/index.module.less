@@ -9,6 +9,19 @@
   overflow: hidden;
 
   :global {
+    /* SDK 默认给聊天右栏铺 colorFillTertiary 半透明灰底，标题栏只做
+     * blur 毛玻璃（透明背景），消息滚动时标题栏透出内容呈半透明状。
+     * 这里改为实心底色并去掉模糊，标题栏与消息区统一不透明。 */
+    .qwenpaw-chat-anywhere-layout-right {
+      background: var(--ant-color-bg-base, #fff);
+    }
+
+    .qwenpaw-chat-anywhere-layout-right-header {
+      background: var(--ant-color-bg-base, #fff);
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+    }
+
     [class$="-bubble-files-download"] {
       opacity: 1 !important;
       background: transparent !important;

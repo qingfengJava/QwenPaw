@@ -19,6 +19,7 @@
  * Pure functions only, so the pairing logic stays unit-testable.
  */
 import type {
+  RunLogSpan,
   RunLogTrace,
   RunLogTraceEvent,
 } from "../../../../api/modules/runLogs";
@@ -302,6 +303,126 @@ export function buildTraceTree(trace: RunLogTrace): TraceNode {
       endNode.durationMs = Math.round((trace.completed_at - lastAt) * 1000);
     }
     root.children.push(endNode);
+  }
+
+  return root;
+}
+
+/**
+ * Build the tree directly from backend-captured spans (PG runs).
+ *
+ * Structure mirrors the competitor detail page — real steps, real
+ * durations, no semantic guessing:
+ *
+ *   运行总览 (total duration)
+ *   ├─ 系统上下文           — system span
+ *   ├─ Agent 容器           — all llm/tool spans, start-ordered
+ *   │   ├─ LLM 思考        — llm span (title = model name -> i18n kind)
+ *   │   │   └─ tool_name   — tool span (parent = owning llm span)
+ *   │   └─ …
+ *   └─ 逻辑结束              — reply span
+ */
+export function buildSpanTree(trace: RunLogTrace): TraceNode {
+  const spans = trace.spans || [];
+  const meta = trace.meta ?? ({} as RunLogTrace["meta"]);
+  const rootDuration =
+    typeof trace.completed_at === "number" &&
+    typeof trace.created_at === "number"
+      ? Math.max(0, (trace.completed_at - trace.created_at) * 1000)
+      : null;
+
+  const root: TraceNode = {
+    key: "root",
+    kind: "root",
+    title: "root",
+    durationMs: rootDuration,
+    detail: { input: meta?.query ?? undefined },
+    children: [],
+  };
+
+  if (meta && Object.keys(meta).length > 0) {
+    root.children.push({
+      key: "node-system",
+      kind: "system",
+      title: "system",
+      durationMs: 0,
+      detail: { input: meta },
+      children: [],
+    });
+  }
+
+  let nodeSeq = 0;
+  const makeNode = (
+    kind: TraceNodeKind,
+    span: RunLogSpan,
+  ): TraceNode => {
+    nodeSeq += 1;
+    return {
+      key: `node-${nodeSeq}`,
+      kind,
+      // Tool nodes show their name; llm nodes carry the model name but
+      // fall back to the kind title (titleMap lookup misses -> kind).
+      title: span.name || kind,
+      durationMs:
+        typeof span.duration_ms === "number" ? span.duration_ms : null,
+      detail: { input: span.input, output: span.output },
+      children: [],
+    };
+  };
+
+  const byId = new Map<string, TraceNode>();
+  const ordered = [...spans].sort((a, b) => {
+    const at = (s: RunLogSpan) =>
+      typeof s.started_at === "number" ? s.started_at : 0;
+    return at(a) - at(b);
+  });
+
+  const loopChildren: TraceNode[] = [];
+  let replyNode: TraceNode | null = null;
+  for (const span of ordered) {
+    if (span.kind === "system") {
+      continue; // already represented by the meta node above
+    }
+    if (span.kind === "reply") {
+      replyNode = makeNode("end", span);
+      replyNode.title = "end";
+      continue;
+    }
+    const node = makeNode(span.kind === "tool" ? "tool" : "llm", span);
+    byId.set(span.span_id, node);
+    const parentSpanId = span.parent_span_id
+      ? byId.get(span.parent_span_id)
+      : undefined;
+    if (span.kind === "tool" && parentSpanId) {
+      parentSpanId.children.push(node);
+    } else {
+      loopChildren.push(node);
+    }
+  }
+
+  if (loopChildren.length > 0) {
+    const agentNode: TraceNode = {
+      key: "node-agent",
+      kind: "agent",
+      // Prefer the human-readable agent name captured by the backend;
+      // fall back to the raw agent id.
+      title:
+        String(meta?.display_name || "") ||
+        String(meta?.agent_id || "") ||
+        "Agent",
+      durationMs:
+        loopChildren.reduce(
+          (sum, child) => sum + (child.durationMs ?? 0),
+          0,
+        ) || null,
+      detail: {},
+      children: loopChildren,
+    };
+    root.children.push(agentNode);
+  }
+
+  if (replyNode) {
+    root.children.push(replyNode);
   }
 
   return root;

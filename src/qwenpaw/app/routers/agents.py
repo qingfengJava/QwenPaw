@@ -853,6 +853,10 @@ async def create_agent(
             request.skill_names if request.skill_names is not None else []
         ),
         language=language,
+        # 数字员工出生即有身份：不落 BOOTSTRAP.md，模板占位符渲染为真实身份
+        skip_bootstrap=True,
+        identity_name=request.name,
+        identity_description=request.description,
     )
 
     if request.mail is not None:
@@ -958,6 +962,8 @@ def _prepare_copied_workspace(
         apply_md_templates=request.copy_md_files,
         create_skills_dir=request.copy_skills,
         create_jobs_file=request.copy_jobs,
+        # 复制工作区同样不引入引导流程：源工作区身份已是真实值
+        skip_bootstrap=True,
     )
     _copy_selected_workspace_files(
         request=request,
@@ -1703,12 +1709,16 @@ def _apply_workspace_md_templates(
     language: str,
     *,
     md_template_id: str | None,
+    identity_name: str | None = None,
+    identity_description: str | None = None,
 ) -> None:
     """Copy common and template-specific markdown files for a workspace."""
     copy_workspace_md_files(
         language,
         workspace_dir,
         md_template_id=md_template_id,
+        identity_name=identity_name,
+        identity_description=identity_description,
     )
 
 
@@ -2019,8 +2029,16 @@ def _initialize_agent_workspace(
     apply_md_templates: bool = True,
     create_skills_dir: bool = True,
     create_jobs_file: bool = True,
+    skip_bootstrap: bool = False,
+    identity_name: str | None = None,
+    identity_description: str | None = None,
 ) -> None:
-    """Initialize agent workspace with only explicitly requested skills."""
+    """Initialize agent workspace with only explicitly requested skills.
+
+    ``skip_bootstrap`` 移除模板带出的 BOOTSTRAP.md：数字员工出生即有身份
+    （agent.json + PROFILE.md），不应在首次会话反问用户角色设定；CLI 裸建
+    等自助场景保持引导流程不变。
+    """
     from ...config import load_config as load_global_config
 
     (workspace_dir / "sessions").mkdir(exist_ok=True)
@@ -2037,8 +2055,25 @@ def _initialize_agent_workspace(
             workspace_dir,
             language,
             md_template_id=md_template_id,
+            identity_name=identity_name,
+            identity_description=identity_description,
         )
         _ensure_heartbeat_file(workspace_dir, language)
+        if skip_bootstrap:
+            bootstrap_path = workspace_dir / "BOOTSTRAP.md"
+            if bootstrap_path.exists():
+                try:
+                    bootstrap_path.unlink()
+                    logger.info(
+                        "Removed BOOTSTRAP.md for managed agent workspace %s",
+                        workspace_dir,
+                    )
+                except OSError as e:
+                    logger.warning(
+                        "Could not remove BOOTSTRAP.md from %s: %s",
+                        workspace_dir,
+                        e,
+                    )
     _install_initial_skills(workspace_dir, skill_names)
 
     if create_jobs_file:

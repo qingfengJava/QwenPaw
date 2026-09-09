@@ -209,14 +209,20 @@ class SafeJSONSession(BaseSessionStore):
     def __init__(
         self,
         save_dir: str = "./",
+        agent_id: str = "default",
     ) -> None:
         """Initialize the JSON session class.
 
         Args:
             save_dir (`str`, defaults to `"./"):
                 The directory to save the session state.
+            agent_id (`str`, defaults to `"default"`):
+                Accepted for factory signature parity with the PG backend;
+                the JSON store is already workspace-isolated by save_dir,
+                so the value is recorded but unused.
         """
         self.save_dir = save_dir
+        self.agent_id = agent_id or "default"
 
     def _get_save_path(
         self,

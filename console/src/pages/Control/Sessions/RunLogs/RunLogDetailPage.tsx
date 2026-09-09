@@ -11,7 +11,7 @@ import { ArrowLeft } from "lucide-react";
 import { Spin } from "antd";
 import { useExpertAvatarUri } from "../../../../hooks/useExpertAvatarUri";
 import { useRunLogTrace } from "./useRunLogTrace";
-import { buildTraceTree, truncateDetail, type TraceNode } from "./traceTree";
+import { buildSpanTree, buildTraceTree, truncateDetail, type TraceNode } from "./traceTree";
 import { formatClock } from "./format";
 import { TraceTreePanel } from "./TraceTreePanel";
 import { NodeDetailPanel } from "./NodeDetailPanel";
@@ -38,7 +38,14 @@ export default function RunLogDetailPage() {
   const [selectedKey, setSelectedKey] = useState("root");
 
   const tree = useMemo(
-    () => (trace ? buildTraceTree(trace) : null),
+    () =>
+      trace
+        ? // PG runs carry real spans; legacy file traces fall back to
+          // message-based semantic guessing.
+          trace.spans && trace.spans.length > 0
+          ? buildSpanTree(trace)
+          : buildTraceTree(trace)
+        : null,
     [trace],
   );
   const selectedNode = useMemo(

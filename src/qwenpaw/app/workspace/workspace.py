@@ -456,6 +456,8 @@ class Workspace:
                 service_class=lambda ws: get_session_store_class(),
                 init_args=lambda ws: {
                     "save_dir": str(ws.workspace_dir / "sessions"),
+                    # 归属智能体：PG 共表后按员工隔离会话状态
+                    "agent_id": getattr(ws, "agent_id", "default"),
                 },
                 priority=10,
                 concurrent_init=False,

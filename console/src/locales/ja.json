@@ -1555,6 +1555,29 @@
     "filter": {
       "reset": "フィルターをリセット",
       "columns": "列設定"
+    },
+    "tree": {
+      "root": "実行概要",
+      "system": "システムコンテキスト",
+      "user": "ユーザー入力",
+      "intent": "意図認識",
+      "llm": "LLM 思考",
+      "end": "処理完了"
+    },
+    "tools": {
+      "web_search": "ウェブ検索",
+      "read_file": "ファイル読込",
+      "write_file": "ファイル書込",
+      "edit_file": "ファイル編集",
+      "append_file": "ファイル追記",
+      "execute_shell": "コマンド実行",
+      "bash": "コマンド実行",
+      "glob": "ファイル検索",
+      "grep": "内容検索",
+      "submit": "結果提出",
+      "get_skills": "スキル取得",
+      "browser_navigate": "ページを開く",
+      "browser_click": "ページクリック"
     }
   },
   "environments": {

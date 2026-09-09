@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -17,6 +18,23 @@ from qwenpaw.agent_stats.service import (
 )
 from qwenpaw.token_usage.manager import TokenUsageStats, TokenUsageSummary
 from qwenpaw.token_usage.turn_usage import TURN_USAGE_META_KEY
+
+
+@pytest.fixture(autouse=True)
+def _pin_json_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the json backend: the host may export a PG DSN, whose dynamic
+    default (dual) or explicit pg value would redirect the storage reads
+    these unit tests make to the filesystem."""
+    monkeypatch.setenv("QWENPAW_STORAGE_BACKEND", "json")
+
+
+def _fake_config(*pairs: tuple[str, Path]):
+    """Build a minimal config whose profiles point at the given dirs."""
+    profiles = {
+        agent_id: SimpleNamespace(id=agent_id, workspace_dir=str(path))
+        for agent_id, path in pairs
+    }
+    return SimpleNamespace(agents=SimpleNamespace(profiles=profiles))
 
 
 def _empty_daily(date_str: str) -> dict:
@@ -514,8 +532,13 @@ async def test_get_global_llm_tool_by_date_sums_skips_and_fills(tmp_path):
     ws_b = _write_trend_workspace(tmp_path / "b", 1, 1)
     with (
         patch(
-            "qwenpaw.agent_stats.service.get_agent_dirs",
-            return_value=[ws_a, ws_a, ws_b],
+            "qwenpaw.agent_stats.service.load_config",
+            return_value=_fake_config(
+                ("a", ws_a),
+                # 重复目录（不同 id）：按 resolve 后路径去重
+                ("a_dup", ws_a),
+                ("b", ws_b),
+            ),
         ),
         patch(
             "qwenpaw.agent_stats.service.get_token_usage_manager",
@@ -535,8 +558,8 @@ async def test_get_global_llm_tool_by_date_sums_skips_and_fills(tmp_path):
 @pytest.mark.asyncio
 async def test_get_global_llm_tool_by_date_clamps_to_365_days():
     with patch(
-        "qwenpaw.agent_stats.service.get_agent_dirs",
-        return_value=[],
+        "qwenpaw.agent_stats.service.load_config",
+        return_value=_fake_config(),
     ):
         rows = await AgentStatsService().get_global_llm_tool_by_date(
             start_date=date(2025, 1, 1),

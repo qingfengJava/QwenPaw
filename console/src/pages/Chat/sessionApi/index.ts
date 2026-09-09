@@ -1320,10 +1320,16 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
     };
     entry.promise = (async () => {
       try {
-        const chats = await api.listChats({
-          archived: false,
-          include_app_owned: false,
-        });
+        const chats = await api.listChats(
+          {
+            archived: false,
+            include_app_owned: false,
+          },
+          // 显式携带 owner epoch 的 agentId：请求头与所有权严格一致，
+          // 避免 request 层从 storage 兑底读到滞后或异 Tab 的 selectedAgent
+          // （工作台新标签页首帧时 storage 仍是上一个员工）。
+          this.activeOwner.agentId || undefined,
+        );
         // A result from a stale epoch must not replace the current agent's
         // session list; hand back the current list without mutation.
         if (!this.isActiveOwner(owner)) {

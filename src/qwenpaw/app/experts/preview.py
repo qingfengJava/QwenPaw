@@ -31,6 +31,7 @@ from .models import (
     expert_agent_id,
     expert_draft_agent_id,
 )
+from ..agent_docs.store import shadow_write_document
 from .publish import (
     EXPERTS_WORKSPACE_ROOT,
     _build_expert_spec,
@@ -89,6 +90,8 @@ async def start_expert_preview(
 
     # 调试实例 spec 以草稿 spec 为准，但 id/workspace 指向草稿域。
     spec = _build_expert_spec(record, agent_id, workspace_dir)
+    # 档案内容先渲染后落盘：供 _materialize 写文件与影子双写共用同一份
+    profile_md = _expert_profile_md(record, skill_names, caps=caps)
 
     def _materialize() -> None:
         workspace_dir.mkdir(parents=True, exist_ok=True)
@@ -99,11 +102,18 @@ async def start_expert_preview(
         _write_agent_json(agent_id, workspace_dir, spec)
         _sync_workspace_skills(workspace_dir, skill_names)
         (workspace_dir / "PROFILE.md").write_text(
-            _expert_profile_md(record, skill_names, caps=caps),
+            profile_md,
             encoding="utf-8",
         )
 
     await asyncio.to_thread(_materialize)
+    # 草稿域档案影子双写：agent_id 带 __draft 后缀 → environment=draft，
+    # 与线上 production 记录天然隔离
+    shadow_write_document(agent_id, "PROFILE.md", profile_md)
+    agent_json_content = await asyncio.to_thread(
+        lambda: (workspace_dir / "agent.json").read_text(encoding="utf-8"),
+    )
+    shadow_write_document(agent_id, "agent.json", agent_json_content)
 
     if manager is not None:
         try:
@@ -250,12 +260,12 @@ async def refresh_expert_preview_profile(
     skill_names = await store.enabled_skill_names(expert_id)
     caps = await _load_capability_snapshot(expert_id)
     profile_path = workspace_dir / "PROFILE.md"
+    profile_md = _expert_profile_md(record, skill_names, caps=caps)
     await asyncio.to_thread(
-        lambda: profile_path.write_text(
-            _expert_profile_md(record, skill_names, caps=caps),
-            encoding="utf-8",
-        ),
+        lambda: profile_path.write_text(profile_md, encoding="utf-8"),
     )
+    # 草稿档案同步影子双写（draft 环境，不触碰线上记录）
+    shadow_write_document(expert_draft_agent_id(expert_id), "PROFILE.md", profile_md)
     if manager is not None:
         try:
             await manager.reload_agent(expert_draft_agent_id(expert_id))

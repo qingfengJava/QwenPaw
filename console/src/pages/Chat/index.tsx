@@ -105,7 +105,6 @@ import {
   stripScrollHeadlineTextBlocks,
 } from "./headlineFilter";
 import FilesDrawer from "../../features/files-workspace/FilesDrawer";
-import SessionProjectDirectory from "../../features/project-directory/SessionProjectDirectory";
 import {
   sessionFilesScopeKey,
   type FilesWorkspaceScope,
@@ -3282,17 +3281,6 @@ export default function ChatPage() {
                 />
               </span>
             )}
-            {usesQwenPawBackend && (
-              <SessionProjectDirectory
-                scope={sessionScope}
-                compact={isMobile || compactSender}
-                className={
-                  isMobile || compactSender
-                    ? styles.mobileComposerControl
-                    : undefined
-                }
-              />
-            )}
             {usesQwenPawBackend ? (
               <ApprovalLevelToggle
                 sessionId={queueSessionId}
@@ -3630,7 +3618,6 @@ export default function ChatPage() {
     handleNewCommand,
     isMobile,
     compactSender,
-    sessionScope,
     filesWorkspaceOpen,
     toggleFilesWorkspace,
     isOwner,

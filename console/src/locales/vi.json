@@ -2643,6 +2643,29 @@
     "filter": {
       "reset": "Đặt lại bộ lọc",
       "columns": "Cột"
+    },
+    "tree": {
+      "root": "Tổng quan chạy",
+      "system": "Ngữ cảnh hệ thống",
+      "user": "Đầu vào người dùng",
+      "intent": "Nhận diện ý định",
+      "llm": "LLM suy nghĩ",
+      "end": "Kết thúc"
+    },
+    "tools": {
+      "web_search": "Tìm kiếm web",
+      "read_file": "Đọc tệp",
+      "write_file": "Ghi tệp",
+      "edit_file": "Sửa tệp",
+      "append_file": "Thêm tệp",
+      "execute_shell": "Chạy lệnh",
+      "bash": "Chạy lệnh",
+      "glob": "Tìm tệp",
+      "grep": "Tìm nội dung",
+      "submit": "Gửi kết quả",
+      "get_skills": "Lấy kỹ năng",
+      "browser_navigate": "Mở trang",
+      "browser_click": "Bấm trang"
     }
   },
   "loop": {

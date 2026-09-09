@@ -87,14 +87,36 @@ describe("agent session ownership epochs", () => {
     await sessionApi.getSessionList();
     await sessionApi.getSession(A_CHAT);
 
-    expect(listSpy).toHaveBeenCalledWith({
-      archived: false,
-      include_app_owned: false,
-    });
+    expect(listSpy).toHaveBeenCalledWith(
+      {
+        archived: false,
+        include_app_owned: false,
+      },
+      "agent-a",
+    );
     expect(getSpy).toHaveBeenCalledWith(A_CHAT, {
       signal: undefined,
       include_app_owned: false,
     });
+  });
+
+  it("listChats header agent always matches the active ownership epoch", async () => {
+    // 工作台新标签页首帧时 storage 里的 selectedAgent 可能仍是上一个员工；
+    // getSessionList 必须显式传 owner epoch 的 agentId，而不是让 request 层
+    // 从 storage 兑底——否则请求头与所有权不一致，会拿到别人的会话列表。
+    const listSpy = vi
+      .spyOn(api, "listChats")
+      .mockResolvedValue([makeChatSpec(B_CHAT, "console:b")]);
+
+    sessionApi.setActiveAgent("agent-a");
+    listSpy.mockClear();
+    await sessionApi.getSessionList();
+    expect(listSpy).toHaveBeenCalledWith(expect.anything(), "agent-a");
+
+    sessionApi.setActiveAgent("agent-b");
+    listSpy.mockClear();
+    await sessionApi.getSessionList();
+    expect(listSpy).toHaveBeenCalledWith(expect.anything(), "agent-b");
   });
 
   it("Test A: an old agent's list request cannot replace the new agent's list", async () => {

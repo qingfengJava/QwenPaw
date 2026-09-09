@@ -1860,6 +1860,73 @@ def test_initialize_agent_workspace_applies_md_templates_by_default(
     assert (workspace / "jobs.json").is_file()
 
 
+def test_initialize_agent_workspace_skip_bootstrap_removes_bootstrap(
+    tmp_path,
+    fake_config,
+):
+    """数字员工创建路径不落 BOOTSTRAP.md：出生即有身份，不引导反问。"""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    fake_config.agents.language = "en"
+
+    with patch(
+        "qwenpaw.config.load_config",
+        return_value=fake_config,
+    ):
+        _initialize_agent_workspace(
+            workspace,
+            skill_names=[],
+            language="en",
+            skip_bootstrap=True,
+        )
+
+    assert (workspace / "AGENTS.md").is_file()
+    assert not (workspace / "BOOTSTRAP.md").exists()
+
+    # 默认（自助场景）仍保留引导文件
+    workspace_cli = tmp_path / "ws_cli"
+    workspace_cli.mkdir()
+    with patch(
+        "qwenpaw.config.load_config",
+        return_value=fake_config,
+    ):
+        _initialize_agent_workspace(
+            workspace_cli,
+            skill_names=[],
+            language="en",
+        )
+    assert (workspace_cli / "BOOTSTRAP.md").is_file()
+
+
+def test_initialize_agent_workspace_renders_identity_placeholders(
+    tmp_path,
+    fake_config,
+):
+    """创建时的 name/description 渲染进 PROFILE.md，出生即有身份。"""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    fake_config.agents.language = "zh"
+
+    with patch(
+        "qwenpaw.config.load_config",
+        return_value=fake_config,
+    ):
+        _initialize_agent_workspace(
+            workspace,
+            skill_names=[],
+            language="zh",
+            identity_name="数据分析师",
+            identity_description="数据清洗与可视化洞察",
+        )
+
+    profile = (workspace / "PROFILE.md").read_text(encoding="utf-8")
+    assert "数据分析师" in profile
+    assert "数据清洗与可视化洞察" in profile
+    # 占位符已被替换，不再残留
+    assert "挑个你喜欢的" not in profile
+    assert "（AI？机器人？" not in profile
+
+
 @pytest.mark.parametrize(
     ("copy_skills", "copy_jobs", "agent_id"),
     [

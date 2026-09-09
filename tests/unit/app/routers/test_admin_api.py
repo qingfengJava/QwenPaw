@@ -39,6 +39,14 @@ def admin_app(
     existing = AuditLog._instance
     if existing is not None:
         existing.close()
+    # 单元测试强制 JSONL 审计后端：宿主机可能配置了 PG DSN/STORAGE_BACKEND，
+    # 不能让单元测试依赖真实数据库
+    from qwenpaw.governance.audit_store import JsonlAuditStore
+
+    monkeypatch.setattr(
+        "qwenpaw.governance.audit.create_audit_backend",
+        lambda d: JsonlAuditStore(Path(d) / "audit.jsonl"),
+    )
     audit_log = AuditLog.get_instance(tmp_path / "auditdir")
 
     app = FastAPI()

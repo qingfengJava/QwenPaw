@@ -2188,6 +2188,29 @@
     "filter": {
       "reset": "Atur ulang filter",
       "columns": "Kolom"
+    },
+    "tree": {
+      "root": "Ringkasan Eksekusi",
+      "system": "Konteks Sistem",
+      "user": "Input Pengguna",
+      "intent": "Pengenalan Niat",
+      "llm": "LLM Berpikir",
+      "end": "Selesai"
+    },
+    "tools": {
+      "web_search": "Pencarian Web",
+      "read_file": "Baca File",
+      "write_file": "Tulis File",
+      "edit_file": "Edit File",
+      "append_file": "Tambah File",
+      "execute_shell": "Jalankan Perintah",
+      "bash": "Jalankan Perintah",
+      "glob": "Cari File",
+      "grep": "Cari Konten",
+      "submit": "Kirim Hasil",
+      "get_skills": "Ambil Skill",
+      "browser_navigate": "Buka Halaman",
+      "browser_click": "Klik Halaman"
     }
   },
   "environments": {

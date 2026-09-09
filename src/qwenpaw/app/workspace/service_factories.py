@@ -151,7 +151,11 @@ async def create_chat_service(
         logger.info(f"Reusing ChatManager for {ws.agent_id}")
     else:
         chats_path = str(ws.workspace_dir / "chats.json")
-        chat_repo = build_chat_repository(chats_path)
+        # 归属智能体：PG 共表后按员工隔离（测试替身可能无 agent_id）
+        chat_repo = build_chat_repository(
+            chats_path,
+            agent_id=getattr(ws, "agent_id", "default"),
+        )
         cm = ChatManager(
             repo=chat_repo,
             on_session_closed=close_browser_session,

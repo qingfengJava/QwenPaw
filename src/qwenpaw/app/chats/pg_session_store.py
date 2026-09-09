@@ -2,9 +2,10 @@
 """PostgreSQL session store (M2).
 
 Implements ``BaseSessionStore`` over the ``session_states`` table, keyed by
-``(tenant_id, channel, owner_id, session_id)`` — the same identity the JSON
-backend encodes into its file names. State lives in one JSONB document so
-module payloads stay schemaless, exactly like the file era.
+``(tenant_id, agent_id, channel, owner_id, session_id)`` — the JSON backend
+encoded the agent part into the workspace directory layout. State lives in
+one JSONB document so module payloads stay schemaless, exactly like the
+file era.
 """
 from __future__ import annotations
 
@@ -35,6 +36,7 @@ class PgSessionStore(BaseSessionStore):
         engine: "AsyncEngine | None" = None,
         tenant_id: str = DEFAULT_TENANT_ID,
         save_dir: str | None = None,
+        agent_id: str = "default",
     ) -> None:
         if engine is None:
             from ...db.engine import create_pg_engine
@@ -43,6 +45,8 @@ class PgSessionStore(BaseSessionStore):
         _ = save_dir
         self._engine = engine
         self._tenant_id = tenant_id
+        # 归属智能体：同用户同 session_id 在不同员工下互不覆盖
+        self._agent_id = agent_id or "default"
 
     # -- helpers ----------------------------------------------------------
 
@@ -54,6 +58,7 @@ class PgSessionStore(BaseSessionStore):
     ) -> dict:
         return {
             "tid": self._tenant_id,
+            "aid": self._agent_id,
             "chan": channel or "",
             "uid": user_id or "",
             "sid": session_id,
@@ -73,7 +78,8 @@ class PgSessionStore(BaseSessionStore):
         result = await conn.execute(
             text(
                 "SELECT state FROM session_states "
-                "WHERE tenant_id = :tid AND channel = :chan "
+                "WHERE tenant_id = :tid AND agent_id = :aid "
+                "AND channel = :chan "
                 "AND owner_id = :uid AND session_id = :sid" + lock,
             ),
             key,
@@ -96,11 +102,13 @@ class PgSessionStore(BaseSessionStore):
         now = datetime.now(timezone.utc)
         await conn.execute(
             text(
-                "INSERT INTO session_states (tenant_id, channel, owner_id, "
+                "INSERT INTO session_states (tenant_id, agent_id, channel, "
+                "owner_id, "
                 "session_id, state, created_at, updated_at) "
-                "VALUES (:tid, :chan, :uid, :sid, CAST(:state AS JSONB), "
+                "VALUES (:tid, :aid, :chan, :uid, :sid, CAST(:state AS JSONB), "
                 ":now, :now) "
-                "ON CONFLICT (tenant_id, channel, owner_id, session_id) "
+                "ON CONFLICT (tenant_id, agent_id, channel, owner_id, "
+                "session_id) "
                 "DO UPDATE SET state = EXCLUDED.state, "
                 "updated_at = EXCLUDED.updated_at"
             ),
@@ -211,3 +219,31 @@ class PgSessionStore(BaseSessionStore):
                 return {}
             raise self._not_found(session_id, "get_session_state_dict")
         return states
+
+    async def list_session_state_dicts(self) -> list[tuple[str, str, dict]]:
+        """Return ``(channel, session_id, state)`` for every stored session.
+
+        Scoped to this store's tenant and agent, mirroring the JSON
+        backend's per-workspace directory sweep in agent statistics.
+        """
+        import json
+
+        from sqlalchemy import text
+
+        async with self._engine.connect() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT channel, session_id, state FROM session_states "
+                    "WHERE tenant_id = :tid AND agent_id = :aid",
+                ),
+                {"tid": self._tenant_id, "aid": self._agent_id},
+            )
+            rows = result.all()
+
+        sessions: list[tuple[str, str, dict]] = []
+        for channel, session_id, state in rows:
+            # text() results carry no type processor: JSONB arrives as text.
+            if isinstance(state, str):
+                state = json.loads(state)
+            sessions.append((channel or "", session_id, state or {}))
+        return sessions

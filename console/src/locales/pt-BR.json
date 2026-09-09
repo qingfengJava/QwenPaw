@@ -1782,6 +1782,29 @@
     "filter": {
       "reset": "Limpar filtros",
       "columns": "Colunas"
+    },
+    "tree": {
+      "root": "Visão da Execução",
+      "system": "Contexto do Sistema",
+      "user": "Entrada do Usuário",
+      "intent": "Reconhecimento de Intenção",
+      "llm": "Raciocínio do LLM",
+      "end": "Conclusão"
+    },
+    "tools": {
+      "web_search": "Busca na Web",
+      "read_file": "Ler Arquivo",
+      "write_file": "Gravar Arquivo",
+      "edit_file": "Editar Arquivo",
+      "append_file": "Anexar Arquivo",
+      "execute_shell": "Executar Comando",
+      "bash": "Executar Comando",
+      "glob": "Localizar Arquivos",
+      "grep": "Buscar Conteúdo",
+      "submit": "Enviar Resultado",
+      "get_skills": "Obter Skills",
+      "browser_navigate": "Abrir Página",
+      "browser_click": "Clicar Página"
     }
   },
   "environments": {

@@ -74,3 +74,13 @@ class BaseSessionStore(ABC):
     ) -> dict:
         """Return the raw persisted state dict for one session."""
         raise NotImplementedError
+
+    async def list_session_state_dicts(self) -> list[tuple[str, str, dict]]:
+        """Return ``(channel, session_id, state)`` for every stored session.
+
+        Aggregation consumers (e.g. agent statistics) sweep all of one
+        agent's sessions through this instead of knowing the on-disk /
+        on-table layout. Backends without a full-scan story raise
+        ``NotImplementedError``; callers fall back to their native path.
+        """
+        raise NotImplementedError

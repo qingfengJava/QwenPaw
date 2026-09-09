@@ -16,6 +16,7 @@ Currently provided:
 
 import asyncio
 import logging
+import time
 from copy import deepcopy
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -992,3 +993,267 @@ class LangfuseToolSpanMiddleware(MiddlewareBase):
                         ],
                     },
                 )
+
+
+class SpanRecorderMiddleware(MiddlewareBase):
+    """Record execution spans (system/llm/tool/reply) into the local sink.
+
+    Mirrors :class:`LangfuseToolSpanMiddleware` boundaries but writes to
+    the process-local PG span sink (``observability.span_sink``) instead
+    of the Langfuse cloud, so the console run-log tree shows real steps
+    with per-step duration and input/output payloads.
+
+    Every hook is fully guarded: any sink failure is swallowed and the
+    underlying call is always passed through unchanged.
+    """
+
+    async def on_system_prompt(
+        self,
+        agent: "Agent",  # pylint: disable=unused-argument
+        current_prompt: str,
+    ) -> str:
+        """Time the prompt assembly as a ``system`` span."""
+        started_at = time.time()
+        t0 = time.perf_counter()
+        try:
+            return current_prompt
+        finally:
+            try:
+                from ..observability.span_sink import get_span_sink
+
+                get_span_sink().emit_span(
+                    kind="system",
+                    name=None,
+                    started_at=started_at,
+                    ended_at=time.time(),
+                    duration_override_ms=int(
+                        (time.perf_counter() - t0) * 1000,
+                    ),
+                    input={"prompt_chars": len(current_prompt or "")},
+                    output=None,
+                )
+            except Exception:  # pylint: disable=broad-except
+                logger.debug("span recorder system span failed", exc_info=True)
+
+    async def on_model_call(
+        self,
+        agent: "Agent",  # pylint: disable=unused-argument
+        input_kwargs: dict[str, Any],
+        next_handler: Callable[..., Any],
+    ) -> Any:
+        """Time each LLM invocation as an ``llm`` span."""
+        from ..observability.span_sink import (
+            get_span_sink,
+            set_current_llm_span,
+        )
+
+        started_at = time.time()
+        t0 = time.perf_counter()
+        span_id: str | None = None
+        try:
+            result = await next_handler(**input_kwargs)
+            elapsed_ms = int((time.perf_counter() - t0) * 1000)
+            try:
+                sink = get_span_sink()
+                usage = getattr(result, "usage", None)
+                output_tokens = (
+                    int(getattr(usage, "output_tokens", 0) or 0)
+                    if usage is not None
+                    else None
+                )
+                model_name = (
+                    getattr(result, "name", None)
+                    or self._model_name_from_messages(input_kwargs)
+                )
+                span_id = sink.emit_span(
+                    kind="llm",
+                    name=model_name,
+                    started_at=started_at,
+                    ended_at=time.time(),
+                    duration_override_ms=elapsed_ms,
+                    input=self._messages_summary(input_kwargs),
+                    output=self._msg_summary(result),
+                    tokens=output_tokens,
+                )
+            except Exception:  # pylint: disable=broad-except
+                logger.debug("span recorder llm span failed", exc_info=True)
+            finally:
+                set_current_llm_span(span_id)
+            return result
+        except BaseException as exc:
+            try:
+                get_span_sink().emit_span(
+                    kind="llm",
+                    name=self._model_name_from_messages(input_kwargs),
+                    started_at=started_at,
+                    ended_at=time.time(),
+                    duration_override_ms=int(
+                        (time.perf_counter() - t0) * 1000,
+                    ),
+                    input=self._messages_summary(input_kwargs),
+                    output=None,
+                    status="failed",
+                    error=repr(exc),
+                )
+            except Exception:  # pylint: disable=broad-except
+                logger.debug("span recorder llm error span failed", exc_info=True)
+            raise
+
+    async def on_acting(
+        self,
+        agent: "Agent",  # pylint: disable=unused-argument
+        input_kwargs: dict[str, Any],
+        next_handler: Callable[..., AsyncGenerator[Any, None]],
+    ) -> AsyncGenerator[Any, None]:
+        """Time each tool execution as a ``tool`` span under the llm span."""
+        from ..observability.span_sink import (
+            get_current_llm_span,
+            get_span_sink,
+        )
+
+        tool_call = input_kwargs.get("tool_call")
+        tool_name = str(getattr(tool_call, "name", None) or "unknown")
+        tool_input = getattr(tool_call, "input", None)
+        parent = get_current_llm_span()
+
+        started_at = time.time()
+        t0 = time.perf_counter()
+        final_response: Any = None
+        error_text: str | None = None
+        try:
+            async for event in next_handler():
+                if isinstance(event, ToolResponse):
+                    final_response = event
+                yield event
+        except BaseException as exc:  # noqa: BLE001 — re-raised below
+            error_text = repr(exc)
+            raise
+        finally:
+            try:
+                output = None
+                if final_response is not None:
+                    output = {
+                        "content": [
+                            getattr(b, "text", str(b))
+                            for b in (final_response.content or [])
+                        ],
+                    }
+                get_span_sink().emit_span(
+                    kind="tool",
+                    name=tool_name,
+                    started_at=started_at,
+                    ended_at=time.time(),
+                    duration_override_ms=int(
+                        (time.perf_counter() - t0) * 1000,
+                    ),
+                    input=tool_input,
+                    output=output,
+                    parent_span_id=parent,
+                    status="failed" if error_text else "success",
+                    error=error_text,
+                )
+            except Exception:  # pylint: disable=broad-except
+                logger.debug("span recorder tool span failed", exc_info=True)
+
+    async def on_reply(
+        self,
+        agent: "Agent",  # pylint: disable=unused-argument
+        input_kwargs: dict[str, Any],
+        next_handler: Callable[..., AsyncGenerator[Any, None]],
+    ) -> AsyncGenerator[Any, None]:
+        """Time the full reply loop as the ``reply`` (逻辑结束) span."""
+        from ..observability.span_sink import get_span_sink
+
+        started_at = time.time()
+        t0 = time.perf_counter()
+        last_text: str | None = None
+        try:
+            async for item in next_handler():
+                text = self._extract_text(item)
+                if text:
+                    last_text = text
+                yield item
+        finally:
+            try:
+                get_span_sink().emit_span(
+                    kind="reply",
+                    name=None,
+                    started_at=started_at,
+                    ended_at=time.time(),
+                    duration_override_ms=int(
+                        (time.perf_counter() - t0) * 1000,
+                    ),
+                    input=None,
+                    output=last_text,
+                    parent_span_id=None,
+                )
+            except Exception:  # pylint: disable=broad-except
+                logger.debug("span recorder reply span failed", exc_info=True)
+
+    # -- payload helpers ---------------------------------------------------
+
+    @staticmethod
+    def _model_name_from_messages(input_kwargs: dict[str, Any]) -> str | None:
+        """Best-effort model label from call kwargs (model= or messages)."""
+        model = input_kwargs.get("model")
+        if isinstance(model, str) and model:
+            return model
+        return None
+
+    @staticmethod
+    def _messages_summary(input_kwargs: dict[str, Any]) -> dict[str, Any]:
+        """Compact llm-input summary: count + last message (never full prompt)."""
+        messages = input_kwargs.get("messages") or []
+        summary: dict[str, Any] = {"message_count": len(messages)}
+        if messages:
+            last = messages[-1]
+            role = getattr(last, "role", None) or (
+                last.get("role") if isinstance(last, dict) else None
+            )
+            content = getattr(last, "content", None)
+            if content is None and isinstance(last, dict):
+                content = last.get("content")
+            summary["last_message"] = {"role": role, "content": content}
+        return summary
+
+    @staticmethod
+    def _msg_summary(msg: Any) -> Any:
+        """Compact assistant-output summary (text blocks + tool names)."""
+        if msg is None:
+            return None
+        content = getattr(msg, "content", None)
+        if content is None:
+            return str(msg)[:512]
+        blocks: list[Any] = []
+        if isinstance(content, str):
+            return content
+        for block in content if isinstance(content, list) else []:
+            block_type = getattr(block, "type", None) or (
+                block.get("type") if isinstance(block, dict) else None
+            )
+            if block_type == "thinking":
+                continue
+            text = getattr(block, "text", None)
+            name = getattr(block, "name", None) or (
+                block.get("name") if isinstance(block, dict) else None
+            )
+            if text:
+                blocks.append({"type": "text", "text": text})
+            elif name:
+                blocks.append({"type": "tool_call", "name": name})
+        return {"blocks": blocks}
+
+    @staticmethod
+    def _extract_text(item: Any) -> str | None:
+        """Pull displayable text from a reply-stream item."""
+        content = getattr(item, "content", None)
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            chunks = [
+                getattr(b, "text", "")
+                for b in content
+                if (getattr(b, "type", None) == "text" and b.text)
+            ]
+            return "\n".join(chunks) or None
+        return None

@@ -21,7 +21,13 @@
  * expert 托管判定：preview/status 探测成功（404 → 非托管，隐藏
  * 调试/发布/版本），无需依赖 id 前缀约定。
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+} from "react";
 import type { ComponentType } from "react";
 import {
   MemoryRouter,
@@ -197,7 +203,11 @@ function AgentWorkbenchShell({ chatRoute = false }: { chatRoute?: boolean }) {
 
   // ── 借壳同步：调试态切草稿实例，常态切线上 aid ──
   const targetAgent = debugOn && preview ? preview.agent_id : aid;
-  useEffect(() => {
+  // 必须用 useLayoutEffect：子组件 Chat 的 passive effect（首次拉会话列表）
+  // 先于父组件 useEffect 执行，若在此时才同步 selectedAgent，请求头会
+  // 带着上一个员工（storage 兑底值）拿到别人的会话记录。layout 阶段
+  // 同步可保证在所有 passive effect 之前完成数据域切换。
+  useLayoutEffect(() => {
     if (!aid) return;
     const state = useAgentStore.getState();
     if (state.selectedAgent === targetAgent) return;

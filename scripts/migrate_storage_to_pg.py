@@ -46,7 +46,12 @@ logger = logging.getLogger("migrate_storage_to_pg")
 # ---------------------------------------------------------------------------
 
 
-async def migrate_chats(workspace: Path, engine, dry_run: bool) -> dict:
+async def migrate_chats(
+    workspace: Path,
+    engine,
+    dry_run: bool,
+    agent_id: str = "default",
+) -> dict:
     from qwenpaw.app.chats.models import ChatsFile
     from qwenpaw.app.chats.repo.pg_repo import PgChatRepository
 
@@ -55,7 +60,7 @@ async def migrate_chats(workspace: Path, engine, dry_run: bool) -> dict:
         return {"plane": "chats", "source": 0, "target": 0, "skipped": True}
     data = json.loads(path.read_text(encoding="utf-8"))
     chats_file = ChatsFile.model_validate(data)
-    repo = PgChatRepository(engine=engine)
+    repo = PgChatRepository(engine=engine, agent_id=agent_id)
     if not dry_run:
         # Upsert semantics (save would also delete rows absent here, which
         # must NOT happen on a re-run after cutover): upsert one by one.
@@ -104,7 +109,12 @@ def _build_file_index(workspace: Path) -> dict[str, tuple[str, str, str]]:
     return index
 
 
-async def migrate_sessions(workspace: Path, engine, dry_run: bool) -> dict:
+async def migrate_sessions(
+    workspace: Path,
+    engine,
+    dry_run: bool,
+    agent_id: str = "default",
+) -> dict:
     from sqlalchemy import text
 
     sessions_dir = workspace / "sessions"
@@ -135,6 +145,7 @@ async def migrate_sessions(workspace: Path, engine, dry_run: bool) -> dict:
         )
         rows.append(
             {
+                "aid": agent_id,
                 "chan": channel,
                 "uid": owner,
                 "sid": session_id,
@@ -147,11 +158,12 @@ async def migrate_sessions(workspace: Path, engine, dry_run: bool) -> dict:
             for row in rows:
                 await conn.execute(
                     text(
-                        "INSERT INTO session_states (tenant_id, channel, "
+                        "INSERT INTO session_states (tenant_id, agent_id, "
+                        "channel, "
                         "owner_id, session_id, state, created_at, updated_at) "
-                        "VALUES ('default', :chan, :uid, :sid, "
+                        "VALUES ('default', :aid, :chan, :uid, :sid, "
                         "CAST(:state AS JSONB), now(), now()) "
-                        "ON CONFLICT (tenant_id, channel, owner_id, "
+                        "ON CONFLICT (tenant_id, agent_id, channel, owner_id, "
                         "session_id) DO UPDATE SET state = EXCLUDED.state, "
                         "updated_at = now()",
                     ),
@@ -304,8 +316,17 @@ async def _run(args: argparse.Namespace) -> int:
         if not args.dry_run:
             await run_migrations(engine)
         results = []
-        results.append(await migrate_chats(workspace, engine, args.dry_run))
-        results.append(await migrate_sessions(workspace, engine, args.dry_run))
+        results.append(
+            await migrate_chats(workspace, engine, args.dry_run, args.agent_id),
+        )
+        results.append(
+            await migrate_sessions(
+                workspace,
+                engine,
+                args.dry_run,
+                args.agent_id,
+            ),
+        )
         results.append(await migrate_history(workspace, engine, args.dry_run))
     finally:
         await engine.dispose()
@@ -329,6 +350,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workspace", required=True, help="workspace dir")
     parser.add_argument("--dsn", required=True, help="SQLAlchemy async DSN")
+    parser.add_argument(
+        "--agent-id",
+        default="default",
+        help=(
+            "agent id owning this workspace's chats/sessions "
+            "(chats.agent_id scope)"
+        ),
+    )
     parser.add_argument("--dry-run", action="store_true", help="count only")
     parser.add_argument("--sample", type=int, default=20)
     args = parser.parse_args()

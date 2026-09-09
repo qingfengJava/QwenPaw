@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useLayoutEffect, useMemo } from "react";
 import {
   Navigate,
   Route,
@@ -102,7 +102,9 @@ export default function AgentDetailLayout() {
 
   // 借壳同步：URL :aid 是数据域唯一事实来源，单向同步到 selectedAgent。
   // 相同 aid 短路，避免 menuRegistry.refresh() 风暴。
-  useEffect(() => {
+  // 用 useLayoutEffect：子组件 Chat 的 passive effect（首次拉会话列表）先
+  // 于父级 useEffect 执行，layout 阶段同步可避免首帧请求头携带上一个员工。
+  useLayoutEffect(() => {
     if (!aid) return;
     const state = useAgentStore.getState();
     if (state.selectedAgent === aid) return;

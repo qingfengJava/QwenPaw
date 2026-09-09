@@ -22,6 +22,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     Index,
+    Integer,
     PrimaryKeyConstraint,
     String,
     Text,
@@ -39,10 +40,20 @@ class ChatRow(TenantMixin, Base):
     ``created_at``/``updated_at`` are application-assigned: a repository
     round-trip must preserve the exact values carried by the ``ChatSpec``
     so JSON and PG backends stay byte-equivalent in behavior.
+
+    ``agent_id`` scopes the row to one digital employee: the JSON backend
+    isolated workspaces by file layout, the PG backend needs the column.
     """
 
     __tablename__ = "chats"
 
+    # 归属智能体：JSON 时代靠 workspace 目录隔离，PG 共表后由该列隔离
+    agent_id: Mapped[str] = mapped_column(
+        String(128),
+        nullable=False,
+        default="default",
+        server_default="default",
+    )
     id: Mapped[str] = mapped_column(String(64), nullable=False)
     session_id: Mapped[str] = mapped_column(Text, nullable=False)
     user_id: Mapped[str] = mapped_column(Text, nullable=False)
@@ -109,6 +120,7 @@ class ChatRow(TenantMixin, Base):
             "updated_at",
         ),
         Index("ix_chats_project", "tenant_id", "project_id"),
+        Index("ix_chats_tenant_agent", "tenant_id", "agent_id"),
         Index(
             "ix_chats_session",
             "tenant_id",
@@ -123,11 +135,21 @@ class SessionStateRow(TenantMixin, Base):
     """One session state document (mirrors a ``*.json`` session file).
 
     The composite primary key is exactly the file-name identity of the JSON
-    backend: ``(tenant_id, channel, owner_id, session_id)``.
+    backend: ``(tenant_id, agent_id, channel, owner_id, session_id)`` —
+    ``agent_id`` was added when the PG backend replaced per-workspace
+    session directories, so two employees sharing a session id never
+    overwrite each other's state.
     """
 
     __tablename__ = "session_states"
 
+    # 归属智能体：与 chats.agent_id 同语义（会话状态跨员工隔离）
+    agent_id: Mapped[str] = mapped_column(
+        String(128),
+        nullable=False,
+        default="default",
+        server_default="default",
+    )
     channel: Mapped[str] = mapped_column(
         Text,
         nullable=False,
@@ -159,6 +181,7 @@ class SessionStateRow(TenantMixin, Base):
     __table_args__ = (
         PrimaryKeyConstraint(
             "tenant_id",
+            "agent_id",
             "channel",
             "owner_id",
             "session_id",
@@ -226,4 +249,107 @@ class HistoryRow(TenantMixin, Base):
             unique=True,
             postgresql_where=text("dedup_key IS NOT NULL"),
         ),
+    )
+
+
+class AgentRunRow(TenantMixin, Base):
+    """One agent run (chat/cron execution) — the run-log list row.
+
+    Replaces the file-era ``run_logs/index-YYYYMMDD.jsonl`` shard: the
+    same fields power the list API but with SQL filtering/pagination.
+    Detail spans live in :class:`AgentRunSpanRow`.
+    """
+
+    __tablename__ = "agent_runs"
+
+    run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    agent_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    # Human-readable agent name (AgentProfileConfig.name) for display;
+    # falls back to agent_id in the UI when NULL.
+    display_name: Mapped[Optional[str]] = mapped_column(
+        String(128),
+        nullable=True,
+    )
+    session_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    root_session_id: Mapped[Optional[str]] = mapped_column(
+        String(128),
+        nullable=True,
+    )
+    chat_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    channel: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    source: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    environment: Mapped[Optional[str]] = mapped_column(
+        String(16),
+        nullable=True,
+    )
+    query_preview: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    started_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    finished_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    total_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    model: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    version: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    app_version: Mapped[Optional[str]] = mapped_column(
+        String(64),
+        nullable=True,
+    )
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        Index(
+            "ix_agent_runs_agent_started",
+            "tenant_id",
+            "agent_id",
+            "started_at",
+        ),
+    )
+
+
+class AgentRunSpanRow(Base):
+    """One execution span inside a run (system/llm/tool/reply).
+
+    Captured by ``SpanRecorderMiddleware`` at AgentScope middleware
+    boundaries; the span tree is rebuilt by ``parent_span_id``.
+    """
+
+    __tablename__ = "agent_run_spans"
+
+    id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        autoincrement=True,
+    )
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    span_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    parent_span_id: Mapped[Optional[str]] = mapped_column(
+        String(64),
+        nullable=True,
+    )
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    ended_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    input: Mapped[Optional[Any]] = mapped_column(JSONB, nullable=True)
+    output: Mapped[Optional[Any]] = mapped_column(JSONB, nullable=True)
+    tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    status: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_agent_run_spans_run", "run_id"),
     )

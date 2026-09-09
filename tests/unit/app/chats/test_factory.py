@@ -20,14 +20,35 @@ LEGACY_STORAGE_BACKEND_ENV = "COPAW_STORAGE_BACKEND"
 
 
 @pytest.fixture(autouse=True)
-def _clean_backend_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ensure each test starts without any backend override."""
+def _clean_backend_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ensure each test starts without any backend override.
+
+    同时把动态默认值钉回 json：宿主机可能配置了 QWENPAW_PG_DSN（此时
+    生产默认为 dual），测试需与宿主环境解耦；DSN→dual 默认值由独立用例覆盖。
+    """
     monkeypatch.delenv(STORAGE_BACKEND_ENV, raising=False)
     monkeypatch.delenv(LEGACY_STORAGE_BACKEND_ENV, raising=False)
+    monkeypatch.setattr(
+        "qwenpaw.app.chats.factory._default_storage_backend",
+        lambda: "json",
+    )
 
 
 def test_default_backend_is_json() -> None:
     assert get_storage_backend() == "json"
+
+
+def test_default_backend_is_dual_when_pg_dsn_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SQLite 退役（Phase A）：配置 PG DSN 后默认切换 dual 双写。"""
+    monkeypatch.setattr(
+        "qwenpaw.app.chats.factory._default_storage_backend",
+        lambda: "dual",
+    )
+    assert get_storage_backend() == "dual"
 
 
 def test_explicit_json_backend(monkeypatch: pytest.MonkeyPatch) -> None:

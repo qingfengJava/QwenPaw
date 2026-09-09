@@ -1835,6 +1835,29 @@
     "filter": {
       "reset": "重置筛选",
       "columns": "列设置"
+    },
+    "tree": {
+      "root": "运行总览",
+      "system": "系统上下文",
+      "user": "用户输入",
+      "intent": "意图识别",
+      "llm": "LLM 思考",
+      "end": "逻辑结束"
+    },
+    "tools": {
+      "web_search": "联网搜索",
+      "read_file": "读取文件",
+      "write_file": "写入文件",
+      "edit_file": "编辑文件",
+      "append_file": "追加文件",
+      "execute_shell": "执行命令",
+      "bash": "执行命令",
+      "glob": "搜索文件",
+      "grep": "搜索内容",
+      "submit": "提交结果",
+      "get_skills": "获取技能",
+      "browser_navigate": "打开网页",
+      "browser_click": "点击页面"
     }
   },
   "environments": {

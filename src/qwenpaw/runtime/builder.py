@@ -1482,6 +1482,21 @@ class AgentBuilder:
             ),
         )
 
+        # Local span recorder (console run-log execution tree). Only when a
+        # PG DSN is configured — the file-era run-log path stays untouched
+        # otherwise, and the sink swallows every failure anyway.
+        try:
+            from ..observability.span_sink import get_span_sink
+            from ..app.run_log_pg_store import pg_available
+
+            if pg_available():
+                from ..agents.middlewares import SpanRecorderMiddleware
+
+                _ = get_span_sink()  # warm the singleton on the loop
+                mws.append(SpanRecorderMiddleware())
+        except Exception:
+            _logger.debug("SpanRecorderMiddleware not created", exc_info=True)
+
         return mws
 
 

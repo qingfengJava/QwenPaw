@@ -26,6 +26,17 @@ from qwenpaw.governance.tool_registry import DEFAULT_REGISTRY
 from qwenpaw.governance.audit import AuditLog
 from qwenpaw.sandbox import SandboxCapability
 
+
+@pytest.fixture(autouse=True)
+def _jsonl_audit_backend(monkeypatch, tmp_path):
+    """单元测试强制 JSONL 审计后端，与宿主机 PG 环境解耦。"""
+    from qwenpaw.governance.audit_store import JsonlAuditStore
+
+    monkeypatch.setattr(
+        "qwenpaw.governance.audit.create_audit_backend",
+        lambda d: JsonlAuditStore(tmp_path / "audit.jsonl"),
+    )
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -50,60 +61,43 @@ def _make_governor(tmp_path) -> ResourceGovernor:
     )
 
 
-def test_audit_close_waits_for_active_connection_user(tmp_path):
-    """Closing the singleton must share its connection lock."""
+def test_audit_close_drains_queue_and_stops_writer(tmp_path):
+    """close 必须先排空写队列再停写线程，后续 record 不崩溃。
+
+    （SQLite 退役后 close 不再共享连接锁，旧语义测试重写为：
+    队列排空 + 写线程退出 + 关闭后 record 静默不抛。）
+    """
+    import json
     import threading
-
-    class _ObservedRLock:
-        def __init__(self):
-            self._lock = threading.RLock()
-            self.acquire_attempted = threading.Event()
-
-        def acquire(self):
-            self.acquire_attempted.set()
-            return self._lock.acquire()
-
-        def release(self):
-            self._lock.release()
-
-        def __enter__(self):
-            self.acquire()
-            return self
-
-        def __exit__(self, *_args):
-            self.release()
 
     existing = AuditLog._instance
     if existing is not None:
         existing.close()
     audit_log = AuditLog.get_instance(tmp_path)
-    observed_lock = _ObservedRLock()
-    audit_log._lock = observed_lock
-    close_finished = threading.Event()
-
-    def close_log():
-        audit_log.close()
-        close_finished.set()
-
-    observed_lock.acquire()
-    observed_lock.acquire_attempted.clear()
-    close_thread = threading.Thread(target=close_log)
-    close_thread.start()
-    try:
-        assert observed_lock.acquire_attempted.wait(timeout=1)
-        assert not close_finished.is_set()
-    finally:
-        observed_lock.release()
-    close_thread.join(timeout=5)
-
-    assert not close_thread.is_alive()
-    assert close_finished.is_set()
+    writer = audit_log._writer
     audit_log.record(
         str(tmp_path),
         _tc("Bash", "git status"),
         GovernanceDecision(
             action=GovernanceAction.ALLOW,
             reason="test",
+        ),
+    )
+    audit_log.close()
+
+    # 排空完成：写线程退出，事件已落盘
+    assert not writer.is_alive()
+    jsonl = tmp_path / "audit.jsonl"
+    rows = [json.loads(line) for line in jsonl.read_text(encoding="utf-8").splitlines() if line]
+    assert rows and rows[0]["target"] == "git status"
+
+    # 关闭后的 record 只静默入队（队列无消费者），绝不抛异常
+    audit_log.record(
+        str(tmp_path),
+        _tc("Bash", "git log"),
+        GovernanceDecision(
+            action=GovernanceAction.ALLOW,
+            reason="after close",
         ),
     )
 

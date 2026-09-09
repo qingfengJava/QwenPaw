@@ -404,3 +404,230 @@ COMMENT ON COLUMN xian_workspaces.tenant_id IS '租户标识（多租户预留�
 COMMENT ON COLUMN xian_workspaces.created_at IS '创建时间（DB 自动维护，UTC）';
 
 COMMENT ON COLUMN xian_workspaces.updated_at IS '更新时间（DB 自动维护，UTC）';
+
+
+-- ============================================================
+-- 20260909/01 agent_documents（数字员工档案文档表，alembic 0014 等价）
+-- ============================================================
+
+-- ============================================================
+-- agent_documents：数字员工档案文档表
+-- alembic 等价路径：0014_agent_documents
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS agent_documents (
+    tenant_id    VARCHAR(64) NOT NULL DEFAULT 'default',
+    id           BIGSERIAL PRIMARY KEY,
+    agent_id     VARCHAR(64) NOT NULL,
+    doc_type     VARCHAR(32) NOT NULL,
+    environment  VARCHAR(16) NOT NULL DEFAULT 'production',
+    content      TEXT NOT NULL DEFAULT '',
+    content_hash VARCHAR(64) NOT NULL DEFAULT '',
+    version      INTEGER NOT NULL DEFAULT 1,
+    updated_by   TEXT,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_agent_documents_doc
+        UNIQUE (tenant_id, agent_id, doc_type, environment),
+    CONSTRAINT ck_agent_documents_doc_type
+        CHECK (doc_type IN ('profile', 'agents', 'soul', 'agent_json')),
+    CONSTRAINT ck_agent_documents_environment
+        CHECK (environment IN ('draft', 'production'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_documents_agent
+    ON agent_documents (tenant_id, agent_id);
+
+COMMENT ON TABLE agent_documents IS '数字员工档案文档表：PROFILE/AGENTS/SOUL/agent.json 的 PG 权威存储（Phase A 影子双写，Phase B 读切换；environment 区分草稿/生产）';
+
+COMMENT ON COLUMN agent_documents.tenant_id IS '租户标识（多租户预留，单租户部署恒为 default）';
+
+COMMENT ON COLUMN agent_documents.id IS '文档行 ID（BIGSERIAL 自增主键）';
+
+COMMENT ON COLUMN agent_documents.agent_id IS '智能体标识（工作区目录名，与 AgentProfileRef.id 一致）';
+
+COMMENT ON COLUMN agent_documents.doc_type IS '文档类型: profile-PROFILE.md, agents-AGENTS.md, soul-SOUL.md, agent_json-agent.json';
+
+COMMENT ON COLUMN agent_documents.environment IS '环境: draft-调试草稿, production-线上发布';
+
+COMMENT ON COLUMN agent_documents.content IS '文档全文内容';
+
+COMMENT ON COLUMN agent_documents.content_hash IS '内容 SHA-256 摘要（幂等 upsert 判据，内容未变时不递增版本）';
+
+COMMENT ON COLUMN agent_documents.version IS '文档版本号，内容变更时单调递增';
+
+COMMENT ON COLUMN agent_documents.updated_by IS '最后修改人标识';
+
+COMMENT ON COLUMN agent_documents.created_at IS '创建时间（DB 自动维护，UTC）';
+
+COMMENT ON COLUMN agent_documents.updated_at IS '更新时间（DB 自动维护，UTC）';
+
+
+-- ============================================================
+-- 20260909/02 audit_events（治理审计事件表，alembic 0015 等价）
+-- ============================================================
+
+-- ============================================================
+-- audit_events：治理审计事件表
+-- alembic 等价路径：0015_audit_events
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS audit_events (
+    tenant_id     VARCHAR(64) NOT NULL DEFAULT 'default',
+    id            BIGSERIAL PRIMARY KEY,
+    ts            BIGINT NOT NULL,
+    workspace_dir TEXT NOT NULL,
+    agent_id      TEXT NOT NULL,
+    session_id    TEXT NOT NULL,
+    tool_name     TEXT NOT NULL,
+    target        TEXT NOT NULL,
+    decision      VARCHAR(32) NOT NULL,
+    reason        TEXT NOT NULL DEFAULT '',
+    extra         JSONB,
+    actor_id      TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_events_ts
+    ON audit_events (tenant_id, ts);
+
+CREATE INDEX IF NOT EXISTS idx_audit_events_workspace
+    ON audit_events (tenant_id, workspace_dir);
+
+CREATE INDEX IF NOT EXISTS idx_audit_events_agent
+    ON audit_events (tenant_id, agent_id);
+
+CREATE INDEX IF NOT EXISTS idx_audit_events_tool
+    ON audit_events (tenant_id, tool_name);
+
+COMMENT ON TABLE audit_events IS '治理审计事件表：每次 assert_policy/audit 调用的 5W 记录（SQLite audit.db 的 PG 替代；ts 为 UTC 毫秒时间戳）';
+
+COMMENT ON COLUMN audit_events.tenant_id IS '租户标识（多租户预留，单租户部署恒为 default）';
+
+COMMENT ON COLUMN audit_events.id IS '事件行 ID（BIGSERIAL 自增主键）';
+
+COMMENT ON COLUMN audit_events.ts IS '事件时间（UTC 毫秒时间戳）';
+
+COMMENT ON COLUMN audit_events.workspace_dir IS '事件所属工作区路径';
+
+COMMENT ON COLUMN audit_events.agent_id IS '执行调用的智能体标识';
+
+COMMENT ON COLUMN audit_events.session_id IS '调用所属会话标识';
+
+COMMENT ON COLUMN audit_events.tool_name IS '被治理的工具名';
+
+COMMENT ON COLUMN audit_events.target IS '工具调用目标';
+
+COMMENT ON COLUMN audit_events.decision IS '治理决策: allow-允许, deny-拒绝, ask-询问, sandbox_fallback-沙箱降级';
+
+COMMENT ON COLUMN audit_events.reason IS '决策原因说明';
+
+COMMENT ON COLUMN audit_events.extra IS '扩展信息（JSONB）';
+
+COMMENT ON COLUMN audit_events.actor_id IS '可信用户身份（M4；匿名调用为空串）';
+
+
+-- ============================================================
+-- 20260909/03 chats/session_states 增加 agent_id 维度
+-- （数字员工会话隔离；alembic 等价路径：0016_chats_agent_scope）
+-- ============================================================
+
+-- chats：归属智能体列 + 复合索引
+ALTER TABLE chats ADD COLUMN IF NOT EXISTS agent_id
+VARCHAR(128) NOT NULL DEFAULT 'default';
+
+CREATE INDEX IF NOT EXISTS ix_chats_tenant_agent
+ON chats (tenant_id, agent_id);
+
+COMMENT ON COLUMN chats.agent_id IS
+'归属智能体标识（数字员工会话隔离；历史行由 backfill_chat_agent 修正）';
+
+-- session_states：归属智能体列 + 主键扩展
+ALTER TABLE session_states ADD COLUMN IF NOT EXISTS agent_id
+VARCHAR(128) NOT NULL DEFAULT 'default';
+
+ALTER TABLE session_states DROP CONSTRAINT IF EXISTS pk_session_states;
+
+ALTER TABLE session_states ADD CONSTRAINT pk_session_states
+PRIMARY KEY (tenant_id, agent_id, channel, owner_id, session_id);
+
+COMMENT ON COLUMN session_states.agent_id IS
+'归属智能体标识（数字员工会话状态隔离）';
+
+-- [变更说明] 运行日志 Span 化：agent_runs 列表表 + agent_run_spans 执行树表
+-- [变更时间] 2026-09-09
+-- [变更人]   清风
+-- [适用环境] 测试环境（在已有库基础上增量执行）
+-- [同步至 db/feature/agent_run_logs_20260908/test.sql] 是
+-- [同步至 db/feature/agent_run_logs_20260908/prod.sql] 是
+--
+-- 背景：运行日志原为「inbox_trace 消息快照 + run_logs/index-*.jsonl 文件
+-- 索引」，前端执行树只能从消息流猜测语义。升级为 span 级采集
+-- （SpanRecorderMiddleware 在 on_system_prompt/on_model_call/on_acting/
+-- on_reply 边界埋点）+ PG 双表存储。无 PG 部署继续走文件路径。
+-- alembic twin: 0017_run_log_spans
+
+-- 运行日志列表行（替代 run_logs/index-*.jsonl）
+CREATE TABLE IF NOT EXISTS agent_runs (
+    tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
+    run_id VARCHAR(64) NOT NULL,
+    agent_id VARCHAR(128) NOT NULL,
+    display_name VARCHAR(128),
+    session_id VARCHAR(128),
+    root_session_id VARCHAR(128),
+    chat_id VARCHAR(128),
+    user_id VARCHAR(128),
+    channel VARCHAR(64),
+    source VARCHAR(32),
+    environment VARCHAR(16),
+    query_preview TEXT,
+    status VARCHAR(16) NOT NULL,
+    started_at TIMESTAMPTZ,
+    finished_at TIMESTAMPTZ,
+    duration_ms INTEGER,
+    total_tokens INTEGER,
+    model VARCHAR(128),
+    version VARCHAR(64),
+    app_version VARCHAR(64),
+    error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT pk_agent_runs PRIMARY KEY (run_id)
+);
+CREATE INDEX IF NOT EXISTS ix_agent_runs_agent_started
+ON agent_runs (tenant_id, agent_id, started_at);
+
+-- 已按初始 0017 建库的环境补列（幂等）
+ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS display_name VARCHAR(128);
+
+COMMENT ON TABLE agent_runs IS
+'Agent 运行日志列表行（替代 run_logs/index-*.jsonl 文件索引）';
+COMMENT ON COLUMN agent_runs.status IS '状态: running, success, failed';
+COMMENT ON COLUMN agent_runs.display_name IS
+'智能体可读名称（AgentProfileConfig.name，展示用；空则前端回退 agent_id）';
+
+-- 运行执行 span（system/llm/tool/reply，parent_span_id 组树）
+CREATE TABLE IF NOT EXISTS agent_run_spans (
+    id BIGSERIAL PRIMARY KEY,
+    tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
+    run_id VARCHAR(64) NOT NULL,
+    span_id VARCHAR(64) NOT NULL,
+    parent_span_id VARCHAR(64),
+    kind VARCHAR(16) NOT NULL,
+    name VARCHAR(128),
+    started_at TIMESTAMPTZ,
+    ended_at TIMESTAMPTZ,
+    duration_ms INTEGER,
+    input JSONB,
+    output JSONB,
+    tokens INTEGER,
+    status VARCHAR(16),
+    error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ix_agent_run_spans_run
+ON agent_run_spans (run_id);
+COMMENT ON TABLE agent_run_spans IS
+'Agent 运行执行 span（system/llm/tool/reply，parent_span_id 组树）';
+COMMENT ON COLUMN agent_run_spans.kind IS
+'span 类型: system, llm, tool, reply';

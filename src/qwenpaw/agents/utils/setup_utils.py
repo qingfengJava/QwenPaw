@@ -290,14 +290,72 @@ def copy_template_md_files(
     return copied_files
 
 
+def _render_identity_placeholders(
+    workspace_dir: Path,
+    *,
+    identity_name: str | None,
+    identity_description: str | None,
+) -> None:
+    """Fill PROFILE.md identity placeholders with the agent's birth identity.
+
+    数字员工创建时已确定 name/description，出生即有身份：将模板中的占位符
+    替换为真实值。仅在占位符仍存在时替换（幂等），不触碰用户已编辑的内容。
+    """
+    if not identity_name and not identity_description:
+        return
+    profile = workspace_dir / "PROFILE.md"
+    if not profile.is_file():
+        return
+    try:
+        content = profile.read_text(encoding="utf-8")
+    except OSError as e:
+        logger.warning("Failed to read PROFILE.md for identity render: %s", e)
+        return
+    updated = content
+    if identity_name:
+        # 中文名占位符（模板原文）
+        updated = updated.replace(
+            "- **名字：**\n  *（挑个你喜欢的）*",
+            f"- **名字：** {identity_name}",
+        )
+        # 英文占位符（模板原文）
+        updated = updated.replace(
+            "- **Name:**\n  *(pick something you like)*",
+            f"- **Name:** {identity_name}",
+        )
+    if identity_description:
+        updated = updated.replace(
+            "- **定位：**\n  *（AI？机器人？使魔？机器里的幽灵？还是更怪的？）*",
+            f"- **定位：** {identity_description}",
+        )
+        updated = updated.replace(
+            "- **Creature:**\n  *(AI? robot? familiar? ghost in the machine? "
+            "something weirder?)*",
+            f"- **Creature:** {identity_description}",
+        )
+    if updated == content:
+        return
+    try:
+        profile.write_text(updated, encoding="utf-8")
+    except OSError as e:
+        logger.warning("Failed to write rendered PROFILE.md: %s", e)
+
+
 def copy_workspace_md_files(
     language: str,
     workspace_dir: Path | str,
     *,
     md_template_id: str | None = None,
     only_if_missing: bool = True,
+    identity_name: str | None = None,
+    identity_description: str | None = None,
 ) -> list[str]:
-    """Copy common workspace md files plus optional template overrides."""
+    """Copy common workspace md files plus optional template overrides.
+
+    ``identity_name`` / ``identity_description`` render the PROFILE.md
+    identity placeholders so a console-created agent is born with its
+    identity instead of asking the user on the first session.
+    """
     workspace_dir = Path(workspace_dir).expanduser()
 
     copied_files = copy_md_files(
@@ -310,6 +368,11 @@ def copy_workspace_md_files(
     )
 
     if not md_template_id:
+        _render_identity_placeholders(
+            workspace_dir,
+            identity_name=identity_name,
+            identity_description=identity_description,
+        )
         return copied_files
 
     copied_files.extend(

@@ -42,7 +42,23 @@ export interface RunLogTraceEvent {
   event: Record<string, unknown>;
 }
 
-/** Full per-run trace payload (meta + events). */
+/** One execution span captured by SpanRecorderMiddleware (PG runs). */
+export interface RunLogSpan {
+  span_id: string;
+  parent_span_id?: string | null;
+  kind: "system" | "llm" | "tool" | "reply" | string;
+  name?: string | null;
+  started_at?: number | null;
+  ended_at?: number | null;
+  duration_ms?: number | null;
+  input?: unknown;
+  output?: unknown;
+  tokens?: number | null;
+  status?: string | null;
+  error?: string | null;
+}
+
+/** Full per-run trace payload (meta + events, plus spans for PG runs). */
 export interface RunLogTrace {
   run_id: string;
   created_at: number;
@@ -54,6 +70,8 @@ export interface RunLogTrace {
     session_id?: string;
     root_session_id?: string;
     agent_id?: string;
+    /** Human-readable agent name (falls back to agent_id in the UI). */
+    display_name?: string;
     user_id?: string;
     channel?: string;
     environment?: string;
@@ -64,6 +82,8 @@ export interface RunLogTrace {
     app_version?: string;
   };
   events: RunLogTraceEvent[];
+  /** Execution spans (PG-backed runs); absent on legacy file traces. */
+  spans?: RunLogSpan[];
 }
 
 export interface RunLogListParams {

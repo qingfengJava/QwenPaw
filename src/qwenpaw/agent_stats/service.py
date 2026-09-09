@@ -13,8 +13,14 @@ import aiofiles
 import aiofiles.os
 import orjson
 
-from ..app.chats.repo import JsonChatRepository
-from ..config.utils import get_agent_dirs
+from ..app.channels.schema import DEFAULT_CHANNEL
+from ..app.chats.factory import (
+    STORAGE_BACKEND_PG,
+    build_chat_repository,
+    get_session_store_class,
+    get_storage_backend,
+)
+from ..config.utils import load_config
 from ..token_usage import get_token_usage_manager
 from ..token_usage.turn_usage import TURN_USAGE_META_KEY
 from .models import (
@@ -280,12 +286,18 @@ class AgentStatsService:
         end_date: date,
         *,
         include_token_overlay: bool = True,
+        agent_id: str = "default",
     ) -> AgentStatsSummary:
         """Return Agent Statistics for one workspace.
 
         When include_token_overlay is False, global token fields stay 0
         and are indistinguishable from no usage. Session-derived
         agent_llm_calls and tool_calls are still counted.
+
+        ``agent_id`` scopes the storage reads: the pg backend keeps
+        chats and session states in shared tables keyed by it, while
+        the json/dual backends isolate by file layout and only use it
+        for the repository contract.
         """
         chats_file = workspace_dir / "chats.json"
         sessions_dir = workspace_dir / "sessions"
@@ -321,22 +333,69 @@ class AgentStatsService:
         agent_completion_tokens = 0
         agent_llm_calls = 0
 
-        if chats_file.exists():
-            try:
-                repo = JsonChatRepository(chats_file)
-                chats = await repo.list_chats()
-                for chat in chats:
-                    if chat.created_at is None:
-                        continue
-                    chat_date = chat.created_at.date()
-                    if start_date <= chat_date <= end_date:
-                        date_str = chat_date.isoformat()
-                        daily_stats[date_str]["chats"] += 1
-            except Exception as e:
-                logger.warning("Failed to load chat statistics: %s", e)
+        # Chat specs read through the storage factory: json/dual resolve
+        # to chats.json (missing file = empty registry), pg reads the
+        # shared chats table scoped to this agent. File existence is
+        # therefore not a precondition under pg.
+        try:
+            repo = build_chat_repository(chats_file, agent_id=agent_id)
+            chats = await repo.list_chats()
+            for chat in chats:
+                if chat.created_at is None:
+                    continue
+                chat_date = chat.created_at.date()
+                if start_date <= chat_date <= end_date:
+                    date_str = chat_date.isoformat()
+                    daily_stats[date_str]["chats"] += 1
+        except Exception as e:
+            logger.warning("Failed to load chat statistics: %s", e)
 
         # pylint: disable=too-many-nested-blocks
-        if sessions_dir.exists():
+        if get_storage_backend() == STORAGE_BACKEND_PG:
+            # pg backend: session states live in the session_states table,
+            # so the on-disk sessions/ sweep below sees nothing. Enumerate
+            # the agent's rows and run the exact same message counter.
+            try:
+                store = get_session_store_class()(
+                    save_dir=str(sessions_dir),
+                    agent_id=agent_id,
+                )
+                stored_sessions = await store.list_session_state_dicts()
+            except NotImplementedError:
+                stored_sessions = []
+            except Exception as e:
+                logger.warning("Failed to enumerate stored sessions: %s", e)
+                stored_sessions = []
+            for channel, session_stem, session_data in stored_sessions:
+                if _should_skip_by_content_range(
+                    session_data,
+                    start_date_str,
+                    end_date_str,
+                ):
+                    continue
+                (
+                    tool_calls,
+                    has_messages,
+                    sess_prompt,
+                    sess_completion,
+                    sess_llm_calls,
+                ) = _process_session_file(
+                    session_data,
+                    start_date_str,
+                    end_date_str,
+                    daily_stats,
+                    channel_stats,
+                    channel or DEFAULT_CHANNEL,
+                    session_stem,
+                    active_sessions,
+                )
+                total_tool_calls += tool_calls
+                if has_messages:
+                    total_active_sessions += 1
+                agent_prompt_tokens += sess_prompt
+                agent_completion_tokens += sess_completion
+                agent_llm_calls += sess_llm_calls
+        elif sessions_dir.exists():
             try:
                 session_files = []
 
@@ -525,7 +584,13 @@ class AgentStatsService:
                 "tool_calls": 0,
             }
         seen: set[str] = set()
-        for path in get_agent_dirs():
+        # Iterate profiles (id -> workspace ref) instead of bare dirs so
+        # the pg backend receives the agent_id its tables are keyed by.
+        profiles = getattr(load_config().agents, "profiles", None) or {}
+        for profile_id, profile in profiles.items():
+            path = Path(profile.workspace_dir).expanduser()
+            if not (path.exists() and (path / "agent.json").exists()):
+                continue
             key = str(path.resolve())
             if key in seen:
                 continue
@@ -535,6 +600,7 @@ class AgentStatsService:
                 start_date,
                 end_date,
                 include_token_overlay=False,
+                agent_id=str(getattr(profile, "id", "") or profile_id),
             )
             for ds in summary.by_date:
                 totals[ds.date]["agent_llm_calls"] += ds.agent_llm_calls

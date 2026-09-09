@@ -24,6 +24,7 @@ class DualSessionStore(BaseSessionStore):
         primary: BaseSessionStore | None = None,
         shadow: BaseSessionStore | None = None,
         save_dir: str | None = None,
+        agent_id: str = "default",
     ) -> None:
         # ``save_dir`` keeps the workspace ``init_args`` contract: with no
         # explicit backends the dual store wires JSON-primary + PG-shadow.
@@ -34,7 +35,8 @@ class DualSessionStore(BaseSessionStore):
         if shadow is None:
             from .pg_session_store import PgSessionStore
 
-            shadow = PgSessionStore()
+            # 影子写入带上归属智能体，切换读路径后各员工会话不互覆
+            shadow = PgSessionStore(agent_id=agent_id)
         self._primary = primary
         self._shadow = shadow
         self.shadow_write_failures = 0

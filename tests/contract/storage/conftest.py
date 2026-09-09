@@ -42,7 +42,8 @@ def pg_dsn() -> str:
             async with engine.begin() as conn:
                 await conn.execute(
                     text(
-                        "TRUNCATE chats, session_states, history_entries",
+                        "TRUNCATE chats, session_states, history_entries, "
+                        "agent_runs, agent_run_spans",
                     ),
                 )
         finally:

@@ -21,6 +21,10 @@ logger = logging.getLogger(__name__)
 _BUSY_TIMEOUT_MS = 5000
 _UNSET = METADATA_UNSET
 
+# purge 后自动 VACUUM 的行数阈值：低于此量级让 SQLite 复用空闲页即可，
+# 避免小 purge 频繁重写整个文件（O(db size)）。
+_PURGE_VACUUM_MIN_ROWS = 2000
+
 # The recall tool's own turns — the model's ``ms.*`` Python source and its
 # printed stdout/stderr — are written through to history like any turn, but
 # they are the agent *reading* memory, not memory content. Keyword-indexing
@@ -63,6 +67,11 @@ class HistoryStore(BaseHistoryStore):
     The model reaches the same file *read-only* through its ``MemorySpace``
     (ATTACHed ``hist`` schema), so this writer and those readers coexist under
     WAL. The file is never dropped; ``close()`` only closes this connection.
+
+    .. deprecated:: SQLite 退役专项（Phase A）
+        本 SQLite 存储已标记退役：``QWENPAW_STORAGE_BACKEND`` 默认 ``dual``
+        影子写 PG，回填工具（``python -m qwenpaw.db.backfill_history``）完成
+        后切 ``pg`` 读路径；本类仅保留两个大版本的降级读兼容，之后移除。
     """
 
     # FTS5 is a property of the SQLite build, not of one DB — warn at most once
@@ -742,7 +751,15 @@ class HistoryStore(BaseHistoryStore):
                 "DELETE FROM conversation_history WHERE " + where,
                 params,
             )
-            return len(doomed)
+            purged = len(doomed)
+        # 过渡期缓解（SQLite 退役切 PG 前）：大批量清理后主动 VACUUM，
+        # 防止文件只增不缩；vacuum 自带锁与提交，必须在事务外调用。
+        if purged >= _PURGE_VACUUM_MIN_ROWS:
+            try:
+                self.vacuum()
+            except sqlite3.Error as exc:
+                logger.warning("Post-purge VACUUM failed (ignored): %s", exc)
+        return purged
 
     def vacuum(self) -> None:
         """Rebuild the database file to reclaim space freed by ``purge``.

@@ -160,6 +160,46 @@ class RunLogStartHook(LifecycleHook):
                 "baseline_count": len(baseline),
                 "started_at": started_at,
             }
+
+            # PG span path: open agent_runs + bind the run context so the
+            # SpanRecorderMiddleware tags spans with this run. File-era
+            # stores above stay untouched (they serve non-PG deployments).
+            try:
+                from ...app.run_log_pg_store import pg_available
+                from ...observability.span_sink import (
+                    get_span_sink,
+                    set_run_context,
+                )
+
+                if pg_available():
+                    get_span_sink().start_run(
+                        {
+                            "run_id": run_id,
+                            "agent_id": ctx.agent_id or "default",
+                            # Human-readable agent name for the run-log UI.
+                            "display_name": (
+                                getattr(ctx.agent_config, "name", None)
+                                or None
+                            ),
+                            "session_id": ctx.session_id,
+                            "root_session_id": ctx.root_session_id,
+                            "chat_id": chat_id or None,
+                            "user_id": user_id or None,
+                            "channel": channel or None,
+                            "source": "chat",
+                            "environment": environment,
+                            "query_preview": (
+                                _get_last_user_text(ctx.input_msgs) or None
+                            ),
+                            "started_at": started_at,
+                            "model": model or None,
+                            "version": agent_version or None,
+                            "app_version": __version__,
+                        },
+                    )
+                    set_run_context(run_id)
+            except Exception:  # pylint: disable=broad-except
+                logger.warning("run log pg start failed", exc_info=True)
         except Exception:  # pylint: disable=broad-except
             logger.warning("run log start hook failed", exc_info=True)
         return HookResult()
@@ -235,8 +275,35 @@ class RunLogFinishHook(LifecycleHook):
                 run_day=date.fromtimestamp(started_at),
                 **updates,
             )
+
+            # PG span path: close agent_runs with the same authoritative
+            # tokens/model as the file index row.
+            try:
+                from ...app.run_log_pg_store import pg_available
+                from ...observability.span_sink import get_span_sink
+
+                if pg_available():
+                    get_span_sink().finish_run(
+                        status=status,
+                        finished_at=finished_at,
+                        duration_ms=int((finished_at - started_at) * 1000),
+                        total_tokens=staged_tokens or _sum_delta_tokens(delta),
+                        model=staged_model or None,
+                        error=error,
+                    )
+            except Exception:  # pylint: disable=broad-except
+                logger.warning("run log pg finish failed", exc_info=True)
         except Exception:  # pylint: disable=broad-except
             logger.warning("run log finish hook failed", exc_info=True)
+        finally:
+            # Unbind the run context unconditionally (idempotent) so later
+            # warmup calls cannot leak spans into a finished run.
+            try:
+                from ...observability.span_sink import clear_run_context
+
+                clear_run_context()
+            except Exception:  # pylint: disable=broad-except
+                logger.debug("run log ctx clear failed", exc_info=True)
         return HookResult()
 
 

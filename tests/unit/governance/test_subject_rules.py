@@ -94,28 +94,51 @@ def test_subject_denies_role_end_to_end() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _fresh_audit_log(tmp_path: Path) -> AuditLog:
+def _fresh_audit_log(tmp_path: Path, monkeypatch=None) -> AuditLog:
     existing = AuditLog._instance
     if existing is not None:
         existing.close()
+    if monkeypatch is not None:
+        # 单元测试强制 JSONL 后端，与宿主机 PG 环境解耦
+        from qwenpaw.governance.audit_store import JsonlAuditStore
+
+        monkeypatch.setattr(
+            "qwenpaw.governance.audit.create_audit_backend",
+            lambda d: JsonlAuditStore(tmp_path / "audit.jsonl"),
+        )
     return AuditLog.get_instance(tmp_path)
 
 
-def test_audit_schema_has_actor_column(tmp_path: Path) -> None:
-    log = _fresh_audit_log(tmp_path)
+def test_audit_row_carries_actor_id(tmp_path: Path, monkeypatch) -> None:
+    """JSONL 后端落盘的行包含 actor_id 字段（M4 语义保持）。"""
+    import json
+
+    log = _fresh_audit_log(tmp_path, monkeypatch)
     try:
-        cols = {
-            row[1]
-            for row in log._conn.execute(
-                "PRAGMA table_info(audit_events)",
-            ).fetchall()
-        }
-        assert "actor_id" in cols
+        spec = _spec(user_id="alice")
+        decision = GovernanceDecision(
+            action=GovernanceAction.ALLOW,
+            reason="ok",
+        )
+        log.record("/ws", spec, decision)
+        log.flush()
+        jsonl = tmp_path / "audit.jsonl"
+        row = json.loads(jsonl.read_text(encoding="utf-8").splitlines()[0])
+        assert row["actor_id"] == "alice"
     finally:
         log.close()
 
 
-def test_legacy_table_backfilled_with_actor_column(tmp_path: Path) -> None:
+def test_legacy_sqlite_rows_imported_into_backend(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """遗留 SQLite audit.db 被一次性导入后端并写入 marker（幂等）。"""
+    import sqlite3
+
+    from qwenpaw.governance.audit import _backfill_legacy_sqlite
+    from qwenpaw.governance.audit_store import JsonlAuditStore
+
     db = tmp_path / "audit.db"
     conn = sqlite3.connect(str(db))
     conn.execute(
@@ -124,24 +147,38 @@ def test_legacy_table_backfilled_with_actor_column(tmp_path: Path) -> None:
         "agent_id TEXT NOT NULL, session_id TEXT NOT NULL, "
         "tool_name TEXT NOT NULL, target TEXT NOT NULL, "
         "decision TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', "
-        "extra TEXT NOT NULL DEFAULT '{}')",
+        "extra TEXT NOT NULL DEFAULT '{}', "
+        "actor_id TEXT NOT NULL DEFAULT '')"
+    )
+    conn.execute(
+        "INSERT INTO audit_events VALUES (1, '/ws', 'a', 's', 'Bash', "
+        "'git status', 'allow', 'ok', '{}', 'bob')"
     )
     conn.commit()
-    AuditLog._migrate_legacy_schema(conn)
-    cols = {
-        row[1]
-        for row in conn.execute("PRAGMA table_info(audit_events)").fetchall()
-    }
     conn.close()
-    assert "actor_id" in cols
-    # Idempotent: a second run is a no-op.
+
+    backend = JsonlAuditStore(tmp_path / "audit.jsonl")
+    _backfill_legacy_sqlite(backend, db)
+    rows, total = backend.query()
+    assert total == 1
+    assert rows[0]["actor_id"] == "bob"
+    assert (tmp_path / "audit.db.pg_backfilled").exists()
+
+    # 幂等：marker 存在时重复导入是 no-op
     conn = sqlite3.connect(str(db))
-    AuditLog._migrate_legacy_schema(conn)
+    conn.execute(
+        "INSERT INTO audit_events VALUES (2, '/ws', 'a', 's', 'Bash', "
+        "'git log', 'allow', 'ok', '{}', 'bob')"
+    )
+    conn.commit()
     conn.close()
+    _backfill_legacy_sqlite(backend, db)
+    _, total_again = backend.query()
+    assert total_again == 1
 
 
-def test_record_persists_actor_id(tmp_path: Path) -> None:
-    log = _fresh_audit_log(tmp_path)
+def test_record_persists_actor_id(tmp_path: Path, monkeypatch) -> None:
+    log = _fresh_audit_log(tmp_path, monkeypatch)
     try:
         spec = _spec(user_id="alice")
         decision = GovernanceDecision(

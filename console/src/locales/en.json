@@ -1977,6 +1977,29 @@
     "filter": {
       "reset": "Reset filters",
       "columns": "Columns"
+    },
+    "tree": {
+      "root": "Run Overview",
+      "system": "System Context",
+      "user": "User Input",
+      "intent": "Intent Recognition",
+      "llm": "LLM Thinking",
+      "end": "Finish"
+    },
+    "tools": {
+      "web_search": "Web Search",
+      "read_file": "Read File",
+      "write_file": "Write File",
+      "edit_file": "Edit File",
+      "append_file": "Append File",
+      "execute_shell": "Run Command",
+      "bash": "Run Command",
+      "glob": "Find Files",
+      "grep": "Search Content",
+      "submit": "Submit Result",
+      "get_skills": "Get Skills",
+      "browser_navigate": "Open Page",
+      "browser_click": "Click Page"
     }
   },
   "environments": {

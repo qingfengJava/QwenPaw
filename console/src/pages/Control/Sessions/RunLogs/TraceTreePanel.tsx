@@ -21,6 +21,38 @@ import type { TraceNode, TraceNodeKind } from "./traceTree";
 import { formatDuration } from "./format";
 import styles from "./runLogs.module.less";
 
+/**
+ * i18n titles for structural kinds (root/system/llm/end…) and common
+ * tool names. Unmapped tool names and agent display names fall through
+ * to the node title verbatim.
+ */
+function buildTitleMap(
+  t: (key: string, fallback: string) => string,
+): Record<string, string> {
+  return {
+    root: t("runLogs.tree.root", "运行总览"),
+    system: t("runLogs.tree.system", "系统上下文"),
+    user: t("runLogs.tree.user", "用户输入"),
+    intent: t("runLogs.tree.intent", "意图识别"),
+    llm: t("runLogs.tree.llm", "LLM 思考"),
+    end: t("runLogs.tree.end", "逻辑结束"),
+    // Common tool names — anything unmapped keeps its original name.
+    web_search: t("runLogs.tools.web_search", "联网搜索"),
+    read_file: t("runLogs.tools.read_file", "读取文件"),
+    write_file: t("runLogs.tools.write_file", "写入文件"),
+    edit_file: t("runLogs.tools.edit_file", "编辑文件"),
+    append_file: t("runLogs.tools.append_file", "追加文件"),
+    execute_shell: t("runLogs.tools.execute_shell", "执行命令"),
+    bash: t("runLogs.tools.bash", "执行命令"),
+    glob: t("runLogs.tools.glob", "搜索文件"),
+    grep: t("runLogs.tools.grep", "搜索内容"),
+    submit: t("runLogs.tools.submit", "提交结果"),
+    get_skills: t("runLogs.tools.get_skills", "获取技能"),
+    browser_navigate: t("runLogs.tools.browser_navigate", "打开网页"),
+    browser_click: t("runLogs.tools.browser_click", "点击页面"),
+  };
+}
+
 const KIND_ICONS: Record<TraceNodeKind, typeof Globe> = {
   root: Globe,
   system: Database,
@@ -51,14 +83,15 @@ function ChainNodeRow({
   const [collapsed, setCollapsed] = useState(depth >= 2);
   const hasChildren = node.children.length > 0;
   const Icon = KIND_ICONS[node.kind] ?? Globe;
+  // Priority: caller overrides -> i18n by title (tool names, kind keys)
+  // -> i18n by kind -> raw title (unmapped tools, agent display names).
+  const defaults = buildTitleMap(t);
   const title =
     titleMap[node.title] ??
     titleMap[node.kind] ??
-    (node.kind === "toolCall" || node.kind === "tool"
-      ? node.title
-      : node.kind === "system"
-        ? t("runLogs.detail.systemContext", "系统上下文")
-        : node.title);
+    defaults[node.title] ??
+    defaults[node.kind] ??
+    node.title;
   return (
     <div>
       <div

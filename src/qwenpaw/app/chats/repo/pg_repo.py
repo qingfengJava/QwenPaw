@@ -6,6 +6,12 @@ operations are overridden with single statements so the hot path never pays
 the JSON backend's load-modify-save round trip; ``load``/``save`` keep the
 whole-registry semantics for the migration script and compatibility shims.
 
+Agent scoping: the JSON backend isolated workspaces by file layout; the
+shared ``chats`` table needs the ``agent_id`` column instead. Every query
+and write is scoped to the repository's ``agent_id``, and ``save()`` only
+replaces *this agent's* rows — without that guard any workspace's full
+registry write would wipe every other employee's chats.
+
 Concurrency: mutations run inside real transactions, so the per-owner /
 global write locks carried by the file-era ``ChatManager`` become a no-op
 safety net here (the plan removes them once the pg backend is authoritative).
@@ -52,12 +58,13 @@ def _row_to_spec(row) -> ChatSpec:
     )
 
 
-def _spec_to_values(spec: ChatSpec, tenant_id: str) -> dict:
+def _spec_to_values(spec: ChatSpec, tenant_id: str, agent_id: str) -> dict:
     """Flatten a ``ChatSpec`` into column values for insert/upsert."""
     import json
 
     return {
         "tenant_id": tenant_id,
+        "agent_id": agent_id,
         "id": spec.id,
         "session_id": spec.session_id,
         "user_id": spec.user_id,
@@ -86,14 +93,22 @@ class PgChatRepository(BaseChatRepository):
         self,
         engine: "AsyncEngine",
         tenant_id: str = DEFAULT_TENANT_ID,
+        agent_id: str = "default",
     ) -> None:
         self._engine = engine
         self._tenant_id = tenant_id
+        # 归属智能体：本 repo 的所有读写都限定在该员工的行集合内
+        self._agent_id = agent_id or "default"
+
+    @property
+    def agent_id(self) -> str:
+        """The employee this repository instance is scoped to."""
+        return self._agent_id
 
     @property
     def path(self) -> str:
         """Storage identity (the JSON backend exposes a file path)."""
-        return f"pg://chats/{self._tenant_id}"
+        return f"pg://chats/{self._tenant_id}/{self._agent_id}"
 
     # -- row helpers ----------------------------------------------------
 
@@ -106,43 +121,48 @@ class PgChatRepository(BaseChatRepository):
                     "SELECT id, session_id, user_id, owner_id, channel, "
                     "name, status, pinned, archived_at, source, meta, "
                     "created_at, updated_at FROM chats "
-                    "WHERE tenant_id = :tid ORDER BY created_at, id",
+                    "WHERE tenant_id = :tid AND agent_id = :aid "
+                    "ORDER BY created_at, id",
                 ),
-                {"tid": self._tenant_id},
+                {"tid": self._tenant_id, "aid": self._agent_id},
             )
             return [_row_to_spec(row._mapping) for row in result]
 
     # -- contract: whole-registry semantics ------------------------------
 
     async def load(self) -> ChatsFile:
-        """Load every chat spec of this tenant."""
+        """Load every chat spec of this tenant and agent."""
         return ChatsFile(version=1, chats=await self._fetch_all())
 
     async def save(self, chats_file: ChatsFile) -> None:
-        """Replace the tenant's registry with ``chats_file`` atomically.
+        """Replace *this agent's* registry with ``chats_file`` atomically.
 
         Runs in one transaction: upsert every given spec, then delete rows
         absent from the file — the exact semantics of the JSON atomic
-        rewrite, without its cross-owner write amplification.
+        rewrite, without its cross-owner write amplification. The DELETE is
+        scoped to ``agent_id`` so a full-registry write from one workspace
+        can never wipe another employee's chats.
         """
         from sqlalchemy import text
 
         values = [
-            _spec_to_values(spec, self._tenant_id)
+            _spec_to_values(spec, self._tenant_id, self._agent_id)
             for spec in chats_file.chats
         ]
         async with self._engine.begin() as conn:
             if values:
                 await conn.execute(
                     text(
-                        "INSERT INTO chats (tenant_id, id, session_id, "
+                        "INSERT INTO chats (tenant_id, agent_id, id, "
+                        "session_id, "
                         "user_id, owner_id, channel, name, status, pinned, "
                         "archived_at, source, meta, created_at, updated_at) "
-                        "VALUES (:tenant_id, :id, :session_id, :user_id, "
-                        ":owner_id, :channel, :name, :status, :pinned, "
-                        ":archived_at, :source, CAST(:meta AS JSONB), "
+                        "VALUES (:tenant_id, :agent_id, :id, :session_id, "
+                        ":user_id, :owner_id, :channel, :name, :status, "
+                        ":pinned, :archived_at, :source, CAST(:meta AS JSONB), "
                         ":created_at, :updated_at) "
                         "ON CONFLICT (tenant_id, id) DO UPDATE SET "
+                        "agent_id = EXCLUDED.agent_id, "
                         "session_id = EXCLUDED.session_id, "
                         "user_id = EXCLUDED.user_id, "
                         "owner_id = EXCLUDED.owner_id, "
@@ -161,10 +181,11 @@ class PgChatRepository(BaseChatRepository):
             await conn.execute(
                 text(
                     "DELETE FROM chats WHERE tenant_id = :tid "
-                    "AND id <> ALL(:keep_ids)",
+                    "AND agent_id = :aid AND id <> ALL(:keep_ids)",
                 ),
                 {
                     "tid": self._tenant_id,
+                    "aid": self._agent_id,
                     "keep_ids": [v["id"] for v in values],
                 },
             )
@@ -180,9 +201,10 @@ class PgChatRepository(BaseChatRepository):
                     "SELECT id, session_id, user_id, owner_id, channel, "
                     "name, status, pinned, archived_at, source, meta, "
                     "created_at, updated_at FROM chats "
-                    "WHERE tenant_id = :tid AND id = :cid",
+                    "WHERE tenant_id = :tid AND agent_id = :aid "
+                    "AND id = :cid",
                 ),
-                {"tid": self._tenant_id, "cid": chat_id},
+                {"tid": self._tenant_id, "aid": self._agent_id, "cid": chat_id},
             )
             row = result.first()
             return _row_to_spec(row._mapping) if row else None
@@ -201,12 +223,14 @@ class PgChatRepository(BaseChatRepository):
                     "SELECT id, session_id, user_id, owner_id, channel, "
                     "name, status, pinned, archived_at, source, meta, "
                     "created_at, updated_at FROM chats "
-                    "WHERE tenant_id = :tid AND session_id = :sid "
+                    "WHERE tenant_id = :tid AND agent_id = :aid "
+                    "AND session_id = :sid "
                     "AND user_id = :uid AND channel = :chan "
                     "ORDER BY updated_at DESC LIMIT 1",
                 ),
                 {
                     "tid": self._tenant_id,
+                    "aid": self._agent_id,
                     "sid": session_id,
                     "uid": user_id,
                     "chan": channel,
@@ -222,14 +246,15 @@ class PgChatRepository(BaseChatRepository):
         async with self._engine.begin() as conn:
             await conn.execute(
                 text(
-                    "INSERT INTO chats (tenant_id, id, session_id, user_id, "
-                    "owner_id, channel, name, status, pinned, archived_at, "
-                    "source, meta, created_at, updated_at) "
-                    "VALUES (:tenant_id, :id, :session_id, :user_id, "
-                    ":owner_id, :channel, :name, :status, :pinned, "
-                    ":archived_at, :source, CAST(:meta AS JSONB), "
+                    "INSERT INTO chats (tenant_id, agent_id, id, session_id, "
+                    "user_id, owner_id, channel, name, status, pinned, "
+                    "archived_at, source, meta, created_at, updated_at) "
+                    "VALUES (:tenant_id, :agent_id, :id, :session_id, "
+                    ":user_id, :owner_id, :channel, :name, :status, "
+                    ":pinned, :archived_at, :source, CAST(:meta AS JSONB), "
                     ":created_at, :updated_at) "
                     "ON CONFLICT (tenant_id, id) DO UPDATE SET "
+                    "agent_id = EXCLUDED.agent_id, "
                     "session_id = EXCLUDED.session_id, "
                     "user_id = EXCLUDED.user_id, "
                     "owner_id = EXCLUDED.owner_id, "
@@ -243,7 +268,7 @@ class PgChatRepository(BaseChatRepository):
                     "created_at = EXCLUDED.created_at, "
                     "updated_at = EXCLUDED.updated_at"
                 ),
-                _spec_to_values(spec, self._tenant_id),
+                _spec_to_values(spec, self._tenant_id, self._agent_id),
             )
 
     async def touch_chat_by_session(
@@ -260,9 +285,10 @@ class PgChatRepository(BaseChatRepository):
                 result = await conn.execute(
                     text(
                         "UPDATE chats SET updated_at = :now WHERE "
-                        "tenant_id = :tid AND id = ("
+                        "tenant_id = :tid AND agent_id = :aid AND id = ("
                         "  SELECT id FROM chats WHERE tenant_id = :tid "
-                        "  AND session_id = :sid AND channel = :chan "
+                        "  AND agent_id = :aid AND session_id = :sid "
+                        "  AND channel = :chan "
                         "  AND user_id = :uid "
                         "  ORDER BY updated_at DESC LIMIT 1"
                         ") RETURNING id, session_id, user_id, owner_id, "
@@ -272,6 +298,7 @@ class PgChatRepository(BaseChatRepository):
                     {
                         "now": datetime.now(timezone.utc),
                         "tid": self._tenant_id,
+                        "aid": self._agent_id,
                         "sid": session_id,
                         "chan": channel,
                         "uid": user_id,
@@ -281,9 +308,10 @@ class PgChatRepository(BaseChatRepository):
                 result = await conn.execute(
                     text(
                         "UPDATE chats SET updated_at = :now WHERE "
-                        "tenant_id = :tid AND id = ("
+                        "tenant_id = :tid AND agent_id = :aid AND id = ("
                         "  SELECT id FROM chats WHERE tenant_id = :tid "
-                        "  AND session_id = :sid AND channel = :chan "
+                        "  AND agent_id = :aid AND session_id = :sid "
+                        "  AND channel = :chan "
                         "  ORDER BY updated_at DESC LIMIT 1"
                         ") RETURNING id, session_id, user_id, owner_id, "
                         "channel, name, status, pinned, archived_at, "
@@ -292,6 +320,7 @@ class PgChatRepository(BaseChatRepository):
                     {
                         "now": datetime.now(timezone.utc),
                         "tid": self._tenant_id,
+                        "aid": self._agent_id,
                         "sid": session_id,
                         "chan": channel,
                     },
@@ -308,9 +337,13 @@ class PgChatRepository(BaseChatRepository):
             result = await conn.execute(
                 text(
                     "DELETE FROM chats WHERE tenant_id = :tid "
-                    "AND id = ANY(:ids)",
+                    "AND agent_id = :aid AND id = ANY(:ids)",
                 ),
-                {"tid": self._tenant_id, "ids": chat_ids},
+                {
+                    "tid": self._tenant_id,
+                    "aid": self._agent_id,
+                    "ids": chat_ids,
+                },
             )
             return result.rowcount > 0
 
@@ -322,8 +355,8 @@ class PgChatRepository(BaseChatRepository):
     ) -> list[ChatSpec]:
         from sqlalchemy import text
 
-        clauses = ["tenant_id = :tid"]
-        params: dict = {"tid": self._tenant_id}
+        clauses = ["tenant_id = :tid", "agent_id = :aid"]
+        params: dict = {"tid": self._tenant_id, "aid": self._agent_id}
         if user_id is not None:
             clauses.append("user_id = :uid")
             params["uid"] = user_id

@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from ..enterprise import current_tenant_id
+from ..agent_docs.store import shadow_write_document
 from .models import (
     EXPERT_STATUS_ARCHIVED,
     EXPERT_STATUS_DRAFT,
@@ -391,6 +392,8 @@ async def publish_expert(
         )
 
     spec = _build_expert_spec(record, agent_id, workspace_dir)
+    # 档案内容先渲染后落盘：供 _materialize 写文件与影子双写共用同一份
+    profile_md = _expert_profile_md(record, skill_names, caps=caps)
 
     def _materialize() -> None:
         workspace_dir.mkdir(parents=True, exist_ok=True)
@@ -404,11 +407,17 @@ async def publish_expert(
         # The persona card is refreshed on every publish (mirrors the
         # team SOUL.md policy below).
         (workspace_dir / "PROFILE.md").write_text(
-            _expert_profile_md(record, skill_names, caps=caps),
+            profile_md,
             encoding="utf-8",
         )
 
     await asyncio.to_thread(_materialize)
+    # 档案文件影子双写到 agent_documents（发布 = production 环境）
+    shadow_write_document(agent_id, "PROFILE.md", profile_md)
+    agent_json_content = await asyncio.to_thread(
+        lambda: (workspace_dir / "agent.json").read_text(encoding="utf-8"),
+    )
+    shadow_write_document(agent_id, "agent.json", agent_json_content)
 
     await store.insert_snapshot(
         expert_id,
@@ -498,9 +507,15 @@ async def materialize_expert_profile(expert_id: str) -> Optional[Path]:
             exc_info=True,
         )
     profile_path = workspace_dir / "PROFILE.md"
-    profile_path.write_text(
-        _expert_profile_md(record, skill_names, caps=caps),
-        encoding="utf-8",
+    profile_md = _expert_profile_md(record, skill_names, caps=caps)
+    await asyncio.to_thread(
+        lambda: profile_path.write_text(profile_md, encoding="utf-8"),
+    )
+    # 能力绑定变更的档案同步影子双写（保持 PG 与文件一致）
+    shadow_write_document(
+        expert_agent_id(expert_id),
+        "PROFILE.md",
+        profile_md,
     )
     return profile_path
 
@@ -585,6 +600,8 @@ async def publish_expert_team(
         (workspace_dir / "SOUL.md").write_text(soul_md, encoding="utf-8")
 
     await asyncio.to_thread(_materialize)
+    # 团队 SOUL.md 同样影子双写到 agent_documents
+    shadow_write_document(agent_id, "SOUL.md", soul_md)
 
     updated = await store.set_team_status(
         team_id,

@@ -38,6 +38,7 @@ from watchfiles import awatch, Change
 from pydantic import BaseModel, Field
 
 from ..utils import check_upload_size, safe_join, schedule_agent_reload
+from ..agent_docs.store import shadow_write_document
 from ...config import (
     load_config,
     save_config,
@@ -222,6 +223,9 @@ async def write_working_file(
             agent_id=workspace.agent_id,
         )
         workspace_manager.write_working_md(md_name, body.content)
+        # 档案文件影子双写：成功写入文件后 fire-and-forget 同步到
+        # agent_documents（PG 权威源 Phase A；未知文件名在 store 内被忽略）
+        shadow_write_document(workspace.agent_id, md_name, body.content)
         return {"written": True}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -511,13 +515,22 @@ async def write_workspace_file_content(
     files_root = await _resolve_files_root(request, workspace, root)
     try:
         async with _FILESYSTEM_SEMAPHORE:
-            return await asyncio.to_thread(
+            result = await asyncio.to_thread(
                 save_text_file,
                 files_root,
                 path,
                 content,
                 request.headers.get("if-match"),
             )
+            # 工作区根下的档案文件影子双写到 agent_documents（store 内
+            # 按文件名白名单过滤，项目目录文件不受影响）
+            if root == "workspace":
+                shadow_write_document(
+                    workspace.agent_id,
+                    Path(path).name,
+                    content,
+                )
+            return result
     except InvalidWorkspacePath as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except FileVersionConflict as exc:
@@ -2101,3 +2114,54 @@ async def get_available_commands(request: Request):
                 },
             )
     return ORJSONResponse({"commands": commands})
+
+
+@router.get(
+    "/storage-stats",
+    summary="Workspace storage usage breakdown",
+)
+async def get_storage_stats(request: Request) -> dict:
+    """分项统计当前 agent 工作区的磁盘占用（只读，运维观测用）。
+
+    返回顶层条目的字节数（history 数据库、checkpoints 影子 git、media、
+    memory、skills、sessions 等），帮助识别增长源与建议清理项。
+    """
+
+    def _tree_size(path: Path) -> int:
+        """递归统计一个文件/目录的字节数（统计失败按 0 计）。"""
+        try:
+            if path.is_file():
+                return path.stat().st_size
+            total = 0
+            for dirpath, _dirnames, filenames in os.walk(path):
+                for name in filenames:
+                    try:
+                        total += (Path(dirpath) / name).stat().st_size
+                    except OSError:
+                        continue
+            return total
+        except OSError:
+            return 0
+
+    workspace = await get_agent_for_request(request)
+    root = Path(workspace.workspace_dir)
+    items: list[dict] = []
+    if root.is_dir():
+        for entry in sorted(root.iterdir(), key=lambda p: p.name):
+            try:
+                size = await asyncio.to_thread(_tree_size, entry)
+            except OSError:
+                continue
+            items.append(
+                {
+                    "name": entry.name,
+                    "kind": "dir" if entry.is_dir() else "file",
+                    "bytes": size,
+                },
+            )
+    return {
+        "agent_id": workspace.agent_id,
+        "workspace_dir": str(root),
+        "items": items,
+        "total_bytes": sum(item["bytes"] for item in items),
+    }

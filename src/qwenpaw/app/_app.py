@@ -189,6 +189,23 @@ async def lifespan(  # pylint: disable=too-many-statements,too-many-branches
     # boot path) to speed up startup.
     await _sync_scroll_history_on_startup()
 
+    # 运行日志保留窗口启动清扫（强制扫一遍过期分片，低写入量环境也生效）
+    try:
+        from .run_log_store import startup_sweep
+
+        asyncio.create_task(startup_sweep())
+    except Exception:  # noqa: BLE001 - housekeeping must never block boot
+        logger.debug("run-log startup sweep launch failed", exc_info=True)
+
+    # PG 运行日志保留窗口清扫（agent_runs/agent_run_spans，30 天滚动）
+    try:
+        from .run_log_pg_store import pg_available, purge_old_runs
+
+        if pg_available():
+            asyncio.create_task(purge_old_runs())
+    except Exception:  # noqa: BLE001 - housekeeping must never block boot
+        logger.debug("run-log pg purge launch failed", exc_info=True)
+
     # Provider initialization scans and may migrate persisted configuration;
     # offload to a worker thread so the event loop never blocks on startup.
     provider_manager = await asyncio.to_thread(ProviderManager.get_instance)

@@ -227,6 +227,19 @@ async def _maybe_purge(now: float) -> None:
         logger.debug("run-log purge failed", exc_info=True)
 
 
+async def startup_sweep() -> None:
+    """Force one retention sweep at app startup.
+
+    惰性清扫由 append_run_index 顺带触发（每日一次）；低写入量环境
+    （如数周无新运行）可能长期不触发导致过期分片堆积。启动时强制扫
+    一遍，保证 30 天保留窗口真实生效。
+    """
+    try:
+        await run_sync_io(_purge_expired_blocking, time.time())
+    except Exception:  # pylint: disable=broad-except
+        logger.debug("run-log startup sweep failed", exc_info=True)
+
+
 def normalize_index_entry(entry: dict[str, Any]) -> dict[str, Any]:
     """Clamp free-text fields and coerce timestamps for one index row."""
     normalized = dict(entry)
@@ -338,5 +351,6 @@ __all__ = [
     "append_run_index",
     "normalize_index_entry",
     "query_run_logs",
+    "startup_sweep",
     "update_run_index",
 ]
