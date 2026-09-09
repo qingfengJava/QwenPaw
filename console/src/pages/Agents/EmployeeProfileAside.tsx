@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import { StatusPill } from "@/components/staffdeck";
 import ExpertAvatar from "@/components/ExpertAvatar";
-import AgentModelSelector from "@/pages/Agents/AgentModelSelector";
+import ModelSelector from "@/pages/Chat/ModelSelector";
 import { avatarGradient } from "@/utils/avatarGradient";
 import { isExpertAgentId } from "@/api/modules/xianFeedback";
 import { useExpertIcons } from "@/hooks/useExpertIcons";
@@ -139,8 +139,8 @@ export default function EmployeeProfileAside({
             <div className={styles.metaRow}>
               <dt>{t("agentDetail.model", "Model")}</dt>
               <dd>
-                {/* 默认模型：可编辑下拉（与档案区选择器同一配置入口） */}
-                <AgentModelSelector agentId={aid} showLabel={false} />
+                {/* 默认模型：复用聊天页 ModelSelector，数据域随 selectedAgent */}
+                <ModelSelector />
               </dd>
             </div>
             {agent?.workspace_dir ? (

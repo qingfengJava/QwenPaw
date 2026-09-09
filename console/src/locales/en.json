@@ -4702,13 +4702,7 @@
     "promptImprove": "Improve this employee",
     "recentActivity": "Recent Activity",
     "aiTune": "AI Tuning",
-    "aiTuneDefault": "Help me optimize this digital employee: refine the profile and suggest suitable skills and tools.",
-    "modelSelectorLabel": "Model",
-    "modelSelectorTitle": "Set the default model this agent runs with in the console",
-    "modelSelectorUpdateOk": "Default model updated; takes effect immediately",
-    "modelSelectorSaveFail": "Failed to save the default model, please retry",
-    "modelFollowGlobal": "Following global default",
-    "modelFollowGlobalTitle": "No agent-specific model configured; following the global default. Pick a model to set an agent-specific default"
+    "aiTuneDefault": "Help me optimize this digital employee: refine the profile and suggest suitable skills and tools."
   },
   "staffdeck": {
     "timeline": {
