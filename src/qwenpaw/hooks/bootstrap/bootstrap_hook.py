@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 """Bootstrap guidance hook.
 
-Checks for BOOTSTRAP.md in the workspace and injects guidance into
-the first user message before agent execution.  Operates directly on
-``ctx.input_msgs`` — does not require an agent instance.
+Checks for BOOTSTRAP.md in the workspace and injects guidance into the
+agent's system prompt for the first interaction.  The system prompt is
+rebuilt per request and never persisted into ``state.context``, so the
+session history keeps the user's original message.  Operates on
+``ctx.agent`` — input messages are left untouched.
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class BootstrapHook(LifecycleHook):
-    """Inject BOOTSTRAP.md guidance into the first user message."""
+    """Inject BOOTSTRAP.md guidance into the first turn's system prompt."""
 
     phase = Phase.PRE_EXECUTE
     name = "bootstrap"
@@ -44,9 +46,12 @@ class BootstrapHook(LifecycleHook):
         if not ctx.input_msgs:
             return HookResult()
 
+        agent = ctx.agent
+        if agent is None:
+            return HookResult()
+
         try:
             from ...agents.prompt import build_bootstrap_guidance
-            from ...agents.utils import prepend_to_message_content
 
             language = "zh"
             agent_config = ctx.agent_config
@@ -55,13 +60,21 @@ class BootstrapHook(LifecycleHook):
 
             bootstrap_guidance = build_bootstrap_guidance(language)
 
-            for msg in ctx.input_msgs:
-                if msg.role == "user":
-                    prepend_to_message_content(msg, bootstrap_guidance)
-                    break
+            # Append to the transient system prompt instead of prepending
+            # to the user message: whatever is mutated in ``input_msgs``
+            # is deep-copied into ``state.context`` by agentscope and
+            # persisted with the session snapshot, so the guidance used
+            # to echo back as part of the user's own message after a
+            # refresh. The system prompt is rebuilt per request and never
+            # persisted, so this guides the model without rewriting what
+            # the user said.
+            base_prompt = getattr(agent, "_system_prompt", "") or ""
+            agent._system_prompt = (
+                base_prompt.rstrip() + "\n\n" + bootstrap_guidance
+            )
 
             bootstrap_completed_flag.touch()
-            logger.debug("Bootstrap guidance injected into input_msgs")
+            logger.debug("Bootstrap guidance injected into system prompt")
         except Exception:
             logger.debug("bootstrap: injection failed", exc_info=True)
 

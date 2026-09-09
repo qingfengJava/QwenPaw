@@ -513,9 +513,17 @@
   color: rgba(255, 255, 255, 0.6);
 }
 
-/* 档案 hero 行：默认模型选择器（复用聊天页 ModelSelector）标签布局 */
+/* 档案 hero 行：默认模型选择器（复用聊天页 ModelSelector）标签布局。
+   容器内接管 ModelSelector 的 --ms-* 主题变量：hover 用档案区中性色，
+   避免聊天页暗色主题变量把 pill 渲成深色块 */
 
 .modelSelectorRow {
+  --ms-primary: var(--sd-link, #2563eb);
+  --ms-accent: var(--sd-link, #2563eb);
+  --ms-accent-strong: var(--sd-link, #2563eb);
+  --ms-accent-soft: var(--sd-blue-bg, rgba(37, 99, 235, 0.08));
+  --ms-text: var(--sd-ink, #1f1f1f);
+
   display: flex;
   align-items: center;
   gap: 8px;
@@ -523,10 +531,34 @@
   margin-top: 10px;
 }
 
+:global([data-theme="dark"]) .modelSelectorRow,
+:global(.dark) .modelSelectorRow {
+  --ms-primary: #ff9d4d;
+  --ms-accent: #ff9d4d;
+  --ms-accent-strong: #ff9d4d;
+  --ms-accent-soft: rgba(255, 127, 22, 0.14);
+  --ms-text: rgba(255, 255, 255, 0.88);
+}
+
 .modelSelectorLabel {
   flex: 0 0 auto;
   font-size: 12px;
   color: var(--sd-text-3);
+}
+
+.modelFollowTag {
+  flex: 0 0 auto;
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 8px;
+  border-radius: var(--sd-radius-pill);
+  color: var(--sd-text-3);
+  background: rgba(0, 0, 0, 0.04);
+}
+
+:global([data-theme="dark"]) .modelFollowTag,
+:global(.dark) .modelFollowTag {
+  background: rgba(255, 255, 255, 0.06);
 }
 
 /* 基础配置：文件 chip 切换 + Markdown / JSON 内容区 */

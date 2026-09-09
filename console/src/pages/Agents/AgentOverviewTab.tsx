@@ -12,7 +12,7 @@
  *
  * 诚实数据原则：后端未就绪的指标（好评率）一律显示占位，不造假。
  */
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -21,6 +21,7 @@ import { StatCard, StatusPill } from "@/components/staffdeck";
 import ExpertAvatar from "@/components/ExpertAvatar";
 import { avatarGradient } from "@/utils/avatarGradient";
 import { workspaceApi } from "@/api/modules/workspace";
+import { providerApi } from "@/api/modules/provider";
 import { isExpertAgentId } from "@/api/modules/xianFeedback";
 import ModelSelector from "@/pages/Chat/ModelSelector";
 import { useExpertIcons } from "@/hooks/useExpertIcons";
@@ -74,6 +75,27 @@ export default function AgentOverviewTab({
   const expertId = isExpertAgentId(aid);
   const expertIcon = useExpertIcons()[expertId];
   const displayName = agent ? getAgentDisplayName(agent, t) : aid;
+
+  // ── 默认模型跟随态：员工未单独配置（scope=agent 无 active_llm）时
+  // 显示「跟随全局默认」徽标；ModelSelector 保存成功后派发
+  // model-switched 事件，借它静默刷新本态。
+  const [followingGlobal, setFollowingGlobal] = useState(false);
+  const refreshFollowing = useCallback(async () => {
+    try {
+      const active = await providerApi.getActiveModels({
+        scope: "agent",
+        agent_id: aid,
+      });
+      setFollowingGlobal(!active.active_llm);
+    } catch {
+      setFollowingGlobal(false);
+    }
+  }, [aid]);
+  useEffect(() => {
+    void refreshFollowing();
+    window.addEventListener("model-switched", refreshFollowing);
+    return () => window.removeEventListener("model-switched", refreshFollowing);
+  }, [refreshFollowing]);
 
   // ── 基础配置：并发探测工作区根的配置文件，取到内容的进入 chip 列表 ──
   const [configDocs, setConfigDocs] = useState<Record<string, string>>({});
@@ -201,6 +223,17 @@ export default function AgentOverviewTab({
                 {t("agentDetail.model", "模型")}
               </span>
               <ModelSelector />
+              {followingGlobal && (
+                <span
+                  className={styles.modelFollowTag}
+                  title={t(
+                    "agentDetail.modelFollowGlobalTitle",
+                    "未单独配置模型，当前跟随全局默认；选择模型即设为本员工专属默认",
+                  )}
+                >
+                  {t("agentDetail.modelFollowGlobal", "跟随全局默认")}
+                </span>
+              )}
             </div>
           </div>
         </div>

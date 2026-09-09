@@ -1,4 +1,5 @@
 import type { ModelInfo, ProviderInfo } from "../../../api/types";
+import { listSelectableModels } from "../../../utils/selectableModels";
 
 export interface EligibleProvider {
   id: string;
@@ -54,11 +55,9 @@ export function buildEligibleProviders(
 ): EligibleProvider[] {
   return providers
     .filter((provider) => {
-      const hasModels =
-        (provider.models?.length ?? 0) + (provider.extra_models?.length ?? 0) >
-        0;
+      // 选择器只认未被禁用的模型（disabled_model_ids 语义：从所有选择器隐藏）
       if (provider.is_free_tier) return true;
-      if (!hasModels) return false;
+      if (listSelectableModels(provider).length === 0) return false;
       if (provider.require_api_key === false) return Boolean(provider.base_url);
       if (provider.is_custom) return Boolean(provider.base_url);
       if (provider.require_api_key ?? true) return Boolean(provider.api_key);
@@ -67,7 +66,7 @@ export function buildEligibleProviders(
     .map((provider) => ({
       id: provider.id,
       name: provider.name,
-      models: [...(provider.models ?? []), ...(provider.extra_models ?? [])],
+      models: listSelectableModels(provider),
       is_free_tier: provider.is_free_tier,
       is_custom: provider.is_custom,
       is_local: provider.is_local,

@@ -153,6 +153,43 @@ describe("modelSelectorModels (#5784 压缩阈值跨 provider 校验)", () => {
       expect(eligible).toHaveLength(0);
     });
 
+    it("disabled_model_ids 中的模型不进入选择器模型列表", () => {
+      const providers: ProviderInfo[] = [
+        makeProvider({
+          id: "dashscope",
+          name: "DashScope",
+          models: [
+            makeModel("qwen3.8-max", 32768),
+            makeModel("qwen3.8-flash", 32768),
+          ],
+          extra_models: [makeModel("user-added", 16384)],
+          disabled_model_ids: ["qwen3.8-max", "user-added"],
+        }),
+      ];
+
+      const eligible = buildEligibleProviders(providers);
+
+      expect(eligible).toHaveLength(1);
+      expect(eligible[0].models.map((m) => m.id)).toEqual([
+        "qwen3.8-flash",
+      ]);
+    });
+
+    it("全部模型被禁用且非 free_tier 的 provider 不出现在选择器", () => {
+      const providers: ProviderInfo[] = [
+        makeProvider({
+          id: "all-disabled",
+          name: "All Disabled",
+          models: [makeModel("model-1", 32768)],
+          disabled_model_ids: ["model-1"],
+        }),
+      ];
+
+      const eligible = buildEligibleProviders(providers);
+
+      expect(eligible).toHaveLength(0);
+    });
+
     it("is_free_tier provider 即使无 model 也保留", () => {
       const providers: ProviderInfo[] = [
         makeProvider({

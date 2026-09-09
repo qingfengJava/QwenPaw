@@ -1,25 +1,16 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { SaveOutlined } from "@ant-design/icons";
 import { Select, Button } from "@agentscope-ai/design";
-import type { ModelSlotRequest } from "../../../../../api/types";
+import type { ModelSlotRequest, ProviderInfo } from "../../../../../api/types";
 import api from "../../../../../api";
+import { listSelectableModels } from "../../../../../utils/selectableModels";
 import { useTranslation } from "react-i18next";
 import { useAppMessage } from "../../../../../hooks/useAppMessage";
 import { confirmFreeModelSwitch } from "@/utils/freeModelSwitchWarning";
 import styles from "../../index.module.less";
 
 interface ModelsSectionProps {
-  providers: Array<{
-    id: string;
-    name: string;
-    models?: Array<{ id: string; name: string; is_free?: boolean }>;
-    extra_models?: Array<{ id: string; name: string; is_free?: boolean }>;
-    base_url?: string;
-    api_key?: string;
-    is_custom: boolean;
-    is_local?: boolean;
-    require_api_key?: boolean;
-  }>;
+  providers: ProviderInfo[];
   activeModels: {
     active_llm: {
       provider_id?: string;
@@ -50,9 +41,8 @@ export const ModelsSection = React.memo(function ModelsSection({
   const eligible = useMemo(
     () =>
       providers.filter((p) => {
-        const hasModels =
-          (p.models?.length ?? 0) + (p.extra_models?.length ?? 0) > 0;
-        if (!hasModels) return false;
+        // 全部模型被禁用的 provider 不进入默认 LLM 的提供商下拉
+        if (listSelectableModels(p).length === 0) return false;
         if (p.require_api_key === false) return !!p.base_url;
         if (p.is_custom) return !!p.base_url;
         if (p.require_api_key ?? true) return !!p.api_key;
@@ -70,10 +60,10 @@ export const ModelsSection = React.memo(function ModelsSection({
   }, [currentSlot?.provider_id, currentSlot?.model]);
 
   const chosenProvider = providers.find((p) => p.id === selectedProviderId);
-  const modelOptions = [
-    ...(chosenProvider?.models ?? []),
-    ...(chosenProvider?.extra_models ?? []),
-  ];
+  // 模型下拉只列未被禁用的模型（disabled_model_ids 语义：从所有选择器隐藏）
+  const modelOptions = chosenProvider
+    ? listSelectableModels(chosenProvider)
+    : [];
   const hasModels = modelOptions.length > 0;
 
   const handleProviderChange = (pid: string) => {
@@ -91,6 +81,7 @@ export const ModelsSection = React.memo(function ModelsSection({
     if (!selectedProviderId || !selectedModel) return;
 
     const selectedProvider = providers.find((p) => p.id === selectedProviderId);
+    // 用原始配置列表查找（含禁用模型），仅为读取 is_free 做免费切换确认
     const selectedModelInfo = [
       ...(selectedProvider?.models ?? []),
       ...(selectedProvider?.extra_models ?? []),
