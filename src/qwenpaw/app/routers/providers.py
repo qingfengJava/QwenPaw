@@ -40,6 +40,10 @@ from ...providers.provider_discovery_policy import (
     CustomChatModelName,
 )
 from ...config.config import ActiveModelsInfo
+from ...providers.agent_model_store import (
+    persist_agent_model_slot,
+    resolve_agent_active_model,
+)
 from ...providers.provider_manager import ProviderManager
 from ...utils.io_utils import run_sync_io
 from ...utils.logging import sanitize_log_value
@@ -307,7 +311,12 @@ async def _load_agent_model(
         load_agent_config,
         workspace.agent_id,
     )
-    return agent_config.active_model
+    # 员工默认模型统一解析：pg 后端下 agent_model_slots 行优先，
+    # 否则回退 agent.json active_model（json/dual 后端行为不变）
+    return await resolve_agent_active_model(
+        workspace.agent_id,
+        agent_config,
+    )
 
 
 @router.get(
@@ -955,6 +964,12 @@ async def set_active_model(
         await update_agent_config_async(
             workspace.agent_id,
             apply_active_model,
+        )
+        # 同步员工默认模型到 PG 平面（json 零动作 / dual 影子 / pg 权威）
+        await persist_agent_model_slot(
+            workspace.agent_id,
+            body.provider_id,
+            body.model,
         )
         # Hot reload agent (async, non-blocking)
         schedule_agent_reload(request, workspace.agent_id)

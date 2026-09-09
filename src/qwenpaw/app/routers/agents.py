@@ -55,6 +55,7 @@ from ...agents.utils import (
 )
 from ...agents.skill_system import SkillPoolService, get_workspace_skills_dir
 from ...harnesses.registry import ProviderCatalogItem, get_provider
+from ...providers.agent_model_store import resolve_agent_active_model
 from ..agent_startup import AgentStartupStatus
 from ..multi_agent_manager import MultiAgentManager
 from ...constant import WORKING_DIR
@@ -440,7 +441,12 @@ async def list_agents(request: Request = None) -> AgentListResponse:
                 else:
                     description = profile_desc
 
-            active_model = agent_config.active_model
+            # 员工默认模型统一解析：pg 后端下 agent_model_slots 行优先，
+            # 否则回退 agent.json active_model（json/dual 后端行为不变）
+            active_model = await resolve_agent_active_model(
+                agent_id,
+                agent_config,
+            )
             template_id = agent_config.template_id or ""
             managed_by_app = (
                 template_id.removeprefix("pawapp:")

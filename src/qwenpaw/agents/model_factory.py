@@ -2067,6 +2067,7 @@ def create_model_and_formatter(
     agent_id: Optional[str] = None,
     model_slot_override: Any = None,
     agent_config: Any = None,
+    pg_model_slot: Any = None,
 ) -> Tuple[ChatModelBase, FormatterBase]:
     """Factory method to create model and formatter instances.
 
@@ -2084,6 +2085,8 @@ def create_model_and_formatter(
             only the first ``:`` is treated as the separator.
         agent_config: Optional config already loaded by an async caller.
             Synchronous callers may omit it to preserve legacy loading.
+        pg_model_slot: Optional pre-resolved slot from the PG plane
+            (``agent_model_slots``，异步调用方预取)。非空时覆盖文件槽位。
     Returns:
         Tuple of (model_instance, formatter_instance)
 
@@ -2100,6 +2103,14 @@ def create_model_and_formatter(
             pass
 
     settings = _load_agent_model_settings(agent_id, agent_config)
+    # pg 后端权威槽位（异步调用方预取）覆盖文件槽位；
+    # json/dual 下预取值即文件槽位本身，赋值幂等无副作用。
+    if (
+        pg_model_slot is not None
+        and getattr(pg_model_slot, "provider_id", "")
+        and getattr(pg_model_slot, "model", "")
+    ):
+        settings.model_slot = pg_model_slot
     model_slot = settings.model_slot
     slot = _resolve_model_slot_override(model_slot_override)
     if slot is not None and slot.provider_id and slot.model:
@@ -2190,11 +2201,44 @@ async def create_model_and_formatter_async(
     agent_config: Any = None,
 ) -> Tuple[ChatModelBase, FormatterBase]:
     """Build a model and formatter without blocking the event loop."""
+    # pg 后端预取员工默认模型槽位（agent_model_slots 权威行）；
+    # json/dual 下 resolve 返回文件槽位本身，传递仅为统一语义。
+    pg_model_slot = None
+    try:
+        target_agent_id = agent_id
+        if target_agent_id is None:
+            from ..app.agent_context import get_current_agent_id
+
+            target_agent_id = get_current_agent_id()
+        if target_agent_id:
+            from ..providers.agent_model_store import (
+                resolve_agent_active_model,
+            )
+
+            if agent_config is None:
+                from ..config.config import load_agent_config
+
+                agent_config = await run_sync_io(
+                    load_agent_config,
+                    target_agent_id,
+                )
+            pg_model_slot = await resolve_agent_active_model(
+                target_agent_id,
+                agent_config,
+            )
+    except Exception:  # noqa: BLE001 - PG plane must never break business
+        logger.warning(
+            "Prefetching agent model slot failed; "
+            "falling back to file plane",
+            exc_info=True,
+        )
+        pg_model_slot = None
     return await run_sync_io(
         create_model_and_formatter,
         agent_id=agent_id,
         model_slot_override=model_slot_override,
         agent_config=agent_config,
+        pg_model_slot=pg_model_slot,
     )
 
 

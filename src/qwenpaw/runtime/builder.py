@@ -301,6 +301,7 @@ class AgentBuilder:
         )
         from ..config.config import load_agent_config
         from ..constant import WORKING_DIR
+        from ..providers.agent_model_store import resolve_agent_active_model
         from ..providers.provider_manager import ProviderManager
 
         agent_id = getattr(ctx, "agent_id", None) or "default"
@@ -313,7 +314,9 @@ class AgentBuilder:
         ctx.agent_config = agent_config
 
         # Validate model availability.
-        active = agent_config.active_model
+        # 员工默认模型统一解析：pg 后端下 agent_model_slots 行优先，
+        # 否则回退 agent.json active_model（json/dual 后端行为不变）
+        active = await resolve_agent_active_model(agent_id, agent_config)
         if not (active and active.provider_id and active.model):
             active = ProviderManager.get_instance().get_active_model()
         if active is None or not active.provider_id or not active.model:
