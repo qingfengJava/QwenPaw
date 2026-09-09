@@ -1153,7 +1153,15 @@ const HISTORY_PANEL_STORAGE_KEY = "qwenpaw_history_panel_open";
 const isLocalTimestampId = (id: string | null | undefined): boolean =>
   !!id && /^\d+-[a-z0-9]+$/.test(id);
 
-export default function ChatPage() {
+/** ChatPage 可选注入 props（宿主场景定制；均缺省保持默认行为）。 */
+interface ChatPageProps {
+  /** 隐藏头部模型选择器（工作台场景：档案区已提供默认模型配置入口）。 */
+  hideHeaderModelSelector?: boolean;
+}
+
+export default function ChatPage({
+  hideHeaderModelSelector = false,
+}: ChatPageProps = {}) {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
@@ -3175,11 +3183,17 @@ export default function ChatPage() {
             />
             <ChatHeaderTitle />
             <span className={styles.headerSpacer} />
-            {usesQwenPawBackend ? (
-              <ModelSelector />
-            ) : backendCapabilities?.model_selection ? (
-              <HarnessModelSelector providerId={selectedAgentBackend} />
-            ) : null}
+            {hideHeaderModelSelector
+              ? null
+              : usesQwenPawBackend
+                ? (
+                    <ModelSelector />
+                  )
+                : backendCapabilities?.model_selection
+                  ? (
+                      <HarnessModelSelector providerId={selectedAgentBackend} />
+                    )
+                  : null}
             <ChatActionGroup
               onToggleWorkspace={toggleFilesWorkspace}
               workspaceOpen={filesWorkspaceOpen}
@@ -3591,6 +3605,7 @@ export default function ChatPage() {
     backendCommands,
     approvalPresets,
     usesQwenPawBackend,
+    hideHeaderModelSelector,
     supportsAttachments,
     runningConfigApprovalLevel,
     queueSessionId,

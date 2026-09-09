@@ -56,6 +56,8 @@ interface WorkbenchChatPanelProps {
   debugOn: boolean;
   /** 变更时强制重挂 Chat（消费 stash 的 AI 调优预填指令）。 */
   chatKey?: number;
+  /** 隐藏聊天头部模型选择器（默认模型配置入口在档案区）。 */
+  hideHeaderModelSelector?: boolean;
   onWidthChange: (width: number) => void;
   onCollapsedChange: (collapsed: boolean) => void;
 }
@@ -65,6 +67,7 @@ export default function WorkbenchChatPanel({
   collapsed,
   debugOn,
   chatKey,
+  hideHeaderModelSelector = false,
   onWidthChange,
   onCollapsedChange,
 }: WorkbenchChatPanelProps) {
@@ -153,7 +156,7 @@ export default function WorkbenchChatPanel({
       </div>
 
       <div className={styles.chatHost}>
-        <Chat key={chatKey ?? 0} />
+        <Chat key={chatKey ?? 0} hideHeaderModelSelector={hideHeaderModelSelector} />
       </div>
 
       <div

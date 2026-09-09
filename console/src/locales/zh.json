@@ -4720,7 +4720,13 @@
     "promptImprove": "改进该员工",
     "recentActivity": "近期活动",
     "aiTune": "AI 调优",
-    "aiTuneDefault": "帮我优化这位数字员工：完善档案描述，并建议合适的技能与工具。"
+    "aiTuneDefault": "帮我优化这位数字员工：完善档案描述，并建议合适的技能与工具。",
+    "modelSelectorLabel": "模型",
+    "modelSelectorTitle": "配置该员工后台默认运行的模型",
+    "modelSelectorUpdateOk": "默认模型已更新，对话即时生效",
+    "modelSelectorSaveFail": "默认模型保存失败，请重试",
+    "modelFollowGlobal": "跟随全局默认",
+    "modelFollowGlobalTitle": "该员工未单独配置模型，当前跟随全局默认；选择模型即设为本员工专属默认"
   },
   "staffdeck": {
     "timeline": {

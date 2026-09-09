@@ -22,6 +22,7 @@ import ExpertAvatar from "@/components/ExpertAvatar";
 import { avatarGradient } from "@/utils/avatarGradient";
 import { workspaceApi } from "@/api/modules/workspace";
 import { isExpertAgentId } from "@/api/modules/xianFeedback";
+import AgentModelSelector from "@/pages/Agents/AgentModelSelector";
 import { useExpertIcons } from "@/hooks/useExpertIcons";
 import { getAgentDisplayName } from "@/utils/agentDisplayName";
 import type { AgentSummary } from "@/api/types/agents";
@@ -193,6 +194,8 @@ export default function AgentOverviewTab({
             <p className={styles.heroDesc}>
               {agent?.description || "\u00a0"}
             </p>
+            {/* 默认模型：后台为该员工配置的默认运行模型（前台未指定时使用） */}
+            <AgentModelSelector agentId={aid} />
           </div>
         </div>
       )}

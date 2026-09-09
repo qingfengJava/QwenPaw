@@ -378,6 +378,7 @@ function AgentWorkbenchShell({ chatRoute = false }: { chatRoute?: boolean }) {
           collapsed={chatCollapsed}
           debugOn={debugOn}
           chatKey={chatKey}
+          hideHeaderModelSelector
           onWidthChange={setChatWidth}
           onCollapsedChange={setChatCollapsed}
         />
