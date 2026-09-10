@@ -827,10 +827,11 @@
   --ms-primary: var(--qwenpaw-color-primary, var(--colorPrimary, #ff7f16));
   --ms-accent: var(--qwenpaw-color-primary, var(--colorPrimary, #ff7f16));
   --ms-accent-strong: var(--qwenpaw-color-primary-hover, var(--ms-accent));
-  --ms-accent-soft: var(
-    --qwenpaw-color-primary-bg,
-    var(--colorPrimaryBg, rgba(255, 127, 22, 0.08))
-  );
+  /* StaffDeck 主题下主色为墨色，antd cssVar 会运行时注入
+   --qwenpaw-color-primary-bg: #545559（墨色种子生成的深灰），
+   严禁引用该变量作选中/hover 底色；改为对主色本身做 color-mix
+   浅色调和：墨色 → 极浅灰、彩色主色 → 该色浅色调 */
+  --ms-accent-soft: color-mix(in srgb, var(--ms-accent) 8%, transparent);
   --ms-surface: var(--qwenpaw-color-bg-container, #ffffff);
   --ms-surface-muted: var(--qwenpaw-color-fill-quaternary, #f5f5f5);
   --ms-border: var(--qwenpaw-color-border-secondary, #e8e8e8);
@@ -1373,7 +1374,8 @@
     --ms-primary: var(--qwenpaw-color-primary, var(--colorPrimary, #ff9d4d));
     --ms-accent: var(--qwenpaw-color-primary, var(--colorPrimary, #ff9d4d));
     --ms-accent-strong: var(--qwenpaw-color-primary-hover, var(--ms-accent));
-    --ms-accent-soft: var(--qwenpaw-color-primary-bg, rgba(255, 127, 22, 0.14));
+    /* 同上：不用 antd 运行时注入的 --qwenpaw-color-primary-bg（暗色下同为深灰） */
+    --ms-accent-soft: color-mix(in srgb, var(--ms-accent) 16%, transparent);
     --ms-surface: var(--qwenpaw-color-bg-container, #1f1f1f);
     --ms-surface-muted: var(--qwenpaw-color-fill-quaternary, #262626);
     --ms-border: var(

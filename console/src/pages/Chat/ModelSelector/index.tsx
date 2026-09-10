@@ -410,6 +410,15 @@ export default function ModelSelector({
       );
       publishActiveMaxInputLength(updated?.effective_max_input_length);
       rememberRecent(providerId, modelId);
+      // 切换成功提示：优先展示模型名，列表中不存在时退回原始 id
+      const targetModel = eligibleProviders
+        .find((provider) => provider.id === providerId)
+        ?.models.find((model) => model.id === modelId);
+      message.success(
+        t("modelSelector.switchSuccess", {
+          model: targetModel?.name || modelId,
+        }),
+      );
     } catch (err) {
       if (
         activationRevision !== activationRevisionRef.current ||

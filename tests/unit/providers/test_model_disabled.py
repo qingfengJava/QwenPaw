@@ -83,6 +83,39 @@ class TestDisabledModelIds:
             provider.api_key = original_key
             provider.require_api_key = original_require
 
+    async def test_disabled_survives_manager_restart(self, manager) -> None:
+        """重启（重建 manager）后禁用状态必须保留。
+
+        回归：_restore_builtin_provider 曾恢复 hidden/removed 却漏掉
+        disabled_model_ids，导致重启后禁用模型回到启用态。
+        """
+        provider = manager.get_provider("dashscope")
+        assert provider is not None
+        target = next(iter(provider.models), None)
+        if target is None:  # pragma: no cover
+            pytest.skip("dashscope catalog empty")
+
+        # 隔离环境无真实 Key：塞入临时 Key 以通过启用方向守卫
+        original_key = provider.api_key
+        original_require = provider.require_api_key
+        provider.api_key = "sk-test"
+        provider.require_api_key = True
+        try:
+            await manager.set_model_disabled(
+                "dashscope", target.id, disabled=True,
+            )
+            # 模拟重启：基于同一隔离 secret dir 重建 manager
+            restarted = ProviderManager()
+            current = restarted.get_provider("dashscope")
+            assert current is not None
+            assert target.id in current.disabled_model_ids
+            assert all(
+                m.id != target.id for m in current.configured_models()
+            )
+        finally:
+            provider.api_key = original_key
+            provider.require_api_key = original_require
+
     async def test_cannot_enable_model_without_provider_key(
         self,
         manager,

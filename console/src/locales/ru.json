@@ -1684,6 +1684,7 @@
     "noConfiguredModels": "Нет настроенных моделей",
     "noFreeModels": "Нет доступных бесплатных моделей",
     "switchFailed": "Не удалось переключить модель",
+    "switchSuccess": "Переключено на {{model}}",
     "searchModels": "Поиск моделей...",
     "noModelsFound": "Подходящие модели не найдены",
     "free": "Бесплатно",

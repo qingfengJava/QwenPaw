@@ -1845,6 +1845,7 @@
     "noConfiguredModels": "Nenhum modelo configurado",
     "noFreeModels": "Nenhum modelo gratuito disponível",
     "switchFailed": "Falha ao trocar modelo",
+    "switchSuccess": "Alternado para {{model}}",
     "searchModels": "Buscar modelos...",
     "noModelsFound": "Nenhum modelo encontrado",
     "free": "Grátis",

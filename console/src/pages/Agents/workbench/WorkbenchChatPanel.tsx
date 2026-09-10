@@ -156,7 +156,12 @@ export default function WorkbenchChatPanel({
       </div>
 
       <div className={styles.chatHost}>
-        <Chat key={chatKey ?? 0} hideHeaderModelSelector={hideHeaderModelSelector} />
+        {/* hideWorkspaceToggle：右侧能力 Tab 已有知识库入口，隐藏头部工作区按钮 */}
+        <Chat
+          key={chatKey ?? 0}
+          hideHeaderModelSelector={hideHeaderModelSelector}
+          hideWorkspaceToggle
+        />
       </div>
 
       <div

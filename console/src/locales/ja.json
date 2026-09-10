@@ -1684,6 +1684,7 @@
     "noConfiguredModels": "設定済みモデルがありません",
     "noFreeModels": "利用可能な無料モデルがありません",
     "switchFailed": "モデルの切り替えに失敗しました",
+    "switchSuccess": "{{model}} に切り替えました",
     "searchModels": "モデルを検索...",
     "noModelsFound": "一致するモデルが見つかりません",
     "free": "無料",

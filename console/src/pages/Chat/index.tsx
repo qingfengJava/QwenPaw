@@ -1157,10 +1157,13 @@ const isLocalTimestampId = (id: string | null | undefined): boolean =>
 interface ChatPageProps {
   /** 隐藏头部模型选择器（工作台场景：档案区已提供默认模型配置入口）。 */
   hideHeaderModelSelector?: boolean;
+  /** 隐藏头部"打开工作区"按钮（工作台场景：右侧能力 Tab 已有知识库入口）。 */
+  hideWorkspaceToggle?: boolean;
 }
 
 export default function ChatPage({
   hideHeaderModelSelector = false,
+  hideWorkspaceToggle = false,
 }: ChatPageProps = {}) {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
@@ -3195,8 +3198,10 @@ export default function ChatPage({
                     )
                   : null}
             <ChatActionGroup
-              onToggleWorkspace={toggleFilesWorkspace}
-              workspaceOpen={filesWorkspaceOpen}
+              onToggleWorkspace={
+                hideWorkspaceToggle ? undefined : toggleFilesWorkspace
+              }
+              workspaceOpen={hideWorkspaceToggle ? false : filesWorkspaceOpen}
               onToggleHistory={
                 effectiveIsFullMode ? toggleHistoryPanel : undefined
               }
@@ -3606,6 +3611,7 @@ export default function ChatPage({
     approvalPresets,
     usesQwenPawBackend,
     hideHeaderModelSelector,
+    hideWorkspaceToggle,
     supportsAttachments,
     runningConfigApprovalLevel,
     queueSessionId,

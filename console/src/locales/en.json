@@ -2040,6 +2040,7 @@
     "noConfiguredModels": "No configured models",
     "noFreeModels": "No free models available",
     "switchFailed": "Failed to switch model",
+    "switchSuccess": "Switched to {{model}}",
     "searchModels": "Search models...",
     "clearSearch": "Clear model search",
     "loadingModels": "Loading models",

@@ -1469,6 +1469,7 @@
     "error": "Tải mô hình thất bại",
     "default": "Mặc định",
     "custom": "Tùy chỉnh",
+    "switchSuccess": "Đã chuyển sang {{model}}",
     "refresh": "Làm mới danh sách mô hình"
   },
   "modelConfig": {

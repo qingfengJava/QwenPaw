@@ -1964,6 +1964,7 @@
     "noConfiguredModels": "暂无已配置模型",
     "noFreeModels": "暂无可用的免费模型",
     "switchFailed": "切换模型失败",
+    "switchSuccess": "已切换到 {{model}}",
     "searchModels": "搜索模型...",
     "clearSearch": "清除模型搜索",
     "loadingModels": "正在加载模型",

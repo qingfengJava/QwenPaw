@@ -1223,6 +1223,10 @@ class ProviderManagerPersistenceMixin(
         builtin.models_syncing = False
         builtin.hidden_model_ids = list(provider.hidden_model_ids)
         builtin.removed_model_ids = list(provider.removed_model_ids)
+        # 启停开关必须随快照恢复（文件平面与 PG 权威读共用本函数；
+        # 漏恢复会导致重启后禁用模型回到启用态，且任意写操作会把
+        # 丢失后的状态经 mirror 回写污染 PG 快照）
+        builtin.disabled_model_ids = list(provider.disabled_model_ids)
         builtin.generate_kwargs.update(provider.generate_kwargs)
 
         # Catalog model metadata is authoritative. Persisted model state can

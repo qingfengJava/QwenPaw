@@ -798,6 +798,7 @@
     "noConfiguredModels": "Tidak ada model yang dikonfigurasi",
     "noFreeModels": "Tidak ada model gratis tersedia",
     "switchFailed": "Gagal mengganti model",
+    "switchSuccess": "Beralih ke {{model}}",
     "searchModels": "Cari model...",
     "noModelsFound": "Tidak ada model yang cocok",
     "free": "Gratis",

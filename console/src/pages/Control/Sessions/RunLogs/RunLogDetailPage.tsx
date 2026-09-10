@@ -34,6 +34,10 @@ export default function RunLogDetailPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { aid, runId } = useParams<{ aid: string; runId: string }>();
+  // 返回目标：会话 Tab 下的运行日志列表。必须用 "../sessions"
+  // （route 层级相对路径）："../.." 会解析到根路径跳出沙箱，
+  // 触发 CatchAllNavigate 整体重挂工作台（表现为整页刷新）。
+  const backTarget = `../sessions`;
   const { trace, loading, error } = useRunLogTrace(aid, runId);
   const [selectedKey, setSelectedKey] = useState("root");
 
@@ -81,18 +85,18 @@ export default function RunLogDetailPage() {
           type="button"
           className={styles.detailBack}
           title={t("runLogs.detail.backToList", "返回运行日志")}
-          onClick={() => navigate("../../")}
+          onClick={() => navigate(backTarget)}
         >
           <ArrowLeft size={15} />
         </button>
         <span
           className={styles.detailBreadcrumbLink}
-          onClick={() => navigate("../../")}
+          onClick={() => navigate(backTarget)}
           role="link"
           tabIndex={0}
           onKeyDown={(event) => {
             if (event.key === "Enter") {
-              navigate("../../");
+              navigate(backTarget);
             }
           }}
         >
