@@ -32,11 +32,8 @@ import type { ComponentType } from "react";
 import {
   MemoryRouter,
   Navigate,
-  Route,
-  Routes,
   useLocation,
   useNavigate,
-  useParams,
 } from "react-router-dom";
 import { Button, Switch, Tooltip } from "antd";
 import { House, Rocket } from "lucide-react";
@@ -102,7 +99,9 @@ const PAGE_COMPONENTS: Record<string, ComponentType> = {
   heartbeat: HeartbeatPage,
 };
 
-/** 由路径推导顶层 Tab 与二级 Tab。 */
+/**
+ * 由路径推导顶层 Tab 与二级 Tab。
+ */
 function parseWorkbenchPath(pathname: string, aid: string): {
   top: string;
   sub: string | null;
@@ -126,20 +125,32 @@ function parseWorkbenchPath(pathname: string, aid: string): {
 
 /**
  * 沙箱外壳：app 在 /studio 路径下不再提供外层 Router，这里自挂
- * MemoryRouter（不写地址栏）。/chat/* 顶层路由承接 Chat 切换会话的
- * 硬导航，使其留在工作台内；未知路径回退到当前员工的档案页。
+ * MemoryRouter（不写地址栏）。沙箱内只有一条通配路由、共用同一个
+ * Shell 元素实例——/studio/:aid/* 与 /chat/*（Chat 切换会话/新建
+ * 会话的硬导航落点，见 utils/sessionRoute）之间切换时 Shell 不卸载
+ * 重挂；此前二者是两条兄弟 Route，新建聊天会整棵重挂工作台
+ * （用户感知为“点新建聊天整页刷新”）。未知路径回退到当前员工的
+ * 档案页。
  */
 export default function AgentWorkbenchLayout() {
   const initialPath = getAppRelativeLocation(window.location);
   return (
     <MemoryRouter initialEntries={[initialPath]}>
-      <Routes>
-        <Route path="/studio/:aid/*" element={<AgentWorkbenchShell />} />
-        <Route path="/chat/*" element={<AgentWorkbenchShell chatRoute />} />
-        <Route path="*" element={<CatchAllNavigate />} />
-      </Routes>
+      <AgentWorkbenchSandbox />
     </MemoryRouter>
   );
+}
+
+function AgentWorkbenchSandbox() {
+  const location = useLocation();
+  const aidMatch = location.pathname.match(/^\/studio\/([^/?#]+)/);
+  if (aidMatch) {
+    return <AgentWorkbenchShell />;
+  }
+  if (/^\/chat(?:\/|$)/.test(location.pathname)) {
+    return <AgentWorkbenchShell chatRoute />;
+  }
+  return <CatchAllNavigate />;
 }
 
 /** 未知路径兜底：回当前选中员工的档案页（沙箱内导航，不出工作台）。 */
@@ -151,10 +162,12 @@ function CatchAllNavigate() {
 function AgentWorkbenchShell({ chatRoute = false }: { chatRoute?: boolean }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const params = useParams<{ aid: string }>();
-  // /chat/* 顶层路由无 :aid 参数：回退到 selectedAgent（与聊天面板一致）。
+  // 沙箱已无外层 Route 参数：从路径解析 aid；/chat/* 无 aid 时回退到
+  // selectedAgent（与聊天面板一致）。
+  const aidFromPath =
+    location.pathname.match(/^\/studio\/([^/?#]+)/)?.[1] ?? "";
   const fallbackAid = useAgentStore((s) => s.selectedAgent);
-  const aid = params.aid || fallbackAid || "";
+  const aid = aidFromPath || fallbackAid || "";
   const { t } = useTranslation();
   const { message } = useAppMessage();
   const { agents } = useAgentStore();
@@ -225,8 +238,13 @@ function AgentWorkbenchShell({ chatRoute = false }: { chatRoute?: boolean }) {
   }, [agents, aid]);
 
   const { top, sub } = parseWorkbenchPath(location.pathname, aid);
+  // 运行日志详情页：/studio/:aid/sessions/runs/:runId（原嵌套路由参数改为路径解析）。
+  const runId =
+    location.pathname.match(
+      /^\/studio\/[^/]+\/sessions\/runs\/([^/?#]+)/,
+    )?.[1] ?? null;
 
-  // 顶层 Tab 恒等跳转（/studio/:aid 顶层路由由 Routes 承接）。
+  // 顶层 Tab 恒等跳转（路径由沙箱统一解析）。
   const handleTopTab = (key: string) => {
     navigate(
       key === "overview"
@@ -426,67 +444,29 @@ function AgentWorkbenchShell({ chatRoute = false }: { chatRoute?: boolean }) {
                 aid={aid}
                 onAiTune={handleAiTune}
               />
+            ) : runId ? (
+              <RunLogDetailPage />
+            ) : top === "sessions" ? (
+              <SessionsPage />
+            ) : top === "activity" ? (
+              <AgentActivityTab aid={aid} />
+            ) : top === "capability" ? (
+              <GroupPane group="capability" sub={sub} aid={aid} />
+            ) : top === "ops" ? (
+              <GroupPane group="ops" sub={sub} aid={aid} />
+            ) : top === "versions" && isExpert && expertId ? (
+              <WorkbenchVersionsTab
+                expertId={expertId}
+                preview={preview}
+                onChanged={handleVersionsChanged}
+              />
             ) : (
-              <Routes>
-              <Route
-                index
-                element={
-                  <AgentOverviewTab
-                    agent={currentAgent}
-                    aid={aid}
-                    onAiTune={handleAiTune}
-                  />
-                }
+              // index / overview / 未知路径 / 非专家的 versions：回档案页。
+              <AgentOverviewTab
+                agent={currentAgent}
+                aid={aid}
+                onAiTune={handleAiTune}
               />
-              <Route
-                path="overview"
-                element={
-                  <AgentOverviewTab
-                    agent={currentAgent}
-                    aid={aid}
-                    onAiTune={handleAiTune}
-                  />
-                }
-              />
-              <Route path="sessions" element={<SessionsPage />} />
-              <Route
-                path="sessions/runs/:runId"
-                element={<RunLogDetailPage />}
-              />
-              <Route path="activity" element={<AgentActivityTab aid={aid} />} />
-              <Route
-                path="capability"
-                element={<GroupPane group="capability" sub={null} aid={aid} />}
-              />
-              <Route
-                path="capability/:tab"
-                element={<GroupPane group="capability" sub={sub} aid={aid} />}
-              />
-              <Route
-                path="ops"
-                element={<GroupPane group="ops" sub={null} aid={aid} />}
-              />
-              <Route
-                path="ops/:tab"
-                element={<GroupPane group="ops" sub={sub} aid={aid} />}
-              />
-              {isExpert && expertId ? (
-                <Route
-                  path="versions"
-                  element={
-                    <WorkbenchVersionsTab
-                      expertId={expertId}
-                      preview={preview}
-                      onChanged={handleVersionsChanged}
-                    />
-                  }
-                />
-              ) : null}
-              <Route
-                path="*"
-                element={<Navigate to="overview" replace />}
-              />
-              </Routes>
             )}
           </div>
         </section>

@@ -3539,5 +3539,14 @@
         "description": "Jalankan tugas multi-langkah yang terstruktur dan berkelanjutan."
       }
     }
+  },
+  "workbench": {
+    "docHistoryTitle": "Riwayat Dokumen",
+    "docHistoryHint": "Cuplikan setiap publikasi/rollback dokumen dasar; rollback langsung aktif",
+    "docHistoryUnavailable": "Rantai versi dokumen memerlukan penyimpanan PostgreSQL",
+    "docHistoryEmpty": "Belum ada cuplikan untuk dokumen ini (dibuat saat publikasi)",
+    "docRollbackConfirm": "Kembalikan {{file}} ke v{{version}}?",
+    "docRollbackHint": "Langsung berlaku: baris DB + file workspace diperbarui",
+    "docRollbackSuccess": "{{file}} dikembalikan ke v{{version}}, sudah aktif"
   }
 }

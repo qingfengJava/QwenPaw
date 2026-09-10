@@ -27,7 +27,11 @@ from pathlib import Path
 from typing import List, Optional
 
 from ..enterprise import current_tenant_id
-from ..agent_docs.store import shadow_write_document
+from ..agent_docs.store import (
+    DOC_TYPE_BY_FILENAME,
+    get_agent_docs_store,
+    promote_documents,
+)
 from .models import (
     EXPERT_STATUS_ARCHIVED,
     EXPERT_STATUS_DRAFT,
@@ -46,6 +50,88 @@ logger = logging.getLogger(__name__)
 
 #: Workspaces of published experts live under this directory.
 EXPERTS_WORKSPACE_ROOT = "workspaces/experts"
+
+
+async def _resolve_publish_content(
+    agent_id: str,
+    doc_type: str,
+    generated: str,
+    spec_updated_at=None,
+) -> str:
+    """发布时档案内容取用：调试调优成果优先，spec 权威兜底。
+
+    - draft 行不存在 → 用本次发布生成内容；
+    - draft 行存在且其更新时间晚于 spec 最后变更 → 用草稿内容
+      （调试期 AI 调优/手工编辑的成果必须随发布固化，否则调试白做）；
+    - 其余（spec 比草稿新，如后台改了档案表单后未经调试直接发布）
+      → 用生成内容，避免陈旧草稿覆盖新 spec；
+    - PG 不可用/异常 → 用生成内容（发布永不因 PG 故障阻断）。
+    """
+    docs = get_agent_docs_store()
+    if docs is None:
+        return generated
+    try:
+        row = await docs.get_document(
+            agent_id,
+            doc_type,
+            environment="draft",
+        )
+    except Exception:  # pylint: disable=broad-except
+        logger.warning(
+            "expert %s draft doc read failed; publish uses generated",
+            agent_id,
+            exc_info=True,
+        )
+        return generated
+    if row is None:
+        return generated
+
+    def _epoch(value) -> float:
+        """归一化 PG/ISO 两种时间格式为 epoch 秒（解析失败按 0）。"""
+        if isinstance(value, (int, float)):
+            return float(value)
+        try:
+            from datetime import datetime
+
+            return datetime.fromisoformat(str(value).strip()).timestamp()
+        except (TypeError, ValueError):
+            return 0.0
+
+    draft_updated = _epoch(row.get("updated_at"))
+    spec_updated = _epoch(spec_updated_at)
+    if draft_updated > spec_updated:
+        return str(row.get("content") or generated)
+    return generated
+
+
+async def _promote_publish_documents(
+    agent_id: str,
+    documents: dict,
+    published_by: str,
+) -> None:
+    """发布闸门：把最终档案内容写入 production 权威行 + 版本快照。
+
+    best-effort：PG 故障时告警不阻断发布（文件物化照常，启动对账
+    会以文件回填种子），保证发布主链路健壮性。
+    """
+    try:
+        promoted = await promote_documents(
+            agent_id,
+            documents,
+            environment="production",
+            updated_by=published_by,
+        )
+        if not promoted:
+            logger.info(
+                "expert %s publish skipped doc promote (PG unavailable)",
+                agent_id,
+            )
+    except Exception:  # pylint: disable=broad-except
+        logger.warning(
+            "expert %s publish doc promote failed (file plane live)",
+            agent_id,
+            exc_info=True,
+        )
 
 
 def _experts_root() -> Path:
@@ -412,12 +498,50 @@ async def publish_expert(
         )
 
     await asyncio.to_thread(_materialize)
-    # 档案文件影子双写到 agent_documents（发布 = production 环境）
-    shadow_write_document(agent_id, "PROFILE.md", profile_md)
-    agent_json_content = await asyncio.to_thread(
-        lambda: (workspace_dir / "agent.json").read_text(encoding="utf-8"),
+    # 发布闸门（Phase B）：production 权威行 + 版本快照。PROFILE.md
+    # 取用规则见 _resolve_publish_content（调试调优成果 vs spec 生成）。
+    profile_final = await _resolve_publish_content(
+        agent_id,
+        DOC_TYPE_BY_FILENAME["PROFILE.md"],
+        profile_md,
+        spec_updated_at=record.updated_at,
     )
-    shadow_write_document(agent_id, "agent.json", agent_json_content)
+    if profile_final != profile_md:
+        # 草稿调优版胜出：把物化文件也换成草稿内容（与 PG 保持一致）
+        await asyncio.to_thread(
+            lambda: (workspace_dir / "PROFILE.md").write_text(
+                profile_final,
+                encoding="utf-8",
+            ),
+        )
+    documents = {
+        DOC_TYPE_BY_FILENAME["PROFILE.md"]: profile_final,
+        DOC_TYPE_BY_FILENAME["agent.json"]: await asyncio.to_thread(
+            lambda: (workspace_dir / "agent.json").read_text(
+                encoding="utf-8",
+            ),
+        ),
+    }
+    # AGENTS.md / SOUL.md 无 spec 生成器（纯调优内容）：草稿行存在则随发布固化
+    docs_store = get_agent_docs_store()
+    for filename in ("AGENTS.md", "SOUL.md"):
+        if docs_store is None:
+            break
+        try:
+            row = await docs_store.get_document(
+                agent_id,
+                DOC_TYPE_BY_FILENAME[filename],
+                environment="draft",
+            )
+        except Exception:  # pylint: disable=broad-except
+            row = None
+        if row is not None and row.get("content"):
+            documents[DOC_TYPE_BY_FILENAME[filename]] = str(row["content"])
+    await _promote_publish_documents(
+        agent_id,
+        documents,
+        published_by,
+    )
 
     await store.insert_snapshot(
         expert_id,
@@ -511,11 +635,12 @@ async def materialize_expert_profile(expert_id: str) -> Optional[Path]:
     await asyncio.to_thread(
         lambda: profile_path.write_text(profile_md, encoding="utf-8"),
     )
-    # 能力绑定变更的档案同步影子双写（保持 PG 与文件一致）
-    shadow_write_document(
+    # 能力绑定变更的档案同步 production 权威行（保持 PG 与文件一致；
+    # best-effort：PG 故障不阻断文件物化，启动对账兜底）
+    await _promote_publish_documents(
         expert_agent_id(expert_id),
-        "PROFILE.md",
-        profile_md,
+        {DOC_TYPE_BY_FILENAME["PROFILE.md"]: profile_md},
+        updated_by="capability_refresh",
     )
     return profile_path
 
@@ -600,8 +725,13 @@ async def publish_expert_team(
         (workspace_dir / "SOUL.md").write_text(soul_md, encoding="utf-8")
 
     await asyncio.to_thread(_materialize)
-    # 团队 SOUL.md 同样影子双写到 agent_documents
-    shadow_write_document(agent_id, "SOUL.md", soul_md)
+    # 团队 SOUL.md 发布闸门：production 权威行 + 版本快照（团队无调试
+    # 实例，生成内容即权威）
+    await _promote_publish_documents(
+        agent_id,
+        {DOC_TYPE_BY_FILENAME["SOUL.md"]: soul_md},
+        published_by,
+    )
 
     updated = await store.set_team_status(
         team_id,

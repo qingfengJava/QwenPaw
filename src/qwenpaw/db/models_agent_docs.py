@@ -21,10 +21,12 @@ is carried by the table itself.
 """
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import (
     BigInteger,
+    DateTime,
     Index,
     Integer,
     String,
@@ -93,4 +95,72 @@ class AgentDocumentRow(TenantMixin, TimestampMixin, Base):
             name="uq_agent_documents_doc",
         ),
         Index("ix_agent_documents_agent", "tenant_id", "agent_id"),
+    )
+
+
+class AgentDocumentRevisionRow(TenantMixin, Base):
+    """Immutable revision snapshot of one identity document (publish chain).
+
+    Insert-only: every ``promote`` (publish / rollback) that changes the
+    authoritative row snapshots the new content here with the row's new
+    version. Retention keeps the most recent ``REVISION_RETENTION``
+    versions per document (lazily trimmed by the promote transaction).
+    The natural key adds ``version`` on top of the document key.
+    """
+
+    __tablename__ = "agent_document_revisions"
+
+    id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        autoincrement=True,
+    )
+    agent_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    # profile | agents | soul | agent_json
+    doc_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    # draft | production（快照链当前仅由 production 发布闸门写入）
+    environment: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="production",
+        server_default="production",
+    )
+    # 快照对应的生产行版本号（与 agent_documents.version 同源）
+    version: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+    )
+    content: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="",
+        server_default="",
+    )
+    content_hash: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default="",
+        server_default="",
+    )
+    published_by: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    published_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "agent_id",
+            "doc_type",
+            "environment",
+            "version",
+            name="uq_agent_document_revisions_version",
+        ),
+        Index(
+            "ix_agent_document_revisions_doc",
+            "tenant_id",
+            "agent_id",
+            "doc_type",
+        ),
     )

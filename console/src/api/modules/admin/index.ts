@@ -30,6 +30,9 @@ export type {
   ExpertPreviewStatus,
   ExpertVersionInfo,
   ExpertVersionRestoreResult,
+  ExpertDocRevisionInfo,
+  ExpertDocRevisionsResult,
+  ExpertDocRollbackResult,
 } from "./experts";
 export { adminExpertTeamsApi } from "./expertTeams";
 export type {

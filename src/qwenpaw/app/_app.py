@@ -206,6 +206,15 @@ async def lifespan(  # pylint: disable=too-many-statements,too-many-branches
     except Exception:  # noqa: BLE001 - housekeeping must never block boot
         logger.debug("run-log pg purge launch failed", exc_info=True)
 
+    # 档案文档启动对账（Phase B）：PG 权威裁决物化缓存 / 文件回填种子，
+    # 后台任务不阻塞启动；无 PG 部署自动 no-op
+    try:
+        from .agent_docs.reconcile import reconcile_agent_docs
+
+        asyncio.create_task(reconcile_agent_docs())
+    except Exception:  # noqa: BLE001 - housekeeping must never block boot
+        logger.debug("agent docs reconcile launch failed", exc_info=True)
+
     # Provider initialization scans and may migrate persisted configuration;
     # offload to a worker thread so the event loop never blocks on startup.
     provider_manager = await asyncio.to_thread(ProviderManager.get_instance)

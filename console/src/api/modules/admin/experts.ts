@@ -105,6 +105,29 @@ export interface ExpertVersionRestoreResult {
   agent_spec: Record<string, unknown>;
 }
 
+/** 一条档案文档版本快照（agent_document_revisions，production 链）。 */
+export interface ExpertDocRevisionInfo {
+  version: number;
+  content_hash: string;
+  published_by: string | null;
+  published_at: string | null;
+}
+
+/** 档案文档版本列表响应（available=false 表示未启用 PG 档案存储）。 */
+export interface ExpertDocRevisionsResult {
+  revisions: ExpertDocRevisionInfo[];
+  available: boolean;
+}
+
+/** 档案文档回滚结果（直接生效：production 行 + 文件物化 + 热重载）。 */
+export interface ExpertDocRollbackResult {
+  expert_id: string;
+  doc_type: string;
+  restored_version: number;
+  version: number | null;
+  materialized: boolean;
+}
+
 const enc = encodeURIComponent;
 
 export const adminExpertsApi = {
@@ -171,5 +194,18 @@ export const adminExpertsApi = {
     request<ExpertVersionRestoreResult>(
       `/admin/experts/${enc(expertId)}/versions/${version}/restore`,
       { method: "POST" },
+    ),
+
+  // ── 档案文档版本链（agent_document_revisions；回滚直接生效）──
+
+  listDocRevisions: (expertId: string, docType: string) =>
+    request<ExpertDocRevisionsResult>(
+      `/admin/experts/${enc(expertId)}/documents/revisions?doc_type=${enc(docType)}`,
+    ),
+
+  rollbackDoc: (expertId: string, docType: string, version: number) =>
+    request<ExpertDocRollbackResult>(
+      `/admin/experts/${enc(expertId)}/documents/${enc(docType)}/rollback`,
+      { method: "POST", body: JSON.stringify({ version }) },
     ),
 };

@@ -4688,7 +4688,14 @@
     "restore": "Restore",
     "restoreConfirm": "Restore to v{{version}}?",
     "restoreHint": "Writes to the draft only; click Publish to affect live",
-    "restoreSuccess": "Restored to v{{version}} (into draft). Review and click Publish to apply"
+    "restoreSuccess": "Restored to v{{version}} (into draft). Review and click Publish to apply",
+    "docHistoryTitle": "Document History",
+    "docHistoryHint": "Snapshots of base identity docs per publish/rollback; rollback takes effect immediately",
+    "docHistoryUnavailable": "Document version chain requires PostgreSQL-backed storage",
+    "docHistoryEmpty": "No snapshots for this document yet (generated on publish)",
+    "docRollbackConfirm": "Roll back {{file}} to v{{version}}?",
+    "docRollbackHint": "Applies to production immediately: DB row + workspace file updated",
+    "docRollbackSuccess": "Rolled back {{file}} to v{{version}}; live now"
   },
   "agentDetail": {
     "overview": "Overview",

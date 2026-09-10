@@ -3660,6 +3660,18 @@ def save_agent_config(  # pylint: disable=too-many-branches,too-many-statements
             payload = candidate.model_dump(exclude_none=True)
             saved_digest = _json_payload_digest(payload)
             write_json_atomic(agent_config_path, payload)
+            # 档案配置影子双写（Phase B 收口）：agent.json 的所有变更路径
+            # （模型切换/渠道/插件/pawapp/CLI 等 25+ 调用点）统一在此镜像到
+            # agent_documents，消除文件/PG 漂移源；序列化格式与落盘文件
+            # 完全一致（hash 可对账）；无事件循环由 store 后台循环兜底，
+            # 无 PG 时静默跳过，失败不影响主流程。
+            from ..app.agent_docs.store import shadow_write_document
+
+            shadow_write_document(
+                agent_id,
+                "agent.json",
+                json.dumps(payload, ensure_ascii=False, indent=2),
+            )
             candidate.record_source_digest(saved_digest)
             agent_config.record_source_digest(saved_digest)
             try:

@@ -3,11 +3,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
+from ...agent_docs.store import DOC_TYPE_BY_FILENAME, get_agent_docs_store
 from ...experts.models import (
     EXPERT_STATUS_PUBLISHED,
     ExpertCreateBody,
@@ -20,7 +22,11 @@ from ...experts.preview import (
     start_expert_preview,
     stop_expert_preview,
 )
-from ...experts.publish import archive_expert, publish_expert
+from ...experts.publish import (
+    _expert_workspace_dir,
+    archive_expert,
+    publish_expert,
+)
 from ...experts.store import get_expert_store
 from ...rbac import PERM_ADMIN_EXPERTS, require_perm
 
@@ -261,4 +267,120 @@ async def restore_version(expert_id: str, version: int) -> dict:
         "expert_id": expert_id,
         "restored_version": version,
         "agent_spec": draft_spec,
+    }
+
+
+# ----------------------------------------------------------------------
+# 档案文档版本历史/回滚（agent_document_revisions，Phase B 发布闭环）。
+# 与快照 spec 回滚不同：档案文档回滚直接生效（production 行 + 文件
+# 物化 + 热重载），无需再次发布。
+# ----------------------------------------------------------------------
+
+#: doc_type → 工作区文件名（回滚物化用）
+_FILENAME_BY_DOC_TYPE = {v: k for k, v in DOC_TYPE_BY_FILENAME.items()}
+
+
+def _validate_doc_type(doc_type: str) -> None:
+    if doc_type not in _FILENAME_BY_DOC_TYPE:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"unknown doc_type: {doc_type} "
+                f"(must be one of {', '.join(sorted(_FILENAME_BY_DOC_TYPE))})"
+            ),
+        )
+
+
+@router.get("/{expert_id}/documents/revisions")
+async def list_document_revisions(
+    expert_id: str,
+    doc_type: str = Query("profile"),
+) -> dict:
+    """档案文档的版本快照列表（production 链，新版本在前）。"""
+    _validate_doc_type(doc_type)
+    if await get_expert_store().get_expert(expert_id) is None:
+        raise HTTPException(status_code=404, detail="Expert not found")
+    docs = get_agent_docs_store()
+    if docs is None:
+        # 无 PG 部署：档案版本链不可用（诚实空态，前端提示）
+        return {"revisions": [], "available": False}
+    revisions = await docs.list_revisions(
+        expert_agent_id(expert_id),
+        doc_type,
+    )
+    return {"revisions": revisions, "available": True}
+
+
+@router.post("/{expert_id}/documents/{doc_type}/rollback")
+async def rollback_document(
+    expert_id: str,
+    doc_type: str,
+    body: dict = Body(...),
+    request: Request = None,
+) -> dict:
+    """回滚档案文档到指定版本（直接生效：production 行 + 物化 + reload）。"""
+    _validate_doc_type(doc_type)
+    version = body.get("version")
+    if not isinstance(version, int) or isinstance(version, bool):
+        raise HTTPException(
+            status_code=422,
+            detail="body.version must be an integer",
+        )
+    docs = get_agent_docs_store()
+    if docs is None:
+        raise HTTPException(
+            status_code=503,
+            detail="档案文档存储未启用（未配置 PostgreSQL）",
+        )
+    agent_id = expert_agent_id(expert_id)
+    revision = await docs.get_revision(agent_id, doc_type, version)
+    if revision is None:
+        raise HTTPException(status_code=404, detail="Revision not found")
+    content = str(revision.get("content") or "")
+    actor = "admin"
+    if request is not None:
+        actor = getattr(request.state, "user", None) or "admin"
+    # 回滚 = 历史内容重新走发布闸门（production 行 version++ + 新快照）
+    new_version = await docs.promote(
+        agent_id,
+        doc_type,
+        content,
+        updated_by=f"rollback:{actor}",
+    )
+    # 物化正式工作区文件 + 热生效（仅已发布专家有正式工作区）
+    materialized = False
+    workspace_dir = _expert_workspace_dir(expert_id)
+    if (workspace_dir / "agent.json").is_file():
+        target = workspace_dir / _FILENAME_BY_DOC_TYPE[doc_type]
+        await asyncio.to_thread(
+            lambda: (
+                target.parent.mkdir(parents=True, exist_ok=True),
+                target.write_text(content, encoding="utf-8"),
+            ),
+        )
+        materialized = True
+        manager = _manager(request)
+        if manager is not None:
+            try:
+                await manager.reload_agent(agent_id)
+            except Exception:  # pylint: disable=broad-except
+                logger.warning(
+                    "expert %s doc rollback but hot-reload failed",
+                    expert_id,
+                    exc_info=True,
+                )
+    logger.info(
+        "Expert %s document %s rolled back to v%s (new v%s) by %s",
+        expert_id,
+        doc_type,
+        version,
+        new_version,
+        actor,
+    )
+    return {
+        "expert_id": expert_id,
+        "doc_type": doc_type,
+        "restored_version": version,
+        "version": new_version,
+        "materialized": materialized,
     }

@@ -4145,5 +4145,14 @@
         "description": "構造化された複数ステップのタスクを継続的に実行します。"
       }
     }
+  },
+  "workbench": {
+    "docHistoryTitle": "ドキュメント履歴",
+    "docHistoryHint": "基本ドキュメントの公開・ロールバックごとのスナップショット。ロールバックは即時反映",
+    "docHistoryUnavailable": "ドキュメント履歴には PostgreSQL ストレージが必要です",
+    "docHistoryEmpty": "このドキュメントのスナップショットはまだありません（公開時に生成）",
+    "docRollbackConfirm": "{{file}} を v{{version}} にロールバックしますか？",
+    "docRollbackHint": "本番に即時反映：権威行とワークスペースファイルを更新",
+    "docRollbackSuccess": "{{file}} を v{{version}} にロールバックしました（即時反映）"
   }
 }

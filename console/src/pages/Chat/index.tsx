@@ -1157,13 +1157,17 @@ const isLocalTimestampId = (id: string | null | undefined): boolean =>
 interface ChatPageProps {
   /** 隐藏头部模型选择器（工作台场景：档案区已提供默认模型配置入口）。 */
   hideHeaderModelSelector?: boolean;
-  /** 隐藏头部"打开工作区"按钮（工作台场景：右侧能力 Tab 已有知识库入口）。 */
+  /** 隐藏头部“打开工作区”按钮（工作台场景：右侧能力 Tab 已有知识库入口）。 */
   hideWorkspaceToggle?: boolean;
+  /** 进入即开空白新会话（数字员工工作台场景）：URL 无 chatId 时
+   *  不恢复上次会话/按员工记忆的会话，避免每次进入都加载旧上下文。 */
+  defaultNewSession?: boolean;
 }
 
 export default function ChatPage({
   hideHeaderModelSelector = false,
   hideWorkspaceToggle = false,
+  defaultNewSession = false,
 }: ChatPageProps = {}) {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
@@ -1878,6 +1882,10 @@ export default function ChatPage({
   /** Tracks the stale auto-selected session ID that was skipped on init, so we can suppress its late-arriving onSessionSelected callback. */
   const staleAutoSelectedIdRef = useRef<string | null>(null);
   const chatIdRef = useRef(chatId);
+  // 宿主“进入即新会话”声明快照：供无依赖的会话回调 effect 读取，
+  // props 本身不会在宿主生命周期内变化，ref 仅避免扩依赖数组。
+  const defaultNewSessionRef = useRef(defaultNewSession);
+  defaultNewSessionRef.current = defaultNewSession;
   const navigateRef = useRef(navigate);
   const chatRef = useRef<IAgentScopeRuntimeWebUIRef>(null);
   const pendingSenderClearRef = useRef<string | null>(null);
@@ -2309,16 +2317,34 @@ export default function ChatPage({
   // last actively selected session to avoid jumping to the first session on re-mount.
   // Never use a temporary local timestamp id here: it would be passed to the SDK
   // as preferredChatId and could be navigated to as a bogus URL.
-  const safeLastActive = isLocalTimestampId(sessionApi.lastActiveChatId)
-    ? null
-    : sessionApi.lastActiveChatId;
-  const safeLastStored = isLocalTimestampId(getLastChatId(selectedAgent))
-    ? null
-    : getLastChatId(selectedAgent);
+  // 宿主声明 defaultNewSession 时跳过全部回退：只认 URL chatId，
+  // 不把上次会话提置顶，配合挂载时的新建会话实现“进入即新窗口”。
+  const safeLastActive =
+    defaultNewSession || isLocalTimestampId(sessionApi.lastActiveChatId)
+      ? null
+      : sessionApi.lastActiveChatId;
+  const safeLastStored =
+    defaultNewSession || isLocalTimestampId(getLastChatId(selectedAgent))
+      ? null
+      : getLastChatId(selectedAgent);
   const effectiveChatId = chatId || safeLastActive || safeLastStored;
   if (effectiveChatId && sessionApi.preferredChatId !== effectiveChatId) {
     sessionApi.preferredChatId = effectiveChatId;
   }
+
+  // 宿主声明“进入即新会话”：URL 无 chatId 时挂载后直接开空白新会话。
+  // 复用侧栏新建聊天事件通道（ChatSessionInitializer 已在子树挂好监听，
+  // 子组件 effect 先于本组件执行）；rAF 延迟与 pending-flag 流程一致，
+  // 等 SDK 会话上下文初始化完成。
+  useEffect(() => {
+    if (!defaultNewSession || chatIdRef.current) return undefined;
+    const timer = requestAnimationFrame(() => {
+      window.dispatchEvent(new CustomEvent("qwenpaw:sidebar-new-chat"));
+    });
+    return () => cancelAnimationFrame(timer);
+    // 仅挂载时执行一次；后续切会话走 URL chatId 流程，不重复建新会话。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Register session API event callbacks for URL synchronization
 
@@ -2534,8 +2560,14 @@ export default function ChatPage({
       // Restore last chat ID for the agent we're switching to.
       // Ignore temporary local timestamp ids that may have been persisted
       // before this guard was added.
+      // 宿主声明 defaultNewSession：切员工不恢复上次会话，直接落回
+      // 空白新窗口（与“进入即新窗口”的默认行为保持一致）。
       const restored = getLastChatId(selectedAgent);
-      if (restored && !isLocalTimestampId(restored)) {
+      if (defaultNewSessionRef.current) {
+        navigateRef.current(CHAT_BASE_PATH, { replace: true });
+        sessionApi.preferredChatId = null;
+        sessionApi.lastActiveChatId = null;
+      } else if (restored && !isLocalTimestampId(restored)) {
         navigateRef.current(buildChatPath(restored), {
           replace: true,
         });

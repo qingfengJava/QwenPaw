@@ -31,7 +31,7 @@ from .models import (
     expert_agent_id,
     expert_draft_agent_id,
 )
-from ..agent_docs.store import shadow_write_document
+from ..agent_docs.store import DOC_TYPE_BY_FILENAME, get_agent_docs_store
 from .publish import (
     EXPERTS_WORKSPACE_ROOT,
     _build_expert_spec,
@@ -107,13 +107,51 @@ async def start_expert_preview(
         )
 
     await asyncio.to_thread(_materialize)
-    # 草稿域档案影子双写：agent_id 带 __draft 后缀 → environment=draft，
-    # 与线上 production 记录天然隔离
-    shadow_write_document(agent_id, "PROFILE.md", profile_md)
-    agent_json_content = await asyncio.to_thread(
-        lambda: (workspace_dir / "agent.json").read_text(encoding="utf-8"),
-    )
-    shadow_write_document(agent_id, "agent.json", agent_json_content)
+    # 草稿域档案落库（draft 环境）：await 同步写，保证 PG draft 行与
+    # 草稿文件一致（发布闭环的取用依据）；agent_id 带 __draft 后缀 →
+    # environment=draft，与线上 production 记录天然隔离
+    docs = get_agent_docs_store()
+    if docs is not None:
+        agent_json_content = await asyncio.to_thread(
+            lambda: (workspace_dir / "agent.json").read_text(
+                encoding="utf-8",
+            ),
+        )
+        try:
+            await docs.upsert_document(
+                agent_id,
+                DOC_TYPE_BY_FILENAME["PROFILE.md"],
+                profile_md,
+            )
+            await docs.upsert_document(
+                agent_id,
+                DOC_TYPE_BY_FILENAME["agent.json"],
+                agent_json_content,
+            )
+        except Exception:  # pylint: disable=broad-except
+            logger.warning(
+                "expert %s preview draft doc persist failed (file live)",
+                expert_id,
+                exc_info=True,
+            )
+        # AGENTS.md / SOUL.md 无 spec 生成器：draft 行存在则以行内容
+        # 物化草稿文件（调试实例启动即用 PG 草稿权威内容，非残留缓存）
+        for filename in ("AGENTS.md", "SOUL.md"):
+            doc_type = DOC_TYPE_BY_FILENAME[filename]
+            try:
+                row = await docs.get_document(
+                    agent_id,
+                    doc_type,
+                    environment="draft",
+                )
+            except Exception:  # pylint: disable=broad-except
+                row = None
+            if row is not None and row.get("content"):
+                await asyncio.to_thread(
+                    lambda name=filename, body=str(row["content"]): (
+                        workspace_dir / name
+                    ).write_text(body, encoding="utf-8"),
+                )
 
     if manager is not None:
         try:
@@ -264,8 +302,22 @@ async def refresh_expert_preview_profile(
     await asyncio.to_thread(
         lambda: profile_path.write_text(profile_md, encoding="utf-8"),
     )
-    # 草稿档案同步影子双写（draft 环境，不触碰线上记录）
-    shadow_write_document(expert_draft_agent_id(expert_id), "PROFILE.md", profile_md)
+    # 草稿档案同步落库（draft 环境，不触碰线上记录；await 保证行与
+    # 文件一致，调试会话下一轮实时读文件即生效）
+    docs = get_agent_docs_store()
+    if docs is not None:
+        try:
+            await docs.upsert_document(
+                expert_draft_agent_id(expert_id),
+                DOC_TYPE_BY_FILENAME["PROFILE.md"],
+                profile_md,
+            )
+        except Exception:  # pylint: disable=broad-except
+            logger.warning(
+                "expert %s preview profile draft persist failed",
+                expert_id,
+                exc_info=True,
+            )
     if manager is not None:
         try:
             await manager.reload_agent(expert_draft_agent_id(expert_id))

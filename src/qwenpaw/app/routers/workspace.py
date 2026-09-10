@@ -38,7 +38,11 @@ from watchfiles import awatch, Change
 from pydantic import BaseModel, Field
 
 from ..utils import check_upload_size, safe_join, schedule_agent_reload
-from ..agent_docs.store import shadow_write_document
+from ..agent_docs.store import (
+    DOC_TYPE_BY_FILENAME,
+    get_agent_docs_store,
+    shadow_write_document,
+)
 from ...config import (
     load_config,
     save_config,
@@ -179,6 +183,106 @@ async def list_working_files(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+# ---------------------------------------------------------------------------
+# 档案文档 PG 权威读写（Phase B）：白名单文件的落库/读取分流
+# ---------------------------------------------------------------------------
+
+
+async def _persist_identity_document(
+    agent_id: str,
+    filename: str,
+    content: str,
+) -> None:
+    """写档案文档：白名单文件先落 PG（权威），失败抛 503。
+
+    - PG 可用：await 落库（draft/production 随 agent_id 自动分流），
+      成功后由调用方物化工作区文件（编辑必须落库，不能只落文件）；
+    - 无 PG（store 为 None）：回退影子写（文件仍为主链路，行为与
+      Phase A 一致）；
+    - 非白名单文件：不动作。
+    """
+    doc_type = DOC_TYPE_BY_FILENAME.get(filename)
+    if doc_type is None:
+        return
+    store = get_agent_docs_store()
+    if store is None:
+        shadow_write_document(agent_id, filename, content)
+        return
+    try:
+        await store.upsert_document(agent_id, doc_type, content)
+    except Exception as exc:
+        logger.warning(
+            "Agent docs authoritative write failed: agent=%s doc=%s: %s",
+            agent_id,
+            doc_type,
+            exc,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="档案文档落库失败，请稍后重试（编辑必须写入数据库）",
+        ) from exc
+
+
+async def _read_identity_document(
+    agent_id: str,
+    filename: str,
+) -> str | None:
+    """读档案文档：白名单文件 PG 优先，异常/无行回退文件（返回 None）。
+
+    PG 平面绝不阻塞业务：任何异常静默回退，由调用方走原文件读取。
+    """
+    doc_type = DOC_TYPE_BY_FILENAME.get(filename)
+    if doc_type is None:
+        return None
+    store = get_agent_docs_store()
+    if store is None:
+        return None
+    try:
+        row = await store.get_document(agent_id, doc_type)
+    except Exception:
+        logger.warning(
+            "Agent docs PG read failed; falling back to file: "
+            "agent=%s doc=%s",
+            agent_id,
+            doc_type,
+            exc_info=True,
+        )
+        return None
+    if row is None:
+        return None
+    return str(row.get("content") or "")
+
+
+def _identity_file_chunk(
+    files_root: Path,
+    path: str,
+    content: str,
+) -> dict:
+    """把 PG 权威内容包装成 /file-content 的单块响应。
+
+    ETag 取文件真实 stat（文件是权威内容的物化缓存，正常态两者一致），
+    保证编辑器乐观并发保存（if-match）不被 PG 读路径破坏；文件缺失时
+    用内容长度合成弱 ETag（下次保存不带 if-match 也能落盘）。
+    """
+    try:
+        info = resolve_workspace_path(files_root, path).stat()
+        etag = file_etag(info)
+    except OSError:
+        etag = f'W/"pg-{len(content.encode("utf-8"))}"'
+    size = len(content.encode("utf-8"))
+    return {
+        "content": content,
+        "encoding": "utf-8",
+        "eof": True,
+        "etag": etag,
+        "limit": size,
+        "next_offset": size,
+        "offset": 0,
+        "path": path,
+        "truncated": False,
+    }
+
+
 @router.get(
     "/files/{md_name}",
     response_model=MdFileContent,
@@ -192,6 +296,14 @@ async def read_working_file(
     """Read a working directory markdown file."""
     try:
         workspace = await get_agent_for_request(request)
+        # 档案文档 PG 优先读（Phase B）：白名单文件命中 PG 行直接返回；
+        # PG 异常/无行回退文件读取（行为与历史一致）
+        pg_content = await _read_identity_document(
+            workspace.agent_id,
+            md_name,
+        )
+        if pg_content is not None:
+            return MdFileContent(content=pg_content)
         workspace_manager = AgentMdManager(
             str(workspace.workspace_dir),
             agent_id=workspace.agent_id,
@@ -218,15 +330,22 @@ async def write_working_file(
     """Write a working directory markdown file."""
     try:
         workspace = await get_agent_for_request(request)
+        # 档案文件 PG 权威先行（Phase B）：白名单文件先落 agent_documents
+        # （PG 失败 → 503，编辑必须落库），成功后再物化工作区文件；
+        # 无 PG 部署（store 为 None）与非白名单文件保持纯文件行为。
+        await _persist_identity_document(
+            workspace.agent_id,
+            md_name,
+            body.content,
+        )
         workspace_manager = AgentMdManager(
             str(workspace.workspace_dir),
             agent_id=workspace.agent_id,
         )
         workspace_manager.write_working_md(md_name, body.content)
-        # 档案文件影子双写：成功写入文件后 fire-and-forget 同步到
-        # agent_documents（PG 权威源 Phase A；未知文件名在 store 内被忽略）
-        shadow_write_document(workspace.agent_id, md_name, body.content)
         return {"written": True}
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -475,6 +594,15 @@ async def read_workspace_file_content(
     """Read text by byte range with UTF-8 boundary protection."""
     workspace = await get_agent_for_request(request)
     files_root = await _resolve_files_root(request, workspace, root)
+    if root == "workspace":
+        # 档案文档 PG 优先读（Phase B，仅工作区根白名单文件生效）：
+        # 命中 PG 行返回单块完整内容；异常/无行回退文件分块读取
+        pg_content = await _read_identity_document(
+            workspace.agent_id,
+            Path(path).name,
+        )
+        if pg_content is not None:
+            return _identity_file_chunk(files_root, path, pg_content)
     try:
         async with _FILESYSTEM_SEMAPHORE:
             return await asyncio.to_thread(
@@ -512,6 +640,14 @@ async def write_workspace_file_content(
     if not isinstance(content, str):
         raise HTTPException(status_code=422, detail="content must be a string")
     workspace = await get_agent_for_request(request)
+    # 档案文件 PG 权威先行（Phase B，白名单 + root=workspace 才生效）：
+    # 落库失败 → 503；成功后再物化文件（下游 save_text_file）
+    if root == "workspace":
+        await _persist_identity_document(
+            workspace.agent_id,
+            Path(path).name,
+            content,
+        )
     files_root = await _resolve_files_root(request, workspace, root)
     try:
         async with _FILESYSTEM_SEMAPHORE:
@@ -522,14 +658,6 @@ async def write_workspace_file_content(
                 content,
                 request.headers.get("if-match"),
             )
-            # 工作区根下的档案文件影子双写到 agent_documents（store 内
-            # 按文件名白名单过滤，项目目录文件不受影响）
-            if root == "workspace":
-                shadow_write_document(
-                    workspace.agent_id,
-                    Path(path).name,
-                    content,
-                )
             return result
     except InvalidWorkspacePath as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -4200,5 +4200,14 @@
         "description": "Execute uma tarefa estruturada e persistente em várias etapas."
       }
     }
+  },
+  "workbench": {
+    "docHistoryTitle": "Histórico de documentos",
+    "docHistoryHint": "Snapshots de cada publicação/reversão dos documentos base; a reversão tem efeito imediato",
+    "docHistoryUnavailable": "O histórico de versões de documentos requer armazenamento PostgreSQL",
+    "docHistoryEmpty": "Ainda não há snapshots deste documento (gerados ao publicar)",
+    "docRollbackConfirm": "Reverter {{file}} para v{{version}}?",
+    "docRollbackHint": "Aplica imediatamente: linha do BD + arquivo do workspace atualizados",
+    "docRollbackSuccess": "{{file}} revertido para v{{version}}, já em efeito"
   }
 }

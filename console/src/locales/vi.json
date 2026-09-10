@@ -2723,5 +2723,14 @@
         "description": "Chạy tác vụ nhiều bước có cấu trúc và liên tục."
       }
     }
+  },
+  "workbench": {
+    "docHistoryTitle": "Lịch sử hồ sơ",
+    "docHistoryHint": "Ảnh chụp mỗi lần xuất bản/hoàn tác của hồ sơ cơ bản; hoàn tác có hiệu lực ngay",
+    "docHistoryUnavailable": "Chuỗi phiên bản hồ sơ cần lưu trữ PostgreSQL",
+    "docHistoryEmpty": "Chưa có ảnh chụp cho hồ sơ này (tự tạo khi xuất bản)",
+    "docRollbackConfirm": "Hoàn tác {{file}} về v{{version}}?",
+    "docRollbackHint": "Áp dụng ngay: cập nhật dòng DB + tệp workspace",
+    "docRollbackSuccess": "Đã hoàn tác {{file}} về v{{version}}, đã có hiệu lực"
   }
 }
