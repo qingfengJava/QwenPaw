@@ -330,7 +330,7 @@ def test_preloaded_agent_config_preserves_model_settings(monkeypatch):
     thinking_levels = []
 
     @contextmanager
-    def record_thinking_level(level):
+    def record_thinking_level(level, overrides=None):
         thinking_levels.append(level)
         yield
 

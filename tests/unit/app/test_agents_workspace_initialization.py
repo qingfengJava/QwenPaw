@@ -71,7 +71,8 @@ def test_initialize_agent_workspace_applies_md_template_with_language(
     monkeypatch.setattr(
         agents_router,
         "copy_workspace_md_files",
-        lambda language, workspace_dir, md_template_id=None: (
+        lambda language, workspace_dir, md_template_id=None,
+        identity_name=None, identity_description=None: (
             recorded_calls.append(
                 (language, workspace_dir, md_template_id),
             )

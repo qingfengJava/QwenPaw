@@ -206,6 +206,61 @@ _SENSITIVE_ENV_VARS = (
     "TWILIO_AUTH_TOKEN",
 )
 
+#: 集成测试专用数据库：实例可继承宿主机 PG 实例但绝不读写
+#: 开发者库（事故复盘：临时 SECRET_DIR 下迁移 manifest 必然缺失，
+#: 启动全量导入会把真实库 provider_configs 用出厂状态覆盖）。
+_INTEGRATION_DB_NAME = "qwenpaw_integration_test"
+
+
+def _ensure_pg_database_exists(test_url) -> None:
+    """Idempotently create the integration-test database."""
+    import asyncio
+
+    import asyncpg
+
+    admin_dsn = (
+        test_url.set(database="postgres")
+        .render_as_string(hide_password=False)
+        .replace("postgresql+asyncpg://", "postgresql://", 1)
+    )
+
+    async def _create() -> None:
+        conn = await asyncpg.connect(dsn=admin_dsn)
+        try:
+            exists = await conn.fetchval(
+                "SELECT 1 FROM pg_database WHERE datname = $1",
+                _INTEGRATION_DB_NAME,
+            )
+            if not exists:
+                await conn.execute(
+                    f'CREATE DATABASE "{_INTEGRATION_DB_NAME}"',
+                )
+        finally:
+            await conn.close()
+
+    asyncio.run(_create())
+
+
+def _isolate_pg_database(env: dict[str, str]) -> None:
+    """Rewire QWENPAW_PG_DSN to the dedicated integration-test database.
+
+    集成实例临时 SECRET_DIR 下无迁移 manifest，若直连开发者库，
+    启动全量导入会用空工作区的出厂状态覆盖真实 provider 配置
+    （2026-09-10 dashscope extra_models 丢失事故根因）。统一指向
+    qwenpaw_integration_test 库，首次幂等建库，实例启动时自动迁移建表。
+    """
+    dsn = env.get("QWENPAW_PG_DSN")
+    if not dsn:
+        return
+    from sqlalchemy.engine import make_url
+
+    url = make_url(dsn)
+    if url.database == _INTEGRATION_DB_NAME:
+        return
+    test_url = url.set(database=_INTEGRATION_DB_NAME)
+    _ensure_pg_database_exists(test_url)
+    env["QWENPAW_PG_DSN"] = test_url.render_as_string(hide_password=False)
+
 
 def _find_free_port(host: str = "127.0.0.1") -> int:
     """Bind to port 0 and return the assigned free port."""
@@ -334,6 +389,8 @@ def app_server(  # pylint: disable=too-many-statements,too-many-branches
     env = os.environ.copy()
     for key in _SENSITIVE_ENV_VARS:
         env.pop(key, None)
+    # PG 隔离：子进程指向独立测试库（见 _isolate_pg_database 事故注释）
+    _isolate_pg_database(env)
 
     env["QWENPAW_WORKING_DIR"] = str(working_dir)
     env["QWENPAW_SECRET_DIR"] = str(secret_dir)

@@ -1926,6 +1926,19 @@ class _AgentModelSettings:
     compact_threshold: Optional[float] = None
 
 
+def _slot_thinking_overrides(slot: Any) -> tuple | None:
+    """Extract the agent-scoped thinking overrides from a model slot.
+
+    返回 ``(thinking_enabled, thinking_budget, reasoning_effort)``；
+    三项均为空时返回 None（纯档位语义，不进入覆盖通道）。"""
+    enabled = getattr(slot, "thinking_enabled", None)
+    budget = getattr(slot, "thinking_budget", None)
+    effort = getattr(slot, "reasoning_effort", None)
+    if enabled is None and budget is None and effort is None:
+        return None
+    return (enabled, budget, effort)
+
+
 def _load_agent_model_settings(
     agent_id: str | None,
     agent_config: Any = None,
@@ -2128,7 +2141,11 @@ def create_model_and_formatter(
 
         from ..providers.provider import agent_thinking_level
 
-        with agent_thinking_level(settings.thinking_level):
+        # 员工级思考参数覆盖随槽位传递（enabled/budget/effort）
+        with agent_thinking_level(
+            settings.thinking_level,
+            overrides=_slot_thinking_overrides(model_slot),
+        ):
             model = provider.get_chat_model_instance(model_slot.model)
         provider_id = _resolved_provider_id(provider, model_slot.provider_id)
     else:

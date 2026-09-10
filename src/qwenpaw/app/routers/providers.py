@@ -24,7 +24,13 @@ from qwenpaw.exceptions import (
 from ..agent_context import get_agent_for_request
 from ..utils import schedule_agent_reload
 from ..rbac.deps import require_perm
-from ..rbac.models import PERM_MODEL_MANAGE
+from ..rbac.models import PERM_AGENT_MANAGE, PERM_MODEL_MANAGE
+from ...governance.audit import AuditLog
+from ...governance.policy import (
+    GovernanceAction,
+    GovernanceDecision,
+    ToolCallSpec,
+)
 from ...config.config import (
     AgentProfileConfig,
     load_agent_config,
@@ -41,9 +47,11 @@ from ...providers.provider_discovery_policy import (
 )
 from ...config.config import ActiveModelsInfo
 from ...providers.agent_model_store import (
+    get_agent_model_profile_pg,
     persist_agent_model_slot,
     resolve_agent_active_model,
 )
+from ...providers import provider_store
 from ...providers.provider_manager import ProviderManager
 from ...utils.io_utils import run_sync_io
 from ...utils.logging import sanitize_log_value
@@ -93,9 +101,30 @@ async def get_provider_manager(request: Request) -> ProviderManager:
     return request.app.state.provider_manager
 
 
+# 员工级参数覆盖字段全集（与 ModelSlotConfig 可选覆盖字段对齐）
+_OVERRIDE_FIELDS = (
+    "max_input_length",
+    "thinking_enabled",
+    "thinking_budget",
+    "reasoning_effort",
+)
+
+
+def _slot_overrides(slot: ModelSlotConfig | None) -> Dict[str, object]:
+    """Extract only the set override fields from a resolved slot."""
+    if slot is None:
+        return {}
+    return {
+        field: getattr(slot, field)
+        for field in _OVERRIDE_FIELDS
+        if getattr(slot, field) is not None
+    }
+
+
 def _active_models_info(
     manager: ProviderManager,
     active_llm: ModelSlotConfig | None,
+    agent_overrides: Dict[str, object] | None = None,
 ) -> ActiveModelsInfo:
     """Build active-model metadata using the runtime context resolver."""
     effective_max_input_length = None
@@ -105,10 +134,52 @@ def _active_models_info(
             effective_max_input_length = provider.get_context_size(
                 active_llm.model,
             )
+            # 员工覆盖的上下文窗口优先于全局模型配置（展示与压缩同源）
+            if active_llm.max_input_length is not None:
+                effective_max_input_length = active_llm.max_input_length
     return ActiveModelsInfo(
         active_llm=active_llm,
         effective_max_input_length=effective_max_input_length,
+        agent_overrides=agent_overrides,
     )
+
+
+def _audit_agent_model_change(
+    workspace_dir: str,
+    agent_id: str,
+    actor_id: str,
+    provider_id: str,
+    model: str,
+    before: Dict[str, object],
+    after: Dict[str, object],
+) -> None:
+    """Record one agent model-parameter change into the audit plane.
+
+    企业治理面：谁在何时把哪个员工的模型参数从什么改成了什么。
+    审计绝不抛异常（失败仅告警），不阻塞业务主流程。"""
+    try:
+        spec = ToolCallSpec(
+            tool_name="agent_model_config.update",
+            target=f"{provider_id}:{model}",
+            agent_id=agent_id,
+            session_id="",
+            raw_params={"before": before, "after": after},
+            user_id=actor_id,
+        )
+        AuditLog.get_instance().record(
+            workspace_dir,
+            spec,
+            GovernanceDecision(
+                action=GovernanceAction.ALLOW,
+                reason="agent model config updated via console",
+            ),
+        )
+    except Exception:  # noqa: BLE001 - audit must never raise
+        logger.warning(
+            "audit write failed for agent model config change (%s)",
+            agent_id,
+            exc_info=True,
+        )
 
 
 class ProviderConfigRequest(BaseModel):
@@ -161,6 +232,29 @@ def _should_auto_discover(
     return bool(api_key or not require_api_key)
 
 
+class AgentModelOverrides(BaseModel):
+    """员工级模型参数覆盖（None=清除该项覆盖，跟随全局基线）。"""
+
+    max_input_length: Optional[int] = Field(
+        default=None,
+        ge=1000,
+        description="员工专属上下文窗口（≥1000）",
+    )
+    thinking_enabled: Optional[bool] = Field(
+        default=None,
+        description="员工专属思考开关",
+    )
+    thinking_budget: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="员工专属思考预算",
+    )
+    reasoning_effort: Optional[str] = Field(
+        default=None,
+        description="员工专属推理努力档位（如 low/medium/high）",
+    )
+
+
 class ModelSlotRequest(BaseModel):
     provider_id: str = Field(..., description="Provider to use")
     model: str = Field(..., description="Model identifier")
@@ -171,6 +265,15 @@ class ModelSlotRequest(BaseModel):
     agent_id: Optional[str] = Field(
         default=None,
         description="Target agent ID when scope is 'agent'",
+    )
+    overrides: Optional[AgentModelOverrides] = Field(
+        default=None,
+        description=(
+            "Agent-scope only: per-agent model parameter overrides. "
+            "None = keep existing overrides (model switch only); "
+            "provided = replace the whole override set "
+            "(field-level None clears that override back to global)."
+        ),
     )
 
 
@@ -847,9 +950,11 @@ async def get_active_models(
                 status_code=400,
                 detail="agent_id is required when scope is 'agent'",
             )
+        agent_model = await _load_agent_model(request, agent_id)
         return _active_models_info(
             manager,
-            await _load_agent_model(request, agent_id),
+            agent_model,
+            _slot_overrides(agent_model),
         )
 
     try:
@@ -865,7 +970,11 @@ async def get_active_models(
                 sanitize_log_value(target_agent_id),
                 agent_model,
             )
-            return _active_models_info(manager, agent_model)
+            return _active_models_info(
+                manager,
+                agent_model,
+                _slot_overrides(agent_model),
+            )
     except (
         HTTPException,
         OSError,
@@ -947,29 +1056,74 @@ async def set_active_model(
             detail="agent_id is required when scope is 'agent'",
         )
 
+    # 员工级治理边界：改员工的模型/参数需 agent:manage（RBAC 关闭时直通）
+    await require_perm(PERM_AGENT_MANAGE)(request)
+
     _validate_model_slot(manager, body.provider_id, body.model)
+
+    # 覆盖语义：None=仅切模型保留既有员工参数；dict=整体替换（字段 None=清除回全局）
+    new_overrides: Optional[Dict[str, object]] = None
+    if body.overrides is not None:
+        new_overrides = {
+            field: getattr(body.overrides, field)
+            for field in _OVERRIDE_FIELDS
+        }
 
     try:
         workspace = await get_agent_for_request(
             request,
             agent_id=body.agent_id,
         )
+        before_overrides: Dict[str, object] = {}
+
+        # 目标档案参数：带参数写新值；纯切换时优先取目标模型的历史
+        # 参数档案（切回旧模型自动恢复历史参数，参数记忆）。
+        # pg 后端无档案/查询失败或 json/dual 后端回退沿用旧值兼容。
+        snapshot_overrides: Optional[Dict[str, object]] = new_overrides
+        if snapshot_overrides is None and (
+            provider_store.provider_storage_backend()
+            == provider_store._BACKEND_PG  # noqa: SLF001
+        ):
+            try:
+                profile = await get_agent_model_profile_pg(
+                    workspace.agent_id,
+                    body.provider_id,
+                    body.model,
+                )
+                # 空 dict 等价于无档案（跟随全局基线）
+                snapshot_overrides = dict(profile) or None
+            except Exception:  # noqa: BLE001 - PG 平面绝不阻塞业务
+                logger.warning(
+                    "agent model profile lookup failed for %s",
+                    workspace.agent_id,
+                    exc_info=True,
+                )
 
         def apply_active_model(agent_config: AgentProfileConfig) -> None:
+            nonlocal before_overrides
+            before_overrides = _slot_overrides(agent_config.active_model)
+            if snapshot_overrides is not None:
+                # 带参数写入 或 恢复目标模型的历史档案参数
+                preserved = dict(snapshot_overrides)
+            else:
+                # 无档案信息：沿用旧值（json/dual 兼容语义）
+                preserved = before_overrides
             agent_config.active_model = ModelSlotConfig(
                 provider_id=body.provider_id,
                 model=body.model,
+                **preserved,
             )
 
         await update_agent_config_async(
             workspace.agent_id,
             apply_active_model,
         )
-        # 同步员工默认模型到 PG 平面（json 零动作 / dual 影子 / pg 权威）
+        # 同步员工默认模型/参数覆盖到 PG 平面（json 零动作 / dual 影子 / pg 权威）
         await persist_agent_model_slot(
             workspace.agent_id,
             body.provider_id,
             body.model,
+            overrides=new_overrides,
         )
         # Hot reload agent (async, non-blocking)
         schedule_agent_reload(request, workspace.agent_id)
@@ -991,15 +1145,32 @@ async def set_active_model(
             detail="Failed to save active model to agent config",
         ) from exc
 
-    manager.maybe_probe_multimodal(body.provider_id, body.model)
-
-    return _active_models_info(
-        manager,
-        ModelSlotConfig(
+    # 审计留痕：仅参数覆盖写入时记录变更前后 diff（企业成本/合规追溯）
+    if new_overrides is not None:
+        _audit_agent_model_change(
+            workspace_dir=str(getattr(workspace, "workspace_dir", "") or ""),
+            agent_id=workspace.agent_id,
+            actor_id=getattr(request.state, "user", "") or "",
             provider_id=body.provider_id,
             model=body.model,
-        ),
+            before=before_overrides,
+            after={k: v for k, v in new_overrides.items() if v is not None},
+        )
+
+    manager.maybe_probe_multimodal(body.provider_id, body.model)
+
+    # 响应快照带本次生效的参数（纯切换时为恢复的历史档案参数）
+    effective_overrides = (
+        new_overrides
+        if new_overrides is not None
+        else (snapshot_overrides or {})
     )
+    final_slot = ModelSlotConfig(
+        provider_id=body.provider_id,
+        model=body.model,
+        **effective_overrides,
+    )
+    return _active_models_info(manager, final_slot, _slot_overrides(final_slot))
 
 
 # =============================================================================

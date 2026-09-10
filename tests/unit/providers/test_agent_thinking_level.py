@@ -223,3 +223,74 @@ def test_openai_responses_level_uses_reasoning_dict() -> None:
 
     assert kwargs["reasoning"] == {"effort": "high"}
     assert "reasoning_effort" not in kwargs
+
+
+# ---------------------------------------------------------------------------
+# 员工级显式思考覆盖（overrides 三元组：enabled / budget / effort）
+# ---------------------------------------------------------------------------
+
+
+def test_agent_override_enabled_false_maps_off() -> None:
+    """员工显式关闭思考：覆盖优先于档位与全局模型配置。"""
+    provider = PROVIDER_OPENAI.model_copy(deep=True)
+
+    with agent_thinking_level("high", overrides=(False, None, None)):
+        kwargs = provider.get_effective_generate_kwargs("gpt-5.2")
+
+    assert kwargs["reasoning_effort"] == "minimal"
+
+
+def test_agent_override_effort_wins_over_level() -> None:
+    """员工指定 effort 档位：直接采用员工值（与 thinking_level 无关）。"""
+    provider = PROVIDER_OPENAI.model_copy(deep=True)
+
+    with agent_thinking_level("low", overrides=(True, None, "high")):
+        kwargs = provider.get_effective_generate_kwargs("gpt-5.2")
+
+    assert kwargs["reasoning_effort"] == "high"
+
+
+def test_agent_override_effort_on_inherit_level() -> None:
+    """员工显式开启思考且 thinking_level=inherit：取 effort，缺省 medium。"""
+    provider = PROVIDER_OPENAI.model_copy(deep=True)
+
+    with agent_thinking_level("inherit", overrides=(True, None, None)):
+        kwargs = provider.get_effective_generate_kwargs("gpt-5.2")
+
+    assert kwargs["reasoning_effort"] == "medium"
+
+
+def test_agent_override_budget_wins_on_dashscope() -> None:
+    """budget 型模型：员工预算替代档位默认预算。"""
+    provider = PROVIDER_DASHSCOPE.model_copy(deep=True)
+
+    with agent_thinking_level("low", overrides=(True, 12_345, None)):
+        kwargs = provider.get_effective_generate_kwargs(
+            provider.models[0].id,
+        )
+
+    assert kwargs["thinking_enable"] is True
+    assert kwargs["thinking_budget"] == 12_345
+
+
+def test_agent_override_effort_style_dashscope() -> None:
+    """effort 型模型：员工 effort 落 extra_body.reasoning_effort。"""
+    provider = PROVIDER_DASHSCOPE.model_copy(deep=True)
+    model_id = "glm-5.3-flash-agent-test"
+    provider.extra_models.append(
+        PROVIDER_OPENAI.models[0].model_copy(
+            update={
+                "id": model_id,
+                "thinking_enabled": True,
+                "thinking_param_style": "effort",
+            },
+        ),
+    )
+
+    with agent_thinking_level("inherit", overrides=(True, None, "low")):
+        kwargs = provider.get_effective_generate_kwargs(model_id)
+
+    assert kwargs["extra_body"] == {
+        "thinking": {"type": "enabled"},
+        "reasoning_effort": "low",
+    }

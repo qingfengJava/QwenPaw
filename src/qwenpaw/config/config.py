@@ -144,6 +144,15 @@ class ModelSlotConfig(BaseModel):
 
     provider_id: str = Field(default="")
     model: str = Field(default="")
+    # --- 员工级模型参数覆盖（数字员工详情页专属配置，None=跟随全局基线）---
+    #: 员工专属上下文窗口（控制上下文压缩阈值与展示，≥1000）
+    max_input_length: int | None = Field(default=None, ge=1000)
+    #: 员工专属思考开关（None=继承全局模型配置）
+    thinking_enabled: bool | None = None
+    #: 员工专属思考预算（thinking_param_style=budget 的模型生效）
+    thinking_budget: int | None = None
+    #: 员工专属推理努力档位（reasoning_effort 风格模型生效，如 low/medium/high）
+    reasoning_effort: str | None = None
 
 
 class ActiveModelsInfo(BaseModel):
@@ -151,6 +160,8 @@ class ActiveModelsInfo(BaseModel):
 
     active_llm: ModelSlotConfig | None
     effective_max_input_length: int | None = None
+    #: 员工级参数覆盖（仅员工域读取时填充；字段缺省=未覆盖，跟随全局基线）
+    agent_overrides: Dict[str, Any] | None = None
 
 
 class ACPAgentConfig(BaseModel):
@@ -3900,7 +3911,12 @@ def get_model_max_input_length(
             manager = ProviderManager.get_instance()
             provider = manager.get_provider(model_slot.provider_id)
             if provider:
-                return provider.get_context_size(model_slot.model)
+                resolved = provider.get_context_size(model_slot.model)
+                # 员工级上下文窗口覆盖优先于全局模型配置（压缩阈值与展示同源）
+                override = getattr(model_slot, "max_input_length", None)
+                if isinstance(override, int) and override >= 1000:
+                    return override
+                return resolved
         except Exception:
             pass
     logger.debug(

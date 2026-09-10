@@ -508,11 +508,23 @@ def test_patch_agent_model_settings_preserves_active_model(
     assert body["active_model"] == {
         "provider_id": "openai",
         "model": "new-active-model",
+        # 员工级覆盖字段随响应下发（未设置时为 null=跟随全局基线）
+        "max_input_length": None,
+        "thinking_enabled": None,
+        "thinking_budget": None,
+        "reasoning_effort": None,
     }
     assert body["subagent_model"] is None
     assert body["thinking_level"] == "high"
     assert body["fallback_models"] == [
-        {"provider_id": "openai", "model": "fallback-model"},
+        {
+            "provider_id": "openai",
+            "model": "fallback-model",
+            "max_input_length": None,
+            "thinking_enabled": None,
+            "thinking_budget": None,
+            "reasoning_effort": None,
+        },
     ]
     assert len(calls) == 1
     assert calls[0][0] == "bot"

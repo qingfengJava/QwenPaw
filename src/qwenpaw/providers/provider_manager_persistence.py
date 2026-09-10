@@ -886,7 +886,8 @@ class ProviderManagerPersistenceMixin(
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 json.dump(
-                    active_model.model_dump(),
+                    # exclude_none：全局基线不落员工级覆盖字段（覆盖只在员工槽位）
+                    active_model.model_dump(exclude_none=True),
                     handle,
                     ensure_ascii=False,
                     indent=2,

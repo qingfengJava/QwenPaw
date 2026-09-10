@@ -68,7 +68,14 @@ class TestResolveAgentActiveModel:
 
         async def _fake_get(agent_id):
             assert agent_id == "a1"
-            return {"provider_id": "p-pg", "model": "m-pg"}
+            return {
+                "provider_id": "p-pg",
+                "model": "m-pg",
+                "overrides": {
+                    "max_input_length": 1048576,
+                    "reasoning_effort": "high",
+                },
+            }
 
         monkeypatch.setattr(agent_model_store, "get_agent_model_slot_pg", _fake_get)
         result = asyncio.run(
@@ -77,6 +84,10 @@ class TestResolveAgentActiveModel:
         assert result is not None
         assert result.provider_id == "p-pg"
         assert result.model == "m-pg"
+        # 行内覆盖字段随槽位回填（员工级参数覆盖层）
+        assert result.max_input_length == 1048576
+        assert result.reasoning_effort == "high"
+        assert result.thinking_enabled is None
 
     def test_pg_backend_falls_back_when_row_missing(self, monkeypatch):
         """pg 后端：本表无行（存量员工）回退 agent.json 兼容。"""
@@ -125,7 +136,7 @@ class TestResolveAgentActiveModel:
 
 class TestPersistAgentModelSlot:
     def test_json_backend_never_touches_pg(self, monkeypatch):
-        async def _fail_upsert(agent_id, provider_id, model):
+        async def _fail_upsert(agent_id, provider_id, model, overrides=None):
             raise AssertionError("json backend must not write PG")
 
         monkeypatch.setattr(
@@ -154,21 +165,49 @@ class TestPersistAgentModelSlot:
         monkeypatch.setenv("QWENPAW_STORAGE_BACKEND", "pg")
         captured = {}
 
-        async def _fake_upsert(agent_id, provider_id, model):
+        async def _fake_upsert(agent_id, provider_id, model, overrides=None):
             captured["args"] = (agent_id, provider_id, model)
+            captured["overrides"] = overrides
 
         monkeypatch.setattr(
             agent_model_store, "upsert_agent_model_slot_pg", _fake_upsert
         )
         asyncio.run(agent_model_store.persist_agent_model_slot("a1", "p1", "m1"))
         assert captured["args"] == ("a1", "p1", "m1")
+        # 不传覆盖时透传 None（语义：仅切模型，不碰既有参数）
+        assert captured["overrides"] is None
+
+    def test_pg_backend_forwards_overrides(self, monkeypatch):
+        """pg 后端：覆盖字典透传到 PG 写入路径（字段级清除语义）。"""
+        monkeypatch.setenv("QWENPAW_PG_DSN", "postgresql+asyncpg://x")
+        monkeypatch.setenv("QWENPAW_STORAGE_BACKEND", "pg")
+        captured = {}
+
+        async def _fake_upsert(agent_id, provider_id, model, overrides=None):
+            captured["overrides"] = overrides
+
+        monkeypatch.setattr(
+            agent_model_store, "upsert_agent_model_slot_pg", _fake_upsert
+        )
+        overrides = {
+            "max_input_length": 1048576,
+            "thinking_enabled": True,
+            "thinking_budget": None,
+            "reasoning_effort": "high",
+        }
+        asyncio.run(
+            agent_model_store.persist_agent_model_slot(
+                "a1", "p1", "m1", overrides=dict(overrides)
+            )
+        )
+        assert captured["overrides"] == overrides
 
     def test_pg_backend_write_failure_never_raises(self, monkeypatch):
         """pg 后端：权威写失败仅告警，不向调用方抛异常。"""
         monkeypatch.setenv("QWENPAW_PG_DSN", "postgresql+asyncpg://x")
         monkeypatch.setenv("QWENPAW_STORAGE_BACKEND", "pg")
 
-        async def _boom(agent_id, provider_id, model):
+        async def _boom(agent_id, provider_id, model, overrides=None):
             raise RuntimeError("pg down")
 
         monkeypatch.setattr(
@@ -186,7 +225,7 @@ class TestMirrorAgentModelSlot:
         )
         executed = {"count": 0}
 
-        async def _fail_upsert(agent_id, provider_id, model):
+        async def _fail_upsert(agent_id, provider_id, model, overrides=None):
             executed["count"] += 1
 
         monkeypatch.setattr(
@@ -209,3 +248,175 @@ class TestMirrorAgentModelSlot:
         )
         agent_model_store.mirror_agent_model_slot("a1", "p1", "m1")
         assert scheduled["count"] == 1
+
+
+class TestConfigJsonRoundTrip:
+    """agent_model_slots.config JSONB 序列化与解析（员工级覆盖层）。"""
+
+    def test_config_to_json_drops_empty_overrides(self):
+        # 全部覆盖字段为空 → 存 NULL（与旧行完全兼容）
+        assert (
+            agent_model_store._config_to_json(
+                ModelSlotConfig(provider_id="p", model="m")
+            )
+            is None
+        )
+        assert agent_model_store._config_to_json(None) is None
+
+    def test_config_to_json_keeps_only_set_fields(self):
+        payload = agent_model_store._config_to_json(
+            ModelSlotConfig(
+                provider_id="p",
+                model="m",
+                max_input_length=1048576,
+                reasoning_effort="high",
+            )
+        )
+        assert payload is not None
+        assert '"max_input_length": 1048576' in payload
+        assert '"reasoning_effort": "high"' in payload
+        assert "thinking_enabled" not in payload
+
+    def test_json_to_overrides_round_trip(self):
+        raw = (
+            '{"max_input_length": 1048576, "thinking_enabled": true, '
+            '"thinking_budget": 8192, "reasoning_effort": "medium"}'
+        )
+        overrides = agent_model_store._json_to_overrides(raw)
+        assert overrides == {
+            "max_input_length": 1048576,
+            "thinking_enabled": True,
+            "thinking_budget": 8192,
+            "reasoning_effort": "medium",
+        }
+
+    def test_json_to_overrides_rejects_dirty_data(self):
+        # 非法 JSON / 非 dict / 字段越界（ge=1000）一律丢弃不抛
+        assert agent_model_store._json_to_overrides("not-json") == {}
+        assert agent_model_store._json_to_overrides("[1, 2]") == {}
+        assert agent_model_store._json_to_overrides(None) == {}
+        assert (
+            agent_model_store._json_to_overrides(
+                '{"max_input_length": 10}'
+            )
+            == {}
+        )
+
+
+class _FakeResult:
+    def __init__(self, row):
+        self._row = row
+
+    def first(self):
+        return self._row
+
+
+class _FakeConn:
+    """记录 execute 调用序列的假连接（用于断言两步事务 SQL）。"""
+
+    def __init__(self, results=None):
+        self._results = list(results or [])
+        self.executed = []
+
+    async def execute(self, clause, params=None):
+        self.executed.append((str(clause), params))
+        row = self._results.pop(0) if self._results else None
+        return _FakeResult(row)
+
+
+class _FakeCtx:
+    def __init__(self, conn):
+        self._conn = conn
+
+    async def __aenter__(self):
+        return self._conn
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _FakeEngine:
+    def __init__(self, results=None):
+        self.conn = _FakeConn(results)
+
+    def connect(self):
+        return _FakeCtx(self.conn)
+
+    def begin(self):
+        return _FakeCtx(self.conn)
+
+
+class TestProfileActivationSemantics:
+    """档案化语义：切换模型 = 取消旧激活 + 激活目标档案（单事务两步）。"""
+
+    def test_upsert_deactivates_then_activates_without_config(self):
+        # overrides=None：不触碰目标档案既有 config（切回即恢复历史参数）
+        engine = _FakeEngine()
+        asyncio.run(
+            agent_model_store.upsert_agent_model_slot_pg(
+                "a1", "p1", "m1", engine=engine
+            )
+        )
+        assert len(engine.conn.executed) == 2
+        deactivate_sql, deactivate_params = engine.conn.executed[0]
+        assert "SET is_active = FALSE" in deactivate_sql
+        assert deactivate_params["agent_id"] == "a1"
+        activate_sql, activate_params = engine.conn.executed[1]
+        assert "INSERT INTO agent_model_slots" in activate_sql
+        assert "is_active" in activate_sql
+        # 不带参数：不写 config（新档案 NULL，已有档案保留）
+        assert "config" not in activate_params
+
+    def test_upsert_with_overrides_writes_profile_config(self):
+        engine = _FakeEngine()
+        asyncio.run(
+            agent_model_store.upsert_agent_model_slot_pg(
+                "a1",
+                "p1",
+                "m1",
+                overrides={"max_input_length": 1048576},
+                engine=engine,
+            )
+        )
+        _, activate_params = engine.conn.executed[1]
+        assert activate_params["config"] is not None
+        assert "max_input_length" in activate_params["config"]
+
+    def test_upsert_on_conflict_targets_profile_key(self):
+        # 冲突键含模型维度：同一员工多模型档案共存，激活行唯一
+        engine = _FakeEngine()
+        asyncio.run(
+            agent_model_store.upsert_agent_model_slot_pg(
+                "a1", "p1", "m1", engine=engine
+            )
+        )
+        activate_sql, _ = engine.conn.executed[1]
+        assert "tenant_id, agent_id, slot_name, provider_id, model" in activate_sql
+
+    def test_clear_only_removes_active_profile(self):
+        # 恢复跟随全局：只删激活行，其余模型档案保留（参数记忆不丢）
+        engine = _FakeEngine()
+        asyncio.run(
+            agent_model_store.clear_agent_model_slot_pg("a1", engine=engine)
+        )
+        delete_sql, _ = engine.conn.executed[0]
+        assert "DELETE FROM agent_model_slots" in delete_sql
+        assert "AND is_active" in delete_sql
+
+    def test_get_profile_returns_empty_when_absent(self):
+        engine = _FakeEngine(results=[None])
+        result = asyncio.run(
+            agent_model_store.get_agent_model_profile_pg(
+                "a1", "p1", "m1", engine=engine
+            )
+        )
+        assert result == {}
+
+    def test_get_profile_parses_config(self):
+        engine = _FakeEngine(results=[('{"reasoning_effort": "high"}',)])
+        result = asyncio.run(
+            agent_model_store.get_agent_model_profile_pg(
+                "a1", "p1", "m1", engine=engine
+            )
+        )
+        assert result == {"reasoning_effort": "high"}

@@ -312,7 +312,7 @@ async def test_create_agent_appends_new_id_to_order(monkeypatch, tmp_path):
     monkeypatch.setattr(
         agents_router,
         "_initialize_agent_workspace",
-        lambda workspace_dir, skill_names=None, md_template_id=None, language=None: None,  # noqa: E501  # pylint: disable=line-too-long
+        lambda workspace_dir, skill_names=None, md_template_id=None, language=None, skip_bootstrap=False, **_kwargs: None,  # noqa: E501  # pylint: disable=line-too-long
     )
     monkeypatch.setattr(
         agents_router,

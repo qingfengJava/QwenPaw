@@ -217,6 +217,159 @@
   white-space: nowrap;
 }
 
+.thinkingTag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid rgba(130, 80, 223, 0.2);
+  white-space: nowrap;
+}
+
+.contextBadge {
+  flex-shrink: 0;
+  padding: 0 6px;
+  border-radius: 99px;
+  color: var(--ms-text-faint);
+  background: var(--ms-surface-muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.modelConfigButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 3px;
+  border: 0;
+  border-radius: 5px;
+  color: var(--ms-text-faint);
+  background: transparent;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
+
+  .modelItem:hover & {
+    opacity: 1;
+  }
+
+  &:hover {
+    color: var(--ms-text);
+    background: var(--ms-surface-muted);
+  }
+
+  &:disabled {
+    cursor: wait;
+  }
+}
+
+/* ---- Trigger hover 能力卡（antd Tooltip 内，深色底白字） ---- */
+.capabilityCard {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 180px;
+  padding: 2px;
+}
+
+.capabilityCardTitle {
+  margin-bottom: 2px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.capabilityCardRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 12px;
+
+  > span:first-child {
+    opacity: 0.64;
+  }
+}
+
+/* ---- 使用现场模型能力配置侧栏（与列表同浮层并排，对齐竞品布局） ---- */
+.panelWithConfig {
+  display: flex;
+  align-items: stretch;
+  max-height: min(620px, 72vh);
+  border: 1px solid var(--ms-border);
+  border-radius: 16px;
+  background: var(--ms-surface);
+  box-shadow: 0 20px 52px rgba(0, 0, 0, 0.14);
+  overflow: hidden;
+
+  /* 列表面板在组合容器内去边框/圆角/阴影，由外层统一承担 */
+  > .panel {
+    flex-shrink: 0;
+    max-height: none;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+  }
+}
+
+.configPane {
+  display: flex;
+  flex-direction: column;
+  width: 300px;
+  max-width: 44vw;
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--ms-border);
+  background: var(--ms-surface);
+}
+
+.configPaneHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 8px;
+}
+
+.configPaneTitle {
+  overflow: hidden;
+  color: var(--ms-text);
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.configPaneClose {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  padding: 3px;
+  border: 0;
+  border-radius: 5px;
+  color: var(--ms-text-faint);
+  background: transparent;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--ms-text);
+    background: var(--ms-surface-muted);
+  }
+}
+
+.configPaneBody {
+  flex: 1;
+  min-height: 0;
+  padding: 0 16px 12px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .checkIcon {
   flex-shrink: 0;
   font-size: 14px;
@@ -823,7 +976,9 @@
 .trigger,
 .oauthModalContent,
 .agentModelSettings,
-.agentSelectDropdown {
+.agentSelectDropdown,
+.panelWithConfig,
+.configPane {
   --ms-primary: var(--qwenpaw-color-primary, var(--colorPrimary, #ff7f16));
   --ms-accent: var(--qwenpaw-color-primary, var(--colorPrimary, #ff7f16));
   --ms-accent-strong: var(--qwenpaw-color-primary-hover, var(--ms-accent));
@@ -1034,7 +1189,8 @@
 }
 
 .freeTag,
-.visionTag {
+.visionTag,
+.thinkingTag {
   color: var(--ms-text-muted);
   background: var(--ms-surface-muted);
   border-color: var(--ms-border);
@@ -1276,6 +1432,22 @@
     max-height: min(680px, 72vh);
   }
 
+  /* 窄屏下配置侧栏改为上下堆叠，避免左右挤压 */
+  .panelWithConfig {
+    flex-direction: column;
+  }
+
+  .configPane {
+    width: auto;
+    max-width: none;
+    border-left: none;
+    border-top: 1px solid var(--ms-border);
+  }
+
+  .configPaneBody {
+    max-height: min(320px, 40vh);
+  }
+
   .trigger {
     max-width: min(230px, 55vw);
     padding: 4px 7px;
@@ -1370,7 +1542,9 @@
   .trigger,
   .oauthModalContent,
   .agentModelSettings,
-  .agentSelectDropdown {
+  .agentSelectDropdown,
+  .panelWithConfig,
+  .configPane {
     --ms-primary: var(--qwenpaw-color-primary, var(--colorPrimary, #ff9d4d));
     --ms-accent: var(--qwenpaw-color-primary, var(--colorPrimary, #ff9d4d));
     --ms-accent-strong: var(--qwenpaw-color-primary-hover, var(--ms-accent));

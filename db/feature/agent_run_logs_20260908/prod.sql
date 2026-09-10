@@ -736,3 +736,29 @@ COMMENT ON COLUMN agent_model_slots.created_at IS
 '创建时间（首次配置默认模型时写入）';
 COMMENT ON COLUMN agent_model_slots.updated_at IS
 '更新时间（每次切换默认模型时刷新）';
+
+-- 模型参数档案化（数字员工详情页专属配置；一行=员工×模型参数档案，
+-- 切换模型即切换激活档案，切回自动恢复历史参数；NULL=跟随全局基线）
+ALTER TABLE agent_model_slots
+    ADD COLUMN IF NOT EXISTS config JSONB;
+
+COMMENT ON COLUMN agent_model_slots.config IS
+'模型参数档案 JSONB（max_input_length/thinking_enabled/thinking_budget/reasoning_effort；NULL 或字段缺省=跟随全局基线；归属该行的 provider_id+model）';
+
+ALTER TABLE agent_model_slots
+    DROP CONSTRAINT IF EXISTS pk_agent_model_slots;
+
+ALTER TABLE agent_model_slots
+    ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT FALSE;
+
+UPDATE agent_model_slots SET is_active = TRUE WHERE NOT is_active;
+
+ALTER TABLE agent_model_slots
+    ADD CONSTRAINT pk_agent_model_slots
+    PRIMARY KEY (tenant_id, agent_id, slot_name, provider_id, model);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_model_slots_active
+    ON agent_model_slots (tenant_id, agent_id, slot_name) WHERE is_active;
+
+COMMENT ON COLUMN agent_model_slots.is_active IS
+'激活状态位：当前生效的模型档案；同一员工同一槽位至多一行 TRUE';

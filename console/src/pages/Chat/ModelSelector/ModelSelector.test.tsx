@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { screen, waitFor, fireEvent } from "@testing-library/react";
+import { screen, waitFor, fireEvent, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/test/common_setup";
 import ModelSelector from "./index";
@@ -374,6 +374,58 @@ describe("ModelSelector", () => {
     expect(
       screen.getByRole("button", { name: "chat.modelSelectTooltip" }),
     ).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("shows context badge with provenance and thinking tag for capable models", async () => {
+    vi.mocked(providerApi.listProviders).mockResolvedValue([
+      {
+        ...mockProvider,
+        models: [
+          {
+            ...mockProvider.models[0],
+            supports_agent_thinking: true,
+            max_input_length_auto_detected: 1048576,
+          },
+        ],
+      },
+    ]);
+    const user = userEvent.setup();
+    renderWithProviders(<ModelSelector />);
+    await screen.findAllByText("GPT-4");
+
+    await user.click(screen.getAllByText("GPT-4")[0]);
+
+    // 探测值 1M 徽标 + 来源标注（title）+ 深度思考标签
+    expect(await screen.findByText("1M")).toBeInTheDocument();
+    expect(
+      screen.getByTitle("modelSelector.contextDetected"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("modelSelector.thinkingTag")).toBeInTheDocument();
+  });
+
+  it("marks the context badge as customized when the user overrode the window", async () => {
+    vi.mocked(providerApi.listProviders).mockResolvedValue([
+      {
+        ...mockProvider,
+        models: [
+          {
+            ...mockProvider.models[0],
+            max_input_length: 262144,
+            max_input_length_configured: true,
+          },
+        ],
+      },
+    ]);
+    const user = userEvent.setup();
+    renderWithProviders(<ModelSelector />);
+    await screen.findAllByText("GPT-4");
+
+    await user.click(screen.getAllByText("GPT-4")[0]);
+
+    expect(await screen.findByText("256K")).toBeInTheDocument();
+    expect(
+      screen.getByTitle("modelSelector.contextCustomized"),
+    ).toBeInTheDocument();
   });
 
   it("clicking a model calls setActiveLlm with correct parameters", async () => {
@@ -1047,7 +1099,7 @@ describe("ModelSelector", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows every free model from a configured free provider", async () => {
+  it("keeps free models out of the pro tab for a free-tier provider", async () => {
     vi.mocked(providerApi.listProviders).mockResolvedValue([
       {
         ...mockProvider,
@@ -1100,13 +1152,16 @@ describe("ModelSelector", () => {
     expect(screen.queryByText("OpenCode Paid Model")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: "PRO" }));
+    const proPanel = screen.getByRole("tabpanel");
     expect(
-      (await screen.findAllByText("OpenCode Free One")).length,
-    ).toBeGreaterThan(0);
+      within(proPanel).queryByText("OpenCode Free One"),
+    ).not.toBeInTheDocument();
     expect(
-      (await screen.findAllByText("OpenCode Free Two")).length,
-    ).toBeGreaterThan(0);
-    expect(await screen.findByText("OpenCode Paid Model")).toBeInTheDocument();
+      within(proPanel).queryByText("OpenCode Free Two"),
+    ).not.toBeInTheDocument();
+    expect(
+      await within(proPanel).findByText("OpenCode Paid Model"),
+    ).toBeInTheDocument();
   });
 
   it("does not show paid discovery candidates in the free tab search", async () => {

@@ -125,9 +125,19 @@ export interface ModelSlotConfig {
   model: string;
 }
 
+/** 员工级模型参数覆盖（字段 null=清除覆盖，跟随全局基线） */
+export interface AgentModelOverrides {
+  max_input_length?: number | null;
+  thinking_enabled?: boolean | null;
+  thinking_budget?: number | null;
+  reasoning_effort?: string | null;
+}
+
 export interface ActiveModelsInfo {
   active_llm: ModelSlotConfig | null;
   effective_max_input_length?: number | null;
+  /** 员工已设置的参数覆盖（仅员工域读取时下发；缺省=未覆盖） */
+  agent_overrides?: AgentModelOverrides | null;
 }
 
 export type ActiveModelScope = "effective" | "global" | "agent";
@@ -142,6 +152,8 @@ export interface ModelSlotRequest {
   model: string;
   scope: Exclude<ActiveModelScope, "effective">;
   agent_id?: string;
+  /** 员工域专属：不传=仅切模型保留既有覆盖；传=整体替换（字段 null=清除） */
+  overrides?: AgentModelOverrides | null;
 }
 
 /* ---- Custom provider CRUD ---- */

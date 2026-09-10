@@ -25,6 +25,11 @@ _AGENT_THINKING_LEVEL: ContextVar[str] = ContextVar(
     "qwenpaw_agent_thinking_level",
     default="inherit",
 )
+#: 员工级显式思考参数覆盖 (enabled, budget, effort)；None=未覆盖
+_AGENT_THINKING_OVERRIDE: ContextVar[tuple | None] = ContextVar(
+    "qwenpaw_agent_thinking_override",
+    default=None,
+)
 AGENT_THINKING_BUDGETS = {
     "low": 2_048,
     "medium": 8_192,
@@ -70,13 +75,22 @@ def validate_custom_provider_id(provider_id: str) -> str:
 
 
 @contextmanager
-def agent_thinking_level(level: str) -> Iterator[None]:
-    """Apply an agent-level thinking override while constructing a model."""
+def agent_thinking_level(
+    level: str,
+    overrides: tuple | None = None,
+) -> Iterator[None]:
+    """Apply an agent-level thinking override while constructing a model.
+
+    *overrides* 为员工级显式思考参数 ``(thinking_enabled,
+    thinking_budget, reasoning_effort)``（来自员工模型槽位覆盖，
+    None 字段表示该项未覆盖）；None 表示纯 thinking_level 档位语义。"""
     token = _AGENT_THINKING_LEVEL.set(level)
+    override_token = _AGENT_THINKING_OVERRIDE.set(overrides)
     try:
         yield
     finally:
         _AGENT_THINKING_LEVEL.reset(token)
+        _AGENT_THINKING_OVERRIDE.reset(override_token)
 
 
 class ModelInfo(BaseModel):
@@ -857,6 +871,24 @@ class Provider(ProviderInfo, ABC):  # pylint: disable=too-many-public-methods
     ) -> None:
         """Map the current agent thinking level to provider parameters."""
         level = _AGENT_THINKING_LEVEL.get()
+        budget = AGENT_THINKING_BUDGETS.get(level, 0)
+        # 员工级显式覆盖优先：enabled/budget/effort 逐项替代档位默认值
+        override = _AGENT_THINKING_OVERRIDE.get()
+        if override is not None:
+            enabled, override_budget, override_effort = override
+            if enabled is False:
+                level, budget = "off", 0
+            else:
+                if level == "inherit":
+                    # 员工显式开启思考但未指定档位：取 effort，缺省 medium
+                    level = override_effort or "medium"
+                elif override_effort:
+                    level = override_effort
+                budget = (
+                    override_budget
+                    if override_budget
+                    else AGENT_THINKING_BUDGETS.get(level, 0)
+                )
         if level == "inherit" or not self.supports_agent_thinking(model_id):
             return
         for key in (
@@ -881,7 +913,7 @@ class Provider(ProviderInfo, ABC):  # pylint: disable=too-many-public-methods
             effective,
             model_id,
             level,
-            AGENT_THINKING_BUDGETS.get(level, 0),
+            budget,
         )
 
     def _uses_compat_thinking_controls(self, model_id: str) -> bool:

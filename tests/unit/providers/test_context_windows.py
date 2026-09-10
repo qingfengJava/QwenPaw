@@ -425,3 +425,64 @@ def test_get_model_max_input_length_uses_provider_resolution(monkeypatch):
         ),
     )
     assert config_mod.get_model_max_input_length(agent_config) == 200_000
+
+
+def test_get_model_max_input_length_agent_override_wins(monkeypatch):
+    """员工级上下文窗口覆盖优先于全局模型配置（压缩与展示同源）。"""
+    from qwenpaw.config import config as config_mod
+
+    class _Provider:
+        def get_context_size(self, model_id):
+            return 200_000
+
+    class _Manager:
+        def get_provider(self, provider_id):
+            return _Provider()
+
+    monkeypatch.setattr(
+        "qwenpaw.providers.ProviderManager.get_instance",
+        staticmethod(_Manager),
+    )
+    agent_config = SimpleNamespace(
+        id="agent-1",
+        active_model=SimpleNamespace(
+            provider_id="anthropic",
+            model="claude-sonnet-4-5",
+            # 员工覆盖：1M 窗口（覆盖层字段，None=跟随全局）
+            max_input_length=1_048_576,
+            thinking_enabled=None,
+            thinking_budget=None,
+            reasoning_effort=None,
+        ),
+    )
+    assert config_mod.get_model_max_input_length(agent_config) == 1_048_576
+
+
+def test_get_model_max_input_length_no_override_falls_back(monkeypatch):
+    """员工未覆盖（None）时保持全局模型配置解析值。"""
+    from qwenpaw.config import config as config_mod
+
+    class _Provider:
+        def get_context_size(self, model_id):
+            return 200_000
+
+    class _Manager:
+        def get_provider(self, provider_id):
+            return _Provider()
+
+    monkeypatch.setattr(
+        "qwenpaw.providers.ProviderManager.get_instance",
+        staticmethod(_Manager),
+    )
+    agent_config = SimpleNamespace(
+        id="agent-1",
+        active_model=SimpleNamespace(
+            provider_id="anthropic",
+            model="claude-sonnet-4-5",
+            max_input_length=None,
+            thinking_enabled=None,
+            thinking_budget=None,
+            reasoning_effort=None,
+        ),
+    )
+    assert config_mod.get_model_max_input_length(agent_config) == 200_000

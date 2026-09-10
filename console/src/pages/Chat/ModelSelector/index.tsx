@@ -19,11 +19,16 @@ import {
   LoaderCircle,
   Search,
   Settings,
+  Settings2,
+  X,
   XCircle,
 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import type { ActiveModelsInfo } from "../../../api/types";
+import type { ActiveModelsInfo, ModelInfo } from "../../../api/types";
+import { formatTokenCount } from "../../../utils/tokenFormat";
+import { useTheme } from "../../../contexts/ThemeContext";
+import { ModelConfigEditor } from "../../Settings/Models/components/modals/ModelConfigEditor";
 import { useAgentStore } from "../../../stores/agentStore";
 import { confirmFreeModelSwitch } from "@/utils/freeModelSwitchWarning";
 import { ProviderIcon } from "../../Settings/Models/components/ProviderIconComponent";
@@ -62,6 +67,25 @@ function publishActiveMaxInputLength(
 }
 
 const RECENT_STORAGE_KEY = "qwenpaw_model_selector_recent";
+
+/** Context-window badge info with value provenance (能力值可信度分级：探测 > 已自定义 > 默认). */
+function contextBadgeInfo(model: {
+  max_input_length: number;
+  max_input_length_auto_detected?: number | null;
+  max_input_length_configured?: boolean;
+}): { label: string; source: "detected" | "customized" | "default" } | null {
+  const detected = model.max_input_length_auto_detected;
+  const tokens = detected ?? model.max_input_length;
+  if (!tokens || tokens <= 0) {
+    return null;
+  }
+  const source = model.max_input_length_configured
+    ? "customized"
+    : detected != null
+      ? "detected"
+      : "default";
+  return { label: formatTokenCount(tokens), source };
+}
 const DEFAULT_VISIBLE_MODELS = 5;
 const VIEW_MORE_STEP = 20;
 
@@ -108,6 +132,12 @@ export default function ModelSelector({
   const location = useLocation();
   const navigate = useNavigate();
   const { selectedAgent } = useAgentStore();
+  const { isDark } = useTheme();
+  // 当前正在配置的模型（使用现场模型能力配置弹层）
+  const [configTarget, setConfigTarget] = useState<{
+    provider: EligibleProvider;
+    model: ModelInfo;
+  } | null>(null);
   const { message } = useAppMessage();
   const activationRevisionRef = useRef(0);
   const selectedAgentRef = useRef(selectedAgent);
@@ -334,6 +364,11 @@ export default function ModelSelector({
   const activeModelName =
     activeModel?.name || activeModelId || t("modelSelector.selectModel");
   const activeModelIsFree = Boolean(activeModel?.is_free);
+  const activeModelBadge = activeModel ? contextBadgeInfo(activeModel) : null;
+  const activeBadgeSourceKey =
+    activeModelBadge?.source === "customized"
+      ? "modelSelector.contextCustomized"
+      : "modelSelector.contextDefault";
 
   const showActiveProviderIcon = Boolean(activeProviderId);
 
@@ -641,6 +676,26 @@ export default function ModelSelector({
             {visibleModels.map((model) => {
               const isActive =
                 provider.id === activeProviderId && model.id === activeModelId;
+              // 员工域：激活模型被员工覆盖上下文窗口时，徽标显示员工专属值
+              const agentOverrideLength =
+                isActive && selectedAgent
+                  ? (activeModels?.agent_overrides?.max_input_length ??
+                    null)
+                  : null;
+              const badge = agentOverrideLength
+                ? {
+                    label: formatTokenCount(agentOverrideLength),
+                    source: "agent" as const,
+                  }
+                : contextBadgeInfo(model);
+              const badgeTitleKey =
+                badge?.source === "agent"
+                  ? "modelSelector.agentOverrideTag"
+                  : badge?.source === "customized"
+                    ? "modelSelector.contextCustomized"
+                    : badge?.source === "default"
+                      ? "modelSelector.contextDefault"
+                      : "modelSelector.contextDetected";
               return (
                 <div
                   key={model.id}
@@ -662,6 +717,14 @@ export default function ModelSelector({
                     >
                       {model.name || model.id}
                     </span>
+                    {badge && (
+                      <span
+                        className={styles.contextBadge}
+                        title={t(badgeTitleKey)}
+                      >
+                        {badge.label}
+                      </span>
+                    )}
                   </button>
                   <div className={styles.modelTags}>
                     {needsOAuth && (
@@ -675,10 +738,30 @@ export default function ModelSelector({
                         {t("modelSelector.free")}
                       </span>
                     )}
+                    {model.supports_agent_thinking === true && (
+                      <span className={styles.thinkingTag}>
+                        {t("modelSelector.thinkingTag")}
+                      </span>
+                    )}
                     {(model.supports_image || model.supports_multimodal) && (
                       <span className={styles.visionTag}>
                         {t("modelSelector.vision")}
                       </span>
+                    )}
+                    {!needsOAuth && (
+                      <button
+                        type="button"
+                        className={styles.modelConfigButton}
+                        aria-label={t("modelSelector.modelConfig")}
+                        title={t("modelSelector.modelConfig")}
+                        disabled={saving}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setConfigTarget({ provider, model });
+                        }}
+                      >
+                        <Settings2 size={13} />
+                      </button>
                     )}
                     {isActive && (
                       <Check size={14} className={styles.checkIcon} />
@@ -1037,18 +1120,169 @@ export default function ModelSelector({
     </div>
   );
 
+  // 使用现场模型能力配置侧栏：与模型列表同浮层并排展示（对齐竞品布局），
+  // 避免与 Dropdown 面板层叠遮挡
+  const renderConfigPane = () => {
+    if (!configTarget) {
+      return null;
+    }
+    // EligibleProvider 是裁剪类型，厂商级思考参数回退链需查原始 ProviderInfo
+    const rawProvider = providers?.find(
+      (p) => p.id === configTarget.provider.id,
+    );
+    return (
+      <div className={styles.configPane}>
+        <div className={styles.configPaneHeader}>
+          <span className={styles.configPaneTitle}>
+            {t("modelSelector.modelConfigTitle", {
+              model: configTarget.model.name || configTarget.model.id,
+            })}
+          </span>
+          <button
+            type="button"
+            className={styles.configPaneClose}
+            aria-label={t("common.close")}
+            title={t("common.close")}
+            onClick={() => setConfigTarget(null)}
+          >
+            <X size={16} />
+          </button>
+        </div>
+        <div className={styles.configPaneBody}>
+          <ModelConfigEditor
+            providerId={configTarget.provider.id}
+            model={configTarget.model}
+            isDark={isDark}
+            compact
+            // 员工域：有选中员工时编辑员工专属参数覆盖（不触全局基线）
+            agentScope={
+              selectedAgent
+                ? {
+                    agentId: selectedAgent,
+                    overrides: activeModels?.agent_overrides ?? null,
+                  }
+                : null
+            }
+            chatModel={rawProvider?.chat_model}
+            thinkingParamStyle={
+              configTarget.model.thinking_param_style ??
+              rawProvider?.thinking_param_style ??
+              null
+            }
+            reasoningEffortOptions={
+              configTarget.model.reasoning_effort_options ??
+              rawProvider?.reasoning_effort_options
+            }
+            thinkingBudgetRange={
+              (configTarget.model.thinking_budget_range ??
+                rawProvider?.thinking_budget_range) as
+              | [number, number]
+              | undefined
+            }
+            onClose={() => setConfigTarget(null)}
+            onProviderUpdated={(updated) => {
+              // 精简模式选择即存后本地增量更新该厂商，左侧列表的上下文徽标立即跟随
+              setProviders((prev) =>
+                prev.map((p) => (p.id === updated.id ? updated : p)),
+              );
+            }}
+            onSaved={async () => {
+              // 完整模式（非本场景）保存后重拉厂商/模型列表
+              try {
+                await fetchData();
+              } catch {
+                // ignore
+              }
+            }}
+          />
+        </div>
+      </div>
+    );
+  };
+
   return (
     <>
       <Dropdown
         open={open}
         onOpenChange={handleOpenChange}
         popupRender={() => (
-          <div style={{ transform: "translateY(0)" }}>{dropdownContent}</div>
+          <div style={{ transform: "translateY(0)" }}>
+            {configTarget ? (
+              <div className={styles.panelWithConfig}>
+                {dropdownContent}
+                {renderConfigPane()}
+              </div>
+            ) : (
+              dropdownContent
+            )}
+          </div>
         )}
         trigger={["click"]}
         placement={isMobile ? "bottomCenter" : "bottomLeft"}
       >
-        <Tooltip title={t("chat.modelSelectTooltip")} mouseEnterDelay={0.5}>
+        <Tooltip
+          mouseEnterDelay={0.5}
+          title={
+            activeModel ? (
+              <div className={styles.capabilityCard}>
+                <div className={styles.capabilityCardTitle}>
+                  {activeModelName}
+                </div>
+                {activeModelBadge && (
+                  <div className={styles.capabilityCardRow}>
+                    <span>{t("modelSelector.capabilityContext")}</span>
+                    <span>
+                      {activeModelBadge.label}
+                      {activeModelBadge.source !== "detected" &&
+                        ` · ${t(activeBadgeSourceKey)}`}
+                    </span>
+                  </div>
+                )}
+                {activeModel.max_output_length != null && (
+                  <div className={styles.capabilityCardRow}>
+                    <span>{t("modelSelector.capabilityMaxOutput")}</span>
+                    <span>
+                      {formatTokenCount(activeModel.max_output_length)}
+                    </span>
+                  </div>
+                )}
+                {(activeModel.supports_image ||
+                  activeModel.supports_multimodal ||
+                  activeModel.supports_video) && (
+                  <div className={styles.capabilityCardRow}>
+                    <span>{t("modelSelector.capabilityMultimodal")}</span>
+                    <span>
+                      {[
+                        activeModel.supports_image &&
+                          t("modelSelector.vision"),
+                        activeModel.supports_video &&
+                          t("modelSelector.capabilityVideo"),
+                      ]
+                        .filter(Boolean)
+                        .join(" / ")}
+                    </span>
+                  </div>
+                )}
+                {activeModel.supports_agent_thinking != null && (
+                  <div className={styles.capabilityCardRow}>
+                    <span>{t("modelSelector.capabilityThinking")}</span>
+                    <span>
+                      {activeModel.supports_agent_thinking
+                        ? t(
+                            activeModel.thinking_param_style === "budget"
+                              ? "modelSelector.thinkingStyleBudget"
+                              : "modelSelector.thinkingStyleEffort",
+                          )
+                        : t("modelSelector.capabilityUnsupported")}
+                    </span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              t("chat.modelSelectTooltip")
+            )
+          }
+        >
           <button
             type="button"
             aria-expanded={open}
