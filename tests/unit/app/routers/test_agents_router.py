@@ -2029,3 +2029,143 @@ def test_copy_agent_optional_assets_match_request_flags(
         assert not (new_ws / "jobs.json").exists()
 
     manager_mock.schedule_agent_startup.assert_called_once_with(agent_id)
+
+
+# ---------------------------------------------------------------------------
+# POST /agents/{id}/documents/sync-from-files
+# ---------------------------------------------------------------------------
+
+
+def _docs_store_mock(written_doc_types):
+    """Store mock whose upsert reports writes only for the given doc_types."""
+    store = MagicMock(name="AgentDocsStore")
+    store.upsert_document = AsyncMock(
+        side_effect=lambda _aid, doc_type, _content, **_: (
+            doc_type in written_doc_types
+        )
+    )
+    return store
+
+
+def test_sync_documents_reports_synced_unchanged_and_skipped(
+    client, fake_config, tmp_path
+):
+    """Changed files sync, identical ones stay idempotent, the rest skip."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "PROFILE.md").write_text("# profile v2", encoding="utf-8")
+    (ws / "AGENTS.md").write_text("# agents", encoding="utf-8")
+    (ws / "notes.txt").write_text("not whitelisted", encoding="utf-8")
+    fake_config.agents.profiles["bot"].workspace_dir = str(ws)
+    store = _docs_store_mock(written_doc_types={"profile"})
+
+    with (
+        patch(
+            "qwenpaw.app.routers.agents.load_config",
+            return_value=fake_config,
+        ),
+        patch(
+            "qwenpaw.app.routers.agents.get_agent_docs_store",
+            return_value=store,
+        ),
+    ):
+        response = client.post(
+            "/api/agents/bot/documents/sync-from-files",
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["agent_id"] == "bot"
+    assert body["synced"] == ["PROFILE.md"]
+    assert body["unchanged"] == ["AGENTS.md"]
+    # SOUL.md / agent.json 未创建；notes.txt 非白名单 → 全部跳过
+    assert body["skipped"] == ["SOUL.md", "agent.json"]
+    store.upsert_document.assert_any_await(
+        "bot",
+        "profile",
+        "# profile v2",
+        updated_by="chat-edit-sync",
+    )
+
+
+def test_sync_documents_without_pg_reports_all_skipped(
+    client, fake_config, tmp_path
+):
+    """No PG store: files stay the primary source, nothing to mirror."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "PROFILE.md").write_text("# profile", encoding="utf-8")
+    fake_config.agents.profiles["bot"].workspace_dir = str(ws)
+
+    with (
+        patch(
+            "qwenpaw.app.routers.agents.load_config",
+            return_value=fake_config,
+        ),
+        patch(
+            "qwenpaw.app.routers.agents.get_agent_docs_store",
+            return_value=None,
+        ),
+    ):
+        response = client.post(
+            "/api/agents/bot/documents/sync-from-files",
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["synced"] == []
+    assert body["unchanged"] == []
+    assert body["skipped"] == [
+        "PROFILE.md",
+        "AGENTS.md",
+        "SOUL.md",
+        "agent.json",
+    ]
+
+
+def test_sync_documents_tolerates_upsert_failure(client, fake_config, tmp_path):
+    """A failing upsert lands in skipped without failing the request."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "SOUL.md").write_text("# soul", encoding="utf-8")
+    fake_config.agents.profiles["bot"].workspace_dir = str(ws)
+    store = MagicMock(name="AgentDocsStore")
+    store.upsert_document = AsyncMock(side_effect=RuntimeError("pg down"))
+
+    with (
+        patch(
+            "qwenpaw.app.routers.agents.load_config",
+            return_value=fake_config,
+        ),
+        patch(
+            "qwenpaw.app.routers.agents.get_agent_docs_store",
+            return_value=store,
+        ),
+    ):
+        response = client.post(
+            "/api/agents/bot/documents/sync-from-files",
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["synced"] == []
+    # SOUL.md 回填失败；其余本就不存在 → 全部落入 skipped，请求不失败
+    assert body["skipped"] == [
+        "PROFILE.md",
+        "AGENTS.md",
+        "SOUL.md",
+        "agent.json",
+    ]
+
+
+def test_sync_documents_returns_404_for_unknown_agent(client, fake_config):
+    """Unregistered agent ids are rejected before touching the workspace."""
+    with patch(
+        "qwenpaw.app.routers.agents.load_config",
+        return_value=fake_config,
+    ):
+        response = client.post(
+            "/api/agents/ghost/documents/sync-from-files",
+        )
+
+    assert response.status_code == 404

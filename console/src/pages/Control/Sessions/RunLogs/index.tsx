@@ -5,8 +5,8 @@
  * column-settings and refresh icon buttons. Clicking a row (or its id)
  * navigates to the full detail page at runs/:runId.
  */
-import { useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useCallback, useMemo, useState } from "react";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Input, Select, Table, Tag } from "@agentscope-ai/design";
 import { Checkbox, DatePicker, Popover } from "antd";
@@ -30,6 +30,7 @@ import {
   type RunStatusFilter,
 } from "./useRunLogs";
 import { formatClock, formatDuration } from "./format";
+import { buildRunDetailPath } from "./routePath";
 import styles from "./runLogs.module.less";
 
 const { RangePicker } = DatePicker;
@@ -82,6 +83,14 @@ function RunUserAvatar({ userId }: { userId: string }) {
 export default function RunLogsPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const location = useLocation();
+  // 打开运行日志详情：用当前 pathname 派生绝对路径。相对写法 navigate("runs/:id")
+  // 在工作台沙箱（右栏无 <Route> 匹配）里会以 "/" 为基准解析成 "/runs/:id"，越界
+  // 命中 CatchAllNavigate 弹回档案页（表现为点击不跳转）；绝对路径两套壳都成立。
+  const openRunDetail = useCallback(
+    (runId: string) => navigate(buildRunDetailPath(location.pathname, runId)),
+    [navigate, location.pathname],
+  );
   // 详情页/工作台内时 :aid 显式指定数据域；独立挂载时回退 selectedAgent（借壳）。
   const { aid } = useParams<{ aid: string }>();
   const { selectedAgent } = useAgentStore();
@@ -182,13 +191,13 @@ export default function RunLogsPage() {
             title={runId}
             onClick={(event) => {
               event.stopPropagation();
-              navigate(`runs/${runId}`);
+              openRunDetail(runId);
             }}
             role="link"
             tabIndex={0}
             onKeyDown={(event) => {
               if (event.key === "Enter") {
-                navigate(`runs/${runId}`);
+                openRunDetail(runId);
               }
             }}
           >
@@ -244,7 +253,7 @@ export default function RunLogsPage() {
         },
       },
     ],
-    [t, navigate],
+    [t, openRunDetail],
   );
 
   // 列可见性：空数组 = 默认全部显示；用户取消勾选后才记录“白名单”。
@@ -393,7 +402,7 @@ export default function RunLogsPage() {
         size="middle"
         onRow={(record) => ({
           className: styles.clickableRow,
-          onClick: () => navigate(`runs/${record.run_id}`),
+          onClick: () => openRunDetail(record.run_id),
         })}
         pagination={{
           current: query.page,

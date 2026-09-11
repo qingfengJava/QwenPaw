@@ -16,7 +16,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Pin } from "lucide-react";
+import { Pin, Sparkles } from "lucide-react";
 import { StatCard, StatusPill } from "@/components/staffdeck";
 import ExpertAvatar from "@/components/ExpertAvatar";
 import { avatarGradient } from "@/utils/avatarGradient";
@@ -28,18 +28,16 @@ import { useExpertIcons } from "@/hooks/useExpertIcons";
 import { getAgentDisplayName } from "@/utils/agentDisplayName";
 import type { AgentSummary } from "@/api/types/agents";
 import { useBriefStats } from "./useBriefStats";
+import { IDENTITY_DOC_FILES } from "./identityDocFiles";
+import { AGENT_DOCS_CHANGED_EVENT } from "../Chat/agentDocsSync";
 import styles from "./detail.module.less";
 
 /**
  * 基础配置文件清单（工作区根路径）。按展示优先级排序，逐个探测，
- * 不存在的自动从 chip 列表消失。
+ * 不存在的自动从 chip 列表消失。清单与对话修改闭环共用（见
+ * identityDocFiles.ts），避免展示/预填/回填三处定义漂移。
  */
-const CONFIG_FILES = [
-  "PROFILE.md",
-  "AGENTS.md",
-  "SOUL.md",
-  "agent.json",
-] as const;
+const CONFIG_FILES = IDENTITY_DOC_FILES;
 
 /** 大数缩写：12000 → 12k，3400000 → 3.4M。 */
 function formatStatNumber(n: number): string {
@@ -102,36 +100,61 @@ export default function AgentOverviewTab({
   const [configsLoading, setConfigsLoading] = useState(true);
   const [activeConfig, setActiveConfig] = useState<string | null>(null);
 
+  // 并发探测白名单档案文件，取到内容的进入 chip 列表（供挂载与
+  // 对话修改刷新共用；root="workspace"：智能体自身存储根，跟随
+  // selectedAgent 借壳，工作台调试模式下自动指向草稿工作区）。
+  const fetchConfigDocs = useCallback(async () => {
+    const results = await Promise.allSettled(
+      CONFIG_FILES.map(async (name) => ({
+        name,
+        content: (
+          await workspaceApi.loadFileText(name, undefined, "workspace")
+        ).content,
+      })),
+    );
+    const docs: Record<string, string> = {};
+    results.forEach((result) => {
+      if (result.status === "fulfilled" && result.value.content.trim()) {
+        docs[result.value.name] = result.value.content;
+      }
+    });
+    return docs;
+  }, []);
+
   useEffect(() => {
     let alive = true;
     setConfigsLoading(true);
     setConfigDocs({});
     setActiveConfig(null);
-    void (async () => {
-      // root="workspace"：智能体自身存储根（跟随 selectedAgent 借壳，
-      // 工作台调试模式下自动指向草稿工作区）。
-      const results = await Promise.allSettled(
-        CONFIG_FILES.map(async (name) => ({
-          name,
-          content: (await workspaceApi.loadFileText(name, undefined, "workspace"))
-            .content,
-        })),
-      );
+    void fetchConfigDocs().then((docs) => {
       if (!alive) return;
-      const docs: Record<string, string> = {};
-      results.forEach((result) => {
-        if (result.status === "fulfilled" && result.value.content.trim()) {
-          docs[result.value.name] = result.value.content;
-        }
-      });
       setConfigDocs(docs);
       setConfigsLoading(false);
       setActiveConfig(Object.keys(docs)[0] ?? null);
-    })();
+    });
     return () => {
       alive = false;
     };
-  }, [aid]);
+  }, [aid, fetchConfigDocs]);
+
+  // 对话修改闭环：聊天流结束（本轮引用了档案文件）后广播的变更事件
+  // → 静默重拉档案内容；保持当前选中文件，消失时回退到第一个。
+  useEffect(() => {
+    const handleDocsChanged = () => {
+      void fetchConfigDocs().then((docs) => {
+        setConfigDocs(docs);
+        setConfigsLoading(false);
+        setActiveConfig((prev) =>
+          prev && docs[prev] !== undefined
+            ? prev
+            : (Object.keys(docs)[0] ?? null),
+        );
+      });
+    };
+    window.addEventListener(AGENT_DOCS_CHANGED_EVENT, handleDocsChanged);
+    return () =>
+      window.removeEventListener(AGENT_DOCS_CHANGED_EVENT, handleDocsChanged);
+  }, [fetchConfigDocs]);
 
   const quickPrompts = useMemo(
     () => [
@@ -256,7 +279,7 @@ export default function AgentOverviewTab({
           {t("agentDetail.baseConfig", "Base Configuration")}
         </h3>
         <div className={`${styles.profileDocCard} sd-card`}>
-          {/* 文件 chip 切换 */}
+          {/* 文件 chip 切换 + 对话修改入口（锚定当前激活文件） */}
           {Object.keys(configDocs).length > 0 && (
             <div className={styles.configFileRow}>
               {Object.keys(configDocs).map((name) => (
@@ -271,6 +294,27 @@ export default function AgentOverviewTab({
                   {name}
                 </button>
               ))}
+              {activeConfig && (
+                <button
+                  type="button"
+                  className={`${styles.configChip} ${styles.docEditChip}`}
+                  title={t("agentDetail.docEditChatTitle", "针对当前文件发起对话修改", {
+                    file: activeConfig,
+                  })}
+                  onClick={() =>
+                    onAiTune(
+                      t(
+                        "agentDetail.docEditPrompt",
+                        "帮我编辑 @ {{file}}，在开始前请先向我确认具体需要修改的内容",
+                        { file: activeConfig },
+                      ),
+                    )
+                  }
+                >
+                  <Sparkles size={12} />
+                  {t("agentDetail.docEditChat", "对话修改")}
+                </button>
+              )}
             </div>
           )}
 

@@ -19,7 +19,8 @@ interface PoolSkillListItemProps {
   isSelected: boolean;
   batchModeEnabled: boolean;
   onToggleSelect: (name: string) => void;
-  onEdit: (skill: PoolSkillSpec) => void;
+  // 非批量点击进入详情页
+  onOpen: (skill: PoolSkillSpec) => void;
   onBroadcast: (skill: PoolSkillSpec) => void;
   onDelete: (skill: PoolSkillSpec) => void;
 }
@@ -29,7 +30,7 @@ export function PoolSkillListItem({
   isSelected,
   batchModeEnabled,
   onToggleSelect,
-  onEdit,
+  onOpen,
   onBroadcast,
   onDelete,
 }: PoolSkillListItemProps) {
@@ -56,7 +57,7 @@ export function PoolSkillListItem({
         if (batchModeEnabled) {
           onToggleSelect(skill.name);
         } else {
-          onEdit(skill);
+          onOpen(skill);
         }
       }}
     >
@@ -79,9 +80,16 @@ export function PoolSkillListItem({
         </span>
         <div className={styles.listItemInfo}>
           <div className={styles.listItemHeader}>
-            <span className={styles.skillTitle}>{skill.name}</span>
+            <span className={styles.skillTitle}>
+              {skill.display_name_zh || skill.name}
+            </span>
             {isBuiltin && (
               <span className={styles.typeBadge}>{t("skillPool.builtin")}</span>
+            )}
+            {skill.missing && (
+              <span className={styles.typeBadge}>
+                {t("skillPool.missingContent")}
+              </span>
             )}
             {automationLabel && (
               <span className={styles.automationTag}>{automationLabel}</span>
@@ -99,7 +107,9 @@ export function PoolSkillListItem({
               </span>
             )}
           </div>
-          <p className={styles.listItemDesc}>{skill.description || "-"}</p>
+          <p className={styles.listItemDesc}>
+            {skill.description_zh || skill.description || "-"}
+          </p>
           <SkillTagChips tags={skill.tags} />
         </div>
       </div>

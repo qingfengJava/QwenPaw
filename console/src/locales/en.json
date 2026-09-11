@@ -1047,6 +1047,8 @@
     "tags": "Tags",
     "builtin": "Built-in",
     "custom": "Custom",
+    "originPool": "Pool ref",
+    "originPrivate": "Private",
     "addSkill": "Add Skill",
     "createSkill": "Create Skill",
     "viewSkill": "View Skill",
@@ -1157,6 +1159,13 @@
   },
   "skillPool": {
     "description": "Shared local skill pool for built-in skills and workspace uploads. External hub imports such as ClawHub or LobeHub are separate.",
+    "missingContent": "Content missing",
+    "i18nSection": "Chinese mapping",
+    "i18nNameLabel": "Chinese name",
+    "i18nDescLabel": "Chinese description",
+    "i18nSave": "Save Chinese mapping",
+    "i18nSaved": "Chinese mapping saved",
+    "i18nEmptyHint": "No Chinese description yet — add one here to help Chinese-speaking users",
     "broadcast": "Broadcast to Agents",
     "broadcastHint": "Broadcast skills to selected agents",
     "refreshHint": "Refresh skill pool from disk",
@@ -1239,6 +1248,19 @@
     "batchDeleteFailed": "Batch delete failed",
     "zipImportFailed": "ZIP import failed",
     "externalHubHint": "External hub import is separate from the local Skill Pool.",
+    "detailTitle": "Skill Details",
+    "detailSource": "Source",
+    "detailVersion": "Version",
+    "detailUpdatedAt": "Updated",
+    "detailLanguage": "Language",
+    "detailUsedBy": "Used by agents",
+    "detailDownload": "Download",
+    "detailBinaryHint": "This file cannot be previewed inline ({{size}} bytes). Download it to view.",
+    "sourceExternal": "External directory",
+    "editingBadge": "Editing",
+    "detailSaved": "Skill saved",
+    "detailTabFiles": "Files",
+    "detailTabSettings": "Settings",
     "imported": "Imported: {{names}}",
     "noNewImports": "No new skills imported",
     "allBuiltin": "All Built-in",
@@ -3571,7 +3593,12 @@
       "today": "Today",
       "recent": "Last 7 days",
       "earlier": "Earlier"
-    }
+    },
+    "mentionLoading": "Loading…",
+    "mentionEmpty": "No matches",
+    "mentionGroupFile": "Docs",
+    "mentionGroupSkill": "Skill",
+    "mentionGroupTool": "Tool"
   },
   "security": {
     "parent": "Settings",
@@ -4730,7 +4757,10 @@
     "aiTune": "AI Tuning",
     "aiTuneDefault": "Help me optimize this digital employee: refine the profile and suggest suitable skills and tools.",
     "modelFollowGlobal": "Following global default",
-    "modelFollowGlobalTitle": "No agent-specific model configured; following the global default. Pick a model to set an agent-specific default"
+    "modelFollowGlobalTitle": "No agent-specific model configured; following the global default. Pick a model to set an agent-specific default",
+    "docEditChat": "Edit via Chat",
+    "docEditChatTitle": "Start a chat edit for {{file}}",
+    "docEditPrompt": "Help me edit @ {{file}}. Please confirm with me what exactly to change before starting."
   },
   "staffdeck": {
     "timeline": {

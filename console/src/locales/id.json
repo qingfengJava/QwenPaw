@@ -791,7 +791,12 @@
       "today": "Hari ini",
       "recent": "7 hari terakhir",
       "earlier": "Sebelumnya"
-    }
+    },
+    "mentionLoading": "Memuat…",
+    "mentionEmpty": "Tidak ada yang cocok",
+    "mentionGroupFile": "Dokumen",
+    "mentionGroupSkill": "Skill",
+    "mentionGroupTool": "Tool"
   },
   "modelSelector": {
     "selectModel": "Pilih model",
@@ -3548,5 +3553,10 @@
     "docRollbackConfirm": "Kembalikan {{file}} ke v{{version}}?",
     "docRollbackHint": "Langsung berlaku: baris DB + file workspace diperbarui",
     "docRollbackSuccess": "{{file}} dikembalikan ke v{{version}}, sudah aktif"
+  },
+  "agentDetail": {
+    "docEditChat": "Edit via Chat",
+    "docEditChatTitle": "Mulai edit {{file}} via chat",
+    "docEditPrompt": "Bantu saya mengedit @ {{file}}. Sebelum mulai, konfirmasi dulu ke saya apa saja yang perlu diubah."
   }
 }

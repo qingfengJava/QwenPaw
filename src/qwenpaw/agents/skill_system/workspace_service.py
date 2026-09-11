@@ -112,6 +112,57 @@ class SkillService:
     def _read_manifest(self) -> dict[str, Any]:
         return read_skill_manifest(self.workspace_dir)
 
+    def _origin_for(self, entry: dict[str, Any], skill_name: str) -> str:
+        """Resolve one binding's origin (pool/builtin/private).
+
+        优先读 entry 已记录的 origin；存量条目回退推断：
+        source=builtin → builtin；池内同名存在 → pool；否则私有自建。
+        """
+        origin = str(entry.get("origin", "") or "")
+        if origin:
+            return origin
+        if entry.get("source") == "builtin":
+            return "builtin"
+        from .store import read_skill_pool_manifest
+
+        pool_entry = (
+            read_skill_pool_manifest().get("skills", {}).get(skill_name)
+        )
+        if pool_entry is not None:
+            return "pool"
+        return "private"
+
+    def _sync_skill_to_pg(self, skill_name: str) -> None:
+        """Schedule a PG mirror of one workspace binding (+ private snapshot).
+
+        三态分发（json 零动作 / dual 影子写 / pg 权威写）；私有技能
+        同时写内容快照（换环境自愈源），池引用只写绑定行（零拷贝）。
+        """
+        from . import catalog_store
+
+        if not catalog_store.skill_pg_plane_available():
+            return
+        manifest = self._read_manifest()
+        entry = manifest.get("skills", {}).get(skill_name)
+        if not isinstance(entry, dict):
+            return
+        origin = self._origin_for(entry, skill_name)
+        private_dir = (
+            safe_skill_dir(
+                get_workspace_skills_dir(self.workspace_dir),
+                skill_name,
+            )
+            if origin == "private"
+            else None
+        )
+        catalog_store.schedule_agent_skill_sync(
+            self.workspace_dir.name,
+            skill_name,
+            entry,
+            origin=origin,
+            private_dir=private_dir,
+        )
+
     def list_all_skills(self) -> list[SkillInfo]:
         manifest = self._read_manifest()
         skill_root = get_workspace_skills_dir(self.workspace_dir)
@@ -225,6 +276,7 @@ class SkillService:
                     ),
                 },
             ) from exc
+        self._sync_skill_to_pg(skill_name)
         return skill_name
 
     def save_skill(
@@ -368,6 +420,7 @@ class SkillService:
             default_workspace_manifest(),
             _edit,
         )
+        self._sync_skill_to_pg(skill_name)
         return {
             "success": True,
             "mode": "edit",
@@ -437,6 +490,13 @@ class SkillService:
         )
         if old_dir.exists():
             shutil.rmtree(old_dir)
+        from . import catalog_store
+
+        catalog_store.schedule_agent_skill_delete(
+            self.workspace_dir.name,
+            skill_name,
+        )
+        self._sync_skill_to_pg(final_name)
 
         return {
             "success": True,
@@ -540,6 +600,8 @@ class SkillService:
                     default_workspace_manifest(),
                     _mark_imported_entries,
                 )
+                for name in imported:
+                    self._sync_skill_to_pg(name)
 
                 if enable:
                     for skill_name in imported:
@@ -619,6 +681,7 @@ class SkillService:
                 "failed": [self.workspace_dir.name],
                 "reason": "not_found",
             }
+        self._sync_skill_to_pg(skill_name)
 
         return {
             "success": True,
@@ -648,6 +711,7 @@ class SkillService:
         )
         if not updated:
             return {"success": False, "updated_workspaces": []}
+        self._sync_skill_to_pg(skill_name)
 
         return {
             "success": True,
@@ -679,6 +743,8 @@ class SkillService:
             default_workspace_manifest(),
             _update,
         )
+        if updated:
+            self._sync_skill_to_pg(skill_name)
         return updated
 
     def set_skill_tags(
@@ -703,11 +769,14 @@ class SkillService:
             entry["tags"] = normalized
             return True
 
-        return mutate_json(
+        updated = mutate_json(
             manifest_path,
             default_workspace_manifest(),
             _update,
         )
+        if updated:
+            self._sync_skill_to_pg(skill_name)
+        return updated
 
     def delete_skill(self, name: str) -> bool:
         try:
@@ -749,6 +818,12 @@ class SkillService:
                     ),
                 },
             ) from exc
+        from . import catalog_store
+
+        catalog_store.schedule_agent_skill_delete(
+            self.workspace_dir.name,
+            skill_name,
+        )
         return True
 
     def load_skill_file(

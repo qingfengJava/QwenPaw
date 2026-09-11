@@ -2925,7 +2925,12 @@
       "today": "Сегодня",
       "recent": "За 7 дней",
       "earlier": "Ранее"
-    }
+    },
+    "mentionLoading": "Загрузка…",
+    "mentionEmpty": "Нет совпадений",
+    "mentionGroupFile": "Документы",
+    "mentionGroupSkill": "Навык",
+    "mentionGroupTool": "Инструмент"
   },
   "security": {
     "parent": "Настройки",
@@ -4169,5 +4174,10 @@
     "docRollbackConfirm": "Откатить {{file}} к v{{version}}?",
     "docRollbackHint": "Применяется сразу: обновляются строка БД и файл рабочей области",
     "docRollbackSuccess": "{{file}} откачен к v{{version}}, изменения применены"
+  },
+  "agentDetail": {
+    "docEditChat": "Изменить в чате",
+    "docEditChatTitle": "Изменить {{file}} через чат",
+    "docEditPrompt": "Помоги мне отредактировать @ {{file}}. Перед началом уточни у меня, что именно нужно изменить."
   }
 }

@@ -430,6 +430,23 @@ async def lifespan(  # pylint: disable=too-many-statements,too-many-branches
                     exc_info=True,
                 )
 
+            # ---- Skill PG plane (backfill/reconcile/bindings/dedupe) ----
+            # dual/pg 后端启动闭环：manifest → PG 回填、快照自愈物化、
+            # 员工绑定/私有技能恢复、遗留拷贝去重；json 后端零动作。
+            # 失败不阻塞启动，文件平面仍可用。
+            try:
+                from ..db.backfill_skill_catalog import (
+                    run_skill_plane_bootstrap,
+                )
+
+                await run_skill_plane_bootstrap()
+            except Exception:
+                logger.warning(
+                    "Skill PG plane bootstrap skipped; file plane "
+                    "remains authoritative this run.",
+                    exc_info=True,
+                )
+
             # ---- Workforce run recovery (XianWork team tasks) ----
             # Mark still-active team runs as interrupted so users can
             # resume them from RunDetail (engine resumes past done nodes).

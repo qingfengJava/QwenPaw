@@ -31,7 +31,7 @@ import {
 import { useSkillFilter } from "../../Agent/Skills/useSkillFilter";
 import { useUploadLimitStore } from "../../../stores/uploadLimitStore";
 
-export type PoolMode = "broadcast" | "create" | "edit";
+export type PoolMode = "detail" | "broadcast" | "create" | "edit";
 
 type BuiltinSkillLanguage = "en" | "zh";
 interface BuiltinImportSelection {
@@ -154,6 +154,10 @@ export function useSkillPool() {
     [],
   );
   const [configText, setConfigText] = useState("{}");
+  // 详情抽屉内嵌编辑态：宽布局下直接编辑 SKILL.md，不再回退窄表单抽屉
+  const [detailEditing, setDetailEditing] = useState(false);
+  const [detailEditContent, setDetailEditContent] = useState("");
+  const [detailSaving, setDetailSaving] = useState(false);
   const [builtinAutoUpdateEnabled, setBuiltinAutoUpdateEnabled] =
     useState(false);
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(false);
@@ -348,6 +352,206 @@ export function useSkillPool() {
     setMode("broadcast");
     setBroadcastInitialNames(skill ? [skill.name] : []);
   };
+
+  // 打开详情抽屉：只拉详情数据（version/used_by 等），不填编辑表单
+  const openDetail = useCallback(
+    async (skill: PoolSkillSpec) => {
+      const requestId = detailRequestIdRef.current + 1;
+      detailRequestIdRef.current = requestId;
+      setMode("detail");
+      setActiveSkill(null);
+      setDetailSkillName(skill.name);
+      setDetailLoading(true);
+      try {
+        const detail = await api.getPoolSkill(skill.name);
+        if (detailRequestIdRef.current !== requestId) return;
+        setActiveSkill(detail);
+      } catch (error) {
+        if (detailRequestIdRef.current !== requestId) return;
+        message.error(
+          error instanceof Error ? error.message : t("skills.loadFailed"),
+        );
+        setMode(null);
+        setDetailSkillName("");
+      } finally {
+        if (detailRequestIdRef.current === requestId) {
+          setDetailLoading(false);
+        }
+      }
+    },
+    [message, t],
+  );
+
+  // 详情抽屉内嵌编辑：进入/取消/保存（仅编辑 SKILL.md 内容）
+  const startDetailEdit = useCallback(() => {
+    setDetailEditContent(activeSkill?.content ?? "");
+    setDetailEditing(true);
+  }, [activeSkill]);
+
+  const cancelDetailEdit = useCallback(() => {
+    setDetailEditing(false);
+    setDetailEditContent("");
+  }, []);
+
+  const saveDetailEdit = useCallback(async () => {
+    if (!activeSkill) return;
+    if (!detailEditContent.trim()) {
+      message.warning(t("skillPool.contentPlaceholder"));
+      return;
+    }
+    setDetailSaving(true);
+    try {
+      await api.saveSkillPoolSkill({
+        name: activeSkill.name,
+        content: detailEditContent,
+        source_name: activeSkill.name,
+        config: (activeSkill.config as Record<string, unknown>) || {},
+        overwrite: false,
+      });
+      message.success(t("skillPool.detailSaved"));
+      setDetailEditing(false);
+      setDetailEditContent("");
+      invalidateSkillCache({ pool: true });
+      await loadData(true);
+      // 重新拉取详情，刷新 version/content/used_by 与文件树
+      await openDetail(activeSkill);
+    } catch (error) {
+      if (handleScanError(error, t)) return;
+      message.error(
+        error instanceof Error ? error.message : t("skills.saveFailed"),
+      );
+    } finally {
+      setDetailSaving(false);
+    }
+  }, [activeSkill, detailEditContent, loadData, message, openDetail, t]);
+
+  // 详情抽屉「设置」Tab：改名/标签/自动化/config 分项独立保存
+  const renameSettingsSkill = useCallback(
+    async (newName: string) => {
+      const trimmed = (newName || "").trim();
+      if (!activeSkill || !trimmed || trimmed === activeSkill.name) return;
+      // Auto Sync 技能改名会同步迁移已装配员工，需确认
+      if (activeSkill.auto_sync) {
+        const affected = workspaces.filter(
+          (ws) => (ws.skill_names || []).includes(activeSkill.name),
+        );
+        if (affected.length > 0) {
+          const confirmed = await confirmOverwrite(
+            t("skillPool.renameAffectsTitle"),
+            <div style={{ display: "grid", gap: 8 }}>
+              <div>
+                {t("skillPool.renameAffectsContent", {
+                  from: activeSkill.name,
+                  to: trimmed,
+                  count: affected.length,
+                })}
+              </div>
+            </div>,
+          );
+          if (!confirmed) return;
+        }
+      }
+      try {
+        await api.saveSkillPoolSkill({
+          name: trimmed,
+          content: activeSkill.content,
+          source_name: activeSkill.name,
+          config: (activeSkill.config as Record<string, unknown>) || {},
+          overwrite: false,
+        });
+        message.success(t("skillPool.detailSaved"));
+        invalidateSkillCache({ pool: true });
+        await loadData(true);
+        await openDetail({ ...activeSkill, name: trimmed });
+      } catch (error) {
+        if (handleScanError(error, t)) return;
+        message.error(
+          error instanceof Error ? error.message : t("skills.saveFailed"),
+        );
+      }
+    },
+    [activeSkill, workspaces, loadData, message, openDetail, t],
+  );
+
+  const saveSettingsTags = useCallback(
+    async (tags: string[]) => {
+      if (!activeSkill) return;
+      try {
+        await api.updatePoolSkillTags(activeSkill.name, tags);
+        message.success(t("skillPool.detailSaved"));
+        invalidateSkillCache({ pool: true });
+        await loadData(true);
+        await openDetail(activeSkill);
+      } catch (error) {
+        message.error(
+          error instanceof Error ? error.message : t("skills.saveFailed"),
+        );
+      }
+    },
+    [activeSkill, loadData, message, openDetail, t],
+  );
+
+  const saveSettingsAutomation = useCallback(
+    async (update: SkillAutomationUpdate) => {
+      if (!activeSkill) return;
+      try {
+        const response = await api.updatePoolSkillAutomation(
+          activeSkill.name,
+          update,
+        );
+        const issueCount = countAutomationAttentionItems(response);
+        if (issueCount > 0) {
+          message.warning(
+            t("skillPool.automationNeedsAttention", { count: issueCount }),
+          );
+        } else {
+          message.success(t("skillPool.detailSaved"));
+        }
+        invalidateSkillCache({ pool: true, workspaces: true });
+        await loadData(true);
+        await openDetail(activeSkill);
+      } catch (error) {
+        message.error(
+          error instanceof Error ? error.message : t("skills.saveFailed"),
+        );
+      }
+    },
+    [activeSkill, loadData, message, openDetail, t],
+  );
+
+  const saveSettingsConfig = useCallback(
+    async (configText: string) => {
+      if (!activeSkill) return;
+      const trimmed = configText.trim();
+      let parsedConfig: Record<string, unknown> = {};
+      if (trimmed && trimmed !== "{}") {
+        try {
+          parsedConfig = JSON.parse(trimmed);
+        } catch {
+          message.error(t("skills.configInvalidJson"));
+          return;
+        }
+      }
+      try {
+        await api.saveSkillPoolSkill({
+          name: activeSkill.name,
+          content: activeSkill.content,
+          source_name: activeSkill.name,
+          config: parsedConfig,
+          overwrite: false,
+        });
+        message.success(t("skills.configSaved"));
+        invalidateSkillCache({ pool: true });
+        await loadData(true);
+        await openDetail(activeSkill);
+      } catch (error) {
+        message.error(
+          error instanceof Error ? error.message : t("skills.saveFailed"),
+        );
+      }
+    },
+    [activeSkill, loadData, message, openDetail, t],
+  );
 
   const openImportBuiltin = async () => {
     try {
@@ -821,6 +1025,21 @@ export function useSkillPool() {
     [loadData, message, openEdit, t],
   );
 
+  const handleSavePoolSkillI18n = async (payload: {
+    display_name_zh: string;
+    description_zh: string;
+  }) => {
+    if (!activeSkill) return;
+    try {
+      await api.updatePoolSkillI18n(activeSkill.name, payload);
+      message.success(t("skillPool.i18nSaved"));
+      invalidateSkillCache({ pool: true });
+      await loadData();
+    } catch {
+      message.error(t("skills.saveFailed"));
+    }
+  };
+
   const handleSavePoolSkill = async () => {
     const values = await form.validateFields().catch(() => null);
     if (!values) return;
@@ -1045,6 +1264,8 @@ export function useSkillPool() {
         message.success(t("skillPool.deletedFromPool"));
         invalidateSkillCache({ pool: true });
         await loadData(true);
+        // 详情页里删除后同步关闭详情抽屉（卡片场景 mode 本就是 null，无副作用）
+        closeModal();
       },
     });
   };
@@ -1242,6 +1463,17 @@ export function useSkillPool() {
     automationPendingSkills,
     broadcastInitialNames,
     configText,
+    detailEditing,
+    detailEditContent,
+    detailSaving,
+    setDetailEditContent,
+    startDetailEdit,
+    cancelDetailEdit,
+    saveDetailEdit,
+    renameSettingsSkill,
+    saveSettingsTags,
+    saveSettingsAutomation,
+    saveSettingsConfig,
     zipInputRef,
     importBuiltinModalOpen,
     builtinSources,
@@ -1276,10 +1508,12 @@ export function useSkillPool() {
     setShowMarkdown,
     setFilterOpen,
     setViewMode,
+    handleSavePoolSkillI18n,
     handleRefresh,
     closeModal,
     openCreate,
     openBroadcast,
+    openDetail,
     openImportBuiltin,
     closeImportBuiltin,
     closeImportModal,

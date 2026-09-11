@@ -1376,3 +1376,501 @@
     }
   }
 }
+
+/* ─── Skill Detail Drawer（对标竞品三段式：Hero / 元信息条 / 文件浏览）────── */
+.detailHero {
+  display: flex;
+  align-items: flex-start;
+  gap: 20px;
+  padding: 20px 24px 16px;
+}
+
+.detailHeroIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  flex-shrink: 0;
+  border-radius: 12px;
+  background: rgba(22, 119, 255, 0.08);
+  font-size: 32px;
+  line-height: 1;
+}
+
+.detailHeroInfo {
+  flex: 1;
+  min-width: 0;
+}
+
+.detailHeroTitleRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.detailHeroName {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--qwenpaw-color-text, rgba(0, 0, 0, 0.88));
+}
+
+.detailHeroSub {
+  font-size: 13px;
+  color: rgba(0, 0, 0, 0.45);
+  word-break: break-all;
+}
+
+.detailStatusBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid transparent;
+
+  &.synced {
+    background-color: rgba(82, 196, 26, 0.12);
+    color: #52c41a;
+    border-color: rgba(82, 196, 26, 0.3);
+  }
+
+  &.outdated {
+    background-color: rgba(250, 173, 20, 0.12);
+    color: #faad14;
+    border-color: rgba(250, 173, 20, 0.3);
+  }
+
+  &.neutral {
+    background-color: rgba(0, 0, 0, 0.04);
+    color: rgba(0, 0, 0, 0.6);
+    border-color: rgba(0, 0, 0, 0.12);
+  }
+}
+
+.detailHeroDesc {
+  margin: 8px 0 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: rgba(0, 0, 0, 0.65);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.detailHeroActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.detailMetaBar {
+  display: flex;
+  align-items: stretch;
+  margin: 0 24px;
+  padding: 14px 0;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.detailMetaItem {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+}
+
+.detailMetaDivider {
+  align-self: stretch;
+  width: 1px;
+  margin: 2px 0;
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.detailMetaInner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 0 16px;
+}
+
+.detailMetaValue {
+  max-width: 100%;
+  font-size: 16px;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.88);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.detailMetaLabel {
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.45);
+}
+
+.detailBody {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+// 主体 Tabs：文件内容 / 设置；高度链撑满抽屉剩余空间
+.detailTabs {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0 24px 16px;
+
+  :global(.qwenpaw-tabs-nav) {
+    margin-bottom: 12px;
+  }
+
+  :global(.qwenpaw-tabs-content-holder),
+  :global(.qwenpaw-tabs-content) {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+  }
+
+  // 仅激活 pane 撑满；非激活 pane 必须隐藏，否则与文件 pane 叠排溢出
+  :global(.qwenpaw-tabs-tabpane) {
+    flex: 1;
+    min-height: 0;
+  }
+
+  :global(.qwenpaw-tabs-tabpane-active) {
+    display: flex;
+    flex-direction: column;
+  }
+
+  :global(.qwenpaw-tabs-tabpane-inactive) {
+    display: none;
+  }
+}
+
+// 设置 Tab：分节表单（对齐旧编辑抽屉的字段面）
+.detailSettingsPanel {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  max-width: 860px;
+  padding: 4px 4px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.detailSettingsSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.detailSettingsTitle {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.detailSettingsRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  > :first-child {
+    flex: 1;
+    min-width: 0;
+  }
+}
+
+.detailSettingsStack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+}
+
+.detailSettingsHint {
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.45);
+}
+
+.detailTreePanel {
+  width: 264px;
+  flex-shrink: 0;
+  overflow: auto;
+  padding: 12px 8px;
+  border-right: 1px solid rgba(0, 0, 0, 0.06);
+
+  // 选中/悬停态用主色淡化底，替代 antd cssVar 注入的深灰选中色（#545559）
+  // 注意：项目 antd prefixCls 为 qwenpaw-（非 ant-），选择器必须用 qwenpaw-tree
+  :global(.qwenpaw-tree) {
+    --qwenpaw-tree-node-selected-bg: rgba(22, 119, 255, 0.1);
+    --qwenpaw-tree-node-selected-color: #1677ff;
+    --qwenpaw-tree-node-hover-bg: rgba(22, 119, 255, 0.06);
+  }
+
+  :global(.qwenpaw-tree-node-content-wrapper) {
+    border-radius: 6px;
+
+    &:hover {
+      background-color: rgba(22, 119, 255, 0.06);
+    }
+
+    &.qwenpaw-tree-node-selected {
+      // !important 兜底：css-var token 层优先级高于普通类覆盖
+      background-color: rgba(22, 119, 255, 0.1) !important;
+      color: #1677ff !important;
+    }
+  }
+
+  // 长文件名不换行，溢出省略（避免图标与文字分行错位）
+  :global(.ant-tree-title) {
+    display: inline-block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: middle;
+  }
+}
+
+.detailViewerPanel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.detailViewerHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 20px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.detailViewerPath {
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(0, 0, 0, 0.72);
+  font-family: var(--qwenpaw-font-mono, SFMono-Regular, Consolas, monospace);
+  word-break: break-all;
+}
+
+.detailViewerBody {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+}
+
+.detailViewerLoading {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 0;
+}
+
+.detailMarkdownView {
+  padding: 20px 28px 32px;
+  max-width: 980px;
+  font-size: 14px;
+  line-height: 1.75;
+
+  // 正文与代码块不再顶格贴边
+  :global(p),
+  :global(h1),
+  :global(h2),
+  :global(h3),
+  :global(h4),
+  :global(ul),
+  :global(ol) {
+    margin-block: 0.6em;
+  }
+
+  :global(.qwenpaw-code-block) {
+    margin: 12px 0;
+  }
+}
+
+// 内嵌编辑态：编辑器撑满查看器高度（MarkdownCopy 根节点为直接子元素）
+.detailMarkdownEdit {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 12px 20px 16px;
+
+  > * {
+    flex: 1;
+    min-height: 0;
+  }
+}
+
+.detailCodeView {
+  min-height: 100%;
+}
+
+.detailImageView {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+
+  img {
+    max-width: 100%;
+    max-height: 60vh;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  }
+}
+
+.detailBinaryView {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 0;
+}
+
+/* ─── Detail drawer dark mode ─────────────────────────────────── */
+:global(.dark-mode) {
+  .detailHeroName {
+    color: rgba(255, 255, 255, 0.9);
+  }
+
+  .detailHeroSub {
+    color: rgba(255, 255, 255, 0.45);
+  }
+
+  .detailHeroIcon {
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  .detailHeroDesc {
+    color: rgba(255, 255, 255, 0.6);
+  }
+
+  .detailStatusBadge {
+    &.synced {
+      background-color: rgba(82, 196, 26, 0.18);
+      color: #b7eb8f;
+      border-color: rgba(82, 196, 26, 0.32);
+    }
+
+    &.outdated {
+      background-color: rgba(250, 173, 20, 0.2);
+      color: #ffd666;
+      border-color: rgba(250, 173, 20, 0.34);
+    }
+
+    &.neutral {
+      background-color: rgba(255, 255, 255, 0.08);
+      color: rgba(255, 255, 255, 0.8);
+      border-color: rgba(255, 255, 255, 0.14);
+    }
+  }
+
+  .detailMetaBar {
+    border-top-color: rgba(255, 255, 255, 0.1);
+    border-bottom-color: rgba(255, 255, 255, 0.1);
+  }
+
+  .detailMetaDivider {
+    background: rgba(255, 255, 255, 0.12);
+  }
+
+  .detailMetaValue {
+    color: rgba(255, 255, 255, 0.88);
+  }
+
+  .detailMetaLabel {
+    color: rgba(255, 255, 255, 0.45);
+  }
+
+  .detailSettingsHint {
+    color: rgba(255, 255, 255, 0.45);
+  }
+
+  .detailTreePanel {
+    border-right-color: rgba(255, 255, 255, 0.1);
+
+    :global(.qwenpaw-tree) {
+      --qwenpaw-tree-node-selected-bg: rgba(22, 119, 255, 0.25);
+      --qwenpaw-tree-node-selected-color: #69b1ff;
+      --qwenpaw-tree-node-hover-bg: rgba(255, 255, 255, 0.08);
+    }
+
+    :global(.qwenpaw-tree-node-content-wrapper) {
+      &:hover {
+        background-color: rgba(255, 255, 255, 0.08);
+      }
+
+      &.qwenpaw-tree-node-selected {
+        background-color: rgba(22, 119, 255, 0.25) !important;
+        color: #69b1ff !important;
+      }
+    }
+  }
+
+  .detailViewerHeader {
+    border-bottom-color: rgba(255, 255, 255, 0.1);
+  }
+
+  .detailViewerPath {
+    color: rgba(255, 255, 255, 0.7);
+  }
+}
+
+/* ─── Detail drawer responsive ─────────────────────────────── */
+@media (max-width: 768px) {
+  .detailHero {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .detailHeroActions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .detailMetaBar {
+    flex-wrap: wrap;
+    gap: 12px;
+
+    .detailMetaItem {
+      flex: 1 1 40%;
+      justify-content: flex-start;
+    }
+
+    .detailMetaDivider {
+      display: none;
+    }
+  }
+
+  .detailBody {
+    flex-direction: column;
+  }
+
+  .detailTreePanel {
+    width: 100%;
+    max-height: 200px;
+    border-right: none;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  }
+}

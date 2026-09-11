@@ -1,0 +1,185 @@
+﻿
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.6 [39m[90mD:/enterprise_code/xxd/QwenPaw/console[39m
+
+ [31m鉂?[39m src/pages/Chat/mentionCatalog.test.ts [2m([22m[2m14 tests[22m[2m | [22m[31m8 failed[39m[2m)[22m[32m 18[2mms[22m[39m
+[31m     [31m脳[31m assembles groups in order with enabled-only filtering[39m[32m 5[2mms[22m[39m
+[31m     [31m脳[31m caches per agent within the TTL window[39m[32m 1[2mms[22m[39m
+[31m     [31m脳[31m keeps remaining groups when one source fails[39m[32m 1[2mms[22m[39m
+[31m     [31m脳[31m rewrites cached skill tokens to slash commands[39m[32m 1[2mms[22m[39m
+[31m     [31m脳[31m adds the protocol space for file/tool/mcp tokens[39m[32m 1[2mms[22m[39m
+     [32m鉁?[39m truncates glued Chinese punctuation after identity docs[32m 1[2mms[22m[39m
+     [32m鉁?[39m leaves emails, spaced refs and plain text untouched[32m 0[2mms[22m[39m
+     [32m鉁?[39m degrades unknown tokens when the catalog cache is cold[32m 0[2mms[22m[39m
+[31m     [31m脳[31m normalizes multiple mentions in serialization order[39m[32m 0[2mms[22m[39m
+[31m     [31m脳[31m rewrites string content and keeps other fields[39m[32m 0[2mms[22m[39m
+[31m     [31m脳[31m rewrites only text parts of multimodal content arrays[39m[32m 0[2mms[22m[39m
+     [32m鉁?[39m returns the message unchanged when content is absent[32m 0[2mms[22m[39m
+     [32m鉁?[39m returns false when no popover exists[32m 6[2mms[22m[39m
+     [32m鉁?[39m returns true when a visible mention popover exists[32m 2[2mms[22m[39m
+node.exe : 
+所在位置 行:1 字符: 1
++ & "C:\Program Files\nodejs/node.exe" "C:\Program Files\nodejs/node_mo ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+[31m鈳幆鈳幆鈳幆鈳?[39m[1m[41m Failed Tests 8 [49m[22m[31m鈳幆鈳幆鈳幆鈳?[39m
+
+[41m[1m FAIL [22m[49m src/pages/Chat/mentionCatalog.test.ts[2m > [22mbuildMentionItems[2m > [22massembles group
+s in order with enabled-only filtering
+[31m[1mTypeError[22m: Cannot convert undefined or null to object[39m
+[90m [2m鉂?[22m hasValidKey node_modules/react/cjs/react-jsx-runtime.development.js:[2m744:24[22m[39m
+[90m [2m鉂?[22m jsxDEV node_modules/react/cjs/react-jsx-runtime.development.js:[2m908:9[22m[39m
+[90m [2m鉂?[22m jsxWithValidation node_modules/react/cjs/react-jsx-runtime.development.js:[2m1248:19[22m[39m
+[90m [2m鉂?[22m jsxWithValidationDynamic node_modules/react/cjs/react-jsx-runtime.development.js:[2m1320:12[22m[39m
+[36m [2m鉂?[22m Module.buildMentionItems src/pages/Chat/mentionCatalog.ts:[2m140:15[22m[39m
+    [90m138|[39m         label[33m:[39m value[33m,[39m
+    [90m139|[39m         type[33m:[39m typeFile[33m,[39m
+    [90m140|[39m         icon[33m:[39m [34m_jsx[39m([33mFileTextOutlined[39m[33m,[39m [35mnull[39m)[33m,[
+39m
+    [90m   |[39m               [31m^[39m
+    [90m141|[39m         mentionKind[33m:[39m [32m"file"[39m[33m,[39m
+    [90m142|[39m       })[33m;[39m
+[90m [2m鉂?[22m src/pages/Chat/mentionCatalog.test.ts:[2m83:19[22m[39m
+
+[31m[2m鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆[1/8]鈳?[22m[39m
+
+[41m[1m FAIL [22m[49m src/pages/Chat/mentionCatalog.test.ts[2m > [22mbuildMentionItems[2m > [22mcaches per agen
+t within the TTL window
+[31m[1mTypeError[22m: Cannot convert undefined or null to object[39m
+[90m [2m鉂?[22m hasValidKey node_modules/react/cjs/react-jsx-runtime.development.js:[2m744:24[22m[39m
+[90m [2m鉂?[22m jsxDEV node_modules/react/cjs/react-jsx-runtime.development.js:[2m908:9[22m[39m
+[90m [2m鉂?[22m jsxWithValidation node_modules/react/cjs/react-jsx-runtime.development.js:[2m1248:19[22m[39m
+[90m [2m鉂?[22m jsxWithValidationDynamic node_modules/react/cjs/react-jsx-runtime.development.js:[2m1320:12[22m[39m
+[36m [2m鉂?[22m Module.buildMentionItems src/pages/Chat/mentionCatalog.ts:[2m140:15[22m[39m
+    [90m138|[39m         label[33m:[39m value[33m,[39m
+    [90m139|[39m         type[33m:[39m typeFile[33m,[39m
+    [90m140|[39m         icon[33m:[39m [34m_jsx[39m([33mFileTextOutlined[39m[33m,[39m [35mnull[39m)[33m,[
+39m
+    [90m   |[39m               [31m^[39m
+    [90m141|[39m         mentionKind[33m:[39m [32m"file"[39m[33m,[39m
+    [90m142|[39m       })[33m;[39m
+[90m [2m鉂?[22m src/pages/Chat/mentionCatalog.test.ts:[2m105:5[22m[39m
+
+[31m[2m鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆[2/8]鈳?[22m[39m
+
+[41m[1m FAIL [22m[49m src/pages/Chat/mentionCatalog.test.ts[2m > [22mbuildMentionItems[2m > [22mkeeps remaining
+ groups when one source fails
+[31m[1mTypeError[22m: Cannot convert undefined or null to object[39m
+[90m [2m鉂?[22m hasValidKey node_modules/react/cjs/react-jsx-runtime.development.js:[2m744:24[22m[39m
+[90m [2m鉂?[22m jsxDEV node_modules/react/cjs/react-jsx-runtime.development.js:[2m908:9[22m[39m
+[90m [2m鉂?[22m jsxWithValidation node_modules/react/cjs/react-jsx-runtime.development.js:[2m1248:19[22m[39m
+[90m [2m鉂?[22m jsxWithValidationDynamic node_modules/react/cjs/react-jsx-runtime.development.js:[2m1320:12[22m[39m
+[36m [2m鉂?[22m Module.buildMentionItems src/pages/Chat/mentionCatalog.ts:[2m140:15[22m[39m
+    [90m138|[39m         label[33m:[39m value[33m,[39m
+    [90m139|[39m         type[33m:[39m typeFile[33m,[39m
+    [90m140|[39m         icon[33m:[39m [34m_jsx[39m([33mFileTextOutlined[39m[33m,[39m [35mnull[39m)[33m,[
+39m
+    [90m   |[39m               [31m^[39m
+    [90m141|[39m         mentionKind[33m:[39m [32m"file"[39m[33m,[39m
+    [90m142|[39m       })[33m;[39m
+[90m [2m鉂?[22m src/pages/Chat/mentionCatalog.test.ts:[2m118:19[22m[39m
+
+[31m[2m鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆[3/8]鈳?[22m[39m
+
+[41m[1m FAIL [22m[49m src/pages/Chat/mentionCatalog.test.ts[2m > [22mnormalizeMentionTokens[2m > [22mrewrites c
+ached skill tokens to slash commands
+[31m[1mTypeError[22m: Cannot convert undefined or null to object[39m
+[90m [2m鉂?[22m hasValidKey node_modules/react/cjs/react-jsx-runtime.development.js:[2m744:24[22m[39m
+[90m [2m鉂?[22m jsxDEV node_modules/react/cjs/react-jsx-runtime.development.js:[2m908:9[22m[39m
+[90m [2m鉂?[22m jsxWithValidation node_modules/react/cjs/react-jsx-runtime.development.js:[2m1248:19[22m[39m
+[90m [2m鉂?[22m jsxWithValidationDynamic node_modules/react/cjs/react-jsx-runtime.development.js:[2m1320:12[22m[39m
+[36m [2m鉂?[22m Module.buildMentionItems src/pages/Chat/mentionCatalog.ts:[2m140:15[22m[39m
+    [90m138|[39m         label[33m:[39m value[33m,[39m
+    [90m139|[39m         type[33m:[39m typeFile[33m,[39m
+    [90m140|[39m         icon[33m:[39m [34m_jsx[39m([33mFileTextOutlined[39m[33m,[39m [35mnull[39m)[33m,[
+39m
+    [90m   |[39m               [31m^[39m
+    [90m141|[39m         mentionKind[33m:[39m [32m"file"[39m[33m,[39m
+    [90m142|[39m       })[33m;[39m
+[90m [2m鉂?[22m src/pages/Chat/mentionCatalog.test.ts:[2m133:5[22m[39m
+
+[31m[2m鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆[4/8]鈳?[22m[39m
+
+[41m[1m FAIL [22m[49m src/pages/Chat/mentionCatalog.test.ts[2m > [22mnormalizeMentionTokens[2m > [22madds the p
+rotocol space for file/tool/mcp tokens
+[31m[1mTypeError[22m: Cannot convert undefined or null to object[39m
+[90m [2m鉂?[22m hasValidKey node_modules/react/cjs/react-jsx-runtime.development.js:[2m744:24[22m[39m
+[90m [2m鉂?[22m jsxDEV node_modules/react/cjs/react-jsx-runtime.development.js:[2m908:9[22m[39m
+[90m [2m鉂?[22m jsxWithValidation node_modules/react/cjs/react-jsx-runtime.development.js:[2m1248:19[22m[39m
+[90m [2m鉂?[22m jsxWithValidationDynamic node_modules/react/cjs/react-jsx-runtime.development.js:[2m1320:12[22m[39m
+[36m [2m鉂?[22m Module.buildMentionItems src/pages/Chat/mentionCatalog.ts:[2m140:15[22m[39m
+    [90m138|[39m         label[33m:[39m value[33m,[39m
+    [90m139|[39m         type[33m:[39m typeFile[33m,[39m
+    [90m140|[39m         icon[33m:[39m [34m_jsx[39m([33mFileTextOutlined[39m[33m,[39m [35mnull[39m)[33m,[
+39m
+    [90m   |[39m               [31m^[39m
+    [90m141|[39m         mentionKind[33m:[39m [32m"file"[39m[33m,[39m
+    [90m142|[39m       })[33m;[39m
+[90m [2m鉂?[22m src/pages/Chat/mentionCatalog.test.ts:[2m145:5[22m[39m
+
+[31m[2m鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆[5/8]鈳?[22m[39m
+
+[41m[1m FAIL [22m[49m src/pages/Chat/mentionCatalog.test.ts[2m > [22mnormalizeMentionTokens[2m > [22mnormalizes
+ multiple mentions in serialization order
+[31m[1mTypeError[22m: Cannot convert undefined or null to object[39m
+[90m [2m鉂?[22m hasValidKey node_modules/react/cjs/react-jsx-runtime.development.js:[2m744:24[22m[39m
+[90m [2m鉂?[22m jsxDEV node_modules/react/cjs/react-jsx-runtime.development.js:[2m908:9[22m[39m
+[90m [2m鉂?[22m jsxWithValidation node_modules/react/cjs/react-jsx-runtime.development.js:[2m1248:19[22m[39m
+[90m [2m鉂?[22m jsxWithValidationDynamic node_modules/react/cjs/react-jsx-runtime.development.js:[2m1320:12[22m[39m
+[36m [2m鉂?[22m Module.buildMentionItems src/pages/Chat/mentionCatalog.ts:[2m140:15[22m[39m
+    [90m138|[39m         label[33m:[39m value[33m,[39m
+    [90m139|[39m         type[33m:[39m typeFile[33m,[39m
+    [90m140|[39m         icon[33m:[39m [34m_jsx[39m([33mFileTextOutlined[39m[33m,[39m [35mnull[39m)[33m,[
+39m
+    [90m   |[39m               [31m^[39m
+    [90m141|[39m         mentionKind[33m:[39m [32m"file"[39m[33m,[39m
+    [90m142|[39m       })[33m;[39m
+[90m [2m鉂?[22m src/pages/Chat/mentionCatalog.test.ts:[2m186:5[22m[39m
+
+[31m[2m鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆[6/8]鈳?[22m[39m
+
+[41m[1m FAIL [22m[49m src/pages/Chat/mentionCatalog.test.ts[2m > [22mnormalizeUserMessageMentions[2m > [22mrewr
+ites string content and keeps other fields
+[31m[1mTypeError[22m: Cannot convert undefined or null to object[39m
+[90m [2m鉂?[22m hasValidKey node_modules/react/cjs/react-jsx-runtime.development.js:[2m744:24[22m[39m
+[90m [2m鉂?[22m jsxDEV node_modules/react/cjs/react-jsx-runtime.development.js:[2m908:9[22m[39m
+[90m [2m鉂?[22m jsxWithValidation node_modules/react/cjs/react-jsx-runtime.development.js:[2m1248:19[22m[39m
+[90m [2m鉂?[22m jsxWithValidationDynamic node_modules/react/cjs/react-jsx-runtime.development.js:[2m1320:12[22m[39m
+[36m [2m鉂?[22m Module.buildMentionItems src/pages/Chat/mentionCatalog.ts:[2m140:15[22m[39m
+    [90m138|[39m         label[33m:[39m value[33m,[39m
+    [90m139|[39m         type[33m:[39m typeFile[33m,[39m
+    [90m140|[39m         icon[33m:[39m [34m_jsx[39m([33mFileTextOutlined[39m[33m,[39m [35mnull[39m)[33m,[
+39m
+    [90m   |[39m               [31m^[39m
+    [90m141|[39m         mentionKind[33m:[39m [32m"file"[39m[33m,[39m
+    [90m142|[39m       })[33m;[39m
+[90m [2m鉂?[22m src/pages/Chat/mentionCatalog.test.ts:[2m197:5[22m[39m
+
+[31m[2m鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆[7/8]鈳?[22m[39m
+
+[41m[1m FAIL [22m[49m src/pages/Chat/mentionCatalog.test.ts[2m > [22mnormalizeUserMessageMentions[2m > [22mrewr
+ites only text parts of multimodal content arrays
+[31m[1mTypeError[22m: Cannot convert undefined or null to object[39m
+[90m [2m鉂?[22m hasValidKey node_modules/react/cjs/react-jsx-runtime.development.js:[2m744:24[22m[39m
+[90m [2m鉂?[22m jsxDEV node_modules/react/cjs/react-jsx-runtime.development.js:[2m908:9[22m[39m
+[90m [2m鉂?[22m jsxWithValidation node_modules/react/cjs/react-jsx-runtime.development.js:[2m1248:19[22m[39m
+[90m [2m鉂?[22m jsxWithValidationDynamic node_modules/react/cjs/react-jsx-runtime.development.js:[2m1320:12[22m[39m
+[36m [2m鉂?[22m Module.buildMentionItems src/pages/Chat/mentionCatalog.ts:[2m140:15[22m[39m
+    [90m138|[39m         label[33m:[39m value[33m,[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m8 failed[39m[22m[2m | [22m[1m[32m6 passed[39m[22m[90m (14)[39m
+[2m   Start at [22m 10:15:49
+[2m   Duration [22m 3.81s[2m (transform 71ms, setup 164ms, import 2.25s, tests 18ms, environment 1.21s)[22m
+
+    [90m139|[39m         type[33m:[39m typeFile[33m,[39m
+    [90m140|[39m         icon[33m:[39m [34m_jsx[39m([33mFileTextOutlined[39m[33m,[39m [35mnull[39m)[33m,[
+39m
+    [90m   |[39m               [31m^[39m
+    [90m141|[39m         mentionKind[33m:[39m [32m"file"[39m[33m,[39m
+    [90m142|[39m       })[33m;[39m
+[90m [2m鉂?[22m src/pages/Chat/mentionCatalog.test.ts:[2m210:5[22m[39m
+
+[31m[2m鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆[8/8]鈳?[22m[39m
+

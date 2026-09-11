@@ -197,6 +197,18 @@ import {
   getSessionIdFromPath,
 } from "../../utils/sessionRoute";
 import { takeAiTunePrompt } from "../Agents/aiTunePrefill";
+import { wrapResponseForDocSync } from "./agentDocsSync";
+import {
+  buildMentionItems,
+  classifyMentionToken,
+  isMentionPopoverOpen,
+  normalizeUserMessageMentions,
+} from "./mentionCatalog";
+import {
+  ensureChipOverlayFor,
+  setChipClassifier,
+  startMentionChipOverlay,
+} from "./mentionChipOverlay";
 import { useUploadLimitStore } from "../../stores/uploadLimitStore";
 import ChatSenderTabsPanel from "./components/ChatSenderTabsPanel";
 import {
@@ -929,6 +941,8 @@ function useMessageHistoryNavigation(
       if (!textarea) return;
       if (isComposingRef.current || (e as any).isComposing) return;
       if (e.ctrlKey || e.metaKey || e.altKey) return;
+      // @ 提及弹层开启时方向键归候选导航所有，禁止历史替换输入框
+      if (isMentionPopoverOpen()) return;
 
       const hasSelection = textarea.selectionStart !== textarea.selectionEnd;
       if (hasSelection) return;
@@ -1915,6 +1929,9 @@ export default function ChatPage({
       if (textarea) {
         window.clearInterval(timer);
         setTextareaValue(textarea, prompt);
+        // 预填引用必须立即渲染为内联胶囊：不等守护轮询，写入后马上
+        // 确保镜像层就位并重绘（幂等：已挂载则按最新值重绘）
+        ensureChipOverlayFor(textarea);
         textarea.focus();
       } else if (tries > 20) {
         window.clearInterval(timer);
@@ -1922,6 +1939,14 @@ export default function ChatPage({
     }, 250);
     return () => window.clearInterval(timer);
   }, []);
+
+  // 输入框内 @ 引用 / /技能 的内联胶囊层（竞品形态：胶囊嵌在文字流、
+  // × 整 token 删除）；分类器随当前 agent 的技能名单注入，图标与发送
+  // 协议同源；SDK 会话切换会重建 textarea，由轮询守护补挂。
+  useEffect(() => {
+    setChipClassifier((token) => classifyMentionToken(token, selectedAgent));
+    return startMentionChipOverlay();
+  }, [selectedAgent]);
 
   const pendingClearHistoryRef = useRef(false);
   const whisperSpeechRef = useRef<WhisperSpeechButtonRef>(null);
@@ -2669,6 +2694,18 @@ export default function ChatPage({
           ? [rewrittenLastMsg]
           : [];
 
+      // 输入框内 mention token 规范化为后端既有协议：技能 → 句首
+      // `/名字` 斜杠命令（后端只认句首），档案/工具/MCP → `@ 名字`
+      //（见 mentionCatalog.normalizeMentionTokens）。
+      // 后续 requestBody.input 与 turnUserText 均引用本数组，一处规范化
+      // 全链路（后端协议、历史高亮、档案同步闭环）生效。
+      if (rewrittenInput.length > 0) {
+        rewrittenInput[0] = normalizeUserMessageMentions(
+          rewrittenInput[0],
+          selectedAgent,
+        );
+      }
+
       const identity = sessionApi.getSessionIdentity();
       const usageTurn = useTurnUsageStore
         .getState()
@@ -2796,9 +2833,37 @@ export default function ChatPage({
         sessionApi.triggerResolve(localIdToResolve);
       }
 
-      return wrapChatResponseUsageStream(response, chatRef, usageTurn);
+      // 对话修改闭环：本轮用户文本引用了档案文件时，流结束后先回填
+      // PG 权威行再广播档案刷新（见 agentDocsSync.ts）。
+      const turnUserText = rewrittenInput
+        .filter((m) => m.role === "user")
+        .map(extractUserMessageText)
+        .join("\n")
+        .trim();
+      return wrapResponseForDocSync(
+        wrapChatResponseUsageStream(response, chatRef, usageTurn),
+        selectedAgent,
+        turnUserText,
+      );
     },
     [extLists, selectedAgent, runningConfigApprovalLevel, usesQwenPawBackend],
+  );
+
+  // @ 提及菜单：inline 模式（对标竞品内联实体）——选中后 `@值` 插入
+  // 光标处，由 mentionChipOverlay 渲染为文字流中的胶囊（图标 + × 删除）；
+  // 发送前由 normalizeUserMessageMentions 把 token 规范化回既有协议。
+  // items 引用随 useMemo 稳定，SDK 侧 cacheItems 与模块内 TTL 缓存共同
+  // 兜住高频拉取。
+  const mentionOptions = useMemo(
+    () => ({
+      trigger: "@",
+      displayMode: "inline" as const,
+      maxOptions: 50,
+      loadingText: t("chat.mentionLoading", "加载中…"),
+      emptyText: t("chat.mentionEmpty", "无匹配项"),
+      items: () => buildMentionItems(selectedAgent, t),
+    }),
+    [selectedAgent, t],
   );
 
   const handleFileUpload = useCallback(
@@ -3276,6 +3341,7 @@ export default function ChatPage({
       sender: {
         ...(i18nConfig as any)?.sender,
         beforeSubmit: handleBeforeSubmit,
+        mentions: mentionOptions,
         allowSpeech: whisperChecked && !whisperEnabled,
         beforeUI: showSenderBeforeUI ? (
           <>
@@ -3626,6 +3692,7 @@ export default function ChatPage({
     customFetch,
     copyResponse,
     handleFileUpload,
+    mentionOptions,
     t,
     i18n.language,
     isDark,

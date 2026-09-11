@@ -54,6 +54,9 @@ class SkillPoolPage(BasePage):
     DRAWER = '.qwenpaw-drawer'
     DRAWER_TITLE = '.qwenpaw-drawer-title'
     AUTO_SYNC_SWITCH = '.qwenpaw-drawer [data-testid="auto-sync-switch"]'
+    # Detail drawer (PoolSkillDetailDrawer.tsx): opened by clicking a card;
+    # its Edit button re-opens the legacy edit drawer.
+    DETAIL_EDIT_BTN = '[data-testid="skill-detail-edit-btn"]'
     # Target-agent multi-select is rendered ONLY after the switch is ON; anchor
     # on its placeholder text (unique) so we don't match other selects.
     TARGET_SELECT_PLACEHOLDER = (
@@ -113,13 +116,20 @@ class SkillPoolPage(BasePage):
         return self
 
     def open_edit_drawer(self, name: str) -> "SkillPoolPage":
-        """Click a skill card (non-batch mode) to open its edit drawer."""
+        """Open a skill's edit drawer from the card.
+
+        Non-batch card click now opens the detail drawer first; the edit
+        drawer opens via the detail drawer's Edit button.
+        """
         card = self.find_card_by_name(name)
         if card is None:
             raise ValueError(f"Skill card not found: {name}")
         card.scroll_into_view_if_needed(timeout=5000)
         card.click()
-        self.page.locator(self.DRAWER).first.wait_for(
+        edit_btn = self.page.locator(self.DETAIL_EDIT_BTN).first
+        edit_btn.wait_for(state="visible", timeout=self.timeout)
+        edit_btn.click()
+        self.page.locator(self.AUTO_SYNC_SWITCH).first.wait_for(
             state="visible", timeout=self.timeout
         )
         self.wait(400)

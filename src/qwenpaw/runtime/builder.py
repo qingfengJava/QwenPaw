@@ -230,18 +230,33 @@ class AgentBuilder:
         effective_skills: Iterable[str] | None,
         workspace_dir: str | None,
     ) -> list[str]:
-        """Map effective skill names to their SKILL.md-bearing directories."""
+        """Map effective skill names to their SKILL.md-bearing directories.
+
+        引用化解析顺序：workspace 私有（自建/同名覆盖）→ 技能池
+        （引用绑定，零拷贝）→ 打包内置。池引用技能在 workspace 下
+        无副本，必须回退池/内置目录解析。
+        """
         names = list(effective_skills or ())
         if not names:
             return []
 
         from ..agents.skill_system import get_workspace_skills_dir
+        from ..agents.skill_system.registry import resolve_builtin_skill_dir
+        from ..agents.skill_system.store import resolve_pool_skill_dir
         from ..constant import WORKING_DIR
 
         base = get_workspace_skills_dir(Path(workspace_dir or WORKING_DIR))
         dirs: list[str] = []
         for name in names:
             skill_dir = base / name
+            if not (skill_dir / "SKILL.md").exists():
+                pool_dir = resolve_pool_skill_dir(name)
+                if pool_dir is not None:
+                    skill_dir = pool_dir
+                else:
+                    builtin_dir = resolve_builtin_skill_dir(name)
+                    if builtin_dir:
+                        skill_dir = Path(builtin_dir)
             if (skill_dir / "SKILL.md").exists():
                 dirs.append(str(skill_dir))
             else:
@@ -297,7 +312,7 @@ class AgentBuilder:
         from ..agents.react_agent import QwenPawAgent
         from ..agents.skill_system import (
             ensure_skills_initialized,
-            resolve_effective_skills,
+            resolve_effective_skills_async,
         )
         from ..config.config import load_agent_config
         from ..constant import WORKING_DIR
@@ -335,8 +350,7 @@ class AgentBuilder:
         await run_sync_io(ensure_skills_initialized, skills_workspace)
         channel_name = request_context.get("channel", "console")
         try:
-            effective_skills = await run_sync_io(
-                resolve_effective_skills,
+            effective_skills = await resolve_effective_skills_async(
                 skills_workspace,
                 channel_name,
             )

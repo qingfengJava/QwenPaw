@@ -131,6 +131,24 @@ def _register_pool_skill_entry(
     payload["skills"][skill_name] = entry
 
 
+def _sync_pool_skill_to_pg(skill_name: str) -> None:
+    """Schedule a PG mirror of one pool skill (catalog + content snapshot).
+
+    读取最新 manifest 条目 + 解析技能目录，交 catalog_store 三态分发
+    （json 零动作 / dual 影子写 / pg 权威写）；任何 PG 故障仅告警。
+    """
+    from . import catalog_store
+
+    if not catalog_store.skill_pg_plane_available():
+        return
+    manifest = read_skill_pool_manifest()
+    entry = manifest.get("skills", {}).get(skill_name)
+    if not isinstance(entry, dict):
+        return
+    skill_dir = resolve_pool_skill_dir(skill_name)
+    catalog_store.schedule_pool_skill_sync(skill_name, entry, skill_dir)
+
+
 class SkillPoolService:
     """Shared skill-pool lifecycle service.
 
@@ -241,6 +259,7 @@ class SkillPoolService:
                     "manifest_path": str(get_pool_skill_manifest_path()),
                 },
             ) from exc
+        _sync_pool_skill_to_pg(skill_name)
         return skill_name
 
     def import_from_zip(
@@ -347,6 +366,8 @@ class SkillPoolService:
                         )
 
                 mutate_pool_manifest(_update)
+                for name in imported:
+                    _sync_pool_skill_to_pg(name)
             return {
                 "imported": imported,
                 "count": len(imported),
@@ -388,6 +409,9 @@ class SkillPoolService:
                     "manifest_path": str(get_pool_skill_manifest_path()),
                 },
             ) from exc
+        from . import catalog_store
+
+        catalog_store.schedule_pool_skill_delete(skill_name)
         return True
 
     def set_pool_skill_tags(
@@ -409,7 +433,10 @@ class SkillPoolService:
             entry["tags"] = normalized
             return True
 
-        return mutate_pool_manifest(_update)
+        changed = mutate_pool_manifest(_update)
+        if changed:
+            _sync_pool_skill_to_pg(skill_name)
+        return changed
 
     def set_skill_auto_sync(
         self,
@@ -557,6 +584,7 @@ class SkillPoolService:
         configured = mutate_pool_manifest(_update)
         if not isinstance(configured, dict):
             return {"success": False, "reason": "not_found"}
+        _sync_pool_skill_to_pg(skill_name)
         return {"success": True, **configured}
 
     def get_edit_target_name(
@@ -708,6 +736,7 @@ class SkillPoolService:
             )
 
         mutate_pool_manifest(_update)
+        _sync_pool_skill_to_pg(skill_name)
         return {
             "success": True,
             "mode": "edit",
@@ -759,6 +788,10 @@ class SkillPoolService:
             payload["skills"].pop(skill_name, None)
 
         mutate_pool_manifest(_update)
+        from . import catalog_store
+
+        catalog_store.schedule_pool_skill_delete(skill_name)
+        _sync_pool_skill_to_pg(final_name)
 
         automation = read_pool_skill_automation(entry)
         migration = (
@@ -827,54 +860,40 @@ class SkillPoolService:
                 )
 
             workspace_skills_dir = get_workspace_skills_dir(workspace_dir)
-            target_dir = safe_skill_dir(workspace_skills_dir, new_name)
             old_dir = safe_skill_dir(workspace_skills_dir, old_name)
-            try:
-                target_dir.parent.mkdir(parents=True, exist_ok=True)
-                with staged_skill_dir(new_name) as staged_dir:
-                    copy_skill_dir(source_dir, staged_dir)
-                    scan_skill_dir_or_raise(staged_dir, new_name)
-                    copy_skill_dir(staged_dir, target_dir)
-            except Exception:
-                logger.warning(
-                    "rename: failed migrating '%s'->'%s' in workspace '%s'",
-                    old_name,
-                    new_name,
-                    agent_id,
-                    exc_info=True,
-                )
-                continue
+            # 引用化改造：metadata 从池源目录构建（零拷贝）
+            metadata = build_skill_metadata(
+                new_name,
+                source_dir,
+                source=str(
+                    old_entry.get("source", "customized") or "customized",
+                ),
+                protected=False,
+            )
+            ws_entry: dict[str, Any] = {
+                "enabled": bool(old_entry.get("enabled", True)),
+                "channels": old_entry.get("channels") or ["all"],
+                "source": metadata["source"],
+                "installed_from": str(
+                    old_entry.get("installed_from", "") or "",
+                ),
+                "config": old_entry.get("config") or {},
+                "metadata": metadata,
+                "requirements": metadata["requirements"],
+                "updated_at": metadata["updated_at"],
+                "origin": (
+                    "builtin"
+                    if old_entry.get("source") == "builtin"
+                    else "pool"
+                ),
+            }
+            if old_entry.get("builtin_language"):
+                ws_entry["builtin_language"] = old_entry["builtin_language"]
+            if old_entry.get("tags") is not None:
+                ws_entry["tags"] = old_entry["tags"]
 
-            def _update(
-                payload: dict[str, Any],
-                _old: dict[str, Any] = old_entry,
-                _target: Path = target_dir,
-            ) -> None:
+            def _update(payload: dict[str, Any]) -> None:
                 payload.setdefault("skills", {})
-                metadata = build_skill_metadata(
-                    new_name,
-                    _target,
-                    source=str(
-                        _old.get("source", "customized") or "customized",
-                    ),
-                    protected=False,
-                )
-                ws_entry: dict[str, Any] = {
-                    "enabled": bool(_old.get("enabled", True)),
-                    "channels": _old.get("channels") or ["all"],
-                    "source": metadata["source"],
-                    "installed_from": str(
-                        _old.get("installed_from", "") or "",
-                    ),
-                    "config": _old.get("config") or {},
-                    "metadata": metadata,
-                    "requirements": metadata["requirements"],
-                    "updated_at": metadata["updated_at"],
-                }
-                if _old.get("builtin_language"):
-                    ws_entry["builtin_language"] = _old["builtin_language"]
-                if _old.get("tags") is not None:
-                    ws_entry["tags"] = _old["tags"]
                 payload["skills"][new_name] = ws_entry
                 payload["skills"].pop(old_name, None)
 
@@ -883,8 +902,24 @@ class SkillPoolService:
                 default_workspace_manifest(),
                 _update,
             )
+            # 引用化改造：绑定改名（删旧绑定 + 镜像新绑定）
+            from . import catalog_store
+
+            catalog_store.schedule_agent_skill_delete(agent_id, old_name)
+            catalog_store.schedule_agent_skill_sync(
+                agent_id,
+                new_name,
+                ws_entry,
+                origin=str(ws_entry["origin"]),
+            )
+            # 清理拷贝时代遗留同名副本（仅内容与池一致时删；不一致视为私有覆盖保留）
             if old_dir.exists():
-                shutil.rmtree(old_dir, ignore_errors=True)
+                from .store import compute_skill_md_hash
+
+                if compute_skill_md_hash(old_dir) == compute_skill_md_hash(
+                    source_dir,
+                ):
+                    shutil.rmtree(old_dir, ignore_errors=True)
             renamed.append(agent_id)
 
         return {"renamed": renamed, "overwritten": overwritten}
@@ -953,6 +988,7 @@ class SkillPoolService:
             )
 
         mutate_pool_manifest(_update)
+        _sync_pool_skill_to_pg(final_name)
 
         return {"success": True, "name": final_name}
 
@@ -1118,57 +1154,72 @@ class SkillPoolService:
                     )
                 return conflict
 
-        target_dir.parent.mkdir(parents=True, exist_ok=True)
-        with staged_skill_dir(final_name) as staged_dir:
-            copy_skill_dir(source_dir, staged_dir)
-            scan_skill_dir_or_raise(staged_dir, final_name)
-            copy_skill_dir(staged_dir, target_dir)
+        # 引用化改造：纯绑定写入（零拷贝）；overwrite 时清理遗留同名私有副本
+        if overwrite and target_dir.exists():
+            shutil.rmtree(target_dir, ignore_errors=True)
 
         pool_config = entry.get("config") or {}
         pool_tags = entry.get("tags")
         pool_installed_from = str(entry.get("installed_from", "") or "")
 
+        prior = workspace_manifest.get("skills", {}).get(final_name) or {}
+        metadata = build_skill_metadata(
+            final_name,
+            source_dir,
+            source=(
+                "builtin"
+                if entry.get("source") == "builtin"
+                else "customized"
+            ),
+            protected=False,
+        )
+        ws_entry: dict[str, Any] = {
+            "enabled": bool(prior.get("enabled", True)),
+            "channels": prior.get("channels") or ["all"],
+            "source": metadata["source"],
+            "installed_from": pool_installed_from,
+            "config": (
+                prior["config"] if "config" in prior else pool_config
+            ),
+            "metadata": metadata,
+            "requirements": metadata["requirements"],
+            "updated_at": metadata["updated_at"],
+            "origin": (
+                "builtin" if entry.get("source") == "builtin" else "pool"
+            ),
+        }
+        pool_lang = str(
+            entry.get("builtin_language", "") or "",
+        )
+        if entry.get("source") == "builtin" and pool_lang:
+            ws_entry["builtin_language"] = pool_lang
+        # 中文映射随引用传播（员工页中文展示同源）
+        if entry.get("display_name_zh"):
+            ws_entry["display_name_zh"] = entry["display_name_zh"]
+        if entry.get("description_zh"):
+            ws_entry["description_zh"] = entry["description_zh"]
+        prior_tags = prior.get("tags")
+        if prior_tags is not None:
+            ws_entry["tags"] = prior_tags
+        elif pool_tags is not None:
+            ws_entry["tags"] = pool_tags
+
         def _update(payload: dict[str, Any]) -> None:
             payload.setdefault("skills", {})
-            prior = payload["skills"].get(final_name) or {}
-            metadata = build_skill_metadata(
-                final_name,
-                target_dir,
-                source=(
-                    "builtin"
-                    if entry.get("source") == "builtin"
-                    else "customized"
-                ),
-                protected=False,
-            )
-            ws_entry: dict[str, Any] = {
-                "enabled": bool(prior.get("enabled", True)),
-                "channels": prior.get("channels") or ["all"],
-                "source": metadata["source"],
-                "installed_from": pool_installed_from,
-                "config": (
-                    prior["config"] if "config" in prior else pool_config
-                ),
-                "metadata": metadata,
-                "requirements": metadata["requirements"],
-                "updated_at": metadata["updated_at"],
-            }
-            pool_lang = str(
-                entry.get("builtin_language", "") or "",
-            )
-            if entry.get("source") == "builtin" and pool_lang:
-                ws_entry["builtin_language"] = pool_lang
-            prior_tags = prior.get("tags")
-            if prior_tags is not None:
-                ws_entry["tags"] = prior_tags
-            elif pool_tags is not None:
-                ws_entry["tags"] = pool_tags
             payload["skills"][final_name] = ws_entry
 
         mutate_json(
             get_workspace_skill_manifest_path(workspace_dir),
             default_workspace_manifest(),
             _update,
+        )
+        from . import catalog_store
+
+        catalog_store.schedule_agent_skill_sync(
+            workspace_identity["workspace_id"],
+            final_name,
+            ws_entry,
+            origin=str(ws_entry["origin"]),
         )
         return {
             "success": True,

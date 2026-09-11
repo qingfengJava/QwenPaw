@@ -14,6 +14,9 @@ export interface SkillSpec {
   tags?: string[];
   last_updated?: string;
   emoji?: string;
+  display_name_zh?: string;
+  description_zh?: string;
+  origin?: string;
 }
 
 export interface SkillDetail extends SkillSpec {
@@ -34,6 +37,9 @@ export interface PoolSkillSpec {
   emoji?: string;
   auto_sync?: boolean;
   auto_update?: boolean;
+  display_name_zh?: string;
+  description_zh?: string;
+  missing?: boolean;
 }
 
 export interface PoolSkillDetail extends PoolSkillSpec {
@@ -43,6 +49,30 @@ export interface PoolSkillDetail extends PoolSkillSpec {
   builtin_language?: string;
   available_builtin_languages?: string[];
   auto_sync_targets?: string[] | null;
+  // 技能版本（SKILL.md frontmatter version）
+  version?: string;
+  // 装配了该技能的数字员工 agent_id 列表
+  used_by?: string[];
+}
+
+// 技能目录文件树节点（详情页文件预览用）
+export interface SkillFileNode {
+  name: string;
+  path: string;
+  type: "file" | "dir" | string;
+  size?: number;
+  children?: SkillFileNode[];
+}
+
+// 技能单文件内容预览响应（text / image / binary 三态）
+export interface SkillFileContent {
+  type: "text" | "image" | "binary" | string;
+  path: string;
+  name: string;
+  size?: number;
+  language?: string;
+  content?: string;
+  data_url?: string;
 }
 
 export interface BuiltinLanguageSpec {

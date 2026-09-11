@@ -56,6 +56,7 @@ from ...agents.utils import (
 from ...agents.skill_system import SkillPoolService, get_workspace_skills_dir
 from ...harnesses.registry import ProviderCatalogItem, get_provider
 from ...providers.agent_model_store import resolve_agent_active_model
+from ..agent_docs.store import DOC_TYPE_BY_FILENAME, get_agent_docs_store
 from ..agent_startup import AgentStartupStatus
 from ..multi_agent_manager import MultiAgentManager
 from ...constant import WORKING_DIR
@@ -571,6 +572,79 @@ async def set_agent_pinned(
         "success": True,
         "agent_id": agentId,
         "pinned": True if agentId == "default" else pinned,
+    }
+
+
+@router.post(
+    "/{agentId}/documents/sync-from-files",
+    summary="Sync identity documents from workspace files into PG",
+    description=(
+        "Read whitelisted identity files (PROFILE.md/AGENTS.md/SOUL.md/"
+        "agent.json) from the workspace and upsert them into the "
+        "authoritative PG rows (idempotent: no version bump on identical "
+        "content). Covers the chat-edit loop: the agent's runtime file "
+        "tools bypass the workspace write endpoint, so those edits never "
+        "trigger a shadow write on their own."
+    ),
+)
+async def sync_documents_from_files(
+    agentId: str = PathParam(...),
+) -> dict:
+    """Mirror workspace identity files into PG after in-chat edits."""
+    # 解析智能体工作区根（未注册的 agent 直接 404）
+    config = await run_sync_io(load_config)
+    ref = config.agents.profiles.get(agentId)
+    if ref is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Agent '{agentId}' not found",
+        )
+    workspace_dir = Path(ref.workspace_dir).expanduser()
+
+    # 无 PG 平面：文件即主链路，回填无意义（与影子写降级语义一致）
+    store = get_agent_docs_store()
+    synced: list[str] = []
+    unchanged: list[str] = []
+    skipped: list[str] = []
+    for filename in DOC_TYPE_BY_FILENAME:
+        # 逐白名单文件探测：AI 尚未创建的文件直接跳过
+        path = workspace_dir / filename
+        if not path.is_file():
+            skipped.append(filename)
+            continue
+        if store is None:
+            skipped.append(filename)
+            continue
+        try:
+            # 编码回退读取，与档案编辑器读路径一致
+            content = read_text_file_with_encoding_fallback(path)
+        except OSError:
+            skipped.append(filename)
+            continue
+        try:
+            # upsert 幂等：内容 hash 未变时返回 False（不产生新版本）
+            written = await store.upsert_document(
+                agentId,
+                DOC_TYPE_BY_FILENAME[filename],
+                content,
+                updated_by="chat-edit-sync",
+            )
+        except Exception as exc:
+            logger.warning(
+                "Doc sync-from-files upsert failed: agent=%s doc=%s: %s",
+                agentId,
+                filename,
+                exc,
+            )
+            skipped.append(filename)
+            continue
+        # 写入行与幂等重放分开上报，便于前端/测试区分
+        (synced if written else unchanged).append(filename)
+    return {
+        "agent_id": agentId,
+        "synced": synced,
+        "unchanged": unchanged,
+        "skipped": skipped,
     }
 
 

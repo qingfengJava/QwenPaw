@@ -44,6 +44,7 @@ from ...agents.skill_system.registry import (
     list_builtin_import_candidates,
     list_workspaces,
     reconcile_workspace_manifest,
+    resolve_builtin_skill_dir,
     update_single_builtin,
 )
 from ...agents.skill_system.store import (
@@ -58,6 +59,7 @@ from ...agents.skill_system.store import (
     read_skill_content_and_metadata_from_dir,
     read_skill_manifest,
     read_skill_pool_manifest,
+    read_text_file_with_encoding_fallback,
     resolve_pool_skill_dir,
     safe_skill_dir,
     suggest_conflict_name,
@@ -255,6 +257,9 @@ class SkillSpec(BaseModel):
     channels: list[str] = Field(default_factory=lambda: ["all"])
     tags: list[str] = Field(default_factory=list)
     last_updated: str = ""
+    display_name_zh: str = ""
+    description_zh: str = ""
+    origin: str = ""
 
 
 class SkillDetail(SkillSpec):
@@ -279,6 +284,9 @@ class PoolSkillSpec(BaseModel):
     last_updated: str = ""
     auto_sync: bool = False
     auto_update: bool = False
+    display_name_zh: str = ""
+    description_zh: str = ""
+    missing: bool = False
 
 
 class PoolSkillDetail(PoolSkillSpec):
@@ -290,6 +298,20 @@ class PoolSkillDetail(PoolSkillSpec):
     builtin_language: str = ""
     available_builtin_languages: list[str] = Field(default_factory=list)
     auto_sync_targets: list[str] | None = None
+    # 技能版本（SKILL.md frontmatter version），详情页元信息条展示
+    version: str = ""
+    # 装配了该技能的数字员工 agent_id 列表（工作区 manifest 一次性聚合）
+    used_by: list[str] = Field(default_factory=list)
+
+
+class SkillFileNode(BaseModel):
+    """One node in a pool skill's file preview tree."""
+
+    name: str
+    path: str
+    type: str
+    size: int = 0
+    children: list["SkillFileNode"] = Field(default_factory=list)
 
 
 class WorkspaceSkillSummary(BaseModel):
@@ -710,6 +732,19 @@ async def _run_hub_install_task(
         await _hub_task_finish_runtime(task_id)
 
 
+def _resolve_reference_skill_dir(skill_name: str) -> Path | None:
+    """Resolve a pool/builtin reference skill dir (zero-copy loading).
+
+    引用化后池引用技能在 workspace 下无副本，列表/详情展示需回退
+    池/内置目录解析技能体。
+    """
+    pool_dir = resolve_pool_skill_dir(skill_name)
+    if pool_dir is not None:
+        return pool_dir
+    builtin_dir = resolve_builtin_skill_dir(skill_name)
+    return Path(builtin_dir) if builtin_dir else None
+
+
 def _build_workspace_skill_specs(workspace_dir: Path) -> list[SkillSpec]:
     manifest = read_skill_manifest(workspace_dir)
     entries = manifest.get("skills", {})
@@ -726,7 +761,10 @@ def _build_workspace_skill_specs(workspace_dir: Path) -> list[SkillSpec]:
             source = entry.get("source", "customized")
             skill_dir = safe_skill_dir(skill_root, skill_name)
             if not (skill_dir / "SKILL.md").is_file():
-                continue
+                skill_dir_ref = _resolve_reference_skill_dir(skill_name)
+                if skill_dir_ref is None:
+                    continue
+                skill_dir = skill_dir_ref
             metadata = build_skill_metadata(
                 skill_name,
                 skill_dir,
@@ -742,6 +780,13 @@ def _build_workspace_skill_specs(workspace_dir: Path) -> list[SkillSpec]:
                     channels=entry.get("channels") or ["all"],
                     tags=entry.get("tags") or [],
                     last_updated=str(metadata.get("updated_at", "") or ""),
+                    display_name_zh=str(
+                        entry.get("display_name_zh", "") or "",
+                    ),
+                    description_zh=str(
+                        entry.get("description_zh", "") or "",
+                    ),
+                    origin=str(entry.get("origin", "") or ""),
                 ),
             )
         except Exception:
@@ -792,6 +837,12 @@ def _build_pool_skill_specs() -> list[PoolSkillSpec]:
                     auto_sync=automation.auto_sync,
                     auto_update=(
                         source == "builtin" and automation.auto_update
+                    ),
+                    display_name_zh=str(
+                        entry.get("display_name_zh", "") or "",
+                    ),
+                    description_zh=str(
+                        entry.get("description_zh", "") or "",
                     ),
                 ),
             )
@@ -899,7 +950,145 @@ def _build_pool_skill_detail(skill_name: str) -> PoolSkillDetail | None:
             if automation.auto_sync_targets
             else None
         ),
+        version=str(metadata.get("version_text", "") or ""),
+        used_by=_collect_pool_skill_used_by(skill_name),
     )
+
+
+def _collect_pool_skill_used_by(skill_name: str) -> list[str]:
+    """Aggregate agent ids whose workspace manifest installs this skill."""
+    agent_ids: list[str] = []
+    for workspace in list_workspaces():
+        workspace_dir = Path(workspace["workspace_dir"])
+        if skill_name in _list_workspace_skill_names(workspace_dir):
+            agent_ids.append(str(workspace["agent_id"]))
+    return agent_ids
+
+
+# 文件预览排除的缓存/系统伪影（与技能快照打包排除规则对齐）
+_SKILL_TREE_EXCLUDED_NAMES = {"__pycache__", ".DS_Store", "Thumbs.db", ".git"}
+# 允许文本预览的后缀（超出按二进制处理，前端提示下载）
+_SKILL_TEXT_SUFFIXES = {
+    ".md", ".txt", ".py", ".json", ".yaml", ".yml", ".toml",
+    ".sh", ".js", ".ts", ".jsx", ".tsx", ".css", ".html", ".csv",
+    ".cfg", ".ini", ".xml", ".sql",
+}
+# 按图片预览的后缀（base64 data url 内联）
+_SKILL_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico"}
+# 文件内容预览大小上限（超过则降级为下载提示）
+_MAX_SKILL_FILE_PREVIEW_BYTES = 2 * 1024 * 1024
+# 后缀 -> 前端代码高亮语言标识
+_SKILL_LANGUAGE_BY_SUFFIX = {
+    ".py": "python", ".json": "json", ".js": "javascript",
+    ".ts": "typescript", ".jsx": "jsx", ".tsx": "tsx", ".sh": "bash",
+    ".yaml": "yaml", ".yml": "yaml", ".toml": "toml", ".md": "markdown",
+    ".html": "html", ".css": "css", ".sql": "sql", ".xml": "xml",
+}
+
+
+def _build_pool_skill_file_tree(
+    skill_dir: Path,
+    prefix: str = "",
+) -> list[SkillFileNode]:
+    """Walk a skill directory into a preview tree (cache artifacts excluded)."""
+    nodes: list[SkillFileNode] = []
+    try:
+        children = sorted(
+            skill_dir.iterdir(),
+            key=lambda item: (item.is_file(), item.name.lower()),
+        )
+    except OSError:
+        return nodes
+    for child in children:
+        if child.name in _SKILL_TREE_EXCLUDED_NAMES:
+            continue
+        relative_path = f"{prefix}/{child.name}" if prefix else child.name
+        if child.is_dir():
+            nodes.append(
+                SkillFileNode(
+                    name=child.name,
+                    path=relative_path,
+                    type="dir",
+                    children=_build_pool_skill_file_tree(child, relative_path),
+                ),
+            )
+        elif child.is_file():
+            try:
+                size = child.stat().st_size
+            except OSError:
+                size = 0
+            nodes.append(
+                SkillFileNode(
+                    name=child.name,
+                    path=relative_path,
+                    type="file",
+                    size=size,
+                ),
+            )
+    return nodes
+
+
+def _safe_skill_file_path(skill_dir: Path, relative_path: str) -> Path:
+    """Resolve a skill-relative file path, rejecting traversal outside root."""
+    cleaned = (relative_path or "").strip().replace("\\", "/").lstrip("/")
+    parts = [part for part in cleaned.split("/") if part not in ("", ".")]
+    # 逐段校验：拒绝 ..、空段与 Windows 盘符等越权形态
+    if not parts or any(part == ".." for part in parts):
+        raise HTTPException(status_code=400, detail="Unsafe file path")
+    base_resolved = skill_dir.resolve()
+    candidate = (base_resolved / Path(*parts)).resolve()
+    if not candidate.is_relative_to(base_resolved):
+        raise HTTPException(status_code=400, detail="Unsafe file path")
+    return candidate
+
+
+def _read_pool_skill_file(
+    skill_name: str,
+    relative_path: str,
+) -> dict[str, Any]:
+    """Read one skill file for preview: text / image / binary classification."""
+    skill_dir = resolve_pool_skill_dir(skill_name)
+    if skill_dir is None:
+        raise HTTPException(status_code=404, detail="Pool skill not found")
+    target = _safe_skill_file_path(skill_dir, relative_path)
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="Skill file not found")
+    try:
+        size = target.stat().st_size
+    except OSError:
+        size = 0
+    suffix = target.suffix.lower()
+    # 图片内联 base64 预览（同样受大小上限保护）
+    if suffix in _SKILL_IMAGE_SUFFIXES and 0 < size <= _MAX_SKILL_FILE_PREVIEW_BYTES:
+        import base64
+        import mimetypes
+
+        mime = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+        encoded = base64.b64encode(target.read_bytes()).decode("ascii")
+        return {
+            "type": "image",
+            "path": relative_path,
+            "name": target.name,
+            "size": size,
+            "data_url": f"data:{mime};base64,{encoded}",
+        }
+    # 非文本后缀或超限：降级为下载提示，不返回内容
+    if suffix not in _SKILL_TEXT_SUFFIXES or size > _MAX_SKILL_FILE_PREVIEW_BYTES:
+        return {
+            "type": "binary",
+            "path": relative_path,
+            "name": target.name,
+            "size": size,
+        }
+    content = read_text_file_with_encoding_fallback(target)
+    return {
+        "type": "text",
+        "path": relative_path,
+        "name": target.name,
+        "size": size,
+        "language": _SKILL_LANGUAGE_BY_SUFFIX.get(suffix, ""),
+        "content": content,
+    }
 
 
 def _list_workspace_skill_names(workspace_dir: Path) -> list[str]:
@@ -1025,7 +1214,59 @@ async def cancel_hub_install(task_id: str) -> dict[str, Any]:
 
 @router.get("/pool")
 async def list_pool_skills() -> list[PoolSkillSpec]:
-    return _build_pool_skill_specs()
+    return await _overlay_pool_catalog(_build_pool_skill_specs())
+
+
+async def _overlay_pool_catalog(
+    specs: list[PoolSkillSpec],
+) -> list[PoolSkillSpec]:
+    """pg mode: overlay zh mapping from skill_catalog + mark PG orphans.
+
+    dual/json 模式原样返回（zh 已在 manifest 条目）；PG 故障静默回退，
+    绝不阻塞列表。PG 孤儿条目（文件缺失）保留可见以便清理或自愈。
+    """
+    from ...agents.skill_system import catalog_store
+
+    if not (
+        catalog_store.skill_pg_plane_available()
+        and catalog_store.skill_storage_backend() == "pg"
+    ):
+        return specs
+    try:
+        rows = await catalog_store.load_skill_catalog_pg()
+    except Exception:  # noqa: BLE001 - PG plane must never break listing
+        logger.warning(
+            "skill_catalog read failed; serving manifest plane only",
+            exc_info=True,
+        )
+        return specs
+    by_name = {row["skill_name"]: row for row in rows}
+    for spec in specs:
+        row = by_name.get(spec.name)
+        if row is not None:
+            spec.display_name_zh = row["display_name_zh"] or (
+                spec.display_name_zh
+            )
+            spec.description_zh = row["description_zh"] or (
+                spec.description_zh
+            )
+    known = {spec.name for spec in specs}
+    for row in rows:
+        if row["skill_name"] in known:
+            continue
+        specs.append(
+            PoolSkillSpec(
+                name=row["skill_name"],
+                description="",
+                source=row["source"],
+                emoji=row["emoji"],
+                tags=row["tags"] or [],
+                display_name_zh=row["display_name_zh"],
+                description_zh=row["description_zh"],
+                missing=True,
+            ),
+        )
+    return specs
 
 
 @router.post("/pool/refresh")
@@ -1033,7 +1274,7 @@ async def refresh_pool_skills() -> list[PoolSkillSpec]:
     """Force reconcile and return updated pool skill list."""
     result = await asyncio.to_thread(refresh_pool_automation)
     await post_pool_automation_inbox(result)
-    return _build_pool_skill_specs()
+    return await _overlay_pool_catalog(_build_pool_skill_specs())
 
 
 @router.get("/pool/builtin-sources")
@@ -1200,6 +1441,42 @@ async def save_pool_skill(body: SavePoolSkillRequest) -> dict[str, Any]:
         raise HTTPException(status_code=status, detail=result)
     await _follow_auto_sync(result.get("name"))
     return result
+
+
+class SkillI18nRequest(BaseModel):
+    """中文映射编辑请求体（中文显示名 + 一句话中文描述）。"""
+
+    display_name_zh: str = ""
+    description_zh: str = ""
+
+
+@router.put("/pool/{skill_name}/i18n")
+async def update_pool_skill_i18n(
+    skill_name: str,
+    body: SkillI18nRequest,
+) -> dict[str, Any]:
+    """Edit one pool skill's Chinese mapping (manifest + PG mirror)."""
+    from ...agents.skill_system.pool_service import _sync_pool_skill_to_pg
+
+    def _update(payload: dict[str, Any]) -> bool:
+        entry = payload.get("skills", {}).get(skill_name)
+        if not isinstance(entry, dict):
+            return False
+        entry["display_name_zh"] = body.display_name_zh
+        entry["description_zh"] = body.description_zh
+        # 标记人工编辑：后续 sync 不再用 -zh 变体自动回填（清空可持久化）
+        entry["i18n_manual"] = True
+        return True
+
+    changed = mutate_pool_manifest(_update)
+    if not changed:
+        raise HTTPException(status_code=404, detail="Skill not found")
+    _sync_pool_skill_to_pg(skill_name)
+    return {
+        "success": True,
+        "display_name_zh": body.display_name_zh,
+        "description_zh": body.description_zh,
+    }
 
 
 @router.post("/pool/upload-zip")
@@ -1498,6 +1775,21 @@ async def update_pool_builtin(
     return result
 
 
+@router.get("/pool/{skill_name}/files")
+async def list_pool_skill_files(skill_name: str) -> list[SkillFileNode]:
+    """List a pool skill's directory tree for the detail-page file browser."""
+    skill_dir = resolve_pool_skill_dir(skill_name)
+    if skill_dir is None:
+        raise HTTPException(status_code=404, detail="Pool skill not found")
+    return _build_pool_skill_file_tree(skill_dir)
+
+
+@router.get("/pool/{skill_name}/file")
+async def get_pool_skill_file(skill_name: str, path: str) -> dict[str, Any]:
+    """Read one file inside a pool skill for preview (traversal-safe)."""
+    return _read_pool_skill_file(skill_name, path)
+
+
 @router.get("/pool/{skill_name}")
 async def get_pool_skill(skill_name: str) -> PoolSkillDetail:
     detail = _build_pool_skill_detail(skill_name)
@@ -1508,12 +1800,46 @@ async def get_pool_skill(skill_name: str) -> PoolSkillDetail:
 
 @router.delete("/pool/{skill_name}")
 async def delete_pool_skill(skill_name: str) -> dict[str, Any]:
+    from ...agents.skill_system import catalog_store
+    from ...agents.skill_system.store import (
+        normalize_skill_dir_name,
+        read_skill_pool_manifest,
+    )
+
+    try:
+        normalized = normalize_skill_dir_name(skill_name)
+    except Exception:
+        normalized = None
+    if (
+        normalized is None
+        or read_skill_pool_manifest().get("skills", {}).get(normalized) is None
+    ):
+        raise HTTPException(status_code=404, detail="Pool skill not found")
     deleted = SkillPoolService().delete_skill(skill_name)
     if not deleted:
         raise HTTPException(
             status_code=409,
             detail="Skill pool entry cannot be deleted",
         )
+    # 同步清理 PG 平面（catalog/快照/级联绑定）：列表 overlay 紧随
+    # 删除之后读 PG，异步删除会与之竞态（已删技能以 missing 复活）。
+    # PG 故障仅告警，文件平面删除不回滚（孤儿由启动 reconcile 治理）。
+    if catalog_store.skill_pg_plane_available():
+        try:
+            unbound = await catalog_store.purge_pool_skill_pg(normalized)
+            if unbound:
+                logger.info(
+                    "Pool skill %s deletion unbound %d agent binding(s)",
+                    normalized,
+                    unbound,
+                )
+        except Exception:  # noqa: BLE001 - PG plane must never block delete
+            logger.warning(
+                "PG purge failed for pool skill %s; orphan rows remain "
+                "until next bootstrap reconcile",
+                normalized,
+                exc_info=True,
+            )
     return {"deleted": True}
 
 
@@ -1706,11 +2032,23 @@ async def batch_delete_pool_skills(
     skills: list[str],
 ) -> dict[str, Any]:
     """Delete multiple pool skills. Per-skill results."""
+    from ...agents.skill_system import catalog_store
+
     service = SkillPoolService()
     results: dict[str, Any] = {}
     for skill_name in skills:
         try:
             deleted = service.delete_skill(skill_name)
+            # 同步清 PG（理由同单删路由：避免 overlay 读到未删净的行）
+            if deleted and catalog_store.skill_pg_plane_available():
+                try:
+                    await catalog_store.purge_pool_skill_pg(skill_name)
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "PG purge failed for pool skill %s",
+                        skill_name,
+                        exc_info=True,
+                    )
             results[skill_name] = {
                 "success": deleted,
                 "reason": None if deleted else "delete_failed",

@@ -215,14 +215,15 @@ def test_pool_save_missing_404(app_server) -> None:
 
 @pytest.mark.integration
 @pytest.mark.p0
-def test_pool_delete_missing_409(app_server) -> None:
+def test_pool_delete_missing_404(app_server) -> None:
     """Test purpose:
-    - Verify DELETE /pool/{name} for a non-existent skill returns 409
-      ``cannot be deleted``.
+    - Verify DELETE /pool/{name} for a non-existent skill returns 404
+      ``Pool skill not found`` (REST semantics; aligned with the other
+      /pool endpoints' missing-resource responses).
 
     Test flow:
     1. DELETE /pool/<nonexistent>.
-    2. Assert 409.
+    2. Assert 404.
 
     API endpoints:
     - DELETE /api/skills/pool/{skill_name}
@@ -232,7 +233,7 @@ def test_pool_delete_missing_409(app_server) -> None:
         f"{_POOL_BASE}/integ-pool-gone-01",
         timeout=_HTTP_TIMEOUT,
     )
-    assert resp.status_code == 409, app_server.logs_tail()
+    assert resp.status_code == 404, app_server.logs_tail()
 
 
 # ------------------------------------------------------------------ #

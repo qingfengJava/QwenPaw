@@ -794,3 +794,26 @@ describe("skillApi.streamOptimizeSkill", () => {
     expect(chunks).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// pool skill Chinese mapping (i18n plane)
+// ---------------------------------------------------------------------------
+describe("skillApi pool i18n mapping", () => {
+  beforeEach(() => invalidateSkillCache());
+  afterEach(() => vi.clearAllMocks());
+
+  it("updates the Chinese name/description mapping", async () => {
+    vi.mocked(request).mockResolvedValue({ success: true });
+    await skillApi.updatePoolSkillI18n("demo", {
+      display_name_zh: "演示技能",
+      description_zh: "演示用技能描述",
+    });
+    expect(request).toHaveBeenCalledWith("/skills/pool/demo/i18n", {
+      method: "PUT",
+      body: JSON.stringify({
+        display_name_zh: "演示技能",
+        description_zh: "演示用技能描述",
+      }),
+    });
+  });
+});

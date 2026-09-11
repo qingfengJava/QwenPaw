@@ -772,7 +772,12 @@
       "today": "Hôm nay",
       "recent": "7 ngày qua",
       "earlier": "Trước đó"
-    }
+    },
+    "mentionLoading": "Đang tải…",
+    "mentionEmpty": "Không có kết quả",
+    "mentionGroupFile": "Hồ sơ",
+    "mentionGroupSkill": "Kỹ năng",
+    "mentionGroupTool": "Công cụ"
   },
   "debug": {
     "title": "Gỡ lỗi",
@@ -2732,5 +2737,10 @@
     "docRollbackConfirm": "Hoàn tác {{file}} về v{{version}}?",
     "docRollbackHint": "Áp dụng ngay: cập nhật dòng DB + tệp workspace",
     "docRollbackSuccess": "Đã hoàn tác {{file}} về v{{version}}, đã có hiệu lực"
+  },
+  "agentDetail": {
+    "docEditChat": "Chỉnh sửa qua chat",
+    "docEditChatTitle": "Bắt đầu chỉnh sửa {{file}} qua chat",
+    "docEditPrompt": "Giúp tôi chỉnh sửa @ {{file}}. Trước khi bắt đầu, hãy xác nhận với tôi những nội dung cần thay đổi cụ thể."
   }
 }

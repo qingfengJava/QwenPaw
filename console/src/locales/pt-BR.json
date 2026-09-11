@@ -3154,7 +3154,12 @@
       "today": "Hoje",
       "recent": "Últimos 7 dias",
       "earlier": "Anteriores"
-    }
+    },
+    "mentionLoading": "Carregando…",
+    "mentionEmpty": "Nenhuma correspondência",
+    "mentionGroupFile": "Documentos",
+    "mentionGroupSkill": "Habilidade",
+    "mentionGroupTool": "Ferramenta"
   },
   "security": {
     "parent": "Configuracoes",
@@ -4209,5 +4214,10 @@
     "docRollbackConfirm": "Reverter {{file}} para v{{version}}?",
     "docRollbackHint": "Aplica imediatamente: linha do BD + arquivo do workspace atualizados",
     "docRollbackSuccess": "{{file}} revertido para v{{version}}, já em efeito"
+  },
+  "agentDetail": {
+    "docEditChat": "Editar via chat",
+    "docEditChatTitle": "Iniciar edição de {{file}} via chat",
+    "docEditPrompt": "Ajude-me a editar @ {{file}}. Antes de começar, confirme comigo o que exatamente deve ser alterado."
   }
 }

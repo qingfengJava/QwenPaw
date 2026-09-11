@@ -165,4 +165,25 @@ export const agentsApi = {
         body: JSON.stringify({ pinned }),
       },
     ),
+
+  // 对话修改闭环：把工作区白名单档案文件的当前内容回填 PG 权威行
+  //（幂等，内容未变不升版本；无 PG 时全部 skipped 不报错）
+  syncDocumentsFromFiles: (agentId: string) =>
+    request<AgentDocsSyncResult>(
+      `/agents/${agentId}/documents/sync-from-files`,
+      {
+        method: "POST",
+      },
+    ),
 };
+
+/** POST /agents/{id}/documents/sync-from-files 响应。 */
+export interface AgentDocsSyncResult {
+  agent_id: string;
+  /** 本次实际写入 PG（内容有变化）的档案文件。 */
+  synced: string[];
+  /** 内容与 PG 权威行一致（幂等重放，未升版本）的档案文件。 */
+  unchanged: string[];
+  /** 未回填的档案文件（不存在 / 非 PG 平面 / 落库失败）。 */
+  skipped: string[];
+}

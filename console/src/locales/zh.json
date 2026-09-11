@@ -887,6 +887,8 @@
     "tags": "标签",
     "builtin": "内置",
     "custom": "自定义",
+    "originPool": "池引用",
+    "originPrivate": "私有",
     "addSkill": "添加技能",
     "createSkill": "创建技能",
     "viewSkill": "查看技能",
@@ -996,6 +998,13 @@
   },
   "skillPool": {
     "description": "共享本地技能池，包含内置技能和工作区上传。ClawHub 或 LobeHub 等外部导入为独立功能。",
+    "missingContent": "内容缺失",
+    "i18nSection": "中文映射",
+    "i18nNameLabel": "中文名称",
+    "i18nDescLabel": "中文描述",
+    "i18nSave": "保存中文映射",
+    "i18nSaved": "中文映射已保存",
+    "i18nEmptyHint": "暂无中文描述，可在此补全，便于中文用户理解技能用途",
     "broadcast": "广播到智能体",
     "broadcastHint": "将技能广播给选定的智能体",
     "refreshHint": "从磁盘刷新技能池",
@@ -1078,6 +1087,19 @@
     "batchDeleteFailed": "批量删除失败",
     "zipImportFailed": "ZIP 导入失败",
     "externalHubHint": "外部 Hub 导入与本地技能池是独立功能。",
+    "detailTitle": "技能详情",
+    "detailSource": "来源",
+    "detailVersion": "版本",
+    "detailUpdatedAt": "更新时间",
+    "detailLanguage": "语言",
+    "detailUsedBy": "装配员工",
+    "detailDownload": "下载",
+    "detailBinaryHint": "该文件不支持在线预览（{{size}} 字节），可下载后查看",
+    "sourceExternal": "外部目录",
+    "editingBadge": "编辑中",
+    "detailSaved": "技能已保存",
+    "detailTabFiles": "文件内容",
+    "detailTabSettings": "设置",
     "imported": "已导入：{{names}}",
     "noNewImports": "无新技能导入",
     "allBuiltin": "全部内置",
@@ -3428,7 +3450,12 @@
       "today": "今天",
       "recent": "近 7 天",
       "earlier": "更早"
-    }
+    },
+    "mentionLoading": "加载中…",
+    "mentionEmpty": "无匹配项",
+    "mentionGroupFile": "档案",
+    "mentionGroupSkill": "技能",
+    "mentionGroupTool": "工具"
   },
   "security": {
     "parent": "设置",
@@ -4748,7 +4775,10 @@
     "aiTune": "AI 调优",
     "aiTuneDefault": "帮我优化这位数字员工：完善档案描述，并建议合适的技能与工具。",
     "modelFollowGlobal": "跟随全局默认",
-    "modelFollowGlobalTitle": "未单独配置模型，当前跟随全局默认；选择模型即设为本员工专属默认"
+    "modelFollowGlobalTitle": "未单独配置模型，当前跟随全局默认；选择模型即设为本员工专属默认",
+    "docEditChat": "对话修改",
+    "docEditChatTitle": "针对当前文件 {{file}} 发起对话修改",
+    "docEditPrompt": "帮我编辑 @ {{file}}，在开始前请先向我确认具体需要修改的内容"
   },
   "staffdeck": {
     "timeline": {

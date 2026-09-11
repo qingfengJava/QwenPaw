@@ -11,6 +11,8 @@ import type {
   SkillAutomationResponse,
   SkillAutomationUpdate,
   SkillDetail,
+  SkillFileContent,
+  SkillFileNode,
   SkillSpec,
   WorkspaceSkillSummary,
 } from "../types";
@@ -169,6 +171,34 @@ export const skillApi = {
 
   getPoolSkill: (skillName: string) =>
     request<PoolSkillDetail>(`/skills/pool/${encodeURIComponent(skillName)}`),
+
+  // 技能目录文件树（详情页文件预览）
+  listPoolSkillFiles: (skillName: string) =>
+    request<SkillFileNode[]>(
+      `/skills/pool/${encodeURIComponent(skillName)}/files`,
+    ),
+
+  // 技能单文件内容预览（text/image/binary 三态）
+  getPoolSkillFile: (skillName: string, path: string) =>
+    request<SkillFileContent>(
+      `/skills/pool/${encodeURIComponent(skillName)}/file?path=${encodeURIComponent(path)}`,
+    ),
+
+  updatePoolSkillI18n: async (
+    skillName: string,
+    payload: { display_name_zh?: string; description_zh?: string },
+  ) => {
+    const data = await request<{
+      success: boolean;
+      display_name_zh: string;
+      description_zh: string;
+    }>(`/skills/pool/${encodeURIComponent(skillName)}/i18n`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+    invalidateSkillCache({ pool: true });
+    return data;
+  },
 
   refreshSkills: async (agentId?: string) => {
     const opts: RequestInit = { method: "POST" };

@@ -9,3 +9,4 @@ export {
 export { PoolSkillCard } from "./PoolSkillCard";
 export { PoolSkillListItem } from "./PoolSkillListItem";
 export { PoolSkillDrawer } from "./PoolSkillDrawer";
+export { PoolSkillDetailDrawer } from "./PoolSkillDetailDrawer";

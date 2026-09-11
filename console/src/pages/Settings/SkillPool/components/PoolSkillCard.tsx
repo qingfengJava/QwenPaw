@@ -19,7 +19,8 @@ interface PoolSkillCardProps {
   batchModeEnabled: boolean;
   automationPending?: boolean;
   onToggleSelect: (name: string) => void;
-  onEdit: (skill: PoolSkillSpec) => void;
+  // 非批量点击进入详情页
+  onOpen: (skill: PoolSkillSpec) => void;
   onBroadcast: (skill: PoolSkillSpec) => void;
   onDelete: (skill: PoolSkillSpec) => void;
   onAutomationQuickAction: (skill: PoolSkillSpec) => void | Promise<void>;
@@ -31,7 +32,7 @@ export function PoolSkillCard({
   batchModeEnabled,
   automationPending = false,
   onToggleSelect,
-  onEdit,
+  onOpen,
   onBroadcast,
   onDelete,
   onAutomationQuickAction,
@@ -95,7 +96,7 @@ export function PoolSkillCard({
         if (batchModeEnabled) {
           onToggleSelect(skill.name);
         } else {
-          onEdit(skill);
+          onOpen(skill);
         }
       }}
       style={{ cursor: "pointer" }}
@@ -132,13 +133,18 @@ export function PoolSkillCard({
       <div className={styles.titleRow}>
         <Tooltip title={skill.name}>
           <h3 className={styles.skillTitle}>
-            {skill.name}{" "}
+            {skill.display_name_zh || skill.name}{" "}
             {isBuiltin ? (
               <span className={styles.builtinTag}>
                 {t("skillPool.builtin")}
               </span>
             ) : (
               <span className={styles.customTag}>{t("skillPool.custom")}</span>
+            )}
+            {skill.missing && (
+              <span className={styles.customTag}>
+                {t("skillPool.missingContent")}
+              </span>
             )}
             {automationTag && (
               <Tooltip title={automationTagHint}>
@@ -148,6 +154,13 @@ export function PoolSkillCard({
           </h3>
         </Tooltip>
       </div>
+
+      {/* English original name only when the title is a real Chinese display name */}
+      {skill.display_name_zh && /[\u4e00-\u9fff]/.test(skill.display_name_zh) && (
+        <div className={styles.metaInfoRow}>
+          <span className={styles.metaInfoValue}>{skill.name}</span>
+        </div>
+      )}
 
       {/* Updated row */}
       {skill.last_updated && (
@@ -179,7 +192,9 @@ export function PoolSkillCard({
 
       {/* Description */}
       <div className={styles.descriptionSection}>
-        <p className={styles.descriptionText}>{skill.description || "-"}</p>
+        <p className={styles.descriptionText}>
+          {skill.description_zh || skill.description || "-"}
+        </p>
       </div>
 
       {/* Footer - show on hover, batch mode, or mobile (no hover) */}

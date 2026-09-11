@@ -6,6 +6,7 @@ import {
   Select,
   Switch,
 } from "@agentscope-ai/design";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type {
   PoolSkillDetail,
@@ -49,6 +50,10 @@ interface PoolSkillDrawerProps {
   onBuiltinAutoUpdateEnabledChange?: (enabled: boolean) => void;
   onAutoSyncEnabledChange?: (enabled: boolean) => void;
   onAutoSyncTargetsChange?: (targets: string[]) => void;
+  onSaveI18n?: (payload: {
+    display_name_zh: string;
+    description_zh: string;
+  }) => void | Promise<void>;
   validateFrontmatter: (_: unknown, value: string) => Promise<void>;
 }
 
@@ -76,13 +81,21 @@ export function PoolSkillDrawer({
   onBuiltinAutoUpdateEnabledChange,
   onAutoSyncEnabledChange,
   onAutoSyncTargetsChange,
+  onSaveI18n,
   validateFrontmatter,
 }: PoolSkillDrawerProps) {
   const { t } = useTranslation();
+  const [i18nName, setI18nName] = useState(
+    activeSkill?.display_name_zh || "",
+  );
+  const [i18nDesc, setI18nDesc] = useState(
+    activeSkill?.description_zh || "",
+  );
 
   return (
     <Drawer
-      width={520}
+      // 加宽编辑区：内容以 Markdown 源码编辑为主，窄抽屉无法编辑
+      width={720}
       placement="right"
       title={
         mode === "edit"
@@ -167,6 +180,43 @@ export function PoolSkillDrawer({
                     : deriveInstalledFromLabel(activeSkill.installed_from)}
                 </div>
               </div>
+              {onSaveI18n && (
+                <div className={styles.infoSection}>
+                  <div className={styles.infoLabel}>
+                    {t("skillPool.i18nSection")}
+                  </div>
+                  {!activeSkill.display_name_zh &&
+                    !activeSkill.description_zh && (
+                      <div className={styles.automationTargetsHint}>
+                        {t("skillPool.i18nEmptyHint")}
+                      </div>
+                    )}
+                  <Input
+                    style={{ marginBottom: 8 }}
+                    placeholder={t("skillPool.i18nNameLabel")}
+                    defaultValue={activeSkill.display_name_zh || ""}
+                    onChange={(e) => setI18nName(e.target.value)}
+                  />
+                  <Input.TextArea
+                    rows={2}
+                    placeholder={t("skillPool.i18nDescLabel")}
+                    defaultValue={activeSkill.description_zh || ""}
+                    onChange={(e) => setI18nDesc(e.target.value)}
+                  />
+                  <Button
+                    size="small"
+                    style={{ marginTop: 8 }}
+                    onClick={() =>
+                      void onSaveI18n({
+                        display_name_zh: i18nName,
+                        description_zh: i18nDesc,
+                      })
+                    }
+                  >
+                    {t("skillPool.i18nSave")}
+                  </Button>
+                </div>
+              )}
               <div className={styles.infoSection}>
                 <div className={styles.infoLabel}>
                   {t("skillPool.automation")}
@@ -266,7 +316,7 @@ export function PoolSkillDrawer({
                 onContentChange={onContentChange}
                 textareaProps={{
                   placeholder: t("skillPool.contentPlaceholder"),
-                  rows: 12,
+                  rows: 18,
                 }}
               />
             </Form.Item>

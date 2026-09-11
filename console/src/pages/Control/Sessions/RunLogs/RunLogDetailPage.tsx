@@ -6,13 +6,14 @@
  */
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { Spin } from "antd";
 import { useExpertAvatarUri } from "../../../../hooks/useExpertAvatarUri";
 import { useRunLogTrace } from "./useRunLogTrace";
 import { buildSpanTree, buildTraceTree, truncateDetail, type TraceNode } from "./traceTree";
 import { formatClock } from "./format";
+import { buildSessionsListPath, parseRunDetailPath } from "./routePath";
 import { TraceTreePanel } from "./TraceTreePanel";
 import { NodeDetailPanel } from "./NodeDetailPanel";
 import styles from "./runLogs.module.less";
@@ -33,11 +34,18 @@ function findNode(tree: TraceNode, key: string): TraceNode {
 export default function RunLogDetailPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const { aid, runId } = useParams<{ aid: string; runId: string }>();
-  // 返回目标：会话 Tab 下的运行日志列表。必须用 "../sessions"
-  // （route 层级相对路径）："../.." 会解析到根路径跳出沙箱，
-  // 触发 CatchAllNavigate 整体重挂工作台（表现为整页刷新）。
-  const backTarget = `../sessions`;
+  const location = useLocation();
+  const params = useParams<{ aid?: string; runId?: string }>();
+  // 工作台沙箱（/studio/:aid）右栏按 pathname 条件渲染本页，没有 <Route> 匹配，
+  // useParams 返回空对象；此时回退到从 pathname 解析 aid / runId。/agents/:aid/*
+  // 壳有真正的嵌套路由，useParams 正常，优先用之。
+  const parsed = parseRunDetailPath(location.pathname);
+  const aid = params.aid ?? parsed?.aid;
+  const runId = params.runId ?? parsed?.runId;
+  // 返回目标：会话 Tab 下的运行日志列表。用绝对路径（由当前 pathname 剥掉
+  // /runs/:runId 得到）——相对写法 "../sessions" 在沙箱内无 route 基准会解析到
+  // "/sessions" 越界，命中 CatchAllNavigate 弹回档案页；绝对路径两套壳都成立。
+  const backTarget = buildSessionsListPath(location.pathname);
   const { trace, loading, error } = useRunLogTrace(aid, runId);
   const [selectedKey, setSelectedKey] = useState("root");
 

@@ -590,6 +590,24 @@
   color: var(--sd-link);
 }
 
+/* 对话修改入口：锚定当前激活文件，主题色区分于普通文件 chip，
+   推到 chip 行尾（换行时独占行尾，不挤占文件 chip）。 */
+.docEditChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  font-family: inherit;
+  color: var(--sd-link);
+  border-color: var(--sd-link);
+
+  &:hover {
+    background: var(--sd-blue-bg);
+    color: var(--sd-link);
+    border-color: var(--sd-link);
+  }
+}
+
 :global([data-theme="dark"]) .configChip,
 :global(.dark) .configChip {
   background: transparent;

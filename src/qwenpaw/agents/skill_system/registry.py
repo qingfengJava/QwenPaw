@@ -49,8 +49,10 @@ from .store import (
     normalize_skill_manifest_entry,
     read_frontmatter_safe_from_path,
     read_pool_skill_automation,
+    read_skill_frontmatter_from_dir,
     read_skill_manifest,
     read_skill_pool_manifest,
+    resolve_pool_skill_dir,
     safe_skill_dir,
     write_json_atomic,
 )
@@ -823,6 +825,19 @@ def import_builtin_skills(
             )
             entry["builtin_language"] = language
             entry["builtin_source_name"] = variant.source_name
+            # 中文映射回填：从 -zh 变体 frontmatter 提取官方中文名/描述
+            zh_variant = registry[skill_name].get("zh")
+            if zh_variant is not None:
+                zh_post = read_skill_frontmatter_from_dir(
+                    Path(zh_variant.skill_dir),
+                    skill_name,
+                )
+                entry["display_name_zh"] = str(
+                    zh_post.get("name", "") or "",
+                ).strip()
+                entry["description_zh"] = str(
+                    zh_post.get("description", "") or "",
+                ).strip()
             if "config" in existing:
                 entry["config"] = existing.get("config")
             if "tags" in existing:
@@ -1216,6 +1231,20 @@ def list_workspaces() -> list[dict[str, str]]:
     return workspaces
 
 
+def _skill_dir_resolvable(workspace_dir: Path, skill_name: str) -> bool:
+    """Return whether one skill name resolves to a loadable directory.
+
+    引用化解析顺序：workspace 私有自建 → 技能池 → 打包内置。
+    池引用技能在 workspace 下无副本，必须回退池/内置目录判定。
+    """
+    private_dir = get_workspace_skills_dir(workspace_dir) / skill_name
+    if (private_dir / "SKILL.md").exists():
+        return True
+    if resolve_pool_skill_dir(skill_name) is not None:
+        return True
+    return resolve_builtin_skill_dir(skill_name) is not None
+
+
 def resolve_effective_skills(
     workspace_dir: Path,
     channel_name: str,
@@ -1228,8 +1257,49 @@ def resolve_effective_skills(
             continue
         channels = entry.get("channels") or ["all"]
         if "all" in channels or channel_name in channels:
-            skill_dir = get_workspace_skills_dir(workspace_dir) / skill_name
-            if skill_dir.exists():
+            if _skill_dir_resolvable(workspace_dir, skill_name):
+                resolved.append(skill_name)
+    return resolved
+
+
+async def resolve_effective_skills_async(
+    workspace_dir: Path,
+    channel_name: str,
+) -> list[str]:
+    """Resolve enabled skills with the PG binding plane (pg backend).
+
+    pg 后端下 ``agent_skill_bindings`` 为权威读；空表/异常/非 pg 后端
+    一律静默回退 manifest 逻辑（文件平面兼容），绝不阻塞运行时。
+    """
+    from . import catalog_store
+
+    pg_entries: dict[str, dict[str, Any]] | None = None
+    if (
+        catalog_store.skill_pg_plane_available()
+        and catalog_store.skill_storage_backend() == "pg"
+    ):
+        try:
+            pg_entries = await catalog_store.load_agent_bindings_pg(
+                workspace_dir.name,
+            )
+        except Exception:  # noqa: BLE001 - PG plane must never break runtime
+            logger.warning(
+                "agent_skill_bindings read failed for %s; "
+                "falling back to manifest plane",
+                workspace_dir.name,
+                exc_info=True,
+            )
+            pg_entries = None
+    if pg_entries is None:
+        return resolve_effective_skills(workspace_dir, channel_name)
+
+    resolved = []
+    for skill_name, entry in sorted(pg_entries.items()):
+        if not entry.get("enabled", False):
+            continue
+        channels = entry.get("channels") or ["all"]
+        if "all" in channels or channel_name in channels:
+            if _skill_dir_resolvable(workspace_dir, skill_name):
                 resolved.append(skill_name)
     return resolved
 

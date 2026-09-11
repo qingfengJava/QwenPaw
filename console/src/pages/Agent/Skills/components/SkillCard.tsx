@@ -218,11 +218,18 @@ export const SkillCard = React.memo(function SkillCard({
       <div className={styles.titleRow}>
         <Tooltip title={skill.name}>
           <h3 className={styles.skillTitle}>
-            {skill.name}{" "}
+            {skill.display_name_zh || skill.name}{" "}
             {isBuiltin ? (
               <span className={styles.builtinTag}>{t("skills.builtin")}</span>
             ) : (
               <span className={styles.customTag}>{t("skills.custom")}</span>
+            )}
+            {skill.origin && skill.origin !== "builtin" && (
+              <span className={styles.builtinTag}>
+                {skill.origin === "pool"
+                  ? t("skills.originPool")
+                  : t("skills.originPrivate")}
+              </span>
             )}
           </h3>
         </Tooltip>
@@ -268,7 +275,9 @@ export const SkillCard = React.memo(function SkillCard({
 
       {/* Description */}
       <div className={styles.descriptionSection}>
-        <p className={styles.descriptionText}>{skill.description || "-"}</p>
+        <p className={styles.descriptionText}>
+          {skill.description_zh || skill.description || "-"}
+        </p>
       </div>
 
       {/* Footer - only show on hover or batch mode, always on mobile */}

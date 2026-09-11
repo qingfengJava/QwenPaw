@@ -2910,7 +2910,12 @@
       "today": "今日",
       "recent": "過去7日間",
       "earlier": "それ以前"
-    }
+    },
+    "mentionLoading": "読み込み中…",
+    "mentionEmpty": "一致する項目がありません",
+    "mentionGroupFile": "ドキュメント",
+    "mentionGroupSkill": "スキル",
+    "mentionGroupTool": "ツール"
   },
   "security": {
     "parent": "設定",
@@ -4154,5 +4159,10 @@
     "docRollbackConfirm": "{{file}} を v{{version}} にロールバックしますか？",
     "docRollbackHint": "本番に即時反映：権威行とワークスペースファイルを更新",
     "docRollbackSuccess": "{{file}} を v{{version}} にロールバックしました（即時反映）"
+  },
+  "agentDetail": {
+    "docEditChat": "チャットで編集",
+    "docEditChatTitle": "{{file}} のチャット編集を開始",
+    "docEditPrompt": "@ {{file}} の編集を手伝ってください。始める前に具体的な変更内容を私に確認してください。"
   }
 }

@@ -118,7 +118,9 @@ async def test_build_constructs_model_in_worker_thread(monkeypatch):
     def ensure_skills_initialized(*_args):
         skill_threads.append(threading.get_ident())
 
-    def resolve_effective_skills(*_args):
+    async def resolve_effective_skills_async(*_args):
+        # 引用化契约：resolve 原生 async（pg 绑定表权威读），
+        # 运行在事件循环线程而非 worker 线程
         skill_threads.append(threading.get_ident())
         return []
 
@@ -127,8 +129,8 @@ async def test_build_constructs_model_in_worker_thread(monkeypatch):
         ensure_skills_initialized,
     )
     monkeypatch.setattr(
-        "qwenpaw.agents.skill_system.resolve_effective_skills",
-        resolve_effective_skills,
+        "qwenpaw.agents.skill_system.resolve_effective_skills_async",
+        resolve_effective_skills_async,
     )
     ctx = SimpleNamespace(
         agent_id="agent-1",
@@ -141,8 +143,11 @@ async def test_build_constructs_model_in_worker_thread(monkeypatch):
 
     assert model_threads == [model_threads[0]]
     assert model_threads[0] != caller_thread
+    # 引用化契约：仅 ensure_skills_initialized 仍走 worker 线程；
+    # resolve_effective_skills_async 在事件循环线程执行
     assert len(skill_threads) == 2
-    assert all(thread_id != caller_thread for thread_id in skill_threads)
+    assert skill_threads[0] != caller_thread
+    assert skill_threads[1] == caller_thread
 
 
 @pytest.mark.asyncio

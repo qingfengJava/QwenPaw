@@ -125,11 +125,13 @@ class TestDownloadToWorkspace:
         assert result["success"] is True
         assert result["name"] == "demo"
         assert result["workspace_id"] == "agent_x"
-        assert (workspace_dir / "skills" / "demo" / "SKILL.md").exists()
+        # 引用化契约：零拷贝，workspace 不产生技能体副本
+        assert not (workspace_dir / "skills" / "demo" / "SKILL.md").exists()
         entry = _read_workspace_manifest(workspace_dir)["skills"]["demo"]
         assert entry["enabled"] is True
         assert entry["channels"] == ["all"]
         assert entry["source"] == "customized"
+        assert entry["origin"] == "pool"
 
     def test_unknown_skill_not_found(self, pool_env):
         service, pool_dir, workspace_dir = pool_env
@@ -540,7 +542,10 @@ class TestAutoUpdateSync:
         assert result["failed"] == []
         assert result["synced"][0]["skill"] == "demo"
         assert result["synced"][0]["agents"] == ["Agent X"]
-        assert (workspace_dir / "skills" / "demo" / "SKILL.md").exists()
+        # 引用化契约：auto-sync 只做绑定分发，不创建副本
+        assert not (workspace_dir / "skills" / "demo" / "SKILL.md").exists()
+        ws_entry = _read_workspace_manifest(workspace_dir)["skills"]["demo"]
+        assert ws_entry["origin"] == "pool"
         entry = _read_pool_manifest(pool_dir)["skills"]["demo"]
         # The stamped hash lives in the automation namespace (flat keys
         # are migrated away on write).
@@ -611,8 +616,10 @@ class TestRenameBroadcast:
         new_entry = manifest["skills"]["new"]
         assert new_entry["enabled"] is False
         assert new_entry["tags"] == ["t"]
-        assert not (workspace_dir / "skills" / "old").exists()
-        assert (workspace_dir / "skills" / "new" / "SKILL.md").exists()
+        assert new_entry["origin"] == "pool"
+        # 引用化契约：改名迁移只改绑定，不创建新副本；
+        # 内容不一致的遗留拷贝保留为过渡孤儿（去重迁移/人工清理）
+        assert not (workspace_dir / "skills" / "new" / "SKILL.md").exists()
 
     def test_rename_same_name_is_noop(self, pool_env, monkeypatch):
         service, pool_dir, workspace_dir = pool_env

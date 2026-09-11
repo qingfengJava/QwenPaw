@@ -59,10 +59,19 @@ export function SkillListItem({
         </span>
         <div className={styles.listItemInfo}>
           <div className={styles.listItemHeader}>
-            <span className={styles.skillTitle}>{skill.name}</span>
+            <span className={styles.skillTitle}>
+              {skill.display_name_zh || skill.name}
+            </span>
             <span className={styles.typeBadge}>
               {isBuiltin ? t("skills.builtin") : t("skills.custom")}
             </span>
+            {skill.origin && skill.origin !== "builtin" && (
+              <span className={styles.typeBadge}>
+                {skill.origin === "pool"
+                  ? t("skills.originPool")
+                  : t("skills.originPrivate")}
+              </span>
+            )}
             <span className={styles.channelBadge}>{channels}</span>
             {skill.last_updated && (
               <span className={styles.listItemTime}>
@@ -70,7 +79,9 @@ export function SkillListItem({
               </span>
             )}
           </div>
-          <p className={styles.listItemDesc}>{skill.description || "-"}</p>
+          <p className={styles.listItemDesc}>
+            {skill.description_zh || skill.description || "-"}
+          </p>
           {!!skill.tags?.length && (
             <div className={styles.listItemTags}>
               {skill.tags.map((tag) => (

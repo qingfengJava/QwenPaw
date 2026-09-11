@@ -21,6 +21,7 @@ import {
   PoolSkillCard,
   PoolSkillListItem,
   PoolSkillDrawer,
+  PoolSkillDetailDrawer,
 } from "./components";
 import { getBuiltinNoticeLines } from "./builtinNotice";
 import { useSkillPool } from "./useSkillPool";
@@ -238,7 +239,7 @@ function SkillPoolPage() {
                 batchModeEnabled={pool.batchModeEnabled}
                 automationPending={pool.automationPendingSkills.has(skill.name)}
                 onToggleSelect={pool.togglePoolSelect}
-                onEdit={pool.openEdit}
+                onOpen={pool.openDetail}
                 onBroadcast={pool.openBroadcast}
                 onDelete={pool.handleDelete}
                 onAutomationQuickAction={pool.handleAutomationQuickAction}
@@ -255,7 +256,7 @@ function SkillPoolPage() {
                 isSelected={pool.selectedPoolSkills.has(skill.name)}
                 batchModeEnabled={pool.batchModeEnabled}
                 onToggleSelect={pool.togglePoolSelect}
-                onEdit={pool.openEdit}
+                onOpen={pool.openDetail}
                 onBroadcast={pool.openBroadcast}
                 onDelete={pool.handleDelete}
               />
@@ -293,6 +294,33 @@ function SkillPoolPage() {
         onConfirm={pool.handleImportBuiltins}
       />
 
+      <PoolSkillDetailDrawer
+        open={pool.mode === "detail"}
+        skill={pool.activeSkill}
+        loading={pool.detailLoading}
+        workspaces={pool.workspaces}
+        editing={pool.detailEditing}
+        editContent={pool.detailEditContent}
+        saving={pool.detailSaving}
+        onStartEdit={pool.startDetailEdit}
+        onCancelEdit={pool.cancelDetailEdit}
+        onEditContentChange={pool.setDetailEditContent}
+        onSaveEdit={() => void pool.saveDetailEdit()}
+        availableTags={pool.allTags}
+        onRenameSettings={(name) => void pool.renameSettingsSkill(name)}
+        onSaveSettingsTags={(tags) => void pool.saveSettingsTags(tags)}
+        onSaveSettingsI18n={(payload) =>
+          void pool.handleSavePoolSkillI18n(payload)
+        }
+        onSaveSettingsAutomation={(update) =>
+          void pool.saveSettingsAutomation(update)
+        }
+        onSaveSettingsConfig={(text) => void pool.saveSettingsConfig(text)}
+        onClose={pool.closeModal}
+        onBroadcast={pool.openBroadcast}
+        onDelete={pool.handleDelete}
+      />
+
       <PoolSkillDrawer
         mode={pool.mode}
         activeSkill={pool.activeSkill}
@@ -317,6 +345,7 @@ function SkillPoolPage() {
         onBuiltinAutoUpdateEnabledChange={pool.setBuiltinAutoUpdateEnabled}
         onAutoSyncEnabledChange={pool.setAutoSyncEnabled}
         onAutoSyncTargetsChange={pool.setAutoSyncTargets}
+        onSaveI18n={pool.handleSavePoolSkillI18n}
         validateFrontmatter={pool.validateFrontmatter}
       />
 

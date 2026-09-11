@@ -222,13 +222,55 @@
   }
 }
 
-/* Right-side history panel */
+/* Right-side history panel — floating overlay drawer.
+ * Absolutely positioned inside .chatPageRoot so opening it never
+ * reflows (compresses) the main chat column; the mask below catches
+ * outside clicks to close it. */
 .historyPanel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
   width: 330px;
-  flex-shrink: 0;
-  align-self: stretch;
+  z-index: 1000;
   overflow: hidden;
-  position: relative;
+  border-radius: 12px 0 0 12px;
+  box-shadow: -4px 0 12px rgba(0, 0, 0, 0.15);
+  animation: historyPanelSlideIn 240ms cubic-bezier(0.22, 0.78, 0.24, 1);
+}
+
+/* Semi-transparent scrim behind the panel; click closes the panel */
+.historyPanelMask {
+  position: absolute;
+  inset: 0;
+  z-index: 999;
+  background: rgba(0, 0, 0, 0.3);
+  animation: historyPanelMaskIn 200ms ease;
+}
+
+@keyframes historyPanelSlideIn {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes historyPanelMaskIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .historyPanel,
+  .historyPanelMask {
+    animation: none;
+  }
 }
 
 @media (max-width: 900px) {
@@ -559,6 +601,20 @@
   [class*="prompt-icon"],
   [class*="PromptIcon"] {
     color: #ff7f16 !important;
+  }
+}
+
+/* @ 提及菜单空态静默：SDK 的 Popover 只要光标停在 @ 触发词后就弹出，
+ * 候选过滤为空时会渲染“无匹配项”空浮层（loading 态共用同一 empty 容
+ * 器），产品上没有信息量，命中空态即整体隐藏。浮层挂在 body Portal
+ * 下，祖先选择器罩不住，须用顶层 :global 作用域；类名为 SDK 专有前
+ * 缀，无污染风险。items 走宿主侧内存 TTL 缓存，loading 瞬时，一并
+ * 静默可接受且少一次闪烁。 */
+:global {
+  .qwenpaw-chat-anywhere-input-mentions-popover:has(
+    .qwenpaw-chat-anywhere-input-mentions-empty
+  ) {
+    display: none;
   }
 }
 
