@@ -103,17 +103,24 @@ describe("MarketplacePage", () => {
     expect(screen.getByText("plugins-content")).toBeInTheDocument();
   });
 
-  it("shows the skill market from the shared market route", () => {
+  it("defaults the skill market install target to the pool", () => {
     renderMarketplace("/market?tab=skills");
     expect(screen.getByText("skills-content")).toBeInTheDocument();
     expect(screen.getByTestId("skill-market-target")).toHaveTextContent(
-      "workspace",
+      "pool",
     );
   });
 
   it("keeps pool installs when the market is opened from Skill Pool", () => {
     renderMarketplace("/market?tab=skills&target=pool");
     expect(screen.getByTestId("skill-market-target")).toHaveTextContent("pool");
+  });
+
+  it("only installs into an agent workspace with an explicit target", () => {
+    renderMarketplace("/market?tab=skills&target=workspace");
+    expect(screen.getByTestId("skill-market-target")).toHaveTextContent(
+      "workspace",
+    );
   });
 
   it("keeps the skill install queue while switching tabs", () => {

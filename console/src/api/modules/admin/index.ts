@@ -51,6 +51,8 @@ export {
   expertCapabilityApi,
   sopApi,
   evolutionApi,
+  attributionApi,
+  openApiAuditApi,
 } from "./expertCapability";
 export type {
   ResourceBinding,
@@ -70,4 +72,6 @@ export type {
   WorkRecord,
   FeedbackSummary,
   EvolutionProposal,
+  AttributionHeatmap,
+  OpenApiAuditRow,
 } from "./expertCapability";

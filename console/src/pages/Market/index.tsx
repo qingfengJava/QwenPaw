@@ -11,8 +11,14 @@ import {
 import { useAgentStore } from "../../stores/agentStore";
 import styles from "./index.module.less";
 
+/**
+ * 安装目标解析：仅显式 ?target=workspace 才装进智能体工作区，
+ * 其余（无参数 / pool）一律进共享技能池。市场作为公共入口，
+ * 默认必须落到池，避免技能隐式绑死在当前选中智能体上（装完
+ * 技能池看不到、二次安装报 already exists）。
+ */
 function getSkillMarketTarget(value: string | null): InstallTarget {
-  return value === "pool" ? "pool" : "workspace";
+  return value === "workspace" ? "workspace" : "pool";
 }
 
 function SkillMarketplace({
@@ -34,7 +40,9 @@ export default function MarketplacePage() {
   const [searchParams] = useSearchParams();
   const tab = searchParams.get("tab");
   const selectedAgent = useAgentStore((state) => state.selectedAgent);
-  const install = useMarketInstall({ selectedAgent });
+  // 员工技能页入口带 deliver=<agentId>：安装入池后立即分发给该员工
+  const deliverAgentId = searchParams.get("deliver") || undefined;
+  const install = useMarketInstall({ selectedAgent, deliverAgentId });
 
   let content = <AppCenterPage />;
   if (tab === "plugins") {

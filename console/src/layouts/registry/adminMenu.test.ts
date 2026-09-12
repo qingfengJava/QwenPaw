@@ -35,6 +35,7 @@ describe("admin menu role filtering (M5)", () => {
       .sort();
     expect(ids).toEqual([
       "core.admin-agent-grants",
+      "core.admin-attribution",
       "core.admin-audit",
       "core.admin-group",
       "core.admin-knowledge",

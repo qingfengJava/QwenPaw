@@ -1412,6 +1412,19 @@
     "installQueue": "Hàng đợi cài đặt",
     "clearCompleted": "Xóa hoàn thành",
     "retry": "Thử lại",
+    "retryWithName": "Thử lại với tên \"{{name}}\"",
+    "queueTarget": {
+      "pool": "Cài vào: Kho kỹ năng",
+      "poolWithAgent": "Cài vào: Kho kỹ năng, phân phát tới {{agent}}",
+      "workspace": "Cài vào: agent {{agent}}",
+      "activeAgent": "agent hiện tại"
+    },
+    "queueMsg": {
+      "timedOut": "Cài đặt hết thời gian",
+      "failedPrefix": "Thất bại: {{msg}}",
+      "conflictSuggestion": "Kỹ năng đã tồn tại. Tên gợi ý: \"{{name}}\"",
+      "deliverFailed": "Đã vào Kho kỹ năng, nhưng phân phát tới {{agent}} thất bại"
+    },
     "status": {
       "queued": "Đang chờ",
       "installing": "Đang cài đặt",

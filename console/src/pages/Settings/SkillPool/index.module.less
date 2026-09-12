@@ -1559,13 +1559,24 @@
   }
 }
 
-// 设置 Tab：分节表单（对齐旧编辑抽屉的字段面）
+// 设置 Tab：分节表单（双列布局居中，避免宽抽屉右侧大片留白）
 .detailSettingsPanel {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  max-width: 860px;
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
   padding: 4px 4px 24px;
+  display: flex;
+  align-items: flex-start;
+  gap: 40px;
+}
+
+// 双列容器：左列身份字段，右列运行行为字段；窄屏回退单列
+.detailSettingsColumn {
+  flex: 1 1 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 20px;
@@ -1838,6 +1849,21 @@
 }
 
 /* ─── Detail drawer responsive ─────────────────────────────── */
+/* 设置面板：中窄屏回退单列（抽屉宽 62% 后，视口≤1500px 时双列每列不足约 420px，挤压难用） */
+@media (max-width: 1500px) {
+  .detailSettingsPanel {
+    flex-direction: column;
+    /* column 主轴下 flex-start 会让列宽回退为 fit-content，必须拉伸撑满面板 */
+    align-items: stretch;
+    gap: 20px;
+  }
+
+  .detailSettingsColumn {
+    /* 列主轴变为垂直：取消等分伸缩，高度回归内容自适应 */
+    flex: 0 0 auto;
+  }
+}
+
 @media (max-width: 768px) {
   .detailHero {
     flex-direction: column;

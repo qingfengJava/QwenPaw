@@ -3954,6 +3954,13 @@
     "installQueue": "インストールキュー",
     "clearCompleted": "クリア",
     "retry": "再試行",
+    "retryWithName": "「{{name}}」として再試行",
+    "queueTarget": {
+      "pool": "インストール先：スキルプール",
+      "poolWithAgent": "インストール先：スキルプール（{{agent}} にも配布）",
+      "workspace": "インストール先：エージェント {{agent}}",
+      "activeAgent": "現在のエージェント"
+    },
     "status": {
       "queued": "待機中",
       "installing": "インストール中",
@@ -3982,7 +3989,9 @@
     },
     "queueMsg": {
       "timedOut": "インストールがタイムアウトしました",
-      "failedPrefix": "失敗：{{msg}}"
+      "failedPrefix": "失敗：{{msg}}",
+      "conflictSuggestion": "スキルが既に存在します。推奨名：「{{name}}」",
+      "deliverFailed": "スキルプールには追加されましたが、{{agent}} への配布に失敗しました"
     }
   },
   "startup": {

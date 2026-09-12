@@ -84,6 +84,9 @@ const AgentsRunsPage = lazyImportWithRetry(
 const AdminPendingPage = lazyImportWithRetry(
   "../../pages/Admin/Pending.tsx",
 );
+const AdminAttributionPage = lazyImportWithRetry(
+  "../../pages/Admin/Attribution.tsx",
+);
 
 /** "/" lands on the platform workbench. */
 function DefaultRedirect() {
@@ -280,6 +283,11 @@ export const BUILTIN_ROUTES: Route[] = [
     id: "core.admin-pending",
     path: "/admin/pending",
     component: withRequireAdmin(AdminPendingPage),
+  },
+  {
+    id: "core.admin-attribution",
+    path: "/admin/attribution",
+    component: withRequireAdmin(AdminAttributionPage),
   },
   {
     id: "core.admin-expert-teams",

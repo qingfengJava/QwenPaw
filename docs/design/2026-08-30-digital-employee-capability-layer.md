@@ -338,6 +338,29 @@ ACL 沿用 `_enforce_expert_acl` + owner 规则）对称暴露；用户面只读
 
 ## 九、遗留缺口（第三批后重估，显性化）
 
+> **2026-09-12 收尾更新**：缺口 ①②③④ 已全部关闭（分支 agent_run_logs_20260908）——
+> ① 渠道意图分发接线：`BaseChannelConfig.dispatch_experts` 配置字段 +
+> `app/channels/intent_dispatch_gate.py` process 包装门（18 渠道零改动，
+> 经 `ChannelManager` 统一管线拦截，命中转发目标员工 workspace 流式透传，
+> 故障降级默认路由）；
+> ② open API 横切：`openapi_governance.py`（Idempotency-Key 幂等回放
+> TTL 24h + 同键不同指纹 409 + 仅缓存成功响应）+ per-key 滑动窗口限流
+> （`QWENPAW_OPEN_RATE_LIMIT_RPM`，默认 30/min，超限 429+Retry-After）
+> + 全量审计流水（PG 表 `open_api_idempotency`/`open_api_audit`，
+> alembic 0026，changelog 20260912/01）+ 管理端
+> `GET /admin/open-api/audit` 查询面；
+> ③ 归因桶消费面：`feedback.attribution_heatmap` 聚合 +
+> `GET /admin/attribution-heatmap` + console 独立运营页
+> `/admin/attribution`（13 桶 × 日期热力矩阵 + 桶排行 + 员工 top5 +
+> 桶下钻提案抽屉）；
+> ④ SOP 自绘画布：推翻“不做”决策，采用 React Flow（@xyflow/react）
+> + dagre 自动布局交付 `components/sop/SopFlowCanvas.tsx`（自定义
+> 节点/条件边、结构操作撤销重做上限 50 步、属性面板节点/边/槽位编辑、
+> 校验前置阻断保存、编辑/只读双态），员工详情页能力资产区全屏 Drawer
+> 接入；SopFlowPreview 保留为轻量只读视图。
+
+（以下为收尾前的原始记录，保留作历史依据）
+
 1. **渠道适配器接线**：意图分发内核与端点已就绪，18 渠道的适配器尚未
    逐一调用（涉及渠道 registry 改动面，独立批次交付）。
 2. **open API 横切协议**：Idempotency-Key 幂等、审计流水、限流未接

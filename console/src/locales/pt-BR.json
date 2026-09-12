@@ -4009,6 +4009,13 @@
     "installQueue": "Fila de instalação",
     "clearCompleted": "Limpar",
     "retry": "Tentar novamente",
+    "retryWithName": "Tentar como \"{{name}}\"",
+    "queueTarget": {
+      "pool": "Instalar em: Pool de Skills",
+      "poolWithAgent": "Instalar em: Pool de Skills e entregar a {{agent}}",
+      "workspace": "Instalar em: agente {{agent}}",
+      "activeAgent": "agente atual"
+    },
     "status": {
       "queued": "Na fila",
       "installing": "Instalando",
@@ -4037,7 +4044,9 @@
     },
     "queueMsg": {
       "timedOut": "A instalação expirou",
-      "failedPrefix": "Falhou: {{msg}}"
+      "failedPrefix": "Falhou: {{msg}}",
+      "conflictSuggestion": "A skill já existe. Nome sugerido: \"{{name}}\"",
+      "deliverFailed": "Adicionada ao Pool de Skills, mas falhou ao entregar a {{agent}}"
     }
   },
   "startup": {

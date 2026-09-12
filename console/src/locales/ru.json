@@ -3969,6 +3969,13 @@
     "installQueue": "Очередь установки",
     "clearCompleted": "Очистить",
     "retry": "Повторить",
+    "retryWithName": "Повторить как «{{name}}»",
+    "queueTarget": {
+      "pool": "Установка в: пул навыков",
+      "poolWithAgent": "Установка в: пул навыков с доставкой агенту {{agent}}",
+      "workspace": "Установка в: агент {{agent}}",
+      "activeAgent": "текущий агент"
+    },
     "status": {
       "queued": "В очереди",
       "installing": "Установка",
@@ -3997,7 +4004,9 @@
     },
     "queueMsg": {
       "timedOut": "Время установки истекло",
-      "failedPrefix": "Ошибка: {{msg}}"
+      "failedPrefix": "Ошибка: {{msg}}",
+      "conflictSuggestion": "Навык уже существует. Рекомендуемое имя: «{{name}}»",
+      "deliverFailed": "Добавлено в пул навыков, но не доставлено агенту {{agent}}"
     }
   },
   "startup": {

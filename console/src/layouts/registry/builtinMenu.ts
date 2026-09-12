@@ -46,6 +46,7 @@ import i18next from "i18next";
 import {
   BookOpen,
   Bot,
+  Flame,
   Gauge,
   KeyRound,
   Layers,
@@ -272,6 +273,16 @@ export const BUILTIN_MENU: MenuItem[] = [
     icon: ListTodo,
     route: "core.admin-pending",
     order: 5,
+    visible: adminOnly,
+  },
+  {
+    id: "core.admin-attribution",
+    location: "primary.settings",
+    parentId: "core.admin-group",
+    label: navLabel("nav.adminAttribution", "Attribution Heatmap"),
+    icon: Flame,
+    route: "core.admin-attribution",
+    order: 7,
     visible: adminOnly,
   },
   {

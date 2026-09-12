@@ -21,10 +21,26 @@
 
 .queueItemMeta {
   color: rgba(20, 20, 19, 0.45);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.queueTarget {
+  &::before {
+    content: "·";
+    margin-right: 6px;
+  }
 }
 
 .queueItemMessage {
   color: rgba(20, 20, 19, 0.65);
+  word-break: break-word;
+}
+
+.queueItemSuggestion {
+  color: #d48806;
   word-break: break-word;
 }
 
@@ -81,6 +97,10 @@
 
   .queueItemMessage {
     color: rgba(255, 255, 255, 0.65);
+  }
+
+  .queueItemSuggestion {
+    color: #ffc53d;
   }
 
   .queued {

@@ -30,6 +30,7 @@ from pydantic import BaseModel, Field
 from ...experts.apikeys import get_api_key_store
 from ...experts.capability import get_capability_store
 from ...experts.feedback import (
+    attribution_heatmap,
     get_evolution_store,
     get_feedback_store,
 )
@@ -50,6 +51,7 @@ from ...experts.models import (
     WorkRecord,
     expert_agent_id,
 )
+from ...experts.openapi_governance import get_open_governance
 from ...experts.publish import publish_expert
 from ...experts.scheduling import SchedulingService, get_scheduling_store
 from ...experts.sops import get_sop_store
@@ -232,6 +234,25 @@ async def revoke_api_key(expert_id: str, key_id: str) -> None:
     """Soft-revoke（即时生效，幂等）."""
     if not await get_api_key_store().revoke_key(expert_id, key_id):
         raise HTTPException(status_code=404, detail="Key not found")
+
+
+@router.get("/open-api/audit")
+async def open_api_audit(
+    key_id: str = "",
+    expert_id: str = "",
+    limit: int = 50,
+) -> Dict[str, Any]:
+    """Recent open API call audit rows（倒序分页；key/expert 可选过滤）.
+
+    横切审计的消费面：排障（某 key 最近调用）、对账（某员工被
+    外部系统调用的全量留痕）。
+    """
+    rows = await get_open_governance().list_audit(
+        key_id=key_id.strip(),
+        expert_id=expert_id.strip(),
+        limit=limit,
+    )
+    return {"rows": rows, "count": len(rows)}
 
 
 # ---------------------------------------------------------------------------
@@ -663,6 +684,21 @@ async def feedback_summary(
         days=days,
     )
     return summary
+
+
+# ---------------------------------------------------------------------------
+# 归因桶差评热力（缺口③消费面：桶 × 日期矩阵 + 桶排行 + 员工 top5）
+# ---------------------------------------------------------------------------
+
+
+@router.get("/attribution-heatmap")
+async def attribution_heatmap_view(
+    days: int = 30,
+    expert_id: str = "",
+) -> Dict[str, Any]:
+    """Cross-expert negative-feedback attribution heatmap (运营分析页)."""
+    days = max(1, min(days, 90))
+    return await attribution_heatmap(days=days, expert_id=expert_id.strip())
 
 
 # ---------------------------------------------------------------------------

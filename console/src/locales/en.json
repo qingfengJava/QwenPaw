@@ -172,6 +172,7 @@
     "adminWorkforce": "Team Runs",
     "pawapps": "PawApps",
     "adminPending": "To-dos",
+    "adminAttribution": "Attribution Heatmap",
     "agentsManage": "Manage Employees",
     "agentTeams": "Employee Teams",
     "agentRuns": "Run History"
@@ -4397,6 +4398,13 @@
     "installQueue": "Install queue",
     "clearCompleted": "Clear",
     "retry": "Retry",
+    "retryWithName": "Retry as \"{{name}}\"",
+    "queueTarget": {
+      "pool": "Install to: Skill Pool",
+      "poolWithAgent": "Install to: Skill Pool, deliver to {{agent}}",
+      "workspace": "Install to: agent {{agent}}",
+      "activeAgent": "current agent"
+    },
     "status": {
       "queued": "Queued",
       "installing": "Installing",
@@ -4425,7 +4433,9 @@
     },
     "queueMsg": {
       "timedOut": "Install timed out",
-      "failedPrefix": "Failed: {{msg}}"
+      "failedPrefix": "Failed: {{msg}}",
+      "conflictSuggestion": "Skill already exists. Suggested name: \"{{name}}\"",
+      "deliverFailed": "Added to Skill Pool, but failed to deliver to {{agent}}"
     }
   },
   "startup": {

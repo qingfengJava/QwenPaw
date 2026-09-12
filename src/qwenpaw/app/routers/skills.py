@@ -1798,6 +1798,20 @@ async def get_pool_skill(skill_name: str) -> PoolSkillDetail:
     return detail
 
 
+async def _pool_skill_in_pg_catalog(catalog_store: Any, skill_name: str) -> bool:
+    """Return whether the PG skill_catalog still holds this entry."""
+    try:
+        rows = await catalog_store.load_skill_catalog_pg()
+    except Exception:  # noqa: BLE001 - PG 故障按无记录处理，走 404
+        logger.warning(
+            "skill_catalog read failed during orphan delete check for %s",
+            skill_name,
+            exc_info=True,
+        )
+        return False
+    return any(row.get("skill_name") == skill_name for row in rows)
+
+
 @router.delete("/pool/{skill_name}")
 async def delete_pool_skill(skill_name: str) -> dict[str, Any]:
     from ...agents.skill_system import catalog_store
@@ -1810,10 +1824,29 @@ async def delete_pool_skill(skill_name: str) -> dict[str, Any]:
         normalized = normalize_skill_dir_name(skill_name)
     except Exception:
         normalized = None
-    if (
-        normalized is None
-        or read_skill_pool_manifest().get("skills", {}).get(normalized) is None
-    ):
+    in_manifest = (
+        normalized is not None
+        and read_skill_pool_manifest().get("skills", {}).get(normalized)
+        is not None
+    )
+    if not in_manifest:
+        # PG 孤儿兑底：文件平面（目录 + manifest）已不存在但 catalog
+        # 仍留有记录的条目，列表 overlay 以 missing 展示却删不掉。
+        # 这里直接清理 PG 行，兑现"孤儿可见即可清理"的设计意图。
+        if (
+            normalized is not None
+            and catalog_store.skill_pg_plane_available()
+            and catalog_store.skill_storage_backend() == "pg"
+            and await _pool_skill_in_pg_catalog(catalog_store, normalized)
+        ):
+            unbound = await catalog_store.purge_pool_skill_pg(normalized)
+            logger.info(
+                "Purged orphan PG catalog rows for pool skill %s "
+                "(unbound %d binding(s))",
+                normalized,
+                unbound,
+            )
+            return {"deleted": True}
         raise HTTPException(status_code=404, detail="Pool skill not found")
     deleted = SkillPoolService().delete_skill(skill_name)
     if not deleted:

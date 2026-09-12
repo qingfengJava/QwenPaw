@@ -232,8 +232,27 @@ async def create_channel_service(
             agent_id=ws.agent_id,
         )
 
+    # P5 收尾：渠道多员工意图分发门（配置了 dispatch_experts 的渠道在
+    # 消息进入本 agent 前先做一次意图分类，命中更合适员工即转发其
+    # workspace 流式透传；未配置渠道零介入，分发故障降级默认路由）
+    from ..channels.intent_dispatch_gate import wrap_process_with_dispatch
+
+    channels_dump = channels_cfg.model_dump()
+    candidates_by_channel = {
+        key: list(cfg.get("dispatch_experts") or [])
+        for key, cfg in channels_dump.items()
+        if isinstance(cfg, dict) and cfg.get("dispatch_experts")
+    }
+    process = ws.stream_query
+    if candidates_by_channel:
+        process = wrap_process_with_dispatch(
+            ws.stream_query,
+            ws,
+            candidates_by_channel,
+        )
+
     cm = ChannelManager.from_config(
-        process=ws.stream_query,
+        process=process,
         config=temp_config,
         on_last_dispatch=on_last_dispatch,
         workspace_dir=ws.workspace_dir,

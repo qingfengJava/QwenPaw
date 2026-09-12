@@ -45,6 +45,7 @@ vi.mock("lucide-react", () => {
     Bot: stub,
     Building2: stub,
     Database: stub,
+    Flame: stub,
     Gauge: stub,
     KeyRound: stub,
     Layers: stub,

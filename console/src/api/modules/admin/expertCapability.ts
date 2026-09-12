@@ -481,4 +481,46 @@ export const evolutionApi = {
     ),
 };
 
+// ---------------------------------------------------------------------------
+// 归因桶热力（缺口③消费面）+ open API 审计（缺口②消费面）
+// ---------------------------------------------------------------------------
+
+export interface AttributionHeatmap {
+  days: number;
+  buckets: string[];
+  dates: string[];
+  matrix: Record<string, Record<string, number>>;
+  totals: Record<string, number>;
+  top_experts: Array<{ expert_id: string; name: string; count: number }>;
+  total: number;
+}
+
+export interface OpenApiAuditRow {
+  id: string;
+  key_id: string;
+  expert_id: string;
+  method: string;
+  path: string;
+  status_code: number;
+  latency_ms: number;
+  idem_key: string;
+  client_ip: string;
+  created_at?: string | null;
+}
+
+export const attributionApi = {
+  heatmap: (days = 30, expertId = "") =>
+    request<AttributionHeatmap>(
+      `/admin/attribution-heatmap?days=${days}&expert_id=${enc(expertId)}`,
+    ),
+};
+
+export const openApiAuditApi = {
+  list: (keyId = "", expertId = "", limit = 50) =>
+    request<{ rows: OpenApiAuditRow[]; count: number }>(
+      `/admin/open-api/audit?key_id=${enc(keyId)}`
+      + `&expert_id=${enc(expertId)}&limit=${limit}`,
+    ),
+};
+
 export type { ExpertRecord };

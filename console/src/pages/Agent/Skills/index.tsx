@@ -16,6 +16,7 @@ import {
 import type { SkillSpec } from "../../../api/types";
 import type { HarnessDiscoveredSkill } from "../../../api/modules/harness";
 import { PageHeader } from "@/components/PageHeader";
+import { useAgentStore } from "@/stores/agentStore";
 import { useSkillsPage } from "./useSkillsPage";
 import styles from "./index.module.less";
 import { useMemo, useCallback, useState } from "react";
@@ -23,6 +24,7 @@ import { LockKeyhole, Sparkles } from "lucide-react";
 
 function SkillsPage() {
   const { t } = useTranslation();
+  const selectedAgent = useAgentStore((state) => state.selectedAgent);
   const {
     skills,
     providerSkills,
@@ -87,11 +89,13 @@ function SkillsPage() {
     useState<HarnessDiscoveredSkill | null>(null);
 
   const openMarket = useCallback(() => {
-    // Keep the install destination when the shared market page is opened from
-    // the workspace skills view. The skill pool uses the same page but a
-    // different destination.
-    navigate("/market?tab=skills&target=workspace");
-  }, [navigate]);
+    // 员工技能页进市场：安装入共享池，并立即分发给当前员工。
+    // 池是唯一资产源，员工只是获得一份分发副本，避免直装
+    // workspace 导致技能绕过池、其他员工无法复用。
+    navigate(
+      `/market?tab=skills&target=pool&deliver=${encodeURIComponent(selectedAgent)}`,
+    );
+  }, [navigate, selectedAgent]);
 
   // Split skills into enabled and disabled groups
   const { enabledSkills, disabledSkills } = useMemo(() => {

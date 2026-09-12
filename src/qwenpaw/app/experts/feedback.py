@@ -813,6 +813,126 @@ async def _rollback_candidate(proposal: EvolutionProposal) -> None:
     await store.mark_rolled_back(proposal.id)
 
 
+async def attribution_heatmap(
+    days: int = 30,
+    expert_id: str = "",
+) -> Dict[str, Any]:
+    """差评归因热力数据（设计文档 §九 缺口③的消费面）。
+
+    数据源：窗口内 ``evolution_proposals``（LLM 自省归因的产出物，
+    ``candidate.bucket`` 为权威桶位；hypothesis 前缀 ``[bucket]`` 为
+    冗余投影不作依据）。单表一次批量查询 + 内存聚合（五步范式，
+    禁止 N+1）：
+
+    - ``matrix[bucket][date]``：桶 × 日期计数矩阵（空洞日期补零）；
+    - ``totals[bucket]``：窗口内桶总量（供排行与最热桶）；
+    - ``top_experts``：按归因量倒序 top5（一次 IN 批量取名投影）。
+
+    日期统一 UTC 日历日（YYYY-MM-DD），与提案 created_at 的
+    TIMESTAMPTZ 无时区歧义。
+    """
+    from datetime import datetime, timedelta, timezone
+
+    window_days = max(1, min(int(days), 90))
+    since = datetime.now(timezone.utc) - timedelta(days=window_days)
+
+    clauses = ["tenant_id = :tid", "created_at >= :since"]
+    params: Dict[str, Any] = {
+        "tid": current_tenant_id(),
+        "since": since,
+    }
+    if expert_id:
+        clauses.append("expert_id = :eid")
+        params["eid"] = expert_id
+
+    engine = require_enterprise_engine()
+    async with engine.connect() as conn:
+        result = await conn.execute(
+            text(
+                "SELECT created_at, expert_id, candidate FROM "
+                "evolution_proposals WHERE "
+                + " AND ".join(clauses)
+            ),
+            params,
+        )
+        rows = result.all()
+
+    # ---- 内存聚合：桶 × 日期矩阵 + 桶总量 + 员工归因计数 ----
+    matrix: Dict[str, Dict[str, int]] = {
+        bucket: {} for bucket in ATTRIBUTION_BUCKETS
+    }
+    expert_counts: Dict[str, int] = {}
+    total = 0
+    for row in rows:
+        candidate = row.candidate if isinstance(row.candidate, dict) else {}
+        bucket = str(candidate.get("bucket") or "unknown")
+        if bucket not in ATTRIBUTION_BUCKETS:
+            bucket = "unknown"
+        created_at = row.created_at
+        if hasattr(created_at, "astimezone"):
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+            day = created_at.astimezone(timezone.utc).strftime("%Y-%m-%d")
+        else:
+            day = str(created_at or "")[:10]
+        bucket_days = matrix[bucket]
+        bucket_days[day] = bucket_days.get(day, 0) + 1
+        expert_counts[row.expert_id] = expert_counts.get(row.expert_id, 0) + 1
+        total += 1
+
+    # 窗口日期序列（升序，空洞补零由前端/消费方按 dates 基准取 0）
+    dates = [
+        (since + timedelta(days=offset)).strftime("%Y-%m-%d")
+        for offset in range(window_days)
+    ]
+
+    # top5 员工：一次 IN 批量取名（禁止逐条查询的 N+1）
+    top_ids = [
+        eid
+        for eid, _count in sorted(
+            expert_counts.items(),
+            key=lambda kv: kv[1],
+            reverse=True,
+        )[:5]
+    ]
+    names: Dict[str, str] = {}
+    if top_ids:
+        async with engine.connect() as conn:
+            name_rows = await conn.execute(
+                text(
+                    "SELECT id, name FROM experts WHERE tenant_id = :tid "
+                    "AND id = ANY(:ids)"
+                ),
+                {
+                    "tid": current_tenant_id(),
+                    "ids": list(top_ids),
+                },
+            )
+            names = {r.id: (r.name or r.id) for r in name_rows}
+    top_experts = [
+        {
+            "expert_id": eid,
+            "name": names.get(eid, eid),
+            "count": expert_counts[eid],
+        }
+        for eid in top_ids
+    ]
+
+    totals = {
+        bucket: sum(counts.values())
+        for bucket, counts in matrix.items()
+    }
+    return {
+        "days": window_days,
+        "buckets": list(ATTRIBUTION_BUCKETS),
+        "dates": dates,
+        "matrix": matrix,
+        "totals": totals,
+        "top_experts": top_experts,
+        "total": total,
+    }
+
+
 def _utcnow():
     """Current UTC time (helper kept for readability)."""
     from datetime import datetime, timezone

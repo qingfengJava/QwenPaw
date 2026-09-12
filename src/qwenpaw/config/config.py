@@ -325,6 +325,13 @@ class BaseChannelConfig(BaseModel):
     # Channel-level mute: completely disable DM or group messages
     dm_disabled: bool = False
     group_disabled: bool = False
+    # Channel multi-employee intent dispatch (P5 closing batch): this channel's
+    # candidate digital employee expert_id list (the channel's owning agent is
+    # the default receiver; when ≥2 candidates, dispatch_expert_intent is called
+    # before messages enter the agent to re-route to a better-fit employee;
+    # low confidence/degradation always keeps the default routing).
+    # Empty list = dispatch disabled (fully backward compatible).
+    dispatch_experts: List[str] = Field(default_factory=list)
 
 
 class IMessageChannelConfig(BaseChannelConfig):

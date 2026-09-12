@@ -172,6 +172,7 @@
     "adminWorkforce": "团队运行",
     "pawapps": "轻应用",
     "adminPending": "待办",
+    "adminAttribution": "差评归因",
     "agentsManage": "员工运营",
     "agentTeams": "员工团",
     "agentRuns": "运行记录"
@@ -4415,6 +4416,13 @@
     "installQueue": "安装队列",
     "clearCompleted": "清空",
     "retry": "重试",
+    "retryWithName": "用「{{name}}」重试",
+    "queueTarget": {
+      "pool": "安装到：技能池",
+      "poolWithAgent": "安装到：技能池，并分发给 {{agent}}",
+      "workspace": "安装到：智能体 {{agent}}",
+      "activeAgent": "当前智能体"
+    },
     "status": {
       "queued": "排队中",
       "installing": "安装中",
@@ -4443,7 +4451,9 @@
     },
     "queueMsg": {
       "timedOut": "安装超时",
-      "failedPrefix": "失败：{{msg}}"
+      "failedPrefix": "失败：{{msg}}",
+      "conflictSuggestion": "技能已存在，建议改名为「{{name}}」",
+      "deliverFailed": "已入技能池，但分发给 {{agent}} 失败"
     }
   },
   "startup": {

@@ -26,6 +26,7 @@ import {
 } from "antd";
 import { useTranslation } from "react-i18next";
 import { PageHeader } from "@/components/PageHeader";
+import { SopFlowCanvas } from "@/components/sop/SopFlowCanvas";
 import {
   ActivityTimeline,
   SopFlowPreview,
@@ -897,6 +898,8 @@ function ResourcesTab({
   const [adding, setAdding] = useState<"sop" | "knowledge_base" | "tool" | null>(null);
   // SOP 只读流程图预览（查看抽屉）
   const [previewSopId, setPreviewSopId] = useState("");
+  // SOP 画布编辑（缺口④：React Flow 编辑器全屏抽屉）
+  const [editingSop, setEditingSop] = useState<SopRecord | null>(null);
   const [form] = Form.useForm();
 
   const load = useCallback(async () => {
@@ -990,12 +993,36 @@ function ResourcesTab({
                         {row.resource_id}
                       </span>
                       {section.type === "sop" ? (
-                        <Button
-                          size="small"
-                          onClick={() => setPreviewSopId(row.resource_id)}
-                        >
-                          {t("staffdeck.res.view", "查看")}
-                        </Button>
+                        <>
+                          <Button
+                            size="small"
+                            onClick={() => setPreviewSopId(row.resource_id)}
+                          >
+                            {t("staffdeck.res.view", "查看")}
+                          </Button>
+                          <Button
+                            size="small"
+                            type="primary"
+                            ghost
+                            onClick={() => {
+                              const target = sops.find(
+                                (s) => s.id === row.resource_id,
+                              );
+                              if (target) {
+                                setEditingSop(target);
+                              } else {
+                                message.error(
+                                  t(
+                                    "staffdeck.res.sopMissing",
+                                    "SOP 不存在或已删除",
+                                  ),
+                                );
+                              }
+                            }}
+                          >
+                            {t("staffdeck.res.edit", "编辑")}
+                          </Button>
+                        </>
                       ) : null}
                       <Popconfirm
                         title={t("staffdeck.res.removeConfirm", "卸载该能力？")}
@@ -1113,6 +1140,42 @@ function ResourcesTab({
         destroyOnHidden
       >
         {previewSopId ? <SopFlowPreview sopId={previewSopId} /> : null}
+      </Drawer>
+
+      {/* SOP 画布编辑器（缺口④：React Flow，编辑态全屏抽屉） */}
+      <Drawer
+        title={
+          editingSop
+            ? `${t("staffdeck.canvas.editorTitle", "SOP 画布编辑")} · ${editingSop.name} (v${editingSop.version})`
+            : t("staffdeck.canvas.editorTitle", "SOP 画布编辑")
+        }
+        open={editingSop !== null}
+        onClose={() => setEditingSop(null)}
+        width="94vw"
+        destroyOnHidden
+        styles={{ body: { padding: 12, height: "calc(100% - 55px)" } }}
+      >
+        {editingSop ? (
+          <SopFlowCanvas
+            sop={editingSop}
+            onSave={async (payload) => {
+              try {
+                const updated = await sopApi.update(editingSop.id, {
+                  nodes: payload.nodes,
+                  edges: payload.edges,
+                  slots: payload.slots,
+                });
+                setEditingSop(updated);
+                await load();
+                message.success(
+                  t("staffdeck.canvas.saved", "已保存"),
+                );
+              } catch (err) {
+                message.error(String(err));
+              }
+            }}
+          />
+        ) : null}
       </Drawer>
     </div>
   );

@@ -1908,6 +1908,13 @@
     "installQueue": "Antrean instalasi",
     "clearCompleted": "Bersihkan",
     "retry": "Coba lagi",
+    "retryWithName": "Coba lagi sebagai \"{{name}}\"",
+    "queueTarget": {
+      "pool": "Instal ke: Pool Skill",
+      "poolWithAgent": "Instal ke: Pool Skill, teruskan ke {{agent}}",
+      "workspace": "Instal ke: agen {{agent}}",
+      "activeAgent": "agen saat ini"
+    },
     "status": {
       "queued": "Mengantre",
       "installing": "Memasang",
@@ -1936,7 +1943,9 @@
     },
     "queueMsg": {
       "timedOut": "Instalasi habis waktu",
-      "failedPrefix": "Gagal: {{msg}}"
+      "failedPrefix": "Gagal: {{msg}}",
+      "conflictSuggestion": "Skill sudah ada. Nama yang disarankan: \"{{name}}\"",
+      "deliverFailed": "Masuk ke Pool Skill, tetapi gagal dikirim ke {{agent}}"
     }
   },
   "startup": {

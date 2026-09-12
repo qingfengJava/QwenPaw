@@ -316,181 +316,187 @@ export function PoolSkillDetailDrawer({
     const builtin = isSkillBuiltin(skill.source);
     return (
       <div className={styles.detailSettingsPanel}>
-        {/* 改名 */}
-        <section className={styles.detailSettingsSection}>
-          <div className={styles.detailSettingsTitle}>
-            {t("skillPool.skillName")}
-          </div>
-          <div className={styles.detailSettingsRow}>
-            <Input
-              value={settingsName}
-              onChange={(e) => setSettingsName(e.target.value)}
-            />
-            <Button
-              disabled={settingsName.trim() === skill.name}
-              onClick={() => void onRenameSettings?.(settingsName)}
-            >
-              {t("common.save")}
-            </Button>
-          </div>
-        </section>
+        {/* 左列：身份与展示字段（改名 / 标签 / 中文映射） */}
+        <div className={styles.detailSettingsColumn}>
+          {/* 改名 */}
+          <section className={styles.detailSettingsSection}>
+            <div className={styles.detailSettingsTitle}>
+              {t("skillPool.skillName")}
+            </div>
+            <div className={styles.detailSettingsRow}>
+              <Input
+                value={settingsName}
+                onChange={(e) => setSettingsName(e.target.value)}
+              />
+              <Button
+                disabled={settingsName.trim() === skill.name}
+                onClick={() => void onRenameSettings?.(settingsName)}
+              >
+                {t("common.save")}
+              </Button>
+            </div>
+          </section>
 
-        {/* 标签 */}
-        <section className={styles.detailSettingsSection}>
-          <div className={styles.detailSettingsTitle}>
-            {t("skillPool.tags")}
-          </div>
-          <div className={styles.detailSettingsRow}>
-            <Select
-              mode="tags"
-              style={{ width: "100%" }}
-              value={settingsTags}
-              onChange={setSettingsTags}
-              options={availableTags.map((tag) => ({
-                label: tag,
-                value: tag,
-              }))}
-              placeholder={t("skillPool.tagsPlaceholder")}
-              maxCount={MAX_TAGS}
-            />
-            <Button
-              disabled={
-                settingsTags.some((v) => v.length > MAX_TAG_LENGTH) ||
-                JSON.stringify(settingsTags) === JSON.stringify(skill.tags || [])
-              }
-              onClick={() => void onSaveSettingsTags?.(settingsTags)}
-            >
-              {t("common.save")}
-            </Button>
-          </div>
-        </section>
+          {/* 标签 */}
+          <section className={styles.detailSettingsSection}>
+            <div className={styles.detailSettingsTitle}>
+              {t("skillPool.tags")}
+            </div>
+            <div className={styles.detailSettingsRow}>
+              <Select
+                mode="tags"
+                style={{ width: "100%" }}
+                value={settingsTags}
+                onChange={setSettingsTags}
+                options={availableTags.map((tag) => ({
+                  label: tag,
+                  value: tag,
+                }))}
+                placeholder={t("skillPool.tagsPlaceholder")}
+                maxCount={MAX_TAGS}
+              />
+              <Button
+                disabled={
+                  settingsTags.some((v) => v.length > MAX_TAG_LENGTH) ||
+                  JSON.stringify(settingsTags) === JSON.stringify(skill.tags || [])
+                }
+                onClick={() => void onSaveSettingsTags?.(settingsTags)}
+              >
+                {t("common.save")}
+              </Button>
+            </div>
+          </section>
 
-        {/* 中文映射 */}
-        <section className={styles.detailSettingsSection}>
-          <div className={styles.detailSettingsTitle}>
-            {t("skillPool.i18nSection")}
-          </div>
-          <div className={styles.detailSettingsStack}>
-            <Input
-              value={settingsI18nName}
-              placeholder={t("skillPool.i18nNameLabel")}
-              onChange={(e) => setSettingsI18nName(e.target.value)}
-            />
-            <Input.TextArea
-              rows={2}
-              value={settingsI18nDesc}
-              placeholder={t("skillPool.i18nDescLabel")}
-              onChange={(e) => setSettingsI18nDesc(e.target.value)}
-            />
-            <Button
-              disabled={
-                settingsI18nName === (skill.display_name_zh || "") &&
-                settingsI18nDesc === (skill.description_zh || "")
-              }
-              onClick={() =>
-                void onSaveSettingsI18n?.({
-                  display_name_zh: settingsI18nName,
-                  description_zh: settingsI18nDesc,
-                })
-              }
-            >
-              {t("skillPool.i18nSave")}
-            </Button>
-          </div>
-        </section>
+          {/* 中文映射 */}
+          <section className={styles.detailSettingsSection}>
+            <div className={styles.detailSettingsTitle}>
+              {t("skillPool.i18nSection")}
+            </div>
+            <div className={styles.detailSettingsStack}>
+              <Input
+                value={settingsI18nName}
+                placeholder={t("skillPool.i18nNameLabel")}
+                onChange={(e) => setSettingsI18nName(e.target.value)}
+              />
+              <Input.TextArea
+                rows={2}
+                value={settingsI18nDesc}
+                placeholder={t("skillPool.i18nDescLabel")}
+                onChange={(e) => setSettingsI18nDesc(e.target.value)}
+              />
+              <Button
+                disabled={
+                  settingsI18nName === (skill.display_name_zh || "") &&
+                  settingsI18nDesc === (skill.description_zh || "")
+                }
+                onClick={() =>
+                  void onSaveSettingsI18n?.({
+                    display_name_zh: settingsI18nName,
+                    description_zh: settingsI18nDesc,
+                  })
+                }
+              >
+                {t("skillPool.i18nSave")}
+              </Button>
+            </div>
+          </section>
+        </div>
 
-        {/* 自动化：开关即改 */}
-        <section className={styles.detailSettingsSection}>
-          <div className={styles.detailSettingsTitle}>
-            {t("skillPool.automation")}
-          </div>
-          <div className={styles.detailSettingsStack}>
-            {builtin && (
+        {/* 右列：运行行为字段（自动化 / config） */}
+        <div className={styles.detailSettingsColumn}>
+          {/* 自动化：开关即改 */}
+          <section className={styles.detailSettingsSection}>
+            <div className={styles.detailSettingsTitle}>
+              {t("skillPool.automation")}
+            </div>
+            <div className={styles.detailSettingsStack}>
+              {builtin && (
+                <div className={styles.detailSettingsRow}>
+                  <div>
+                    <div>{t("skillPool.builtinAutoUpdate")}</div>
+                    <div className={styles.detailSettingsHint}>
+                      {t("skillPool.builtinAutoUpdateFlow")}
+                    </div>
+                  </div>
+                  <Switch
+                    checked={settingsAutoUpdate}
+                    onChange={(checked) => {
+                      setSettingsAutoUpdate(checked);
+                      void onSaveSettingsAutomation?.({ auto_update: checked });
+                    }}
+                  />
+                </div>
+              )}
               <div className={styles.detailSettingsRow}>
                 <div>
-                  <div>{t("skillPool.builtinAutoUpdate")}</div>
+                  <div>{t("skillPool.autoSync")}</div>
                   <div className={styles.detailSettingsHint}>
-                    {t("skillPool.builtinAutoUpdateFlow")}
+                    {t("skillPool.autoSyncFlow")}
                   </div>
                 </div>
                 <Switch
-                  checked={settingsAutoUpdate}
+                  checked={settingsAutoSync}
                   onChange={(checked) => {
-                    setSettingsAutoUpdate(checked);
-                    void onSaveSettingsAutomation?.({ auto_update: checked });
+                    setSettingsAutoSync(checked);
+                    void onSaveSettingsAutomation?.({
+                      auto_sync: {
+                        enabled: checked,
+                        targets: checked ? settingsAutoSyncTargets : null,
+                      },
+                    });
                   }}
                 />
               </div>
-            )}
-            <div className={styles.detailSettingsRow}>
-              <div>
-                <div>{t("skillPool.autoSync")}</div>
-                <div className={styles.detailSettingsHint}>
-                  {t("skillPool.autoSyncFlow")}
-                </div>
-              </div>
-              <Switch
-                checked={settingsAutoSync}
-                onChange={(checked) => {
-                  setSettingsAutoSync(checked);
-                  void onSaveSettingsAutomation?.({
-                    auto_sync: {
-                      enabled: checked,
-                      targets: checked ? settingsAutoSyncTargets : null,
-                    },
-                  });
-                }}
-              />
+              {settingsAutoSync && (
+                <Select
+                  mode="multiple"
+                  style={{ width: "100%" }}
+                  value={settingsAutoSyncTargets.filter((id) =>
+                    workspaces.some((ws) => ws.agent_id === id),
+                  )}
+                  onChange={(value) => {
+                    const targets = value as string[];
+                    setSettingsAutoSyncTargets(targets);
+                    void onSaveSettingsAutomation?.({
+                      auto_sync: { enabled: true, targets },
+                    });
+                  }}
+                  placeholder={t("skillPool.autoSyncAgentsPlaceholder")}
+                  options={workspaces.map((ws) => ({
+                    label: getAgentDisplayName(
+                      { id: ws.agent_id, name: ws.agent_name ?? "" },
+                      t,
+                    ),
+                    value: ws.agent_id,
+                  }))}
+                />
+              )}
             </div>
-            {settingsAutoSync && (
-              <Select
-                mode="multiple"
-                style={{ width: "100%" }}
-                value={settingsAutoSyncTargets.filter((id) =>
-                  workspaces.some((ws) => ws.agent_id === id),
-                )}
-                onChange={(value) => {
-                  const targets = value as string[];
-                  setSettingsAutoSyncTargets(targets);
-                  void onSaveSettingsAutomation?.({
-                    auto_sync: { enabled: true, targets },
-                  });
-                }}
-                placeholder={t("skillPool.autoSyncAgentsPlaceholder")}
-                options={workspaces.map((ws) => ({
-                  label: getAgentDisplayName(
-                    { id: ws.agent_id, name: ws.agent_name ?? "" },
-                    t,
-                  ),
-                  value: ws.agent_id,
-                }))}
-              />
-            )}
-          </div>
-        </section>
+          </section>
 
-        {/* config */}
-        <section className={styles.detailSettingsSection}>
-          <div className={styles.detailSettingsTitle}>
-            {t("skills.config")}
-          </div>
-          <div className={styles.detailSettingsStack}>
-            <Input.TextArea
-              rows={6}
-              value={settingsConfigText}
-              onChange={(e) => setSettingsConfigText(e.target.value)}
-              placeholder={t("skills.configPlaceholder")}
-            />
-            <Button
-              disabled={
-                settingsConfigText === JSON.stringify(skill.config || {}, null, 2)
-              }
-              onClick={() => void onSaveSettingsConfig?.(settingsConfigText)}
-            >
-              {t("common.save")}
-            </Button>
-          </div>
-        </section>
+          {/* config */}
+          <section className={styles.detailSettingsSection}>
+            <div className={styles.detailSettingsTitle}>
+              {t("skills.config")}
+            </div>
+            <div className={styles.detailSettingsStack}>
+              <Input.TextArea
+                rows={6}
+                value={settingsConfigText}
+                onChange={(e) => setSettingsConfigText(e.target.value)}
+                placeholder={t("skills.configPlaceholder")}
+              />
+              <Button
+                disabled={
+                  settingsConfigText === JSON.stringify(skill.config || {}, null, 2)
+                }
+                onClick={() => void onSaveSettingsConfig?.(settingsConfigText)}
+              >
+                {t("common.save")}
+              </Button>
+            </div>
+          </section>
+        </div>
       </div>
     );
   };
@@ -590,13 +596,17 @@ export function PoolSkillDetailDrawer({
 
   return (
     <Drawer
-      width="92%"
+      width="62%"
       placement="right"
       open={open}
       onClose={onClose}
       destroyOnHidden
       title={t("skillPool.detailTitle")}
-      styles={{ body: { padding: 0, display: "flex", flexDirection: "column" } }}
+      styles={{
+        body: { padding: 0, display: "flex", flexDirection: "column" },
+        // 超宽屏限宽，避免百分比宽度下抽屉过宽、内容两侧留白失衡
+        wrapper: { maxWidth: 1440 },
+      }}
     >
       {loading || !skill ? (
         <div className={styles.detailViewerLoading}>
