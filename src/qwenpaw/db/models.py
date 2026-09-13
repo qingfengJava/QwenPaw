@@ -279,6 +279,11 @@ class AgentRunRow(TenantMixin, Base):
     user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     channel: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     source: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    # 定时任务执行反查键（source=cron 时携带；会话执行为 NULL）
+    cron_job_id: Mapped[Optional[str]] = mapped_column(
+        String(64),
+        nullable=True,
+    )
     environment: Mapped[Optional[str]] = mapped_column(
         String(16),
         nullable=True,
@@ -309,6 +314,13 @@ class AgentRunRow(TenantMixin, Base):
             "tenant_id",
             "agent_id",
             "started_at",
+        ),
+        Index(
+            "ix_agent_runs_cron_job",
+            "tenant_id",
+            "cron_job_id",
+            "started_at",
+            postgresql_where=text("cron_job_id IS NOT NULL"),
         ),
     )
 

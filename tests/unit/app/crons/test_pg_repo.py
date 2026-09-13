@@ -57,7 +57,9 @@ class _FakeResult:
     def all(self) -> list[dict]:
         return list(self._rows)
 
-    async def first(self) -> Optional[dict]:
+    def first(self) -> Optional[dict]:
+        # 与真实 sqlalchemy Result 同步语义一致（曾误作 async 掩盖了
+        # append_history 里 await RowMapping 的 bug）
         return self._first
 
 

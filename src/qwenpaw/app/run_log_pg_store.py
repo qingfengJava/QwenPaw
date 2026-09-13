@@ -33,6 +33,7 @@ _RUN_LIST_FIELDS = (
     "user_id",
     "channel",
     "source",
+    "cron_job_id",
     "environment",
     "query_preview",
     "status",
@@ -107,6 +108,40 @@ def _span_row_to_dict(row: Any) -> dict[str, Any]:
     return span
 
 
+async def get_latest_run_id_for_cron_job(
+    cron_job_id: str,
+    engine: Any = None,
+) -> str:
+    """Authority run id of the newest run triggered by one cron job.
+
+    executor 自建 trace 的 uuid 与 hook 生成并写入 ``agent_runs``
+    的权威 run id 不是同一标识——执行留痕关联详情页时必须以本表
+    为准（cron_job_id 由 hook 经 request_context 透传落列）。
+    """
+    if not cron_job_id:
+        return ""
+    if engine is None:
+        from ..db.engine import create_pg_engine
+
+        engine = create_pg_engine()
+    try:
+        async with engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    text(
+                        "SELECT run_id FROM agent_runs "
+                        "WHERE tenant_id = :tid AND cron_job_id = :jid "
+                        "ORDER BY started_at DESC LIMIT 1"
+                    ),
+                    {"tid": DEFAULT_TENANT_ID, "jid": cron_job_id},
+                )
+            ).first()
+            return str(row[0]) if row else ""
+    except Exception:  # pylint: disable=broad-except
+        logger.warning("run-log cron run lookup failed", exc_info=True)
+        return ""
+
+
 async def start_run_pg(row: dict[str, Any], engine: Any = None) -> None:
     """Insert (or reset) one ``agent_runs`` row with status=running."""
     if engine is None:
@@ -119,11 +154,13 @@ async def start_run_pg(row: dict[str, Any], engine: Any = None) -> None:
                 text(
                     "INSERT INTO agent_runs (tenant_id, run_id, agent_id, "
                     "display_name, session_id, root_session_id, chat_id, "
-                    "user_id, channel, source, environment, query_preview, "
-                    "status, started_at, model, version, app_version) "
+                    "user_id, channel, source, cron_job_id, environment, "
+                    "query_preview, status, started_at, model, version, "
+                    "app_version) "
                     "VALUES (:tenant_id, :run_id, :agent_id, :display_name, "
                     ":session_id, :root_session_id, :chat_id, :user_id, "
-                    ":channel, :source, :environment, :query_preview, "
+                    ":channel, :source, :cron_job_id, :environment, "
+                    ":query_preview, "
                     "'running', :started_at, :model, :version, :app_version) "
                     "ON CONFLICT (run_id) DO UPDATE SET "
                     "agent_id = EXCLUDED.agent_id, "
@@ -135,6 +172,7 @@ async def start_run_pg(row: dict[str, Any], engine: Any = None) -> None:
                     "user_id = EXCLUDED.user_id, "
                     "channel = EXCLUDED.channel, "
                     "source = EXCLUDED.source, "
+                    "cron_job_id = EXCLUDED.cron_job_id, "
                     "environment = EXCLUDED.environment, "
                     "query_preview = EXCLUDED.query_preview, "
                     "status = 'running', "
@@ -154,6 +192,7 @@ async def start_run_pg(row: dict[str, Any], engine: Any = None) -> None:
                     "user_id": row.get("user_id") or None,
                     "channel": row.get("channel") or None,
                     "source": row.get("source") or None,
+                    "cron_job_id": row.get("cron_job_id") or None,
                     "environment": row.get("environment") or None,
                     "query_preview": row.get("query_preview") or None,
                     "started_at": _to_dt(row.get("started_at")),

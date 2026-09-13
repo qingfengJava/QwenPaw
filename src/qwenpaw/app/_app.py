@@ -637,12 +637,19 @@ async def lifespan(  # pylint: disable=too-many-statements,too-many-branches
                 logger.warning(f"Approval service setup skipped: {e}")
 
             # ---- Skill pool auto-update sync ----
+            # M9 上游移植将 fork 旧符号 run_pool_auto_update_sync /
+            # post_auto_update_inbox 更名为 automation pipeline 族；
+            # 此处接回当前实现，恢复启动期自动更新+同步+收件箱通知。
             try:
-                from ..agents.skill_system import run_pool_auto_update_sync
-                from .routers.skills import post_auto_update_inbox
+                from ..agents.skill_system import (
+                    run_pool_automation_pipeline,
+                )
+                from .routers.skills import post_pool_automation_inbox
 
-                au_result = await asyncio.to_thread(run_pool_auto_update_sync)
-                await post_auto_update_inbox(au_result)
+                au_result = await asyncio.to_thread(
+                    run_pool_automation_pipeline,
+                )
+                await post_pool_automation_inbox(au_result)
             except Exception:
                 logger.warning(
                     "Skill pool auto-update sync skipped on startup",

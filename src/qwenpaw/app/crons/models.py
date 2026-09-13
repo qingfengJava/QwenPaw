@@ -261,6 +261,10 @@ class CronExecutionRecord(BaseModel):
     status: Literal["success", "error", "running", "skipped", "cancelled"]
     error: Optional[str] = None
     trigger: Literal["scheduled", "manual"] = "scheduled"
+    #: 关联 agent_runs 的运行 ID（agent 任务执行后回填，执行详情跳转键）
+    run_id: Optional[str] = None
+    #: 本次执行落库的会话 ID（share_session=False 时为 cron:{job_id}）
+    session_id: Optional[str] = None
 
 
 class CronJobView(BaseModel):

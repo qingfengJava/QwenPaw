@@ -75,6 +75,9 @@ const AgentsManagePage = lazyImportWithRetry(
 const AgentExpertDetailPage = lazyImportWithRetry(
   "../../pages/Agents/manage/ExpertDetailPage.tsx",
 );
+const AgentCronRunsPage = lazyImportWithRetry(
+  "../../pages/Agents/manage/CronTaskRunsPage.tsx",
+);
 const AgentsTeamsPage = lazyImportWithRetry(
   "../../pages/Agents/manage/TeamsPage.tsx",
 );
@@ -257,6 +260,13 @@ export const BUILTIN_ROUTES: Route[] = [
     id: "core.agents-manage-detail",
     path: "/agents/manage/:expertId",
     component: withRequireAdmin(AgentExpertDetailPage),
+  },
+  {
+    // 单个定时任务的执行记录页（列表 + 右侧抽屉详情；v6 按 specificity
+    // 匹配，不会被上面的 :expertId 单段路由吞掉）
+    id: "core.agents-manage-schedule-runs",
+    path: "/agents/manage/:expertId/schedules/:jobId/runs",
+    component: withRequireAdmin(AgentCronRunsPage),
   },
   {
     id: "core.agents-teams",

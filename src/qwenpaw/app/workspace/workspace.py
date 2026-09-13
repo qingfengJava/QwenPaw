@@ -624,6 +624,33 @@ class Workspace:
         for name, component in components.items():
             await self._service_manager.set_reusable(name, component)
 
+    async def _wire_expert_scheduling(self) -> None:
+        """Bind the expert scheduling projection (no-op for non-experts).
+
+        观察者若只在对台账的写操作时挂载，对话链路（/cron/jobs）
+        创建的任务会因事件早于挂载而全部丢失；专家 workspace 启动
+        时在此挂注册+执行观察者并回填既有任务。接线失败不阻塞
+        workspace 启动（权威调度仍可用，仅台账投影缺失）。
+        """
+        if not self.agent_id.startswith("expert_"):
+            return
+        cron_manager = self._service_manager.services.get("cron_manager")
+        if cron_manager is None:
+            return
+        from ..experts.scheduling import attach_expert_scheduling
+
+        try:
+            await attach_expert_scheduling(
+                cron_manager,
+                expert_id=self.agent_id[len("expert_"):],
+            )
+        except Exception as e:  # pylint: disable=broad-except
+            logger.warning(
+                "expert scheduling projection wiring failed for %s: %s",
+                sanitize_log_value(self.agent_id),
+                sanitize_log_value(e),
+            )
+
     async def start(self):
         """Start workspace and initialize all components."""
         if self._started:
@@ -664,6 +691,10 @@ class Workspace:
 
             # 3. Start all services via ServiceManager
             await self._service_manager.start_all()
+
+            # 4. 专家 workspace：定时任务投影接线（对话创建任务入统一
+            #    台账 + 执行留痕 + 既有任务回填；非专家 workspace 跳过）
+            await self._wire_expert_scheduling()
 
             self._started = True
             logger.info(

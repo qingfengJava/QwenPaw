@@ -392,7 +392,10 @@ class PgJobRepository(BaseJobRepository):
                         "jid": job_id,
                     },
                 )
-                next_seq = (await seq_row.mappings().first())["next_seq"]
+                # execute() 已返回 Result，mappings().first() 为同步
+                # 取行（此前误加 await 导致 history 写入必崩）
+                seq_row = seq_row.mappings().first()
+                next_seq = seq_row["next_seq"]
                 await conn.execute(
                     text(
                         "INSERT INTO cron_job_history (tenant_id, "

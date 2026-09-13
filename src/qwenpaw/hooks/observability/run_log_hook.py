@@ -37,6 +37,23 @@ def _resolve_environment(agent_id: str | None) -> str:
     return "online"
 
 
+def _resolve_run_origin(ctx: HookContext) -> tuple[str, str]:
+    """Return ``(source, cron_job_id)`` for one run.
+
+    Cron 执行链路在 request_context 里携带 source=cron 与 cron_job_id
+    （见 CronExecutor）；普通会话缺省为 chat。此前 source 硬编码
+    "chat" 导致定时任务执行在运行日志中无法区分来源。
+    """
+    request_context = (
+        getattr(ctx.request, "request_context", None) or {}
+    )
+    if not isinstance(request_context, dict):
+        request_context = {}
+    source = str(request_context.get("source") or "") or "chat"
+    cron_job_id = str(request_context.get("cron_job_id") or "")
+    return source, cron_job_id
+
+
 def _read_agent_labels(ctx: HookContext) -> tuple[str, str]:
     """Return ``(agent_version, model)`` advertised by the agent config."""
     config = getattr(ctx, "agent_config", None)
@@ -107,6 +124,7 @@ class RunLogStartHook(LifecycleHook):
             chat_id = getattr(ctx.request, "chat_id", None) or ""
             environment = _resolve_environment(ctx.agent_id)
             agent_version, model = _read_agent_labels(ctx)
+            source, cron_job_id = _resolve_run_origin(ctx)
 
             # Baseline snapshot: only messages created during this run
             # become trace events (same technique as the cron executor).
@@ -120,7 +138,8 @@ class RunLogStartHook(LifecycleHook):
             await create_trace(
                 run_id,
                 meta={
-                    "source": "chat",
+                    "source": source,
+                    "cron_job_id": cron_job_id or None,
                     "session_id": ctx.session_id,
                     "root_session_id": ctx.root_session_id,
                     "agent_id": ctx.agent_id,
@@ -141,7 +160,7 @@ class RunLogStartHook(LifecycleHook):
                     "chat_id": chat_id,
                     "user_id": user_id,
                     "channel": channel,
-                    "source": "chat",
+                    "source": source,
                     "environment": environment,
                     "query_preview": _get_last_user_text(ctx.input_msgs) or "",
                     "status": "running",
@@ -186,7 +205,8 @@ class RunLogStartHook(LifecycleHook):
                             "chat_id": chat_id or None,
                             "user_id": user_id or None,
                             "channel": channel or None,
-                            "source": "chat",
+                            "source": source,
+                            "cron_job_id": cron_job_id or None,
                             "environment": environment,
                             "query_preview": (
                                 _get_last_user_text(ctx.input_msgs) or None

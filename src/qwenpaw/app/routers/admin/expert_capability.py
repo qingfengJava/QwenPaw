@@ -110,7 +110,8 @@ async def _scheduling_service(
             status_code=400,
             detail="CronManager not ready (expert not published?)",
         )
-    return SchedulingService(cron_manager)
+    # expert_id 用于挂注册观察者：对话/接口创建的任务自动入台账
+    return SchedulingService(cron_manager, expert_id=expert_id)
 
 
 # ---------------------------------------------------------------------------

@@ -261,3 +261,105 @@ class TestRunProviderConfigMigration:
         manager = _FakeManager([])
         assert await migration.run_provider_config_migration(manager) is False
         assert not migration._manifest_path().exists()
+
+    async def test_pg_authoritative_read_runs_key_reconcile(
+        self,
+        monkeypatch,
+        tmp_path,
+    ):
+        """重启路径（manifest 已存在）pg 权威读后必须跑 key 对账。"""
+        monkeypatch.setattr(
+            provider_store,
+            "pg_provider_plane_available",
+            lambda: True,
+        )
+        monkeypatch.setattr(
+            provider_store,
+            "provider_storage_backend",
+            lambda: "pg",
+        )
+        manifest = tmp_path / ".provider_pg_migrated.json"
+        manifest.write_text(
+            json.dumps({"version": migration.MANIFEST_VERSION}),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(migration, "_manifest_path", lambda: manifest)
+        reconciled = {"count": 0}
+
+        async def _reconcile(manager):
+            reconciled["count"] += 1
+            return 0
+
+        monkeypatch.setattr(
+            migration,
+            "_reconcile_file_plane_keys",
+            _reconcile,
+        )
+        manager = _FakeManager([])
+        assert await migration.run_provider_config_migration(manager) is True
+        assert reconciled["count"] == 1
+
+
+class TestReconcileFilePlaneKeys:
+    """PG 权威读后与文件平面交叉核对 api_key 的自愈防线。"""
+
+    async def test_heals_missing_key_from_file_plane(self, monkeypatch):
+        monkeypatch.setattr(
+            migration,
+            "_file_plane_key_fallback",
+            lambda pid: "sk-from-file" if pid == "dashscope" else "",
+        )
+        mirrored: list[dict] = []
+
+        async def _mirror(dump):
+            mirrored.append(dump)
+
+        monkeypatch.setattr(
+            provider_store,
+            "mirror_provider_snapshot_async",
+            _mirror,
+        )
+        manager = _FakeManager([_FakeProvider("dashscope", api_key="")])
+        assert await migration._reconcile_file_plane_keys(manager) == 1
+        assert manager.builtin_providers["dashscope"].api_key == "sk-from-file"
+        assert mirrored[0]["api_key"] == "sk-from-file"
+
+    async def test_keeps_existing_key_untouched(self, monkeypatch):
+        called = {"count": 0}
+
+        def _fallback(pid):
+            called["count"] += 1
+            return "sk-from-file"
+
+        monkeypatch.setattr(migration, "_file_plane_key_fallback", _fallback)
+        manager = _FakeManager(
+            [_FakeProvider("dashscope", api_key="sk-live")],
+        )
+        assert await migration._reconcile_file_plane_keys(manager) == 0
+        assert called["count"] == 0
+        assert manager.builtin_providers["dashscope"].api_key == "sk-live"
+
+    async def test_noop_when_file_plane_also_empty(self, monkeypatch):
+        monkeypatch.setattr(
+            migration,
+            "_file_plane_key_fallback",
+            lambda pid: "",
+        )
+        manager = _FakeManager([_FakeProvider("dashscope", api_key="")])
+        assert await migration._reconcile_file_plane_keys(manager) == 0
+        assert manager.builtin_providers["dashscope"].api_key == ""
+
+    async def test_skips_providers_without_key_requirement(
+        self,
+        monkeypatch,
+    ):
+        monkeypatch.setattr(
+            migration,
+            "_file_plane_key_fallback",
+            lambda pid: "sk-from-file",
+        )
+        manager = _FakeManager(
+            [_FakeProvider("ollama", require_api_key=False)],
+        )
+        assert await migration._reconcile_file_plane_keys(manager) == 0
+        assert manager.builtin_providers["ollama"].api_key == ""

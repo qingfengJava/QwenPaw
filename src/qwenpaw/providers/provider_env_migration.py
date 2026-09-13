@@ -11,11 +11,15 @@
 3. **env Key 迁移**：仍缺 Key 的厂商按约定环境变量名
    （``{ID大写下划线}_API_KEY`` + 少量别名）从 ``os.environ``（含控制台
    环境变量菜单注入值）取 Key 写入配置；
-4. **pg 后端权威读**：从 PG 刷回内存（文件与 env 灌入后的最终态）。
+4. **pg 后端权威读**：从 PG 刷回内存（文件与 env 灌入后的最终态）；
+5. **key 对账自愈**：权威读后逐厂商与文件平面交叉核对 api_key，
+   PG 行缺 key 而文件平面仍保有最后一次正确密文时回填内存并
+   镜像回 PG（任何写入口镜像缺失/未跑完的兑底防线）。
 
 幂等：manifest（``SECRET_DIR/.provider_pg_migrated.json``）成功后落盘，
-重复启动直接跳过（pg 后端仍执行第 4 步权威读）。任何一步失败不写
-manifest，下次启动自动重试；文件平面始终权威/可用，绝不阻塞启动。
+重复启动直接跳过（pg 后端仍执行第 4、5 步权威读与对账）。任何一步
+失败不写 manifest，下次启动自动重试；文件平面始终权威/可用，绝不
+阻塞启动。
 """
 from __future__ import annotations
 
@@ -189,6 +193,37 @@ async def _migrate_env_keys(manager: "ProviderManager") -> list[str]:
     return migrated
 
 
+async def _reconcile_file_plane_keys(manager: "ProviderManager") -> int:
+    """PG 权威读后与文件平面交叉核对 api_key 并自愈。
+
+    任一写入口的 PG 镜像缺失/未跑完时，PG 行 key 为空而文件平面
+    仍保有最后一次正确密文：不回填则权威读把内存清空，下一次写
+    操作还会把空 key 反向污染两个平面。此处读回文件密文解密非空
+    即恢复内存并镜像回 PG（pg 后端 await 权威写）。
+    """
+    healed = 0
+    for provider, is_builtin in _iter_all_providers(manager):
+        if not provider.require_api_key:
+            continue
+        if str(provider.api_key or "").strip():
+            continue
+        pid = str(provider.id or "")
+        fallback = _file_plane_key_fallback(pid)
+        if not fallback:
+            continue
+        provider.api_key = fallback
+        await provider_store.mirror_provider_snapshot_async(
+            _provider_dump(provider, is_builtin=is_builtin),
+        )
+        healed += 1
+        logger.info(
+            "Provider config plane: healed missing API key for '%s' "
+            "from the file plane after PG authoritative read.",
+            pid,
+        )
+    return healed
+
+
 async def run_provider_config_migration(
     manager: "ProviderManager",
 ) -> bool:
@@ -225,6 +260,13 @@ async def run_provider_config_migration(
                     "Provider config plane: restored %d providers from PG.",
                     restored,
                 )
+                healed = await _reconcile_file_plane_keys(manager)
+                if healed:
+                    logger.info(
+                        "Provider config plane: healed %d provider API "
+                        "key(s) from the file plane.",
+                        healed,
+                    )
             except Exception:  # noqa: BLE001
                 logger.warning(
                     "Provider config plane: PG authoritative read failed; "
@@ -244,6 +286,13 @@ async def run_provider_config_migration(
                 "(authoritative read).",
                 restored,
             )
+            healed = await _reconcile_file_plane_keys(manager)
+            if healed:
+                logger.info(
+                    "Provider config plane: healed %d provider API "
+                    "key(s) from the file plane.",
+                    healed,
+                )
     except Exception:  # noqa: BLE001 - 表未就绪/PG 抖动：下次启动重试
         logger.warning(
             "Provider config plane bootstrap failed; will retry on next "

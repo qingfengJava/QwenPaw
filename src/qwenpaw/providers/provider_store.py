@@ -464,6 +464,32 @@ def mirror_provider_snapshot(provider_data: dict[str, Any]) -> None:
     schedule_pg_write(_operation)
 
 
+async def mirror_provider_snapshot_async(
+    provider_data: dict[str, Any],
+) -> None:
+    """Mirror one provider snapshot with backend-aware write semantics.
+
+    pg 后端：await 权威写（失败仅告警不抛，语义同
+    ``write_gateway.authoritative_write``），避免"保存后进程立即
+    重启、影子任务未跑完"导致凭据未入库；dual 后端：保持
+    fire-and-forget 影子语义不变。
+    """
+    if not pg_provider_plane_available():
+        return
+    if provider_storage_backend() != _BACKEND_PG:  # noqa: SLF001
+        mirror_provider_snapshot(provider_data)
+        return
+
+    async def _mirror() -> None:
+        await upsert_provider_snapshot_pg(provider_data)
+        await sync_provider_models_pg(
+            str(provider_data.get("id") or ""),
+            build_model_rows(provider_data),
+        )
+
+    await write_gateway.authoritative_write(_mirror, domain="provider_config")
+
+
 # ---------------------------------------------------------------------------
 # 行级模型投影（provider_models：每厂商每模型一行，参数独立）
 # ---------------------------------------------------------------------------
@@ -654,6 +680,32 @@ def mirror_active_slot(
         )
     else:
         schedule_pg_write(lambda: clear_active_slot_pg(ACTIVE_SLOT_LLM))
+
+
+async def mirror_active_slot_async(
+    provider_id: str | None,
+    model: str | None,
+) -> None:
+    """Active-slot mirror with backend-aware write semantics.
+
+    pg 后端 await 权威写（槽位与快照同族，丢失同样造成重启回退）；
+    dual 后端保持影子 fire-and-forget。
+    """
+    if not pg_provider_plane_available():
+        return
+    if provider_storage_backend() != _BACKEND_PG:  # noqa: SLF001
+        mirror_active_slot(provider_id, model)
+        return
+    if provider_id and model:
+        await write_gateway.authoritative_write(
+            lambda: save_active_slot_pg(ACTIVE_SLOT_LLM, provider_id, model),
+            domain="provider_config",
+        )
+    else:
+        await write_gateway.authoritative_write(
+            lambda: clear_active_slot_pg(ACTIVE_SLOT_LLM),
+            domain="provider_config",
+        )
 
 
 # ---------------------------------------------------------------------------

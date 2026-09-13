@@ -96,6 +96,8 @@ export interface ScheduledTask {
   last_run_at?: string | null;
   last_status?: string;
   run_count?: number;
+  /** 任务来源: ui-界面创建, chat-对话创建, api-开放接口创建 */
+  source?: "ui" | "chat" | "api";
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -108,6 +110,10 @@ export interface TaskRun {
   status: "running" | "succeeded" | "failed";
   result_summary?: string;
   error?: string;
+  /** 关联 agent_runs 的运行 ID（详情跳转键；历史行可能为空） */
+  run_id?: string;
+  /** 本次执行落库的会话 ID */
+  session_id?: string;
   started_at?: string | null;
   finished_at?: string | null;
 }

@@ -4,7 +4,8 @@
  * 结构：Hero 档案卡（头像/姓名职称/在线胶囊/创建者/入职时间/工作风格/
  * 四计数条/生命周期按钮）→ UnderlineTabs：
  *   工作记录（StatCard 四联 + Day/Week/Month 时间线 + 成长记录）/
- *   定时任务（表格 + 暂停/恢复/立即执行/删除 + 新建）/
+ *   定时任务（表格 + 来源列 + 暂停/恢复/立即执行/删除 + 新建；
+ *   执行记录经 run_id 跳转运行日志详情，复用会话日志权威结构）/
  *   记忆（分桶卡片 + 增删 + 清空）/
  *   能力资产（技能 + SOP/知识/工具挂载管理）/
  *   执行日志（定时执行留痕 + 反馈样本；会话回放属 P3 收件箱范围）。
@@ -419,11 +420,10 @@ function ScheduledTab({
   onChanged: () => void;
 }) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const { message } = useAppMessage();
   const [tasks, setTasks] = useState<ScheduledTask[]>([]);
   const [creating, setCreating] = useState(false);
-  const [runsOf, setRunsOf] = useState<ScheduledTask | null>(null);
-  const [runs, setRuns] = useState<TaskRun[]>([]);
   const [form] = Form.useForm();
 
   const load = useCallback(async () => {
@@ -495,6 +495,37 @@ function ScheduledTab({
         locale={{ emptyText: t("staffdeck.sched.empty", "暂无定时任务") }}
         columns={[
           { title: t("staffdeck.sched.name", "名称"), dataIndex: "name" },
+          {
+            title: t("staffdeck.sched.source", "来源"),
+            dataIndex: "source",
+            width: 100,
+            render: (s: string) => {
+              // 枚举描述文本集中映射（后端 source 字段：ui/chat/api）
+              const sourceLabels: Record<
+                string,
+                { label: string; color: string }
+              > = {
+                chat: {
+                  label: t("staffdeck.sched.sourceChat", "对话创建"),
+                  color: "blue",
+                },
+                ui: {
+                  label: t("staffdeck.sched.sourceUi", "界面创建"),
+                  color: "green",
+                },
+                api: {
+                  label: t("staffdeck.sched.sourceApi", "接口创建"),
+                  color: "purple",
+                },
+              };
+              const hit = sourceLabels[s];
+              return hit ? (
+                <Tag color={hit.color}>{hit.label}</Tag>
+              ) : (
+                <Tag>{s || "—"}</Tag>
+              );
+            },
+          },
           {
             title: t("staffdeck.sched.schedule", "计划"),
             render: (_, task) =>
@@ -579,13 +610,14 @@ function ScheduledTab({
                 </Button>
                 <Button
                   size="small"
-                  onClick={() => {
-                    setRunsOf(task);
-                    void expertCapabilityApi
-                      .listTaskRuns(expertId, task.id)
-                      .then((res) => setRuns(res.runs ?? []))
-                      .catch((err) => message.error(String(err)));
-                  }}
+                  onClick={() =>
+                    // 跳转独立执行记录页（对齐会话日志交互：
+                    // 列表页 + 行点击右侧抽屉详情，不再弹框）
+                    navigate(
+                      `/agents/manage/${encodeURIComponent(expertId)}`
+                      + `/schedules/${encodeURIComponent(task.id)}/runs`,
+                    )
+                  }
                 >
                   {t("staffdeck.sched.runs", "执行记录")}
                 </Button>
@@ -679,45 +711,6 @@ function ScheduledTab({
             </Form.Item>
           </Space>
         </Form>
-      </Modal>
-
-      {/* 执行记录弹窗 */}
-      <Modal
-        title={`${runsOf?.name ?? ""} · ${t("staffdeck.sched.runs", "执行记录")}`}
-        open={runsOf !== null}
-        onCancel={() => setRunsOf(null)}
-        footer={null}
-        width={680}
-      >
-        <Table<TaskRun>
-          rowKey="id"
-          dataSource={runs}
-          pagination={false}
-          size="small"
-          locale={{ emptyText: t("staffdeck.sched.noRuns", "暂无执行记录") }}
-          columns={[
-            {
-              title: t("staffdeck.sched.started", "开始"),
-              dataIndex: "started_at",
-              render: (v: string) => (v ?? "").slice(0, 19).replace("T", " "),
-            },
-            {
-              title: t("staffdeck.sched.result", "结果"),
-              dataIndex: "status",
-              width: 90,
-              render: (s: string) => (
-                <StatusPill tone={s === "succeeded" ? "green" : s === "failed" ? "red" : "gray"}>
-                  {s}
-                </StatusPill>
-              ),
-            },
-            {
-              title: t("staffdeck.sched.summary", "结果摘要"),
-              dataIndex: "result_summary",
-              ellipsis: true,
-            },
-          ]}
-        />
       </Modal>
     </div>
   );

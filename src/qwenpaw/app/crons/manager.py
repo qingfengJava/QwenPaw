@@ -94,11 +94,39 @@ class CronManager(ManagerBase):
         #: 域投影（如数字员工定时任务 expert_task_runs）据此回流执行
         #: 留痕——权威仍在本 manager，观察者只做投影，禁止反向写。
         self.execution_observers: list = []
+        #: 注册事件观察者（async (event, spec, job_id) -> None）。
+        #: event ∈ created/updated/deleted/paused/resumed；域投影（如
+        #: 数字员工统一台账 expert_scheduled_tasks）据此把对话/接口
+        #: 创建的任务自动入账——权威仍在本 manager，只投影不反向写。
+        self.registration_observers: list = []
 
     def add_execution_observer(self, observer) -> None:
         """Register one execution observer (idempotent)."""
         if observer not in self.execution_observers:
             self.execution_observers.append(observer)
+
+    def add_registration_observer(self, observer) -> None:
+        """Register one registration observer (idempotent)."""
+        if observer not in self.registration_observers:
+            self.registration_observers.append(observer)
+
+    async def _notify_registration_observers(
+        self,
+        event: str,
+        spec: Optional[CronJobSpec] = None,
+        job_id: str = "",
+    ) -> None:
+        """Fan out one registration event; observer failures never
+        propagate."""
+        for observer in self.registration_observers:
+            try:
+                await observer(event, spec, job_id)
+            except Exception:  # pylint: disable=broad-except
+                logger.exception(
+                    "cron registration observer failed: event=%s job_id=%s",
+                    event,
+                    job_id,
+                )
 
     async def _notify_execution_observers(
         self,
@@ -254,6 +282,12 @@ class CronManager(ManagerBase):
             await self._repo.upsert_job(spec)
             if self._started:
                 await self._register_or_update(spec)
+        # 锁外通知注册观察者（投影写 PG 可能慢，勿占用调度锁）
+        await self._notify_registration_observers(
+            "created",
+            spec=spec,
+            job_id=spec.id or "",
+        )
 
     @api_action(
         methods={"http", "cli", "slash"},
@@ -269,7 +303,14 @@ class CronManager(ManagerBase):
             self._history.pop(job_id, None)
             await self._repo.delete_history(job_id)
             self._rt.pop(job_id, None)
-            return await self._repo.delete_job(job_id)
+            deleted = await self._repo.delete_job(job_id)
+        if deleted:
+            # 锁外通知（observer 只拿 job_id，spec 置 None）
+            await self._notify_registration_observers(
+                "deleted",
+                job_id=job_id,
+            )
+        return deleted
 
     async def pause_job(self, job_id: str) -> None:
         async with self._lock:
@@ -280,6 +321,11 @@ class CronManager(ManagerBase):
             await self._repo.upsert_job(disabled_job)
             if self._scheduler.get_job(job_id):
                 self._scheduler.pause_job(job_id)
+        await self._notify_registration_observers(
+            "paused",
+            spec=disabled_job,
+            job_id=job_id,
+        )
 
     async def resume_job(self, job_id: str) -> None:
         async with self._lock:
@@ -290,6 +336,11 @@ class CronManager(ManagerBase):
             await self._repo.upsert_job(enabled_job)
             if self._scheduler.get_job(job_id):
                 self._scheduler.resume_job(job_id)
+        await self._notify_registration_observers(
+            "resumed",
+            spec=enabled_job,
+            job_id=job_id,
+        )
 
     async def reschedule_heartbeat(self) -> None:
         """Reload heartbeat config and update or remove the heartbeat job.
@@ -821,11 +872,15 @@ class CronManager(ManagerBase):
             finally:
                 st.last_run_at = self._now_in_job_timezone(job)
                 self._states[job.id] = st
+                # run_id/session_id 贯通：执行记录与 agent_runs 运行详情、
+                # 会话回放的关联键（text 任务两者皆为 None）
                 record = CronExecutionRecord(
                     run_at=st.last_run_at,
                     status=st.last_status or "error",
                     error=st.last_error,
                     trigger=trigger,
+                    run_id=execution_result.get("run_id"),
+                    session_id=execution_result.get("session_id"),
                 )
                 records = await self._repo.append_history(
                     job.id,

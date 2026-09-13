@@ -89,7 +89,7 @@ class ProviderManagerPersistenceMixin(
                     snapshot,
                     provider_path,
                 )
-                self._commit_provider_snapshot(provider_id, snapshot)
+                await self._commit_provider_snapshot(provider_id, snapshot)
                 self._bump_provider_revision(provider_id)
 
             await run_async_to_completion(persist_and_commit())
@@ -333,17 +333,20 @@ class ProviderManagerPersistenceMixin(
             snapshot,
             provider_path,
         )
-        self._commit_provider_snapshot(provider_id, snapshot)
+        await self._commit_provider_snapshot(provider_id, snapshot)
 
-    def _commit_provider_snapshot(
+    async def _commit_provider_snapshot(
         self,
         provider_id: str,
         snapshot: Provider,
     ) -> None:
         """Commit a successfully persisted snapshot on the event loop."""
-        # PG 影子双写（dual/pg 后端）：fire-and-forget，失败仅告警，
-        # 文件平面与内存提交不受影响。
-        provider_store.mirror_provider_snapshot(self._pg_mirror_dump(snapshot))
+        # PG 平面镜像：pg 后端 await 权威写（凭据必须入库），dual
+        # 后端 fire-and-forget 影子双写；失败仅告警，文件平面与
+        # 内存提交不受影响。
+        await provider_store.mirror_provider_snapshot_async(
+            self._pg_mirror_dump(snapshot),
+        )
         if provider_id in self.plugin_providers:
             self.plugin_providers[provider_id]["info"] = ProviderInfo(
                 **snapshot.model_dump(),
@@ -924,8 +927,8 @@ class ProviderManagerPersistenceMixin(
             async with lock:
                 await run_sync_io(self.save_active_model, snapshot)
                 self.active_model = snapshot
-                # PG 影子双写 active_llm 槽位（dual/pg 后端）
-                provider_store.mirror_active_slot(
+                # PG 平面双写 active_llm 槽位（pg 后端 await 权威写）
+                await provider_store.mirror_active_slot_async(
                     snapshot.provider_id,
                     snapshot.model,
                 )
@@ -959,8 +962,8 @@ class ProviderManagerPersistenceMixin(
                 active_path = self.root_path / "active_model.json"
                 await run_sync_io(active_path.unlink, missing_ok=True)
                 self.active_model = None
-                # PG 影子同步清除槽位（dual/pg 后端）
-                provider_store.mirror_active_slot(None, None)
+                # PG 平面同步清除槽位（pg 后端 await 权威写）
+                await provider_store.mirror_active_slot_async(None, None)
                 return True
 
         return await run_async_to_completion(clear_model())

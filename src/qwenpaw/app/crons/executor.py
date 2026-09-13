@@ -19,6 +19,26 @@ from ...schemas import RunStatus
 logger = logging.getLogger(__name__)
 
 
+def _last_assistant_text(delta: list) -> str:
+    """Best-effort final reply text from a session delta (newest first)."""
+    for msg in reversed(delta or []):
+        if not isinstance(msg, dict) or msg.get("role") != "assistant":
+            continue
+        content = msg.get("content")
+        if isinstance(content, str) and content.strip():
+            return content.strip()
+        if isinstance(content, list):
+            parts = [
+                str(block.get("text") or "")
+                for block in content
+                if isinstance(block, dict) and block.get("type") == "text"
+            ]
+            text = "\n".join(p for p in parts if p).strip()
+            if text:
+                return text
+    return ""
+
+
 class CronExecutor:
     def __init__(self, *, workspace: Any, channel_manager: Any):
         self._workspace = workspace
@@ -240,9 +260,20 @@ class CronExecutor:
                 delivery_status = "no_content"
             else:
                 delivery_status = "success"
+            # 重新读取会话增量以提取最终回复（执行记录列表的结果摘要）
+            summary_delta = await read_session_messages(
+                runner=self._workspace,
+                session_id=req["session_id"],
+                user_id=req["user_id"],
+                channel=target_channel,
+            )
             return {
                 "task_type": "agent",
                 "run_id": run_id,
+                "session_id": req["session_id"],
+                "final_text": _last_assistant_text(
+                    summary_delta[baseline_count:],
+                ),
                 "delivery_status": delivery_status,
                 "delivery_error": delivery_error,
             }

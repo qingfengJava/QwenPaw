@@ -14,6 +14,7 @@ import pytest
 import qwenpaw.providers.capability_baseline as capability_baseline_module
 import qwenpaw.providers.provider_manager as provider_manager_module
 import qwenpaw.providers.provider_persistence as provider_persistence_module
+from qwenpaw.providers import provider_store
 from qwenpaw.config.config import ModelSlotConfig
 from qwenpaw.exceptions import ModelNotFoundException, ProviderError
 from qwenpaw.local_models.llamacpp import LlamaCppServerSetupResult
@@ -1039,6 +1040,36 @@ async def test_async_provider_update_commits_only_after_snapshot_write(
     release.set()
     assert await update is True
     assert provider.api_key == "new-key"
+
+
+async def test_async_provider_update_mirrors_snapshot_to_pg_plane(
+    isolated_secret_dir,
+    monkeypatch,
+) -> None:
+    """Config update transaction must mirror the snapshot to PG.
+
+    Regression: PUT /{id}/config used to persist only the file plane +
+    memory; under the pg backend the startup PG authoritative read then
+    blanked the never-persisted api_key (credential lost on restart).
+    """
+    manager = ProviderManager()
+    mirrored: list[dict] = []
+
+    async def _fake_mirror(dump):
+        mirrored.append(dump)
+
+    monkeypatch.setattr(
+        provider_store,
+        "mirror_provider_snapshot_async",
+        _fake_mirror,
+    )
+
+    assert await manager.update_provider_async(
+        "openai",
+        {"api_key": "sk-mirror"},
+    )
+    assert len(mirrored) == 1
+    assert mirrored[0]["api_key"] == "sk-mirror"
 
 
 async def test_stale_async_update_restores_live_snapshot_on_disk(

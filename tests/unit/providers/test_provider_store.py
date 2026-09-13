@@ -151,6 +151,82 @@ class TestShadowWriteScheduling:
         provider_store.mirror_active_slot("p", "m")
         provider_store.mirror_active_slot(None, None)
 
+    async def test_mirror_snapshot_async_pg_backend_awaits_authoritative(
+        self,
+        monkeypatch,
+    ):
+        """pg 后端：镜像必须走权威 await 写（凭据必须入库）。"""
+        monkeypatch.setattr(
+            provider_store,
+            "pg_provider_plane_available",
+            lambda: True,
+        )
+        monkeypatch.setattr(
+            provider_store,
+            "provider_storage_backend",
+            lambda: "pg",
+        )
+        domains: list[str] = []
+
+        async def _auth(operation, *, domain):
+            domains.append(domain)
+            await operation()
+            return True
+
+        monkeypatch.setattr(
+            provider_store.write_gateway,
+            "authoritative_write",
+            _auth,
+        )
+        written: list = []
+
+        async def _upsert(data):
+            written.append(data)
+
+        async def _sync_models(pid, rows):
+            written.append(("models", pid))
+
+        monkeypatch.setattr(
+            provider_store,
+            "upsert_provider_snapshot_pg",
+            _upsert,
+        )
+        monkeypatch.setattr(
+            provider_store,
+            "sync_provider_models_pg",
+            _sync_models,
+        )
+        await provider_store.mirror_provider_snapshot_async(
+            {"id": "p1", "api_key": "sk"},
+        )
+        assert domains == ["provider_config"]
+        assert written[0]["api_key"] == "sk"
+        assert written[1] == ("models", "p1")
+
+    async def test_mirror_snapshot_async_dual_backend_stays_shadow(
+        self,
+        monkeypatch,
+    ):
+        """dual 后端：保持 fire-and-forget 影子语义（降级同步 mirror）。"""
+        monkeypatch.setattr(
+            provider_store,
+            "pg_provider_plane_available",
+            lambda: True,
+        )
+        monkeypatch.setattr(
+            provider_store,
+            "provider_storage_backend",
+            lambda: "dual",
+        )
+        scheduled: list = []
+        monkeypatch.setattr(
+            provider_store,
+            "schedule_pg_write",
+            lambda op: scheduled.append(op),
+        )
+        await provider_store.mirror_provider_snapshot_async({"id": "p1"})
+        assert len(scheduled) == 1
+
     def test_mirror_snapshot_schedules_upsert_when_available(
         self,
         monkeypatch,

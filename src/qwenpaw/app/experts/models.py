@@ -471,6 +471,11 @@ class ScheduledTaskRecord(BaseModel):
     #: succeeded | failed | running | ''
     last_status: str = ""
     run_count: int = 0
+    #: 任务来源: ui-界面创建, chat-对话创建, api-开放接口创建
+    #: （注册观察者自动投影，统一台账单一出口）
+    source: str = "ui"
+    #: 来源端原始载荷投影（对话创建时保留 CronJobSpec 关键字段，便于溯源）
+    origin: Dict[str, Any] = Field(default_factory=dict)
     owner_id: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -507,6 +512,10 @@ class TaskRunRecord(BaseModel):
     status: str = "running"
     result_summary: str = ""
     error: str = ""
+    #: 关联 agent_runs 的运行 ID（详情层复用会话日志权威结构；历史行为空串）
+    run_id: str = ""
+    #: 本次执行落库的会话 ID（share_session=False 时为 cron:{job_id}）
+    session_id: str = ""
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
 

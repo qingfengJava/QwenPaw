@@ -275,6 +275,12 @@ class ProviderManager(
             self._copy_provider_state(current, candidate)
         if changed_fields:
             self._bump_provider_revision(provider_id)
+        # PG 平面镜像（缺失即凭据丢失根因）：本事务此前只落文件+
+        # 内存，pg 后端重启经 PG 权威读把未入库的 api_key 覆盖为
+        # 空；pg 后端 await 权威写，dual 后端影子 fire-and-forget。
+        await provider_store.mirror_provider_snapshot_async(
+            self._pg_mirror_dump(candidate),
+        )
         return True
 
     def _update_provider_transaction(
@@ -326,6 +332,12 @@ class ProviderManager(
                 )
             elif snapshot is not provider:
                 self.custom_providers[provider_id] = snapshot
+            # PG 平面镜像（同步事务入口：CLI 等）：fire-and-forget
+            # 调度（无循环走守护线程）；万一未跑完由启动对账从
+            # 文件平面自愈回填 PG。
+            provider_store.mirror_provider_snapshot(
+                self._pg_mirror_dump(snapshot),
+            )
             return True
 
     def _merge_persisted_discovery_state(
