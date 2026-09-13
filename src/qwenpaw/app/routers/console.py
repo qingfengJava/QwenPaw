@@ -900,6 +900,49 @@ async def get_inbox_trace(run_id: str):
     return trace
 
 
+# ── Multi-device sync / restore（M3 全局数据架构收口）──
+
+
+class SyncRestoreRequest(BaseModel):
+    """取回请求体：空列表 = 全域；白名单校验在路由内。"""
+
+    domains: list[str] = []
+
+
+@router.post("/sync/restore")
+async def post_sync_restore(payload: SyncRestoreRequest, request: Request):
+    """手动触发「PG → 本地」全域/指定域取回（幂等）。
+
+    用途：B 设备启动取回失败后的补拉、强制刷新本地物化缓存。
+    各域语义与启动钩子严格一致；单域失败不影响其余域。
+    """
+    from ..sync_restore import RESTORE_DOMAINS, restore_domains
+
+    unknown = [d for d in payload.domains if d not in RESTORE_DOMAINS]
+    if unknown:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"unknown domains: {', '.join(unknown)} "
+                f"(valid: {', '.join(RESTORE_DOMAINS)})"
+            ),
+        )
+    provider_manager = getattr(request.app.state, "provider_manager", None)
+    return await restore_domains(
+        payload.domains or None,
+        provider_manager=provider_manager,
+    )
+
+
+@router.get("/sync/status")
+async def get_sync_status(request: Request):
+    """多设备同步可观测性快照：后端状态 + 各域 PG 侧计数。"""
+    from ..sync_restore import sync_status
+
+    provider_manager = getattr(request.app.state, "provider_manager", None)
+    return await sync_status(provider_manager=provider_manager)
+
+
 # ── Background chat task endpoints ──
 
 

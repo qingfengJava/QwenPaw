@@ -19,9 +19,11 @@ import time
 from unittest.mock import patch
 
 import pytest
+from agentscope.message import ToolResultState
 
 from qwenpaw.agents.tools.file_io import (
     _get_encoding_for_file,
+    _mirror_identity_doc_write,
     _resolve_file_path,
     append_file,
     edit_file,
@@ -357,3 +359,151 @@ class TestAppendFile:
 
         assert max_active == 1
         assert len(f.read_text(encoding="utf-8-sig").splitlines()) == 8
+
+
+# ---------------------------------------------------------------------------
+# _mirror_identity_doc_write（对话写工具 → agent_documents 影子镜像）
+# ---------------------------------------------------------------------------
+
+
+class TestMirrorIdentityDocWrite:
+    """Tests for the identity-file shadow mirror on tool writes."""
+
+    def _patch_workspace(self, workspace_dir):
+        """Patch the per-turn workspace context var getter."""
+        return patch(
+            "qwenpaw.agents.tools.file_io.get_current_workspace_dir",
+            return_value=workspace_dir,
+        )
+
+    def test_whitelisted_file_at_workspace_root_mirrors(self, tmp_path):
+        from qwenpaw.app.agent_docs import store as agent_docs_store
+
+        profile = tmp_path / "PROFILE.md"
+        profile.write_text("# 深度研究员\n", encoding="utf-8")
+        with self._patch_workspace(tmp_path), patch.object(
+            agent_docs_store,
+            "shadow_write_document",
+        ) as mock_shadow:
+            _mirror_identity_doc_write(str(profile))
+        mock_shadow.assert_called_once_with(
+            tmp_path.name,
+            "PROFILE.md",
+            "# 深度研究员\n",
+            updated_by="agent_file_tool",
+        )
+
+    @pytest.mark.parametrize("filename", ["AGENTS.md", "SOUL.md", "agent.json"])
+    def test_all_whitelisted_names_mirror(self, tmp_path, filename):
+        from qwenpaw.app.agent_docs import store as agent_docs_store
+
+        target = tmp_path / filename
+        target.write_text("content", encoding="utf-8")
+        with self._patch_workspace(tmp_path), patch.object(
+            agent_docs_store,
+            "shadow_write_document",
+        ) as mock_shadow:
+            _mirror_identity_doc_write(str(target))
+        assert mock_shadow.call_count == 1
+        assert mock_shadow.call_args.args[1] == filename
+
+    def test_non_whitelisted_file_skipped(self, tmp_path):
+        from qwenpaw.app.agent_docs import store as agent_docs_store
+
+        target = tmp_path / "notes.txt"
+        target.write_text("content", encoding="utf-8")
+        with self._patch_workspace(tmp_path), patch.object(
+            agent_docs_store,
+            "shadow_write_document",
+        ) as mock_shadow:
+            _mirror_identity_doc_write(str(target))
+        mock_shadow.assert_not_called()
+
+    def test_identity_file_outside_workspace_root_skipped(self, tmp_path):
+        from qwenpaw.app.agent_docs import store as agent_docs_store
+
+        sub = tmp_path / "project"
+        sub.mkdir()
+        target = sub / "PROFILE.md"
+        target.write_text("content", encoding="utf-8")
+        with self._patch_workspace(tmp_path), patch.object(
+            agent_docs_store,
+            "shadow_write_document",
+        ) as mock_shadow:
+            _mirror_identity_doc_write(str(target))
+        mock_shadow.assert_not_called()
+
+    def test_no_workspace_context_skipped(self, tmp_path):
+        from qwenpaw.app.agent_docs import store as agent_docs_store
+
+        target = tmp_path / "PROFILE.md"
+        target.write_text("content", encoding="utf-8")
+        with self._patch_workspace(None), patch.object(
+            agent_docs_store,
+            "shadow_write_document",
+        ) as mock_shadow:
+            _mirror_identity_doc_write(str(target))
+        mock_shadow.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_write_file_tool_triggers_mirror(self, tmp_path):
+        from qwenpaw.app.agent_docs import store as agent_docs_store
+
+        profile = tmp_path / "PROFILE.md"
+        with self._patch_workspace(tmp_path), patch.object(
+            agent_docs_store,
+            "shadow_write_document",
+        ) as mock_shadow:
+            result = await write_file(str(profile), "# 新档案")
+        assert result.state == ToolResultState.SUCCESS
+        mock_shadow.assert_called_once_with(
+            tmp_path.name,
+            "PROFILE.md",
+            "# 新档案",
+            updated_by="agent_file_tool",
+        )
+
+    @pytest.mark.asyncio
+    async def test_edit_file_tool_triggers_mirror(self, tmp_path):
+        from qwenpaw.app.agent_docs import store as agent_docs_store
+
+        profile = tmp_path / "PROFILE.md"
+        profile.write_text("旧职责", encoding="utf-8")
+        with self._patch_workspace(tmp_path), patch.object(
+            agent_docs_store,
+            "shadow_write_document",
+        ) as mock_shadow:
+            result = await edit_file(str(profile), "旧职责", "新职责")
+        assert result.state == ToolResultState.SUCCESS
+        mock_shadow.assert_called_once_with(
+            tmp_path.name,
+            "PROFILE.md",
+            "新职责",
+            updated_by="agent_file_tool",
+        )
+
+    @pytest.mark.asyncio
+    async def test_append_file_tool_triggers_mirror(self, tmp_path):
+        from qwenpaw.app.agent_docs import store as agent_docs_store
+
+        profile = tmp_path / "SOUL.md"
+        profile.write_text("base\n", encoding="utf-8")
+        with self._patch_workspace(tmp_path), patch.object(
+            agent_docs_store,
+            "shadow_write_document",
+        ) as mock_shadow:
+            result = await append_file(str(profile), "extra\n")
+        assert result.state == ToolResultState.SUCCESS
+        assert mock_shadow.call_count == 1
+
+    def test_mirror_failure_never_raises(self, tmp_path):
+        from qwenpaw.app.agent_docs import store as agent_docs_store
+
+        target = tmp_path / "PROFILE.md"
+        with self._patch_workspace(tmp_path), patch.object(
+            agent_docs_store,
+            "shadow_write_document",
+            side_effect=RuntimeError("boom"),
+        ):
+            # 不抛出：影子镜像失败绝不影响工具主链路
+            _mirror_identity_doc_write(str(target))

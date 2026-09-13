@@ -215,6 +215,16 @@ async def lifespan(  # pylint: disable=too-many-statements,too-many-branches
     except Exception:  # noqa: BLE001 - housekeeping must never block boot
         logger.debug("agent docs reconcile launch failed", exc_info=True)
 
+    # 收件箱事件启动迁移（一次性 json → PG 导入）。显式生命周期事件：
+    # 运行期读路径永不回填，已读/删除状态不得被种子文件“复活”
+    # （与 crons 平面同一范式）。await 确保后续任何 API 读之前完成。
+    try:
+        from .inbox_store import initialize as inbox_initialize
+
+        await inbox_initialize()
+    except Exception:  # noqa: BLE001 - housekeeping must never block boot
+        logger.warning("inbox initialize failed", exc_info=True)
+
     # Provider initialization scans and may migrate persisted configuration;
     # offload to a worker thread so the event loop never blocks on startup.
     provider_manager = await asyncio.to_thread(ProviderManager.get_instance)

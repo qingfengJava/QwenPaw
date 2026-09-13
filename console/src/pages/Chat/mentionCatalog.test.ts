@@ -96,6 +96,11 @@ describe("buildMentionItems", () => {
     expect(items[3]?.type).toBe("技能");
     expect(items[3]?.label).toContain("📄 docx");
     expect(items[5]?.type).toBe("MCP");
+    // 分组标题文本随 item 下发，由 SDK 弹层补丁渲染为组首标题行
+    expect(items[0]?.group).toBe("档案");
+    expect(items[3]?.group).toBe("技能");
+    expect(items[4]?.group).toBe("工具");
+    expect(items[5]?.group).toBe("MCP");
     // 分类图标供弹层候选与 header 胶囊渲染
     expect(items[0]?.icon).toBeTruthy();
     expect(items[3]?.icon).toBeTruthy();

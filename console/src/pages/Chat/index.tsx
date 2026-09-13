@@ -209,6 +209,7 @@ import {
   setChipClassifier,
   startMentionChipOverlay,
 } from "./mentionChipOverlay";
+import { MentionAwareTextCard } from "./mentionChipView";
 import { useUploadLimitStore } from "../../stores/uploadLimitStore";
 import ChatSenderTabsPanel from "./components/ChatSenderTabsPanel";
 import {
@@ -3625,6 +3626,9 @@ export default function ChatPage({
         AgentScopeRuntimeRequestCard: HostRequestCard,
         AgentScopeRuntimeResponseCard: HostResponseCard,
         Audios: DownloadableAudios,
+        // 用户气泡 Text 卡：raw 纯文本消息内联渲染 mention 胶囊
+        // （与输入框 chip 同视觉），其余形态委托 SDK 默认 Text 卡。
+        Text: MentionAwareTextCard,
         ...pluginCards,
       },
       actions: {

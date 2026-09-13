@@ -37,9 +37,8 @@ import zipfile
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from ...db import write_gateway
 from ...db.base import DEFAULT_TENANT_ID
-from ...providers import provider_store
-from ...providers.provider_store import pg_provider_plane_available
 
 logger = logging.getLogger(__name__)
 
@@ -62,18 +61,22 @@ _SNAPSHOT_IGNORED = {
 
 
 def skill_storage_backend() -> str:
-    """Return the resolved skill storage backend (json/dual/pg)."""
-    return provider_store.provider_storage_backend()
+    """Return the resolved skill storage backend (json/dual/pg).
+
+    M2 收敛：判定统一下沉到 ``db.write_gateway``，消除 agents 层对
+    providers 域的反向依赖（三态开关本属存储层基础设施）。
+    """
+    return write_gateway.resolve_storage_backend()
 
 
 def skill_pg_plane_available() -> bool:
     """True when the skill plane should touch PG (dual/pg + DSN set)."""
-    return pg_provider_plane_available()
+    return write_gateway.pg_write_available()
 
 
 def _schedule(operation: Callable[[], Awaitable[Any]]) -> None:
     """Fire-and-forget a PG write without blocking or failing the caller."""
-    provider_store.schedule_pg_write(operation)
+    write_gateway.submit_shadow_write(operation, domain="skill_catalog")
 
 
 def _json_dumps(value: Any) -> str:

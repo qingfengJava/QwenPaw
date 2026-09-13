@@ -10,6 +10,18 @@ from ..models import CronExecutionRecord, CronJobSpec, JobsFile
 class BaseJobRepository(ABC):
     """Abstract repository for cron job specs persistence."""
 
+    async def initialize(self) -> None:
+        """One-time startup hook (optional legacy-data migration).
+
+        Called by ``CronManager.start()`` before the first ``load()``.
+        Repositories that need a one-shot import (e.g. file → PG
+        backfill) override this; the default is a no-op. Runtime
+        reads must never trigger migration implicitly — otherwise a
+        transient empty plane (e.g. right after deleting the last
+        job) would resurrect data from the projection cache.
+        """
+        return None
+
     @abstractmethod
     async def load(self) -> JobsFile:
         """Load all jobs from storage."""

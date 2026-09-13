@@ -10,8 +10,8 @@ from types import SimpleNamespace
 import pytest
 
 from qwenpaw.config.config import ModelSlotConfig
+from qwenpaw.db import write_gateway
 from qwenpaw.providers import agent_model_store
-from qwenpaw.providers import provider_store
 
 
 @pytest.fixture(autouse=True)
@@ -19,9 +19,9 @@ def _pin_backend_env(monkeypatch):
     """钉回测试期望的后端环境，防止宿主机配置污染（历史教训）。"""
     monkeypatch.delenv("QWENPAW_STORAGE_BACKEND", raising=False)
     monkeypatch.delenv("QWENPAW_PG_DSN", raising=False)
-    provider_store.reset_backend_cache()
+    write_gateway.reset_backend_cache()
     yield
-    provider_store.reset_backend_cache()
+    write_gateway.reset_backend_cache()
 
 
 def _agent_config(active_model=None):
@@ -150,11 +150,12 @@ class TestPersistAgentModelSlot:
         monkeypatch.setenv("QWENPAW_STORAGE_BACKEND", "dual")
         captured = {}
 
-        def _fake_schedule(operation):
+        def _fake_schedule(operation, *, domain="pg"):
             captured["scheduled"] = True
+            captured["domain"] = domain
 
         monkeypatch.setattr(
-            provider_store, "schedule_pg_write", _fake_schedule
+            write_gateway, "submit_shadow_write", _fake_schedule
         )
         asyncio.run(agent_model_store.persist_agent_model_slot("a1", "p1", "m1"))
         assert captured.get("scheduled") is True
@@ -219,9 +220,9 @@ class TestPersistAgentModelSlot:
 
 class TestMirrorAgentModelSlot:
     def test_mirror_noop_when_plane_unavailable(self, monkeypatch):
-        # 平面不可用时真实 schedule_pg_write 直接短路，operation 永不执行
+        # 平面不可用时网关影子调度直接短路，operation 永不执行
         monkeypatch.setattr(
-            provider_store, "pg_provider_plane_available", lambda: False
+            write_gateway, "pg_write_available", lambda: False
         )
         executed = {"count": 0}
 
@@ -237,17 +238,20 @@ class TestMirrorAgentModelSlot:
     def test_mirror_schedules_when_available(self, monkeypatch):
         monkeypatch.setenv("QWENPAW_PG_DSN", "postgresql+asyncpg://x")
         monkeypatch.setenv("QWENPAW_STORAGE_BACKEND", "dual")
-        provider_store.reset_backend_cache()
+        write_gateway.reset_backend_cache()
         scheduled = {"count": 0}
 
-        def _fake_schedule(operation):
+        def _fake_schedule(operation, *, domain="pg"):
             scheduled["count"] += 1
+            scheduled["domain"] = domain
 
         monkeypatch.setattr(
-            provider_store, "schedule_pg_write", _fake_schedule
+            write_gateway, "submit_shadow_write", _fake_schedule
         )
         agent_model_store.mirror_agent_model_slot("a1", "p1", "m1")
         assert scheduled["count"] == 1
+        # M2 收敛：影子写日志域名归属 agent_model_slots（不再误归 provider）
+        assert scheduled["domain"] == "agent_model_slots"
 
 
 class TestConfigJsonRoundTrip:

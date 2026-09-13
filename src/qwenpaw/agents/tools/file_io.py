@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # flake8: noqa: E501
 # pylint: disable=line-too-long
+import logging
 import os
 from pathlib import Path
 from typing import Optional
@@ -18,6 +19,7 @@ from .utils import (
 from ...config.context import (
     get_all_project_dir_paths,
     get_current_recent_max_bytes,
+    get_current_workspace_dir,
     get_tool_base_dir,
 )
 from ...runtime.tool_registry import tool_descriptor
@@ -27,7 +29,59 @@ from ...utils.io_utils import (
     write_text_atomic_async,
 )
 
+logger = logging.getLogger(__name__)
+
 _USER_FILE_MODE = 0o644
+
+
+def _mirror_identity_doc_write(resolved_path: str) -> None:
+    """Mirror a tool write of an agent identity file into PostgreSQL.
+
+    对话链路（write_file/edit_file/append_file）直接落盘的档案文件
+    （PROFILE.md/AGENTS.md/SOUL.md/agent.json）必须同步镜像到
+    ``agent_documents`` 影子表：启动对账（Phase B 权威裁决）以 PG 为准
+    反向覆盖文件，若对话修改只落盘不落库，重启后会被 PG 旧内容覆盖丢失。
+
+    仅当写入位置恰好是当前 agent workspace 根目录时才镜像（project
+    目录下的同名文件不是档案）；文件名白名单与无 PG 降级由
+    ``shadow_write_document`` 统一兜底（非白名单/未配置 PG 静默忽略），
+    影子写自身 fire-and-forget、绝不抛出。本函数任何异常都只降级为
+    DEBUG 日志，不影响工具主链路。
+
+    Args:
+        resolved_path: 已解析的绝对文件路径。
+    """
+    try:
+        # 延迟 import：工具层不承载 app 层依赖（与 config.py 收口同模式）
+        from ...app.agent_docs.store import (
+            DOC_TYPE_BY_FILENAME,
+            shadow_write_document,
+        )
+
+        filename = Path(resolved_path).name
+        if filename not in DOC_TYPE_BY_FILENAME:
+            return
+        workspace_dir = get_current_workspace_dir()
+        if workspace_dir is None:
+            return
+        parent = Path(resolved_path).parent
+        if os.path.normcase(str(parent)) != os.path.normcase(
+            str(workspace_dir),
+        ):
+            return
+        content = Path(resolved_path).read_text(encoding="utf-8")
+        shadow_write_document(
+            Path(workspace_dir).name,
+            filename,
+            content,
+            updated_by="agent_file_tool",
+        )
+    except Exception:  # pylint: disable=broad-except
+        logger.debug(
+            "Identity doc shadow mirror skipped for %s",
+            resolved_path,
+            exc_info=True,
+        )
 
 
 def _path_to_file_url(path: str) -> str:
@@ -331,6 +385,8 @@ async def write_file(
                 encoding=encoding,
                 new_file_mode=_USER_FILE_MODE,
             )
+        # 档案文件写盘成功后镜像到 agent_documents（fire-and-forget）
+        _mirror_identity_doc_write(file_path)
         return ToolChunk(
             is_last=True,
             state=ToolResultState.SUCCESS,
@@ -460,6 +516,8 @@ async def edit_file(
                 encoding=encoding,
                 new_file_mode=_USER_FILE_MODE,
             )
+            # 档案文件编辑成功后镜像到 agent_documents（fire-and-forget）
+            _mirror_identity_doc_write(resolved_path)
         except Exception as e:
             return ToolChunk(
                 is_last=True,
@@ -529,6 +587,8 @@ async def append_file(
             content,
             encoding=encoding,
         )
+        # 档案文件追加成功后镜像到 agent_documents（fire-and-forget）
+        _mirror_identity_doc_write(file_path)
         return ToolChunk(
             is_last=True,
             state=ToolResultState.SUCCESS,

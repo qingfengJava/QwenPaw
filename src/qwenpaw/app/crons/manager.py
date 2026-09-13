@@ -120,6 +120,10 @@ class CronManager(ManagerBase):
         async with self._lock:
             if self._started:
                 return
+            # 一次性启动迁移钩子（如 PG 仓库从 jobs.json 导入），
+            # 必须先于首次 load：运行期读路径禁止隐式回填，
+            # 否则删除最后一个任务后会被投影缓存“复活”。
+            await self._repo.initialize()
             jobs_file = await self._repo.load()
             valid_job_ids = {job.id for job in jobs_file.jobs if job.id is not None}
             await self._repo.prune_orphan_history(valid_job_ids)

@@ -12,6 +12,7 @@
     "format": "tsc -b --noEmit && prettier --write --cache .",
     "format:check": "tsc -b --noEmit && prettier --check .",
     "lint": "eslint .",
+    "postinstall": "node scripts/patch-mentions-group.mjs",
     "verify:monaco-css": "node scripts/verify-monaco-css.mjs",
     "precompress": "node scripts/precompress-assets.mjs",
     "verify:initial-bundle": "node scripts/verify-initial-bundle.mjs",

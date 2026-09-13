@@ -38,17 +38,17 @@ def _enable_pg_plane(monkeypatch: pytest.MonkeyPatch) -> None:
         "QWENPAW_PG_DSN",
         "postgresql+asyncpg://u:p@localhost:5432/db",
     )
-    from qwenpaw.providers import provider_store
+    from qwenpaw.db import write_gateway
 
-    monkeypatch.setattr(provider_store, "_backend_cache", None)
+    write_gateway.reset_backend_cache()
 
 
 def _disable_pg_plane(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("QWENPAW_STORAGE_BACKEND", "json")
     monkeypatch.delenv("QWENPAW_PG_DSN", raising=False)
-    from qwenpaw.providers import provider_store
+    from qwenpaw.db import write_gateway
 
-    monkeypatch.setattr(provider_store, "_backend_cache", None)
+    write_gateway.reset_backend_cache()
 
 
 # ------------------------------------------------------------------ #

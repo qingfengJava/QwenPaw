@@ -24,9 +24,9 @@ import logging
 from typing import Any
 
 from ..config.config import ModelSlotConfig
+from ..db import write_gateway
 from ..db.base import DEFAULT_TENANT_ID
-from . import provider_store
-from .provider_store import ACTIVE_SLOT_LLM, pg_provider_plane_available
+from .provider_store import ACTIVE_SLOT_LLM
 
 logger = logging.getLogger(__name__)
 
@@ -285,9 +285,9 @@ async def resolve_agent_active_model(
         None,
     )
     # 仅 pg 后端读本表；json/dual 的读取权威在 agent.json（与 provider 平面一致）
-    if not pg_provider_plane_available():
+    if not write_gateway.pg_write_available():
         return file_slot
-    if provider_store.provider_storage_backend() != provider_store._BACKEND_PG:  # noqa: SLF001
+    if write_gateway.resolve_storage_backend() != write_gateway.BACKEND_PG:
         return file_slot
     try:
         row = await get_agent_model_slot_pg(agent_id)
@@ -314,14 +314,19 @@ def mirror_agent_model_slot(
     model: str,
     overrides: dict[str, Any] | None = None,
 ) -> None:
-    """dual 后端：影子写一行（fire-and-forget，失败仅告警）。"""
-    provider_store.schedule_pg_write(
+    """dual 后端：影子写一行（fire-and-forget，失败仅告警）。
+
+    M2 收敛：直接走统一写网关（此前经 provider_store 中转，影子
+    失败日志被错误归到 provider_config 域名下）。
+    """
+    write_gateway.submit_shadow_write(
         lambda: upsert_agent_model_slot_pg(
             agent_id,
             provider_id,
             model,
             overrides=overrides,
         ),
+        domain="agent_model_slots",
     )
 
 
@@ -337,23 +342,20 @@ async def persist_agent_model_slot(
     （json/dual 权威写 + pg 降级备份），本函数只负责 PG 平面。
     overrides=None 语义为"不修改既有覆盖"（模型切换不碰参数）；
     字段级清除覆盖由调用方传显式空 dict/字段 None。"""
-    backend = provider_store.provider_storage_backend()
-    if backend == provider_store._BACKEND_PG:  # noqa: SLF001
-        try:
-            await upsert_agent_model_slot_pg(
+    # M2 收敛：三态判定与权威写统一走写网关（失败仅告警不抛）
+    backend = write_gateway.resolve_storage_backend()
+    if backend == write_gateway.BACKEND_PG:
+        await write_gateway.authoritative_write(
+            lambda: upsert_agent_model_slot_pg(
                 agent_id,
                 provider_id,
                 model,
                 overrides=overrides,
-            )
-        except Exception:  # noqa: BLE001 - PG plane must never break business
-            logger.warning(
-                "agent_model_slots authoritative write failed for %s",
-                agent_id,
-                exc_info=True,
-            )
+            ),
+            domain="agent_model_slots",
+        )
         return
-    if backend == provider_store._BACKEND_DUAL:  # noqa: SLF001
+    if backend == write_gateway.BACKEND_DUAL:
         mirror_agent_model_slot(
             agent_id,
             provider_id,

@@ -34,7 +34,7 @@ from ..task_tracker import TaskTracker
 from ..chats.factory import get_session_store_class
 from ..chats.session_store import BaseSessionStore
 from ..crons.manager import CronManager
-from ..crons.repo.json_repo import JsonJobRepository
+from ..crons.repo import build_job_repository
 from ...config.config import load_agent_config
 from ...utils.logging import sanitize_log_value
 
@@ -529,8 +529,11 @@ class Workspace:
                 name="cron_manager",
                 service_class=CronManager,
                 init_args=lambda ws: {
-                    "repo": JsonJobRepository(
-                        str(ws.workspace_dir / "jobs.json"),
+                    # dual/pg 后端选 PG 权威仓库（jobs.json 降为投影缓存），
+                    # json 后端或 PG 不可用时回退 json 仓库（不阻塞启动）
+                    "repo": build_job_repository(
+                        agent_id=ws.agent_id,
+                        jobs_path=str(ws.workspace_dir / "jobs.json"),
                     ),
                     "workspace": ws,
                     "channel_manager": ws._service_manager.services.get(

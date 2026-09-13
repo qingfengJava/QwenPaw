@@ -7,6 +7,10 @@
  * - 工具：toolsApi（仅启用项）；
  * - MCP：mcpApi（仅启用客户端）。
  *
+ * 弹层展示（对标竞品分类导航）：候选按 档案/技能/工具/MCP 分区，
+ * group 字段由 postinstall 补丁（scripts/patch-mentions-group.mjs）渲染为
+ * 组首标题行，分类图标按类别着色辅助区分。
+ *
  * 选中行为（SDK inline 模式 + 镜像层胶囊，对标竞品内联实体）：候选
  * 以 `@值` 插入光标处，由 mentionChipOverlay 渲染为嵌在文字流中的
  * 胶囊（图标 + × 整 token 删除）。发送前由 normalizeMentionTokens 把
@@ -51,10 +55,24 @@ export interface MentionItem {
    * 结构类型下向后兼容，运行时随对象原样透传。
    */
   mentionKind?: "file" | "skill" | "tool" | "mcp";
+  /**
+   * 弹层分组标题文本（本地化）。SDK 类型不含此字段，渲染由 postinstall
+   * 补丁（scripts/patch-mentions-group.mjs）消费：组首项前插入标题行，
+   * 键盘导航索引不受影响。
+   */
+  group?: string;
 }
 
 /** 单候选描述文本的最大长度（超出截断，避免弹层过宽）。 */
 const LABEL_DESC_MAX = 40;
+
+/** 弹层分类图标着色（antd 色板）：分组标题外再提供色彩线索，加快类别识别。 */
+const ICON_COLOR = {
+  file: "#1677ff",
+  skill: "#722ed1",
+  tool: "#fa8c16",
+  mcp: "#13c2c2",
+} as const;
 
 const CACHE_TTL_MS = 30_000;
 const cache = new Map<string, { items: MentionItem[]; at: number }>();
@@ -150,7 +168,8 @@ export async function buildMentionItems(
         value,
         label: value,
         type: typeFile,
-        icon: _jsx(FileTextOutlined, {}),
+        group: typeFile,
+        icon: _jsx(FileTextOutlined, { style: { color: ICON_COLOR.file } }),
         mentionKind: "file",
       });
     }
@@ -168,7 +187,8 @@ export async function buildMentionItems(
         value: skill.name,
         label: compactLabel(skill.name, skill.description, skill.emoji),
         type: typeSkill,
-        icon: _jsx(ThunderboltOutlined, {}),
+        group: typeSkill,
+        icon: _jsx(ThunderboltOutlined, { style: { color: ICON_COLOR.skill } }),
         mentionKind: "skill",
       });
     }
@@ -180,7 +200,8 @@ export async function buildMentionItems(
         value: tool.name,
         label: compactLabel(tool.name, tool.description),
         type: typeTool,
-        icon: _jsx(ToolOutlined, {}),
+        group: typeTool,
+        icon: _jsx(ToolOutlined, { style: { color: ICON_COLOR.tool } }),
         mentionKind: "tool",
       });
     }
@@ -192,7 +213,8 @@ export async function buildMentionItems(
         value: client.key,
         label: compactLabel(client.name || client.key, client.description),
         type: "MCP",
-        icon: _jsx(ApiOutlined, {}),
+        group: "MCP",
+        icon: _jsx(ApiOutlined, { style: { color: ICON_COLOR.mcp } }),
         mentionKind: "mcp",
       });
     }

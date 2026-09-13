@@ -16,12 +16,28 @@ from pathlib import Path
 import pytest
 
 from qwenpaw.app import inbox_store
+from qwenpaw.db import write_gateway
 
 # p0: critical user flows (CRUD, pagination, mark_read); p2: error paths
 pytestmark = [
     pytest.mark.unit,
     pytest.mark.p0,
 ]
+
+
+@pytest.fixture(autouse=True)
+def _pin_json_backend(monkeypatch):
+    """钉回 json 后端：本文件只验证文件协议路径。
+
+    宿主机部署可为 pg（QWENPAW_STORAGE_BACKEND=pg），不钉 env 时
+    分派头会走 PG 平面、绕过 monkeypatch 的 _INBOX_PATH（历史教训：
+    与 test_agent_model_store._pin_backend_env 同款防护）。
+    """
+    monkeypatch.delenv("QWENPAW_STORAGE_BACKEND", raising=False)
+    monkeypatch.delenv("QWENPAW_PG_DSN", raising=False)
+    write_gateway.reset_backend_cache()
+    yield
+    write_gateway.reset_backend_cache()
 
 
 @pytest.fixture

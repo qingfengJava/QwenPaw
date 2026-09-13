@@ -100,17 +100,17 @@ def test_json_backend_schedules_nothing(monkeypatch) -> None:
     """json（默认）后端下所有调度函数必须早退、零 PG 触碰。"""
     monkeypatch.setenv("QWENPAW_STORAGE_BACKEND", "json")
     monkeypatch.delenv("QWENPAW_PG_DSN", raising=False)
-    # 重置 provider_store 后端缓存（模块级 _backend_cache）
-    from qwenpaw.providers import provider_store
+    # 重置统一写网关的后端缓存（M2 收敛后判定缓存位于 db.write_gateway）
+    from qwenpaw.db import write_gateway
 
-    monkeypatch.setattr(provider_store, "_backend_cache", None)
+    write_gateway.reset_backend_cache()
 
     calls: list[str] = []
 
-    def _spy_schedule(operation) -> None:  # noqa: ANN001
+    def _spy_schedule(operation, *, domain="pg") -> None:  # noqa: ANN001
         calls.append("scheduled")
 
-    monkeypatch.setattr(provider_store, "schedule_pg_write", _spy_schedule)
+    monkeypatch.setattr(write_gateway, "submit_shadow_write", _spy_schedule)
 
     catalog_store.schedule_pool_skill_sync(
         "demo",
@@ -127,16 +127,16 @@ def test_json_backend_schedules_nothing(monkeypatch) -> None:
 def test_pg_plane_available_requires_dsn(monkeypatch) -> None:
     monkeypatch.setenv("QWENPAW_STORAGE_BACKEND", "dual")
     monkeypatch.setenv("QWENPAW_PG_DSN", "")
-    from qwenpaw.providers import provider_store
+    from qwenpaw.db import write_gateway
 
-    monkeypatch.setattr(provider_store, "_backend_cache", None)
+    write_gateway.reset_backend_cache()
     assert catalog_store.skill_pg_plane_available() is False
 
     monkeypatch.setenv(
         "QWENPAW_PG_DSN",
         "postgresql+asyncpg://u:p@localhost:5432/db",
     )
-    monkeypatch.setattr(provider_store, "_backend_cache", None)
+    write_gateway.reset_backend_cache()
     assert catalog_store.skill_pg_plane_available() is True
 
 

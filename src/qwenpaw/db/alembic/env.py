@@ -13,6 +13,7 @@ from qwenpaw.db.base import Base
 from qwenpaw.db import models  # noqa: F401  (register tables on metadata)
 from qwenpaw.db import models_enterprise  # noqa: F401  (enterprise tables)
 from qwenpaw.db import models_agent_docs  # noqa: F401  (agent documents)
+from qwenpaw.db import models_crons  # noqa: F401  (cron job plane)
 
 target_metadata = Base.metadata
 

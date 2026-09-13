@@ -9,85 +9,71 @@
   运行时写路径仍同步落文件作为降级备份 + PG 权威写。
 
 表结构见 alembic ``0018_provider_config_plane``：``provider_configs``
-（整包快照 JSONB + api_key 以 ``ENC:`` 密文提升列）与
-``model_active_slots``（active_llm 槽位）。SQL 风格对齐
-``app/run_log_pg_store``：async engine + 参数化 ``text()``，失败只告警。
+（整包快照 JSONB + api_key 以密文提升列）与 ``model_active_slots``
+（active_llm 槽位）。SQL 风格对齐 ``app/run_log_pg_store``：
+async engine + 参数化 ``text()``，失败只告警。
+
+api_key 密文双形态（读取按前缀分派）：
+- ``ENC1:``：可移植密文，密钥存 PG ``app_portable_keys`` 表
+  （alembic ``0028_inbox_events_pg``），跨设备可解密——多设备同步
+  时 B 设备从 PG 取回密钥材料即可恢复 api_key；
+- ``ENC:``：本机密文（OS keychain master key），存量数据兼容，
+  本机可解，跨设备不可解；一旦该 provider 再次保存即升级为
+  ``ENC1:``。
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import threading
 from typing import Any, Awaitable, Callable
 
-from ..constant import EnvVarLoader
+from ..db import write_gateway
 from ..db.base import DEFAULT_TENANT_ID
 from ..security.secret_store import decrypt, encrypt, is_encrypted
 
 logger = logging.getLogger(__name__)
 
-#: 与 app/chats/factory.py 一致的存储后端开关
-STORAGE_BACKEND_ENV = "QWENPAW_STORAGE_BACKEND"
-_BACKEND_JSON = "json"
-_BACKEND_DUAL = "dual"
-_BACKEND_PG = "pg"
-_VALID_BACKENDS = frozenset(
-    {_BACKEND_JSON, _BACKEND_DUAL, _BACKEND_PG},
-)
+# M2 收敛：三态判定常量统一下沉到 db.write_gateway，此处保留原私有
+# 名 re-export（多个模块与测试仍以 provider_store._BACKEND_* 引用）
+STORAGE_BACKEND_ENV = write_gateway.STORAGE_BACKEND_ENV
+_BACKEND_JSON = write_gateway.BACKEND_JSON
+_BACKEND_DUAL = write_gateway.BACKEND_DUAL
+_BACKEND_PG = write_gateway.BACKEND_PG
+_VALID_BACKENDS = write_gateway.VALID_BACKENDS
 
 #: active_llm 槽位名（model_active_slots.slot_name，预留 embedding 等）
 ACTIVE_SLOT_LLM = "llm"
 
-_backend_cache: str | None = None
-_backend_lock = threading.Lock()
+#: 可移植密文前缀（api_key_encrypted 列）：用 PG app_portable_keys
+#: 表内的 Fernet key 加密，跨设备可解；与 OS keychain 绑定的本机
+#: ``ENC:`` 密文互补共存，读取时按前缀分派。
+_PORTABLE_PREFIX = "ENC1:"
 
+#: app_portable_keys.key_name：provider api_key 的可移植加密密钥
+_PORTABLE_KEY_NAME = "provider_api_key"
 
-def _default_storage_backend() -> str:
-    """与 app/chats/factory.py 一致的动态默认（SQLite 退役范式）。
-
-    配置了 ``QWENPAW_PG_DSN`` 时默认 ``dual``（文件 primary + PG 影子），
-    让 provider 配置平面同步开始积累 PG 数据；未配置 DSN 的个人部署
-    保持 ``json`` 不变。显式 ``QWENPAW_STORAGE_BACKEND`` 恒优先。
-    """
-    try:
-        from ..db.engine import get_pg_dsn
-
-        return _BACKEND_DUAL if get_pg_dsn() else _BACKEND_JSON
-    except Exception:  # noqa: BLE001 - DSN 未配置/依赖缺失均视为 json
-        return _BACKEND_JSON
+_portable_key_cache: bytes | None = None
+_portable_key_lock = threading.Lock()
 
 
 def provider_storage_backend() -> str:
-    """Return the resolved provider storage backend (json/dual/pg)."""
-    global _backend_cache  # pylint: disable=global-statement
-    if _backend_cache is not None:
-        return _backend_cache
-    with _backend_lock:
-        if _backend_cache is not None:
-            return _backend_cache
-        raw = EnvVarLoader.get_str(STORAGE_BACKEND_ENV, "").strip().lower()
-        if raw in _VALID_BACKENDS:
-            _backend_cache = raw
-        else:
-            # 无效值静默回退动态默认（避免与 chats 工厂重复告警噪音）
-            _backend_cache = _default_storage_backend()
-        return _backend_cache
+    """Return the resolved provider storage backend (json/dual/pg).
+
+    M2 收敛：三态解析与缓存统一下沉到 ``db.write_gateway``，本函数
+    仅保留兼容门面（chats/history/crons/inbox/skill 等域继续可用）。
+    """
+    return write_gateway.resolve_storage_backend()
 
 
 def reset_backend_cache() -> None:
     """Clear the cached backend (tests / env changes)."""
-    global _backend_cache  # pylint: disable=global-statement
-    with _backend_lock:
-        _backend_cache = None
+    write_gateway.reset_backend_cache()
 
 
 def pg_provider_plane_available() -> bool:
     """True when the provider plane should touch PG (dual/pg + DSN set)."""
-    backend = provider_storage_backend()
-    if backend not in (_BACKEND_DUAL, _BACKEND_PG):
-        return False
-    return bool(EnvVarLoader.get_str("QWENPAW_PG_DSN", "").strip())
+    return write_gateway.pg_write_available()
 
 
 def _derive_enabled(data: dict[str, Any]) -> bool:
@@ -95,6 +81,89 @@ def _derive_enabled(data: dict[str, Any]) -> bool:
     if not data.get("require_api_key", True):
         return True
     return bool(data.get("api_key"))
+
+
+def _portable_encrypt(plaintext: str, key: bytes) -> str:
+    """Encrypt with the PG-stored portable key (``ENC1:`` prefix)."""
+    from cryptography.fernet import Fernet
+
+    token = Fernet(key).encrypt(plaintext.encode("utf-8"))
+    return _PORTABLE_PREFIX + token.decode("ascii")
+
+
+def _portable_decrypt(value: str, key: bytes) -> str:
+    """Decrypt an ``ENC1:`` token; degrade to raw on any failure."""
+    try:
+        from cryptography.fernet import Fernet
+
+        token = value[len(_PORTABLE_PREFIX):].encode("ascii")
+        return Fernet(key).decrypt(token).decode("utf-8")
+    except Exception:  # noqa: BLE001 - 解密失败优雅降级，不崩溃
+        logger.warning(
+            "Failed to portable-decrypt value (key rotated or data"
+            " corrupted?); returning raw ciphertext",
+        )
+        return value
+
+
+async def _load_or_create_portable_key(engine: Any = None) -> bytes:
+    """Return the portable Fernet key, creating one on first use.
+
+    密钥本体存 PG（app_portable_keys）：安全边界等价于 PG 自身访问
+    控制，跨设备部署共享同一把密钥。进程内缓存避免每次读写都查库；
+    并发首启由 INSERT ON CONFLICT DO NOTHING 保证唯一（先插入者胜，
+    重读取库内实际行）。
+    """
+    global _portable_key_cache  # pylint: disable=global-statement
+    if _portable_key_cache is not None:
+        return _portable_key_cache
+    with _portable_key_lock:
+        if _portable_key_cache is not None:
+            return _portable_key_cache
+        from sqlalchemy import text
+
+        from ..db.base import DEFAULT_TENANT_ID
+        from ..db.engine import create_pg_engine
+
+        engine = engine or create_pg_engine()
+        select_sql = text(
+            "SELECT key_value FROM app_portable_keys "
+            "WHERE tenant_id = :tenant_id AND key_name = :key_name",
+        )
+        select_params = {
+            "tenant_id": DEFAULT_TENANT_ID,
+            "key_name": _PORTABLE_KEY_NAME,
+        }
+        async with engine.begin() as conn:
+            result = await conn.execute(select_sql, select_params)
+            row = result.first()
+            if row is None:
+                from cryptography.fernet import Fernet
+
+                await conn.execute(
+                    text(
+                        "INSERT INTO app_portable_keys "
+                        "(tenant_id, key_name, key_value) VALUES "
+                        "(:tenant_id, :key_name, :key_value) "
+                        "ON CONFLICT (tenant_id, key_name) DO NOTHING"
+                    ),
+                    {
+                        "tenant_id": DEFAULT_TENANT_ID,
+                        "key_name": _PORTABLE_KEY_NAME,
+                        "key_value": Fernet.generate_key().decode(
+                            "ascii",
+                        ),
+                    },
+                )
+                result = await conn.execute(select_sql, select_params)
+                row = result.first()
+        if row is None:
+            raise RuntimeError(
+                "app_portable_keys row missing after insert; "
+                "check PG connectivity",
+            )
+        _portable_key_cache = str(row[0]).encode("ascii")
+        return _portable_key_cache
 
 
 def _snapshot_payload(data: dict[str, Any]) -> dict[str, Any]:
@@ -122,14 +191,28 @@ def _row_to_provider_data(
     base_url: str,
     api_key_encrypted: str,
     snapshot: dict[str, Any],
+    portable_key: bytes | None = None,
 ) -> dict[str, Any]:
     """One provider_configs row -> plain provider dump (api_key decrypted)."""
     data = _coerce_snapshot(snapshot)
     data["id"] = provider_id
     data["name"] = name
     data["base_url"] = base_url
-    # 密文解密失败时 decrypt 优雅降级返回原文，不崩溃
-    data["api_key"] = decrypt(api_key_encrypted) if api_key_encrypted else ""
+    if (
+        api_key_encrypted
+        and api_key_encrypted.startswith(_PORTABLE_PREFIX)
+        and portable_key is not None
+    ):
+        # ENC1: 可移植密文 → PG 内密钥解密（跨设备可恢复）
+        data["api_key"] = _portable_decrypt(
+            api_key_encrypted,
+            portable_key,
+        )
+    else:
+        # ENC: 本机密文走 keychain 解密；解密失败优雅降级返回原文
+        data["api_key"] = (
+            decrypt(api_key_encrypted) if api_key_encrypted else ""
+        )
     return data
 
 
@@ -152,6 +235,14 @@ async def upsert_provider_snapshot_pg(
         raise ValueError("provider snapshot requires an id")
     api_key = str(data.get("api_key") or "")
     engine = engine or create_pg_engine()
+    if api_key:
+        # 明文密钥入库前统一用可移植 key 加密（ENC1:，跨设备可解）
+        api_key_encrypted = _portable_encrypt(
+            api_key,
+            await _load_or_create_portable_key(engine),
+        )
+    else:
+        api_key_encrypted = ""
     async with engine.begin() as conn:
         await conn.execute(
             text(_UPSERT_PROVIDER_SQL),
@@ -160,8 +251,7 @@ async def upsert_provider_snapshot_pg(
                 "provider_id": provider_id,
                 "name": str(data.get("name") or provider_id),
                 "base_url": str(data.get("base_url") or ""),
-                # 明文密钥在入库前统一 Fernet 加密（ENC: 前缀）
-                "api_key_encrypted": encrypt(api_key) if api_key else "",
+                "api_key_encrypted": api_key_encrypted,
                 "enabled": _derive_enabled(data),
                 "is_builtin": bool(data.get("is_builtin")),
                 "is_custom": bool(data.get("is_custom")),
@@ -209,6 +299,7 @@ async def load_provider_snapshots_pg(
     from ..db.engine import create_pg_engine
 
     engine = engine or create_pg_engine()
+    portable_key = await _load_or_create_portable_key(engine)
     async with engine.connect() as conn:
         result = await conn.execute(
             text(
@@ -226,6 +317,7 @@ async def load_provider_snapshots_pg(
             row[2],
             row[3],
             row[4],
+            portable_key,
         )
         for row in rows
     ]
@@ -341,40 +433,13 @@ async def load_active_slot_pg(
 
 
 def schedule_pg_write(operation: Callable[[], Awaitable[Any]]) -> None:
-    """Run *operation* against PG without blocking or failing the caller.
+    """Schedule a fire-and-forget shadow write via the unified gateway.
 
-    - 事件循环内：create_task fire-and-forget；
-    - 无事件循环（CLI / 启动同步路径）：独立守护线程中 ``asyncio.run``；
-    - 任何失败仅告警 —— 影子平面必须永不影响主业务。
+    M2 收敛：调度策略与失败语义统一下沉到 ``db.write_gateway``
+    （事件循环 create_task / 无循环守护线程 asyncio.run，失败仅告
+    警），domain 固定为 provider_config（快照 + models 投影 + 槽位）。
     """
-    if not pg_provider_plane_available():
-        return
-
-    def _guarded() -> None:
-        try:
-            asyncio.run(operation())
-        except Exception:  # noqa: BLE001 - shadow plane must never raise
-            logger.warning(
-                "Provider config PG shadow write failed",
-                exc_info=True,
-            )
-
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        threading.Thread(target=_guarded, daemon=True).start()
-        return
-
-    async def _task() -> None:
-        try:
-            await operation()
-        except Exception:  # noqa: BLE001 - shadow plane must never raise
-            logger.warning(
-                "Provider config PG shadow write failed",
-                exc_info=True,
-            )
-
-    asyncio.get_running_loop().create_task(_task())
+    write_gateway.submit_shadow_write(operation, domain="provider_config")
 
 
 def mirror_provider_snapshot(provider_data: dict[str, Any]) -> None:

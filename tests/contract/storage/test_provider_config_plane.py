@@ -4,8 +4,10 @@
 Pins the DB-level behavior of the provider configuration storage plane:
 
 - upsert → load round-trip preserves the full snapshot;
-- ``api_key`` is stored as an ``ENC:`` cipher in ``api_key_encrypted``
-  (never plaintext) and decrypts back to the original value;
+- ``api_key`` is stored as a cipher in ``api_key_encrypted`` (never
+  plaintext) and decrypts back to the original value (``ENC1:``
+  portable cipher since alembic 0028; legacy ``ENC:`` local cipher
+  remains readable);
 - upsert is idempotent per ``(tenant_id, provider_id)``;
 - active slot save/load/clear behaves like the file-era active_model.json.
 
@@ -23,7 +25,6 @@ import pytest
 from sqlalchemy import text
 
 from qwenpaw.providers import provider_store
-from qwenpaw.security.secret_store import is_encrypted
 
 
 @pytest.fixture(autouse=True)
@@ -88,8 +89,9 @@ class TestProviderConfigsTable:
 
         assert len(rows) == 1
         api_key_encrypted, snapshot = rows[0]
-        # 库里必须是 ENC: 密文，且 snapshot JSONB 不含明文 api_key
-        assert is_encrypted(api_key_encrypted)
+        # 库里必须是密文（ENC1: 可移植或存量 ENC: 本机），
+        # 且 snapshot JSONB 不含明文 api_key
+        assert api_key_encrypted.startswith(("ENC:", "ENC1:"))
         assert "sk-test-123456" not in str(snapshot)
         assert "sk-test-123456" not in api_key_encrypted
 

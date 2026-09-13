@@ -618,6 +618,87 @@
   }
 }
 
+/* @ 提及菜单分组标题：SDK 弹层补丁（scripts/patch-mentions-group.mjs）
+ * 注入的非交互标题节点，让档案/技能/工具/MCP 候选分区展示（对标竞品
+ * 分类导航）。标题不占键盘导航索引；小号次级灰字 + 首组外上间距建立
+ * 层级，亮/暗双色跟随 html.dark-mode（与 layout.css 覆盖策略一致）。 */
+:global {
+  .qwenpaw-chat-anywhere-input-mentions-group {
+    padding: 8px 10px 2px;
+    color: rgba(0, 0, 0, 0.45);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 18px;
+    letter-spacing: 0.3px;
+    user-select: none;
+  }
+
+  .qwenpaw-chat-anywhere-input-mentions-group:not(:first-child) {
+    margin-top: 4px;
+  }
+
+  html.dark-mode .qwenpaw-chat-anywhere-input-mentions-group {
+    color: rgba(255, 255, 255, 0.45);
+  }
+}
+
+/* 消息气泡内 mention 胶囊（mentionChipView.tsx）：历史消息里的
+ * `@ 档案` / `/技能` token 复用输入框镜像层同款视觉（实底圆角胶囊
+ * + 分类图标 + 名称），按 kind 着色（档案主色/技能紫/通用引用灰），
+ * 底色用 color-mix 低比例混入保持文字可读；暗色跟随 html.dark-mode。 */
+.mentionChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 260px;
+  margin: 0 1px;
+  padding: 0 7px;
+  border-radius: 999px;
+  vertical-align: middle;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--ant-color-primary, #1677ff);
+  background: color-mix(
+    in srgb,
+    var(--ant-color-primary, #1677ff) 8%,
+    transparent
+  );
+  border: 1px solid
+    color-mix(in srgb, var(--ant-color-primary, #1677ff) 22%, transparent);
+}
+
+.mentionChip[data-chip-kind="skill"] {
+  color: #722ed1;
+  background: color-mix(in srgb, #722ed1 8%, transparent);
+  border-color: color-mix(in srgb, #722ed1 22%, transparent);
+}
+
+.mentionChip[data-chip-kind="ref"] {
+  color: var(--ant-color-text-secondary, rgba(0, 0, 0, 0.65));
+  background: var(--ant-color-fill-tertiary, rgba(0, 0, 0, 0.06));
+  border-color: var(--ant-color-border-secondary, rgba(0, 0, 0, 0.15));
+}
+
+html.dark-mode .mentionChip[data-chip-kind="ref"] {
+  color: var(--ant-color-text-secondary, rgba(255, 255, 255, 0.65));
+  background: var(--ant-color-fill-tertiary, rgba(255, 255, 255, 0.12));
+  border-color: var(--ant-color-border-secondary, rgba(255, 255, 255, 0.2));
+}
+
+.mentionChipIcon {
+  flex: 0 0 auto;
+  font-size: 10px;
+  opacity: 0.72;
+}
+
+.mentionChipName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+
 /* Message actions: always visible (timestamps are useful at a glance). */
 .chatMessagesArea :global {
   [class*="bubble-footer"] {
