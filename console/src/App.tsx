@@ -73,6 +73,9 @@ import { interceptBlankLinkClicks } from "./utils/interceptBlankLinkClicks";
 import "./styles/layout.css";
 import "./styles/form-override.css";
 import "./styles/staffdeck-tokens.css";
+// 页面级全局 token 与「画布 → 面」样式层：必须在 layout.css 之后导入，
+// 才能覆盖 .page-content 的旧白底并让 --pg-* 成为壳层/工作台的色标来源。
+import "./styles/page-tokens.css";
 
 const antdLocaleMap: Record<string, Locale> = {
   zh: zhCN,
@@ -429,30 +432,45 @@ function AppInner({ backendInfo }: { backendInfo: BackendInfo }) {
             : antdTheme.defaultAlgorithm,
           token: {
             // StaffDeck 设计语言（docs/design/2026-08-30-…md §七）：
-            // 墨色主按钮 + 链接蓝 + 冷白布局底 + 控件圆角 10
-            colorPrimary: "#18181a",
+            // 墨色主按钮 + 链接蓝 + 冷白布局底 + 控件圆角 10。
+            // 底色与主色必须随主题切换：此前无条件写死 #ffffff/#fcfcfc，
+            // 暗色下 antd cssVar 会把 --qwenpaw-color-bg-container 定为纯白，
+            // 导致所有消费该变量的组件（模型选择器面板、弹窗、下拉、卡片）
+            // 在暗色下变白底，叠加近白文字后完全不可读；墨色主按钮在暗色
+            // 画布上也会“隐形”。暗色值与 page-tokens.css 的 --pg-* 同源。
+            colorPrimary: isDark ? "#2f6fd8" : "#18181a",
             colorLink: "#1a71ff",
             colorInfo: "#1a71ff",
-            colorBgLayout: "#fcfcfc",
-            colorBgContainer: "#ffffff",
+            colorBgLayout: isDark ? "#131419" : "#fcfcfc",
+            colorBgContainer: isDark ? "#1c2029" : "#ffffff",
+            colorBgElevated: isDark ? "#232834" : "#ffffff",
             borderRadius: 10,
           },
           components: {
             Menu: {
-              // 侧栏菜单：白底 + 浅灰选中 + 墨色文字（去橙色/米色高亮）
-              itemBg: "#ffffff",
-              subMenuItemBg: "#ffffff",
-              popupBg: "#ffffff",
-              itemSelectedBg: "#f6f6f6",
-              itemSelectedColor: "#18181a",
-              itemHoverBg: "#f6f6f6",
-              itemHoverColor: "#18181a",
+              // 侧栏菜单：透明底交由 .sider 统一面色；选中/hover 用与工作台
+              // 同源的品牌蓝调（原浅灰选中 + 白 popup 在暗色下会整块发白）。
+              itemBg: "transparent",
+              subMenuItemBg: "transparent",
+              popupBg: isDark ? "#1f242f" : "#ffffff",
+              itemSelectedBg: isDark
+                ? "rgba(96, 150, 240, 0.16)"
+                : "rgba(26, 113, 255, 0.09)",
+              itemSelectedColor: isDark ? "#9dc0ff" : "#1a5fd0",
+              itemHoverBg: isDark
+                ? "rgba(255, 255, 255, 0.06)"
+                : "rgba(16, 22, 35, 0.045)",
+              itemHoverColor: isDark ? "rgba(255, 255, 255, 0.92)" : "#101623",
+              itemBorderRadius: 10,
+              itemHeight: 38,
               activeBarBorderWidth: 0,
             },
             Tabs: {
-              itemSelectedColor: "#18181a",
-              itemColor: "#757f9c",
-              inkBarColor: "#18181a",
+              // 选中态与墨条必须随主题：写死 #18181a 会在暗色下把激活 Tab
+              // 标签刷成近黑字，落在透明底 + 深色面板上几乎隐形（1.04:1）。
+              itemSelectedColor: isDark ? "rgba(255, 255, 255, 0.92)" : "#18181a",
+              itemColor: isDark ? "#98a2c0" : "#757f9c",
+              inkBarColor: isDark ? "#6ba6ff" : "#18181a",
             },
           },
         }}

@@ -191,9 +191,11 @@ async def test_sop_lifecycle_with_versions(enterprise_env):
     assert versions[0].version == 2
     assert versions[0].snapshot["nodes"][0]["id"] == "n1"
 
-    # 已发布不可直接改字段（必须走版本链）
-    with pytest.raises(ValueError):
-        await store.update_sop(sop.id, name="改名")
+    # 私有能力化语义：已发布也可直接改内容（不改 status/不升 version）
+    edited_pub = await store.update_sop(sop.id, name="改名")
+    assert edited_pub is not None
+    assert edited_pub.name == "改名"
+    assert edited_pub.version == 2
 
     # 再发布一次验证快照链
     again = await store.publish_sop(sop.id, change_note="二次发布")
@@ -210,15 +212,110 @@ async def test_sop_lifecycle_with_versions(enterprise_env):
     all_versions = await store.list_versions(sop.id)
     assert [v.version for v in all_versions] == [4, 3, 2]
 
-    # 归档 + draft-only 删除保护
+    # 归档后仍可物理删（store 层不设状态门槛，绑定守卫在 router 层）
     archived = await store.archive_sop(sop.id)
     assert archived is not None and archived.status == "archived"
-    assert not await store.delete_sop(sop.id)
+    assert await store.delete_sop(sop.id)
+    assert await store.get_sop(sop.id) is None
     draft = await store.create_sop(
         name="草稿SOP",
         sop_id="captest_sop_draft",
     )
     assert await store.delete_sop(draft.id)
+
+
+@pytest.mark.asyncio
+async def test_sop_environment_isolation_and_promote(enterprise_env):
+    """SOP 环境化：草稿行编辑不污染线上行，promote 才升线上并写快照。"""
+    from qwenpaw.app.experts.models import (
+        SOP_ENVIRONMENT_DRAFT,
+        SOP_ENVIRONMENT_PRODUCTION,
+    )
+    from qwenpaw.app.experts.sops import get_sop_store
+
+    store = get_sop_store()
+    # 工作台/AI 新建落草稿环境行
+    draft = await store.create_sop(
+        name="退款流程",
+        sop_id="captest_sop_env",
+        goal="30 分钟完成退款",
+        nodes=[{"id": "n1", "title": "受理", "expected_outcome": "工单已建"}],
+        owner_id="captest_expert_env",
+        environment=SOP_ENVIRONMENT_DRAFT,
+    )
+    assert draft.environment == SOP_ENVIRONMENT_DRAFT
+    assert draft.status == "draft"
+
+    # 草稿行存在时，线上行尚未创建
+    assert await store.get_sop(
+        draft.id,
+        environment=SOP_ENVIRONMENT_PRODUCTION,
+    ) is None
+
+    # 编辑只作用于草稿行，不影响（尚不存在的）线上行
+    await store.update_sop(
+        draft.id,
+        environment=SOP_ENVIRONMENT_DRAFT,
+        nodes=[
+            {"id": "n1", "title": "受理", "expected_outcome": "工单已建"},
+            {"id": "n2", "title": "审核", "expected_outcome": "风险已判"},
+        ],
+    )
+    draft_after = await store.get_sop(
+        draft.id,
+        environment=SOP_ENVIRONMENT_DRAFT,
+    )
+    assert len(draft_after.nodes) == 2
+
+    # promote：草稿 → 线上 v1 + 快照
+    promoted = await store.promote_sop(draft.id, published_by="qingfeng")
+    assert promoted.environment == SOP_ENVIRONMENT_PRODUCTION
+    assert promoted.status == "published"
+    assert promoted.version == 1
+    assert len(promoted.nodes) == 2
+    versions = await store.list_versions(draft.id)
+    assert len(versions) == 1 and versions[0].version == 1
+
+    # 草稿行 promote 后保留（作为后续可编辑工作副本）
+    assert await store.get_sop(
+        draft.id,
+        environment=SOP_ENVIRONMENT_DRAFT,
+    ) is not None
+
+    # 再改草稿 + 再 promote → 线上 v2，草稿与线上分叉即“有未发布变更”
+    await store.update_sop(
+        draft.id,
+        environment=SOP_ENVIRONMENT_DRAFT,
+        goal="20 分钟完成退款",
+    )
+    promoted2 = await store.promote_sop(draft.id)
+    assert promoted2.version == 2
+    assert promoted2.goal == "20 分钟完成退款"
+    # 线上行仍是 v2 新目标，草稿行 goal 也同步（promote 复制非移动）
+    prod_now = await store.get_sop(
+        draft.id,
+        environment=SOP_ENVIRONMENT_PRODUCTION,
+    )
+    assert prod_now.goal == "20 分钟完成退款"
+    assert len(await store.list_versions(draft.id)) == 2
+
+    # 合并列表视图：同 id 草稿优先（代表可编辑工作态）
+    merged = await store.list_sops(
+        owner_id="captest_expert_env",
+        environment=SOP_ENVIRONMENT_DRAFT,
+    )
+    assert any(r.id == draft.id for r in merged)
+
+    # 物理删：双环境行 + 版本链一并清除
+    assert await store.delete_sop(draft.id)
+    assert await store.get_sop(
+        draft.id,
+        environment=SOP_ENVIRONMENT_DRAFT,
+    ) is None
+    assert await store.get_sop(
+        draft.id,
+        environment=SOP_ENVIRONMENT_PRODUCTION,
+    ) is None
 
 
 # ---------------------------------------------------------------------------
@@ -472,3 +569,168 @@ async def test_api_key_issue_verify_revoke(enterprise_env):
     assert await store.verify(plaintext) is None
     # 幂等重复吊销返回 False
     assert not await store.revoke_key(expert.id, issued["id"])
+
+
+@pytest.mark.asyncio
+async def test_sop_private_semantics(enterprise_env):
+    """SOP 私有能力化：published 可编辑、full 投影、duplicate、无绑定可删。"""
+    from qwenpaw.app.experts.sops import get_sop_store
+
+    store = get_sop_store()
+    created = await store.create_sop(
+        name="源流程",
+        sop_id="captest_sop_priv",
+        goal="原目标",
+        nodes=[{"id": "n1", "title": "步骤一", "expected_outcome": "ok"}],
+        slots=[{"key": "k1", "label": "槽位"}],
+        owner_id="captest_expert_a",
+    )
+    assert created.status == "draft"
+    assert created.owner_id == "captest_expert_a"
+
+    # 发布后允许直接编辑内容：status 保持 published、version 不变
+    published = await store.publish_sop("captest_sop_priv")
+    assert published is not None and published.version == 2
+    edited = await store.update_sop("captest_sop_priv", goal="新目标")
+    assert edited is not None
+    assert edited.goal == "新目标"
+    assert edited.status == "published"
+    assert edited.version == 2
+
+    # full 投影带 nodes；light 投影 nodes 为空
+    full_rows = await store.list_sops(owner_id="captest_expert_a", full=True)
+    assert any(r.id == "captest_sop_priv" and r.nodes for r in full_rows)
+    light_rows = await store.list_sops(owner_id="captest_expert_a")
+    assert all(not r.nodes for r in light_rows)
+
+    # duplicate：新行 draft、owner 归目标员工、内容一致、不复制绑定
+    copy = await store.duplicate_sop(
+        "captest_sop_priv",
+        target_expert_id="captest_expert_b",
+        new_sop_id="captest_sop_copy",
+    )
+    assert copy is not None
+    assert copy.status == "draft"
+    assert copy.version == 1
+    assert copy.owner_id == "captest_expert_b"
+    assert copy.name == "源流程"
+    assert copy.goal == "新目标"
+    assert [n["id"] for n in copy.nodes] == ["n1"]
+
+    # delete：无绑定时 published 也可物理删（版本快照同删）
+    assert await store.delete_sop("captest_sop_copy") is True
+    assert await store.get_sop("captest_sop_copy") is None
+
+
+@pytest.mark.asyncio
+async def test_ensure_binding_idempotent(enterprise_env):
+    """ensure_binding 重复调用只落一行（发布自动绑定的幂等底座）。"""
+    from qwenpaw.app.experts.capability import get_capability_store
+
+    cap = get_capability_store()
+    await cap.ensure_binding(
+        "captest_expert_e", "sop", "captest_sop_e", {"name": "x"},
+    )
+    await cap.ensure_binding(
+        "captest_expert_e", "sop", "captest_sop_e", {"name": "x"},
+    )
+    bindings = await cap.list_bindings("captest_expert_e", "sop")
+    assert len([b for b in bindings if b.resource_id == "captest_sop_e"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_sop_publish_auto_bind_and_private_guards(enterprise_env):
+    """发布组合自动绑定 + 一对一私有守卫 + 复制式复用 + 删除守卫。
+
+    直接调用路由函数（绕过鉴权依赖），覆盖 endpoint 层组合逻辑。
+    """
+    import types
+
+    from fastapi import HTTPException
+
+    from qwenpaw.app.experts.capability import get_capability_store
+    from qwenpaw.app.experts.models import (
+        ResourceBinding,
+        SopDuplicateBody,
+        SopPublishBody,
+    )
+    from qwenpaw.app.experts.sops import get_sop_store
+    from qwenpaw.app.experts.store import get_expert_store
+    from qwenpaw.app.routers.admin.expert_capability import (
+        ResourceBindingsPutBody,
+        delete_sop,
+        duplicate_sop,
+        publish_sop,
+        replace_resources,
+    )
+
+    request = types.SimpleNamespace(
+        state=types.SimpleNamespace(user="tester"),
+        app=types.SimpleNamespace(state=types.SimpleNamespace()),
+    )
+    expert_a = await get_expert_store().create_expert(
+        name="甲", expert_id="captest_expert_ra",
+    )
+    expert_b = await get_expert_store().create_expert(
+        name="乙", expert_id="captest_expert_rb",
+    )
+    store = get_sop_store()
+    sop = await store.create_sop(
+        name="流程甲",
+        sop_id="captest_sop_router",
+        owner_id=expert_a.id,
+    )
+
+    # 发布：自动绑定归属员工（重复发布幂等不重复建行）
+    await publish_sop(sop.id, request, SopPublishBody(expert_id=expert_a.id))
+    await publish_sop(sop.id, request, SopPublishBody(expert_id=expert_a.id))
+    bindings_a = await get_capability_store().list_bindings(expert_a.id, "sop")
+    assert [b.resource_id for b in bindings_a] == [sop.id]
+
+    # 发布到非归属员工 → 400（私有守卫）
+    with pytest.raises(HTTPException):
+        await publish_sop(sop.id, request, SopPublishBody(expert_id=expert_b.id))
+
+    # 员工乙直接绑定甲的 SOP → 400；先复制为副本再绑定 → 放行
+    with pytest.raises(HTTPException):
+        await replace_resources(
+            expert_b.id,
+            ResourceBindingsPutBody(bindings=[
+                ResourceBinding(resource_type="sop", resource_id=sop.id),
+            ]),
+            request,
+        )
+    copy = await duplicate_sop(
+        sop.id,
+        SopDuplicateBody(target_expert_id=expert_b.id),
+    )
+    assert copy.owner_id == expert_b.id
+    assert copy.status == "draft"
+    saved = await replace_resources(
+        expert_b.id,
+        ResourceBindingsPutBody(bindings=[
+            ResourceBinding(resource_type="sop", resource_id=copy.id),
+        ]),
+        request,
+    )
+    assert any(b["resource_id"] == copy.id for b in saved["bindings"])
+
+    # 仍有绑定的 SOP 不可删；解除（停用）后可删
+    with pytest.raises(HTTPException):
+        await delete_sop(sop.id)
+    await replace_resources(
+        expert_a.id,
+        ResourceBindingsPutBody(bindings=[]),
+        request,
+    )
+    await delete_sop(sop.id)
+    assert await store.get_sop(sop.id) is None
+
+    # 自清理：duplicate 副本是随机 id（不在 captest_ 前缀内），当场删净
+    await replace_resources(
+        expert_b.id,
+        ResourceBindingsPutBody(bindings=[]),
+        request,
+    )
+    await delete_sop(copy.id)
+    assert await store.get_sop(copy.id) is None

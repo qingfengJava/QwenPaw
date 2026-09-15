@@ -1,0 +1,372 @@
+/**
+ * page-tokens.css — 页面级全局设计 token 与「画布 → 面」样式层（20260915 全站质感统一）。
+ *
+ * 背景：壳层（顶标 + 侧栏）与工作台各自铺了同一份冷灰蓝渐变，但内容区
+ * .page-content 被写死成纯白卡片，导致除工作台外的所有页面是"死白 + antd 表格"。
+ * 本文件把这套视觉语言上升为全站唯一来源：
+ *   画布层 = .page-content（渐变底，色标 --pg-canvas，见 layout.css 消费）
+ *   面层   = Card / Table / Tabs 等正文块（白面 + 发丝边 + 圆角 + 克制阴影）
+ *   锚点层 = 品牌渐变竖线 / 表头淡蓝 wash / tone tile（渐变只用于强调，不铺满屏）
+ *
+ * 三条执行约束：
+ * 1. 颜色/圆角/阴影一律走本文件 token，禁止页面内再抄一份色标；
+ *    壳层 --sh-canvas 与工作台 --wb-canvas 已改为引用 --pg-canvas；
+ * 2. 只需"补齐 antd 默认缺失项"的规则用 :where() 包裹（特异性 0），
+ *    让页面既有定制天然优先；确实要全站统一的（面边框/圆角/阴影、表头 wash）
+ *    才使用 .page-content 前缀的真实特异性，且不加 !important（暗色覆盖仍由
+ *    layout.css 既有 !important 体系负责）；
+ * 3. Modal / Drawer 经传送门渲染在 .page-content 之外，不受本层任何影响。
+ */
+
+/* ─── Token 层：亮色（默认）─────────────────────────────────────────────── */
+
+:root {
+  /* 画布：整页唯一渐变底，顶蓝底白，与壳层/工作台同源 */
+  --pg-canvas: linear-gradient(
+    180deg,
+    #eef3ff 0%,
+    #f7f9fe 34%,
+    #ffffff 74%
+  );
+  /* 画布两端实色：给 sticky 元素遮底用（不能透明，否则滚动内容透穿）*/
+  --pg-canvas-top: #eef3ff;
+  --pg-canvas-bottom: #ffffff;
+
+  /* 面与线 */
+  --pg-surface: #ffffff;
+  --pg-surface-muted: #f6f8fd;
+  --pg-surface-sunken: #eef1f8;
+  --pg-line: #e6eaf3;
+  --pg-line-strong: #d3dbeb;
+
+  /* 墨色三级 */
+  --pg-ink: #101623;
+  --pg-ink-2: #4c5670;
+  --pg-ink-3: #828ca6;
+
+  /* 品牌三色与渐变锚点 */
+  --pg-brand: #1a71ff;
+  --pg-brand-2: #7c5cd6;
+  --pg-brand-3: #0f9d8f;
+  --pg-brand-rule: linear-gradient(180deg, #1a71ff, #7c5cd6);
+  --pg-brand-tile: linear-gradient(120deg, #1a71ff, #6f4fe0);
+  /* 饱和品牌实色底：唯一允许叠 #fff 文字的品牌色（选中开关/日期区间等），
+     浅色档 --pg-brand 在白字下对比度不足，禁止用作实色按钮底 */
+  --pg-brand-solid: #1a5fd0;
+  --pg-brand-text: linear-gradient(
+    96deg,
+    #101623 0%,
+    #1a71ff 44%,
+    #7c5cd6 74%,
+    #0f9d8f 100%
+  );
+  /* 浅色 wash：一律 color-mix 主色调出，禁止引用 antd cssVar 运行时注入的
+     --qwenpaw-color-primary-bg（墨色主色下它推导为深灰 #545559）*/
+  --pg-brand-wash: color-mix(in srgb, var(--pg-brand) 4%, transparent);
+  --pg-brand-wash-strong: color-mix(in srgb, var(--pg-brand) 8%, transparent);
+  --pg-brand-ring: color-mix(in srgb, var(--pg-brand) 55%, transparent);
+
+  /* tone 色板（彩色 tile / 胶囊 / 状态标签的唯一来源）*/
+  --pg-tone-blue-bg: #e9f1ff;
+  --pg-tone-blue-ink: #1a5fd0;
+  --pg-tone-violet-bg: #f0ebfe;
+  --pg-tone-violet-ink: #6a45c9;
+  --pg-tone-teal-bg: #e2f6f2;
+  --pg-tone-teal-ink: #0f8578;
+  --pg-tone-amber-bg: #fdf1e0;
+  --pg-tone-amber-ink: #b26a09;
+  --pg-tone-green-bg: #e5f6ec;
+  --pg-tone-green-ink: #1f9a53;
+  --pg-tone-red-bg: #fdeaea;
+  --pg-tone-red-ink: #c81e1e;
+  --pg-tone-gray-bg: #eff1f6;
+  --pg-tone-gray-ink: #78829a;
+
+  /* 阴影（面浮起两级）*/
+  --pg-shadow-sm: 0 1px 2px rgba(16, 22, 35, 0.05);
+  --pg-shadow-md: 0 12px 26px -14px rgba(16, 22, 35, 0.22);
+
+  /* 形状与节奏 */
+  --pg-radius-surface: 14px;
+  --pg-radius-tile: 12px;
+  --pg-radius-pill: 999px;
+  --pg-gutter: 16px;
+}
+
+/* ─── Token 层：暗色（提亮 + 降饱和的 tonal 变体，非反色）────────────────── */
+
+html.dark-mode {
+  --pg-canvas: linear-gradient(
+    180deg,
+    #171b25 0%,
+    #15171e 40%,
+    #131419 100%
+  );
+  --pg-canvas-top: #171b25;
+  --pg-canvas-bottom: #131419;
+
+  --pg-surface: #1c2029;
+  --pg-surface-muted: #232834;
+  --pg-surface-sunken: #191d25;
+  --pg-line: rgba(255, 255, 255, 0.08);
+  --pg-line-strong: rgba(255, 255, 255, 0.16);
+
+  --pg-ink: rgba(255, 255, 255, 0.92);
+  --pg-ink-2: rgba(255, 255, 255, 0.68);
+  /* 暗色小字（11–12px 标签）需保 AA，对比度 ≥5:1 故抬到 .56 */
+  --pg-ink-3: rgba(255, 255, 255, 0.56);
+
+  --pg-brand: #6ba6ff;
+  --pg-brand-2: #a98ef0;
+  --pg-brand-3: #4ec9b8;
+  --pg-brand-rule: linear-gradient(180deg, #6ba6ff, #a98ef0);
+  --pg-brand-tile: linear-gradient(120deg, #2f6fd8, #6a4bc4);
+  /* 暗色下白字对比度 4.79:1，达 WCAG AA；--pg-brand(#6ba6ff) 只作文字/线条色 */
+  --pg-brand-solid: #2f6fd8;
+  --pg-brand-text: linear-gradient(
+    96deg,
+    rgba(255, 255, 255, 0.95) 0%,
+    #8fbaff 44%,
+    #c0a9ff 74%,
+    #7fded0 100%
+  );
+  --pg-brand-wash: rgba(107, 166, 255, 0.08);
+  --pg-brand-wash-strong: rgba(107, 166, 255, 0.16);
+  --pg-brand-ring: rgba(107, 166, 255, 0.6);
+
+  --pg-tone-blue-bg: rgba(61, 118, 214, 0.2);
+  --pg-tone-blue-ink: #9dc0ff;
+  --pg-tone-violet-bg: rgba(124, 92, 214, 0.2);
+  --pg-tone-violet-ink: #c3b0ff;
+  --pg-tone-teal-bg: rgba(15, 157, 143, 0.2);
+  --pg-tone-teal-ink: #7fded0;
+  --pg-tone-amber-bg: rgba(200, 138, 32, 0.2);
+  --pg-tone-amber-ink: #f0c082;
+  --pg-tone-green-bg: rgba(43, 154, 92, 0.2);
+  --pg-tone-green-ink: #7fd6a1;
+  --pg-tone-red-bg: rgba(200, 60, 60, 0.2);
+  --pg-tone-red-ink: #f0a3a3;
+  --pg-tone-gray-bg: rgba(255, 255, 255, 0.07);
+  --pg-tone-gray-ink: rgba(255, 255, 255, 0.55);
+
+  --pg-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --pg-shadow-md: 0 14px 30px -16px rgba(0, 0, 0, 0.66);
+
+  /* StaffDeck 令牌（--sd-*）暗色变体：原先 staffdeck-tokens.css 只定义 :root
+     亮色值，且 detail.module.less 等页的暗色覆写误用 [data-theme="dark"]/.dark
+     选择器（全站实际用 html.dark-mode）→ 规则永不命中，暗色下整块白底
+     叠加全局近白文字后不可读。在此统一给出暗色值，面色与 --pg-* 同源。*/
+  --sd-ink: rgba(255, 255, 255, 0.92);
+  --sd-ink-hover: rgba(255, 255, 255, 0.78);
+  --sd-text-2: #98a2c0;
+  --sd-text-3: #8d94a8;
+  --sd-text-4: #d4d9e6;
+
+  /* 实色填充在暗色下反转为浅底，字色跟着变深（否则白字压白底）*/
+  --sd-solid: rgba(255, 255, 255, 0.92);
+  --sd-solid-hover: #ffffff;
+  --sd-on-solid: #101623;
+
+  --sd-line: rgba(255, 255, 255, 0.08);
+  --sd-surface: #232834;
+  --sd-bg: #131419;
+  --sd-card: #1c2029;
+
+  --sd-link: #6ba6ff;
+  --sd-green: #7fd6a1;
+  --sd-green-bg: rgba(43, 154, 92, 0.2);
+  --sd-red: #f0a3a3;
+  --sd-red-bg: rgba(200, 60, 60, 0.2);
+  --sd-blue-bg: rgba(61, 118, 214, 0.2);
+  --sd-amber: #f0c082;
+  --sd-amber-bg: rgba(200, 138, 32, 0.2);
+  --sd-gray-bg: rgba(255, 255, 255, 0.07);
+}
+
+/* ─── 样式层：面（Card / 裸表格）────────────────────────────────────────── */
+
+/* antd Card = 标准面：只补齐"发丝边 + 圆角 + 浮起阴影"，底色仍由 antd /
+   页面自身决定（亮色白、暗色由 layout.css 的 !important 体系驱动），
+   避免全站强行刷白底把暗色卡片打回浅色。 */
+.page-content .qwenpaw-card,
+.page-content .ant-card {
+  border: 1px solid var(--pg-line);
+  border-radius: var(--pg-radius-surface);
+  box-shadow: var(--pg-shadow-sm);
+}
+
+/* 未被 Card 包裹的裸表格（如平台管理各列表页）自己成为一面 */
+.page-content .qwenpaw-table-wrapper,
+.page-content .ant-table-wrapper {
+  overflow: hidden;
+  border: 1px solid var(--pg-line);
+  border-radius: var(--pg-radius-surface);
+  box-shadow: var(--pg-shadow-sm);
+}
+
+/* 卡内表格复位：边框/圆角/阴影由外层 Card 承担，避免双层边框 */
+.page-content .qwenpaw-card .qwenpaw-table-wrapper,
+.page-content .qwenpaw-card .ant-table-wrapper,
+.page-content .ant-card .qwenpaw-table-wrapper,
+.page-content .ant-card .ant-table-wrapper {
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* Tabs / Collapse 这类"分区容器"的面感由内层 Card 承担，此处只统一分隔线 */
+.page-content .qwenpaw-tabs-bar,
+.page-content .ant-tabs-bar,
+.page-content .qwenpaw-tabs-top > .qwenpaw-tabs-nav,
+.page-content .ant-tabs-top > .ant-tabs-nav {
+  border-bottom-color: var(--pg-line);
+}
+
+/* ─── 样式层：表头 wash 与行态（仅亮色；暗色沿用 layout.css 的 tonal 体系）── */
+
+html:not(.dark-mode)
+  .page-content
+  .qwenpaw-table-wrapper
+  .qwenpaw-table-container
+  .qwenpaw-table-thead
+  > tr
+  > th,
+html:not(.dark-mode)
+  .page-content
+  .ant-table-wrapper
+  .ant-table-container
+  .ant-table-thead
+  > tr
+  > th {
+  background: var(--pg-brand-wash) !important;
+}
+
+/* 行 hover：antd 自身 hover 用 :where() 书写，本规则同等特异性即可生效 */
+.page-content .qwenpaw-table-tbody > tr:hover > td,
+.page-content .ant-table-tbody > tr:hover > td {
+  background: var(--pg-brand-wash-strong);
+}
+
+/* ─── 样式层：焦点环（零特异性，只为 antd 未覆盖到的自定义控件补环）──────── */
+
+:where(.page-content)
+  :where(button, a, [role="button"], input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--pg-brand-ring);
+  outline-offset: 2px;
+}
+
+/* ─── 工具类：供后续页面按需接入（当前不强制任何页面使用）────────────────── */
+
+/* 手工声明的一块面（用于既非 Card 也非 Table 的自定义正文块）*/
+.pg-surface {
+  border: 1px solid var(--pg-line);
+  border-radius: var(--pg-radius-surface);
+  background: var(--pg-surface);
+  box-shadow: var(--pg-shadow-sm);
+}
+
+/* 区块标题的品牌渐变竖线（与 PageHeader 标题锚点同源）*/
+.pg-section-rule {
+  display: inline-block;
+  width: 3px;
+  height: 15px;
+  margin-right: 10px;
+  border-radius: 2px;
+  background: var(--pg-brand-rule);
+  vertical-align: -2px;
+}
+
+/* 渐变文字（Hero / 强调标题用，正文禁用以免降低可读性）*/
+.pg-brand-text {
+  background: var(--pg-brand-text);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* 彩色 icon tile：42px 方砖，data-tone 驱动（工作台快捷入口同款）*/
+.pg-tile {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: var(--pg-radius-tile);
+  background: var(--pg-tone-blue-bg);
+  color: var(--pg-tone-blue-ink);
+}
+
+.pg-tile[data-tone="violet"] {
+  background: var(--pg-tone-violet-bg);
+  color: var(--pg-tone-violet-ink);
+}
+
+.pg-tile[data-tone="teal"] {
+  background: var(--pg-tone-teal-bg);
+  color: var(--pg-tone-teal-ink);
+}
+
+.pg-tile[data-tone="amber"] {
+  background: var(--pg-tone-amber-bg);
+  color: var(--pg-tone-amber-ink);
+}
+
+.pg-tile[data-tone="green"] {
+  background: var(--pg-tone-green-bg);
+  color: var(--pg-tone-green-ink);
+}
+
+.pg-tile[data-tone="red"] {
+  background: var(--pg-tone-red-bg);
+  color: var(--pg-tone-red-ink);
+}
+
+.pg-tile[data-tone="gray"] {
+  background: var(--pg-tone-gray-bg);
+  color: var(--pg-tone-gray-ink);
+}
+
+/* 状态胶囊：与 .sd-pill 系列并存，tone 取值对齐 pg-tile */
+.pg-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 10px;
+  border-radius: var(--pg-radius-pill);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+  background: var(--pg-tone-gray-bg);
+  color: var(--pg-tone-gray-ink);
+}
+
+.pg-pill[data-tone="blue"] {
+  background: var(--pg-tone-blue-bg);
+  color: var(--pg-tone-blue-ink);
+}
+
+.pg-pill[data-tone="violet"] {
+  background: var(--pg-tone-violet-bg);
+  color: var(--pg-tone-violet-ink);
+}
+
+.pg-pill[data-tone="teal"] {
+  background: var(--pg-tone-teal-bg);
+  color: var(--pg-tone-teal-ink);
+}
+
+.pg-pill[data-tone="amber"] {
+  background: var(--pg-tone-amber-bg);
+  color: var(--pg-tone-amber-ink);
+}
+
+.pg-pill[data-tone="green"] {
+  background: var(--pg-tone-green-bg);
+  color: var(--pg-tone-green-ink);
+}
+
+.pg-pill[data-tone="red"] {
+  background: var(--pg-tone-red-bg);
+  color: var(--pg-tone-red-ink);
+}

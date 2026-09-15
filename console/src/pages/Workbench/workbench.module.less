@@ -1,114 +1,1179 @@
+/**
+ * workbench.module.less — 平台工作台视觉层（20260914 质感升级）。
+ *
+ * 设计目标：把"白卡 + 灰字 + 白底"的单层页面升级为「画布 → 面 → 内嵌 tile」
+ * 三层结构，用冷灰蓝渐变底、彩色 tile、分级阴影建立视觉层级（对标竞品的
+ * 高级感来源是色彩分层，而非装饰元素）。
+ *
+ * 约束：
+ * 1. 所有颜色/阴影/圆角走本文件顶部 token 层，禁止散落魔法值；
+ * 2. 暗色模式在 :global(.dark-mode) 内重新赋值 token（暗色用提亮 + 降饱和的
+ *    tonal 变体，不是简单反色），组件规则只消费 var(--wb-*)；
+ * 3. 响应式优先 @container（内容区宽度受侧栏折叠/拖拽影响，视口断点不可靠）；
+ * 4. 动效只用 transform/opacity，150–300ms，prefers-reduced-motion 全量关闭。
+ */
+
 .workbench {
+  /* ─── Token 层：面 / 线 / 墨 ─────────────────────────────────────────── */
+  /* 与全站同源的色标一律引用 --pg-*（定义见 styles/page-tokens.css），
+     本文件只保留工作台专有的线色 / 光斑 / 大阴影 / 圆角节奏。 */
+  --wb-canvas: var(--pg-canvas);
+  --wb-surface: var(--pg-surface);
+  --wb-surface-muted: var(--pg-surface-muted);
+  --wb-surface-sunken: var(--pg-surface-sunken);
+  --wb-line: #e7ebf4;
+  --wb-line-strong: #d3dbeb;
+
+  --wb-ink: var(--pg-ink);
+  --wb-ink-2: var(--pg-ink-2);
+  --wb-ink-3: var(--pg-ink-3);
+
+  /* ─── Token 层：品牌与语义色 ─────────────────────────────────────────── */
+  --wb-accent: var(--pg-brand);
+  --wb-accent-2: var(--pg-brand-2);
+  --wb-accent-3: var(--pg-brand-3);
+  --wb-brand-text: var(--pg-brand-text);
+
+  --wb-tone-blue-bg: var(--pg-tone-blue-bg);
+  --wb-tone-blue-ink: var(--pg-tone-blue-ink);
+  --wb-tone-violet-bg: var(--pg-tone-violet-bg);
+  --wb-tone-violet-ink: var(--pg-tone-violet-ink);
+  --wb-tone-teal-bg: var(--pg-tone-teal-bg);
+  --wb-tone-teal-ink: var(--pg-tone-teal-ink);
+  --wb-tone-amber-bg: var(--pg-tone-amber-bg);
+  --wb-tone-amber-ink: var(--pg-tone-amber-ink);
+  --wb-tone-green-bg: var(--pg-tone-green-bg);
+  --wb-tone-green-ink: var(--pg-tone-green-ink);
+  --wb-tone-red-bg: var(--pg-tone-red-bg);
+  --wb-tone-red-ink: var(--pg-tone-red-ink);
+  --wb-tone-gray-bg: var(--pg-tone-gray-bg);
+  --wb-tone-gray-ink: var(--pg-tone-gray-ink);
+
+  /* ─── Token 层：Hero 光斑 ────────────────────────────────────────────── */
+  --wb-glow-blue: rgba(26, 113, 255, 0.2);
+  --wb-glow-violet: rgba(124, 92, 214, 0.18);
+  --wb-glow-teal: rgba(15, 157, 143, 0.14);
+
+  /* ─── Token 层：阴影（三级 elevation）───────────────────────────────── */
+  --wb-shadow-sm: var(--pg-shadow-sm);
+  --wb-shadow-md: var(--pg-shadow-md);
+  --wb-shadow-lg: 0 26px 56px -24px rgba(23, 51, 116, 0.34);
+  --wb-shadow-hero: 0 24px 60px -32px rgba(23, 51, 116, 0.3);
+
+  /* ─── Token 层：形状与节奏 ───────────────────────────────────────────── */
+  --wb-radius-hero: 22px;
+  --wb-radius-card: 18px;
+  /* 同心圆：内层半径 = 外层半径 - 内边距（18 - 8 ≈ 10）*/
+  --wb-radius-tile: 12px;
+  --wb-radius-pill: 999px;
+  --wb-gap-section: 30px;
+  --wb-gap-grid: 14px;
+
+  container-type: inline-size;
+  min-height: 100%;
+  background: var(--wb-canvas);
+  color: var(--wb-ink);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 内容列居中：画布与容器查询挂在外层，正文限宽 + 内边距放在子层，
+   这样小屏断点能同时改写内边距（@container 无法命中容器自身）。 */
+.inner {
   display: flex;
   flex-direction: column;
+  gap: var(--wb-gap-section);
+  width: 100%;
+  max-width: 1380px;
+  padding: 26px 28px 46px;
+  margin-inline: auto;
+}
+
+/* 原生 button 之外，卡片用 div[role=button] 承载（与 StatCard 一致）：
+   统一继承正文字体，避免浏览器默认 sans-serif 打断排版节奏。 */
+.agentCard,
+.metricCard,
+.quickCard,
+.sectionLink {
+  font-family: inherit;
+}
+
+/* ─── Hero ────────────────────────────────────────────────────────────── */
+
+.hero {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 36px;
+  padding: 32px 36px;
+  border: 1px solid var(--wb-line);
+  border-radius: var(--wb-radius-hero);
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.96) 0%,
+    rgba(255, 255, 255, 0.86) 46%,
+    rgba(244, 247, 255, 0.9) 100%
+  );
+  box-shadow: var(--wb-shadow-hero);
+}
+
+/* 光斑层：纯 CSS 渐变，替代竞品的 3D 插画（不引入外部素材依赖）*/
+.heroGlow {
+  position: absolute;
+  inset: -40% -10% auto auto;
+  z-index: -1;
+  width: 620px;
+  height: 460px;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      closest-side at 62% 38%,
+      var(--wb-glow-blue),
+      transparent 70%
+    ),
+    radial-gradient(
+      closest-side at 30% 66%,
+      var(--wb-glow-violet),
+      transparent 72%
+    ),
+    radial-gradient(
+      closest-side at 84% 76%,
+      var(--wb-glow-teal),
+      transparent 74%
+    );
+  filter: blur(6px);
+}
+
+.heroMain {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
   gap: 14px;
-  padding: 16px 20px 24px;
-  max-width: 1100px;
 }
 
-.inboxCard {
-  cursor: pointer;
-  border-radius: 10px;
-}
-
-.inboxCardUnread {
-  border-color: #1a71ff;
-}
-
-.inboxRow {
+.heroEyebrow {
   display: flex;
   align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--wb-ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.heroEyebrowDot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--wb-accent-3);
+}
+
+.heroTitle {
+  margin: 0;
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1.24;
+  letter-spacing: -0.022em;
+  text-wrap: balance;
+  color: var(--wb-ink);
+}
+
+.heroTitleAccent {
+  background: var(--wb-brand-text);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.heroSub {
+  max-width: 62ch;
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--wb-ink-2);
+  text-wrap: pretty;
+}
+
+.heroActions {
+  display: flex;
+  flex-wrap: wrap;
   gap: 10px;
-  color: rgba(0, 0, 0, 0.75);
-}
-
-.inboxText {
-  flex: 1;
-  font-size: 13px;
-}
-
-.inboxArrow {
-  opacity: 0.45;
-}
-
-.sectionTitle {
-  font-size: 13px;
-  font-weight: 600;
-  color: rgba(0, 0, 0, 0.6);
   margin-top: 4px;
 }
 
-.agentGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 10px;
-}
-
-.agentCard {
-  cursor: pointer;
-  border-radius: 10px;
-  transition:
-    box-shadow 0.2s ease,
-    border-color 0.2s ease;
+/* 主按钮：品牌渐变底（黑底按钮在此页只做次级，避免与 Hero 抢焦点）*/
+.heroPrimary {
+  height: 40px;
+  padding-inline: 20px;
+  border: none !important;
+  border-radius: var(--wb-radius-tile) !important;
+  /* 品牌渐变底与全站 --pg-brand-tile 同源（暗色由 --pg-* 自行降饱和）*/
+  background: var(--pg-brand-tile) !important;
+  box-shadow: 0 10px 22px -12px rgba(26, 113, 255, 0.75) !important;
+  font-weight: 600;
+  color: #fff !important;
+  transition-property: transform, box-shadow, filter;
+  transition-duration: 180ms;
+  transition-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1);
 
   &:hover {
-    border-color: #1a71ff;
+    transform: translateY(-1px);
+    filter: saturate(1.08) brightness(1.04);
+    box-shadow: 0 16px 30px -14px rgba(26, 113, 255, 0.85) !important;
+  }
+
+  &:active {
+    transform: translateY(0) scale(0.985);
   }
 }
 
-.agentCardDisabled {
-  opacity: 0.55;
+.heroGhost {
+  height: 40px;
+  padding-inline: 18px;
+  border-radius: var(--wb-radius-tile) !important;
+  border-color: var(--wb-line-strong) !important;
+  background: var(--wb-surface) !important;
+  color: var(--wb-ink) !important;
+  font-weight: 500;
+  box-shadow: var(--wb-shadow-sm) !important;
+  transition-property: transform, border-color, box-shadow;
+  transition-duration: 180ms;
+  transition-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1);
+
+  &:hover {
+    transform: translateY(-1px);
+    border-color: var(--wb-accent) !important;
+    color: var(--wb-accent) !important;
+    box-shadow: var(--wb-shadow-md) !important;
+  }
 }
 
-.agentCardCreate {
-  border-style: dashed;
-  color: rgba(0, 0, 0, 0.55);
+/* Hero 右侧视觉：真实员工形象组成的"团队星群"（数据即装饰，不造假）*/
+.heroVisual {
+  position: relative;
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 236px;
+  height: 176px;
+}
+
+.heroVisualOrb {
+  position: absolute;
+  inset: 12px 22px;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 210deg,
+    var(--wb-glow-blue),
+    var(--wb-glow-violet),
+    var(--wb-glow-teal),
+    var(--wb-glow-blue)
+  );
+  filter: blur(22px);
+  opacity: 0.9;
+}
+
+.heroLead {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 104px;
+  height: 104px;
+  padding: 4px;
+  border-radius: 50%;
+  background: linear-gradient(
+    150deg,
+    rgba(26, 113, 255, 0.55),
+    rgba(124, 92, 214, 0.45)
+  );
+  box-shadow: var(--wb-shadow-lg);
+}
+
+.heroLeadInner {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: var(--wb-surface);
+  color: var(--wb-accent);
+  overflow: hidden;
+}
+
+.heroCluster {
+  position: absolute;
+  right: 20px;
+  bottom: 14px;
+  display: flex;
+  align-items: center;
+}
+
+.heroClusterItem {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  margin-left: -10px;
+  border: 2px solid var(--wb-surface);
+  border-radius: 50%;
+  background: var(--wb-surface-muted);
+  box-shadow: var(--wb-shadow-sm);
+  overflow: hidden;
+
+  &:first-child {
+    margin-left: 0;
+  }
+}
+
+.heroClusterMore {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  margin-left: -10px;
+  border: 2px solid var(--wb-surface);
+  border-radius: 50%;
+  background: var(--wb-tone-blue-bg);
+  color: var(--wb-tone-blue-ink);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.heroBadge {
+  position: absolute;
+  top: 8px;
+  left: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border: 1px solid var(--wb-line);
+  border-radius: var(--wb-radius-pill);
+  background: var(--wb-surface);
+  box-shadow: var(--wb-shadow-sm);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--wb-ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.heroBadgeDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--wb-tone-green-ink);
+}
+
+/* ─── 指标条 ───────────────────────────────────────────────────────────── */
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--wb-gap-grid);
+}
+
+.metricCard {
+  --wb-tile-bg: var(--wb-tone-blue-bg);
+  --wb-tile-ink: var(--wb-tone-blue-ink);
+
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  border: 1px solid var(--wb-line);
+  border-radius: var(--wb-radius-card);
+  background: var(--wb-surface);
+  box-shadow: var(--wb-shadow-sm);
+  text-align: left;
+  transition-property: transform, box-shadow, border-color;
+  transition-duration: 180ms;
+  transition-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1);
+
+  &[data-tone="violet"] {
+    --wb-tile-bg: var(--wb-tone-violet-bg);
+    --wb-tile-ink: var(--wb-tone-violet-ink);
+  }
+
+  &[data-tone="teal"] {
+    --wb-tile-bg: var(--wb-tone-teal-bg);
+    --wb-tile-ink: var(--wb-tone-teal-ink);
+  }
+
+  &[data-tone="amber"] {
+    --wb-tile-bg: var(--wb-tone-amber-bg);
+    --wb-tile-ink: var(--wb-tone-amber-ink);
+  }
+
+  &[data-tone="green"] {
+    --wb-tile-bg: var(--wb-tone-green-bg);
+    --wb-tile-ink: var(--wb-tone-green-ink);
+  }
+
+  &[data-tone="red"] {
+    --wb-tile-bg: var(--wb-tone-red-bg);
+    --wb-tile-ink: var(--wb-tone-red-ink);
+  }
+
+  &[data-tone="gray"] {
+    --wb-tile-bg: var(--wb-tone-gray-bg);
+    --wb-tile-ink: var(--wb-tone-gray-ink);
+  }
+
+  &[data-clickable="true"] {
+    cursor: pointer;
+
+    &:hover {
+      transform: translateY(-2px);
+      border-color: var(--wb-line-strong);
+      box-shadow: var(--wb-shadow-md);
+    }
+
+    &:active {
+      transform: translateY(0) scale(0.995);
+    }
+  }
+}
+
+.metricIcon {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: var(--wb-radius-tile);
+  background: var(--wb-tile-bg);
+  color: var(--wb-tile-ink);
+}
+
+.metricBody {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.metricValue {
+  font-size: 24px;
+  font-weight: 650;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  color: var(--wb-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.metricLabel {
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--wb-ink-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metricArrow {
+  flex-shrink: 0;
+  color: var(--wb-ink-3);
+  opacity: 0;
+  transform: translateX(-4px);
+  transition-property: opacity, transform;
+  transition-duration: 180ms;
+}
+
+.metricCard[data-clickable="true"]:hover .metricArrow {
+  opacity: 0.7;
+  transform: translateX(0);
+}
+
+/* ─── Section 通用 ─────────────────────────────────────────────────────── */
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.sectionHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.sectionTitleGroup {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* 品牌渐变短竖线：给 section 标题一个视觉锚点 */
+.sectionRule {
+  width: 3px;
+  height: 15px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, var(--wb-accent), var(--wb-accent-2));
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.008em;
+  color: var(--wb-ink);
+}
+
+.sectionCount {
+  display: inline-grid;
+  min-width: 22px;
+  height: 20px;
+  padding-inline: 7px;
+  place-items: center;
+  border: 1px solid var(--wb-line);
+  border-radius: var(--wb-radius-pill);
+  background: var(--wb-surface-muted);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--wb-ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.sectionLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  margin: -4px -8px;
+  border: none;
+  border-radius: var(--wb-radius-sm, 8px);
+  background: none;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--wb-ink-3);
+  cursor: pointer;
+  transition-property: color, background-color;
+  transition-duration: 160ms;
+
+  &:hover {
+    background: var(--wb-surface-sunken);
+    color: var(--wb-accent);
+  }
+}
+
+/* ─── 数字员工网格 ─────────────────────────────────────────────────────── */
+
+.agentGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(292px, 1fr));
+  gap: var(--wb-gap-grid);
+}
+
+.agentCard {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid var(--wb-line);
+  border-radius: var(--wb-radius-card);
+  background: var(--wb-surface);
+  box-shadow: var(--wb-shadow-sm);
+  text-align: left;
+  color: var(--wb-ink);
+  cursor: pointer;
+  transition-property: transform, box-shadow, border-color;
+  transition-duration: 200ms;
+  transition-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1);
+
+  &:hover {
+    transform: translateY(-3px);
+    border-color: var(--wb-line-strong);
+    box-shadow: var(--wb-shadow-md);
+  }
+
+  &:active {
+    transform: translateY(-1px) scale(0.996);
+  }
+}
+
+/* hover 时浮现的渐变高光线（concentric：内缩距离与卡片 padding 一致）*/
+.agentCardGlow {
+  position: absolute;
+  top: 0;
+  right: 18px;
+  left: 18px;
+  height: 2px;
+  border-radius: 0 0 2px 2px;
+  background: linear-gradient(90deg, var(--wb-accent), var(--wb-accent-2));
+  opacity: 0;
+  transform: scaleX(0.35);
+  transform-origin: center;
+  transition-property: opacity, transform;
+  transition-duration: 220ms;
+  transition-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.agentCard:hover .agentCardGlow {
+  opacity: 1;
+  transform: scaleX(1);
 }
 
 .agentCardHead {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
+  min-width: 0;
+}
+
+.agentCardAvatar {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  background: var(--wb-surface-muted);
+  box-shadow: inset 0 0 0 1px var(--wb-line);
+  overflow: hidden;
+}
+
+.agentCardTitleBlock {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+
+  /* 胶囊不拉伸：父级 stretch 仅服务名称截断，状态胶囊按内容收窄 */
+  .pill {
+    align-self: flex-start;
+  }
 }
 
 .agentCardName {
-  flex: 1;
-  font-size: 14px;
-  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.008em;
+  color: var(--wb-ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-wrap: pretty;
+}
+
+.agentCardPin {
+  flex-shrink: 0;
+  color: var(--wb-accent);
+}
+
+.agentCardArrow {
+  flex-shrink: 0;
+  color: var(--wb-ink-3);
+  opacity: 0.45;
+  transform: translateX(-3px);
+  transition-property: opacity, transform, color;
+  transition-duration: 200ms;
+}
+
+.agentCard:hover .agentCardArrow {
+  color: var(--wb-accent);
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.agentCardDesc {
+  display: -webkit-box;
+  overflow: hidden;
+  min-height: 38px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--wb-ink-2);
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  text-wrap: pretty;
+}
+
+.agentCardDescEmpty {
+  color: var(--wb-ink-3);
+  font-style: italic;
+}
+
+.agentCardFoot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--wb-line);
+  min-width: 0;
+}
+
+.agentChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 3px 9px;
+  border-radius: var(--wb-radius-pill);
+  background: var(--wb-surface-muted);
+  font-size: 11.5px;
+  color: var(--wb-ink-2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.agentCardArrow {
-  opacity: 0.35;
+.agentChipIcon {
+  flex-shrink: 0;
+  color: var(--wb-ink-3);
 }
 
-.agentCardDesc {
-  margin-top: 6px;
-  font-size: 12px;
-  color: rgba(0, 0, 0, 0.5);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+/* 停用态：降饱和而非整卡压透明度（保证文字对比度达标）*/
+.agentCardDisabled {
+  background: var(--wb-surface-muted);
+  border-color: var(--wb-line);
+
+  .agentCardName {
+    color: var(--wb-ink-2);
+  }
+
+  .agentCardAvatar {
+    filter: grayscale(0.75);
+    opacity: 0.8;
+  }
 }
+
+/* 创建卡：虚线 + 居中留白，hover 转品牌色 */
+.agentCardCreate {
+  gap: 6px;
+  min-height: 100%;
+  padding: 18px;
+  border-style: dashed;
+  border-color: var(--wb-line-strong);
+  background: transparent;
+  box-shadow: none;
+  justify-content: center;
+
+  &:hover {
+    border-color: var(--wb-accent);
+    background: var(--wb-surface);
+
+    .agentCardCreateIcon {
+      background: linear-gradient(140deg, #1a71ff, #7c5cd6);
+      color: #fff;
+    }
+  }
+}
+
+.agentCardCreateIcon {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border-radius: var(--wb-radius-tile);
+  background: var(--wb-tone-blue-bg);
+  color: var(--wb-tone-blue-ink);
+  transition-property: background-color, color;
+  transition-duration: 200ms;
+}
+
+/* ─── 状态胶囊 ─────────────────────────────────────────────────────────── */
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 8px;
+  border-radius: var(--wb-radius-pill);
+  background: var(--wb-pill-bg);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 17px;
+  white-space: nowrap;
+  color: var(--wb-pill-ink);
+}
+
+.pillDot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.pill[data-tone="green"] {
+  --wb-pill-bg: var(--wb-tone-green-bg);
+  --wb-pill-ink: var(--wb-tone-green-ink);
+}
+
+.pill[data-tone="blue"] {
+  --wb-pill-bg: var(--wb-tone-blue-bg);
+  --wb-pill-ink: var(--wb-tone-blue-ink);
+}
+
+.pill[data-tone="amber"] {
+  --wb-pill-bg: var(--wb-tone-amber-bg);
+  --wb-pill-ink: var(--wb-tone-amber-ink);
+}
+
+.pill[data-tone="red"] {
+  --wb-pill-bg: var(--wb-tone-red-bg);
+  --wb-pill-ink: var(--wb-tone-red-ink);
+}
+
+.pill[data-tone="gray"] {
+  --wb-pill-bg: var(--wb-tone-gray-bg);
+  --wb-pill-ink: var(--wb-tone-gray-ink);
+}
+
+/* ─── 快捷入口 ─────────────────────────────────────────────────────────── */
 
 .quickGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 10px;
+  /* auto-fit：空轨道被吸收，避免宽屏下右侧出现无卡片的留白列 */
+  grid-template-columns: repeat(auto-fit, minmax(238px, 1fr));
+  gap: var(--wb-gap-grid);
 }
 
 .quickCard {
-  cursor: pointer;
-  border-radius: 10px;
+  --wb-tile-bg: var(--wb-tone-blue-bg);
+  --wb-tile-ink: var(--wb-tone-blue-ink);
+
+  position: relative;
+  overflow: hidden;
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 13px;
+  gap: 14px;
+  padding: 16px 18px;
+  border: 1px solid var(--wb-line);
+  border-radius: var(--wb-radius-card);
+  background: linear-gradient(
+    160deg,
+    var(--wb-surface) 0%,
+    var(--wb-surface-muted) 100%
+  );
+  box-shadow: var(--wb-shadow-sm);
+  text-align: left;
+  color: var(--wb-ink);
+  cursor: pointer;
+  transition-property: transform, box-shadow, border-color;
+  transition-duration: 180ms;
+  transition-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1);
+
+  &[data-tone="violet"] {
+    --wb-tile-bg: var(--wb-tone-violet-bg);
+    --wb-tile-ink: var(--wb-tone-violet-ink);
+  }
+
+  &[data-tone="teal"] {
+    --wb-tile-bg: var(--wb-tone-teal-bg);
+    --wb-tile-ink: var(--wb-tone-teal-ink);
+  }
+
+  &[data-tone="amber"] {
+    --wb-tile-bg: var(--wb-tone-amber-bg);
+    --wb-tile-ink: var(--wb-tone-amber-ink);
+  }
 
   &:hover {
-    border-color: #1a71ff;
+    transform: translateY(-2px);
+    border-color: var(--wb-line-strong);
+    box-shadow: var(--wb-shadow-md);
+
+    .quickArrow {
+      opacity: 0.75;
+      transform: translateX(0);
+    }
   }
+
+  &:active {
+    transform: translateY(0) scale(0.995);
+  }
+}
+
+.quickIcon {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: var(--wb-radius-tile);
+  background: var(--wb-tile-bg);
+  color: var(--wb-tile-ink);
+  transition-property: transform;
+  transition-duration: 220ms;
+  transition-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.quickCard:hover .quickIcon {
+  transform: scale(1.06);
+}
+
+.quickBody {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.quickTitle {
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--wb-ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quickDesc {
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--wb-ink-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-wrap: pretty;
+}
+
+.quickArrow {
+  flex-shrink: 0;
+  color: var(--wb-ink-3);
+  opacity: 0;
+  transform: translateX(-4px);
+  transition-property: opacity, transform;
+  transition-duration: 180ms;
+}
+
+/* ─── 入场动效（错峰上浮）───────────────────────────────────────────────── */
+
+/* 入场错峰上浮：起点故意不给 opacity 0——后台标签页 / 布局重排会冻结动画，
+   从 .45 起跳可保证任何情况下卡片不会白屏。 */
+@keyframes wbRise {
+  from {
+    opacity: 0.45;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.rise {
+  animation: wbRise 320ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  animation-delay: calc(var(--wb-seq, 0) * 32ms);
+}
+
+@keyframes wbFloat {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+.heroVisualOrb,
+.heroLead {
+  animation: wbFloat 7s ease-in-out infinite;
+}
+
+.heroVisualOrb {
+  animation-duration: 9s;
+  animation-delay: -2s;
+}
+
+/* ─── 响应式（容器查询：内容区宽度随侧栏折叠变化）───────────────────────── */
+
+@container (max-width: 1180px) {
+  .hero {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* 单列时星群改为绝对定位到右侧居中：正文行高决定 Hero 高度，
+     避免文字与装饰之间出现空档；预留右内边距保证文字不压到星群 */
+  .heroMain {
+    padding-right: 214px;
+  }
+
+  .heroVisual {
+    position: absolute;
+    top: 50%;
+    right: 26px;
+    width: 190px;
+    height: 150px;
+    transform: translateY(-50%);
+  }
+
+  .heroLead {
+    width: 88px;
+    height: 88px;
+  }
+
+  .heroCluster {
+    right: 8px;
+    bottom: 8px;
+  }
+}
+
+@container (max-width: 900px) {
+  .metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container (max-width: 620px) {
+  .inner {
+    gap: 22px;
+    padding: 16px 14px 32px;
+  }
+
+  .hero {
+    padding: 22px 20px;
+  }
+
+  /* 窄屏优先保正文可读性，装饰性星群直接退场 */
+  .heroVisual {
+    display: none;
+  }
+
+  .heroMain {
+    padding-right: 0;
+  }
+
+  .heroTitle {
+    font-size: 25px;
+  }
+
+  .metrics,
+  .agentGrid,
+  .quickGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ─── 无障碍：键盘焦点环 + 降低动效 ─────────────────────────────────────── */
+
+.agentCard:focus-visible,
+.metricCard:focus-visible,
+.quickCard:focus-visible,
+.sectionLink:focus-visible,
+.heroPrimary:focus-visible,
+.heroGhost:focus-visible {
+  outline: 2px solid var(--wb-accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rise,
+  .heroVisualOrb,
+  .heroLead {
+    animation: none;
+  }
+
+  .agentCard,
+  .metricCard,
+  .quickCard,
+  .heroPrimary,
+  .heroGhost {
+    transition-duration: 1ms;
+
+    &:hover {
+      transform: none;
+    }
+  }
+}
+
+/* ─── 暗色模式：重新赋值 token（提亮 + 降饱和，非反色）─────────────────── */
+
+:global(.dark-mode) .workbench {
+  /* 画布 / 面 / 墨 / 品牌 / tone / sm-md 阴影已引用 --pg-*，
+     暗色值由 page-tokens.css 的 html.dark-mode 统一供给，此处不再重赋。
+     下面只保留工作台专有的线色 / 光斑 / 大阴影。 */
+  --wb-line: rgba(255, 255, 255, 0.08);
+  --wb-line-strong: rgba(255, 255, 255, 0.16);
+
+  --wb-glow-blue: rgba(80, 130, 230, 0.24);
+  --wb-glow-violet: rgba(150, 110, 230, 0.2);
+  --wb-glow-teal: rgba(40, 170, 155, 0.16);
+
+  --wb-shadow-lg: 0 26px 56px -24px rgba(0, 0, 0, 0.7);
+  --wb-shadow-hero: 0 24px 60px -34px rgba(0, 0, 0, 0.72);
+
+  color: var(--wb-ink);
+}
+
+:global(.dark-mode) .hero {
+  background: linear-gradient(
+    135deg,
+    rgba(41, 47, 62, 0.92) 0%,
+    rgba(28, 32, 41, 0.92) 52%,
+    rgba(24, 27, 35, 0.94) 100%
+  );
+  border-color: rgba(255, 255, 255, 0.09);
+}
+
+/* 暗色下主按钮降亮度，避免饱和蓝在深底上发耀 */
+:global(html.dark-mode) .hero .heroPrimary {
+  /* background 已走 var(--pg-brand-tile)，暗色渐变自动切换，此处只调阴影与字色 */
+  box-shadow: 0 12px 26px -14px rgba(47, 111, 216, 0.9) !important;
+  color: #fff !important;
+}
+
+/* layout.css 里 `html.dark-mode .ant-btn-default` 用 !important 把默认按钮
+   强制成纯黑底（特异性 0,2,1）。此处叠 .hero 提高特异性，确保暗色下按钮
+   仍吃本页 token，不脱离深色 Hero 层次。 */
+:global(html.dark-mode) .hero .heroGhost {
+  border-color: rgba(255, 255, 255, 0.16) !important;
+  background: #232834 !important;
+  color: rgba(255, 255, 255, 0.92) !important;
+
+  &:hover {
+    border-color: var(--wb-accent) !important;
+    background: #262c39 !important;
+    color: var(--wb-accent) !important;
+  }
+}
+
+:global(.dark-mode) .heroLead {
+  background: linear-gradient(
+    150deg,
+    rgba(107, 166, 255, 0.5),
+    rgba(169, 142, 240, 0.42)
+  );
+}
+
+:global(.dark-mode) .heroLeadInner {
+  background: #232834;
+}
+
+:global(.dark-mode) .heroClusterItem,
+:global(.dark-mode) .heroClusterMore,
+:global(.dark-mode) .heroBadge {
+  border-color: #232834;
+}
+
+:global(.dark-mode) .heroClusterItem {
+  background: #232834;
+}
+
+:global(.dark-mode) .heroBadge {
+  background: #262c39;
+}
+
+:global(.dark-mode) .heroClusterMore {
+  background: rgba(61, 118, 214, 0.34);
+  color: #b9d2ff;
 }

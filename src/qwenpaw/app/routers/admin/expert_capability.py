@@ -20,11 +20,14 @@ docs/design/2026-08-30-digital-employee-capability-layer.md §六）：
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ...experts.apikeys import get_api_key_store
@@ -41,8 +44,12 @@ from ...experts.memories import (
 from ...experts.models import (
     EXPERT_STATUS_PUBLISHED,
     RESOURCE_TYPES,
+    SOP_ENVIRONMENT_DRAFT,
+    SOP_ENVIRONMENT_PRODUCTION,
     ResourceBinding,
     SopCreateBody,
+    SopDuplicateBody,
+    SopPublishBody,
     SopRecord,
     SopUpdateBody,
     ScheduledTaskCreateBody,
@@ -57,6 +64,8 @@ from ...experts.scheduling import SchedulingService, get_scheduling_store
 from ...experts.sops import get_sop_store
 from ...experts.store import get_expert_store
 from ...experts.worklog import get_worklog_service
+from ...enterprise import current_tenant_id
+from ...events.bus import get_event_bus, now_ms, sop_topic
 from ...rbac import PERM_ADMIN_EXPERTS, require_perm
 
 logger = logging.getLogger(__name__)
@@ -361,13 +370,34 @@ async def replace_resources(
     """
     await _require_expert(expert_id)
     sop_store = get_sop_store()
+    # 存量豁免：本员工已绑的 sop 不重复校验 owner（只拦新增，不追溯拆存量）
+    existing_sop_ids = {
+        b.resource_id
+        for b in await get_capability_store().list_bindings(expert_id, "sop")
+    }
     enriched: List[ResourceBinding] = []
     for binding in body.bindings:
         metadata = dict(binding.metadata or {})
-        if binding.resource_type == "sop" and not metadata.get("name"):
+        if binding.resource_type == "sop":
             sop = await sop_store.get_sop(binding.resource_id)
-            if sop is not None:
-                metadata["name"] = sop.name
+            if sop is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"SOP {binding.resource_id} not found",
+                )
+            metadata.setdefault("name", sop.name)
+            if (
+                binding.resource_id not in existing_sop_ids
+                and sop.owner_id
+                and sop.owner_id != expert_id
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "SOP is private to another expert; "
+                        "duplicate it to reuse"
+                    ),
+                )
         metadata.setdefault("mounted_at", None)
         enriched.append(
             ResourceBinding(
@@ -708,14 +738,57 @@ async def attribution_heatmap_view(
 
 
 @router.get("/sops", response_model=List[SopRecord])
-async def list_sops(status: str = "", q: str = "") -> List[SopRecord]:
-    """SOP assets (light projection, newest first)."""
-    return await get_sop_store().list_sops(status=status, q=q)
+async def list_sops(
+    status: str = "",
+    q: str = "",
+    owner_id: str = "",
+    full: bool = False,
+    environment: str = "",
+) -> List[SopRecord]:
+    """SOP assets (light projection; owner 面板用 full=true 取节点内容).
+
+    environment 为空时返回双环境合并视图（同 id 草稿优先，供员工面板
+    展示工作集）；显式传入时只返回该环境行。
+    """
+    store = get_sop_store()
+    if environment:
+        return await store.list_sops(
+            status=status,
+            q=q,
+            owner_id=owner_id,
+            full=full,
+            environment=environment,
+        )
+    drafts = await store.list_sops(
+        status=status,
+        q=q,
+        owner_id=owner_id,
+        full=full,
+        environment=SOP_ENVIRONMENT_DRAFT,
+    )
+    productions = await store.list_sops(
+        status=status,
+        q=q,
+        owner_id=owner_id,
+        full=full,
+        environment=SOP_ENVIRONMENT_PRODUCTION,
+    )
+    # 合并：草稿优先（同 id 只留草稿行，代表可编辑工作态）
+    merged: Dict[str, SopRecord] = {
+        rec.id: rec for rec in productions
+    }
+    for rec in drafts:
+        merged[rec.id] = rec
+    return sorted(
+        merged.values(),
+        key=lambda r: r.updated_at or datetime.min,
+        reverse=True,
+    )
 
 
 @router.post("/sops", status_code=201, response_model=SopRecord)
 async def create_sop(body: SopCreateBody, request: Request) -> SopRecord:
-    """Create a draft SOP (publish snapshots it)."""
+    """Create a draft SOP in the debug plane (promote publishes it)."""
     return await get_sop_store().create_sop(
         name=body.name,
         description=body.description,
@@ -724,24 +797,47 @@ async def create_sop(body: SopCreateBody, request: Request) -> SopRecord:
         nodes=body.nodes,
         edges=body.edges,
         slots=body.slots,
-        owner_id=_actor(request),
+        owner_id=body.owner_expert_id or _actor(request),
+        environment=SOP_ENVIRONMENT_DRAFT,
     )
 
 
 @router.get("/sops/{sop_id}", response_model=SopRecord)
-async def get_sop(sop_id: str) -> SopRecord:
-    sop = await get_sop_store().get_sop(sop_id)
+async def get_sop(
+    sop_id: str,
+    environment: str = SOP_ENVIRONMENT_DRAFT,
+) -> SopRecord:
+    """Read one SOP row (defaults to the editable draft plane)."""
+    sop = await get_sop_store().get_sop(sop_id, environment=environment)
+    if sop is None:
+        raise HTTPException(status_code=404, detail="SOP not found")
+    return sop
+
+
+@router.post("/sops/{sop_id}/ensure-draft", response_model=SopRecord)
+async def ensure_sop_draft(sop_id: str) -> SopRecord:
+    """Fork a production-only SOP into an editable draft row.
+
+    存量 SOP（仅线上行）首次进画布编辑前调用，保证画布总有一个
+    draft 行可写；已存在草稿则原样返回。
+    """
+    sop = await get_sop_store().ensure_draft_row(sop_id)
     if sop is None:
         raise HTTPException(status_code=404, detail="SOP not found")
     return sop
 
 
 @router.patch("/sops/{sop_id}", response_model=SopRecord)
-async def update_sop(sop_id: str, body: SopUpdateBody) -> SopRecord:
-    """Draft-only field update (published SOPs mutate via versions)."""
+async def update_sop(
+    sop_id: str,
+    body: SopUpdateBody,
+    environment: str = SOP_ENVIRONMENT_DRAFT,
+) -> SopRecord:
+    """Update one environment row (default draft), then broadcast for canvas."""
     try:
         sop = await get_sop_store().update_sop(
             sop_id,
+            environment=environment,
             name=body.name,
             description=body.description,
             business_domain=body.business_domain,
@@ -754,29 +850,156 @@ async def update_sop(sop_id: str, body: SopUpdateBody) -> SopRecord:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if sop is None:
         raise HTTPException(status_code=404, detail="SOP not found")
+    await _publish_sop_event("updated", sop)
     return sop
 
 
 @router.delete("/sops/{sop_id}", status_code=204)
 async def delete_sop(sop_id: str) -> None:
-    """Drafts only (published history is auditable → archive instead)."""
-    if not await get_sop_store().delete_sop(sop_id):
+    """无绑定的 SOP 可物理删；生效中的须先在员工页「停用」（解绑）."""
+    mounted = await get_capability_store().list_experts_for_resource(
+        "sop",
+        sop_id,
+    )
+    if mounted:
         raise HTTPException(
             status_code=400,
-            detail="only draft SOPs can be deleted",
+            detail="SOP is still mounted; deactivate (unmount) before delete",
         )
+    if not await get_sop_store().delete_sop(sop_id):
+        raise HTTPException(status_code=404, detail="SOP not found")
 
 
 @router.post("/sops/{sop_id}/publish", response_model=SopRecord)
-async def publish_sop(sop_id: str, request: Request) -> SopRecord:
-    """Publish: version+1 + immutable snapshot."""
+async def publish_sop(
+    sop_id: str,
+    request: Request,
+    body: Optional[SopPublishBody] = None,
+) -> SopRecord:
+    """Promote the draft row to production + auto-bind owner expert.
+
+    环境化语义：promote 把草稿行内容升为线上新版本写快照（无草稿行
+    退回直接发布）；发布成功后把 SOP 绑到归属员工（显式 expert_id
+    优先，其次 owner_id），绑定已存在时幂等跳过；员工不存在则只发
+    布不绑定。
+    """
     try:
-        return await get_sop_store().publish_sop(
+        record = await get_sop_store().promote_sop(
             sop_id,
             published_by=_actor(request),
         )
     except Exception as exc:  # pylint: disable=broad-except
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if record is None:
+        raise HTTPException(status_code=404, detail="SOP not found or archived")
+    await _publish_sop_event("published", record)
+    target = (body.expert_id if body else "") or record.owner_id or ""
+    if not target:
+        return record
+    if record.owner_id and record.owner_id != target:
+        raise HTTPException(
+            status_code=400,
+            detail="SOP is private to another expert; duplicate it to reuse",
+        )
+    expert = await get_expert_store().get_expert(target)
+    if expert is None:
+        return record
+    await get_capability_store().ensure_binding(
+        target,
+        "sop",
+        sop_id,
+        {"name": record.name},
+    )
+    # 绑定变更同步草稿域 PROFILE（与 replace_resources 同一语义）
+    try:
+        from ...experts.preview import refresh_expert_preview_profile
+
+        await refresh_expert_preview_profile(target, manager=_manager(request))
+    except Exception:  # pylint: disable=broad-except
+        logger.warning(
+            "sop %s published+bound to %s but preview profile refresh failed",
+            sop_id,
+            target,
+            exc_info=True,
+        )
+    return record
+
+
+async def _publish_sop_event(action: str, record: SopRecord) -> None:
+    """Broadcast one SOP write on its live-edit topic (canvas follows).
+
+    携带全量 nodes/edges/slots，前端直接 setNodes 重绘，无需再发 GET。
+    """
+    try:
+        await get_event_bus().publish(
+            sop_topic(current_tenant_id(), record.id),
+            {
+                "action": action,
+                "sop_id": record.id,
+                "environment": record.environment,
+                "version": record.version,
+                "name": record.name,
+                "goal": record.goal,
+                "nodes": record.nodes,
+                "edges": record.edges,
+                "slots": record.slots,
+            },
+        )
+    except Exception:  # pylint: disable=broad-except
+        # 广播失败绝不影响写主链路（画布下次打开从 PG 取现值）
+        logger.warning("sop %s event publish failed", record.id, exc_info=True)
+
+
+#: SSE keepalive 间隔，防代理切断空闲流
+_SOP_KEEPALIVE_S = 25.0
+
+
+@router.get("/sops/{sop_id}/events")
+async def sop_events(
+    sop_id: str,
+    last_event_id: str = Header(default="", alias="Last-Event-ID"),
+) -> StreamingResponse:
+    """SSE stream of one SOP's live edits (AI tool / canvas co-editing).
+
+    前端 SopFlowCanvas 订阅本端点，AI 每次写草稿行后实时收到全量快照，
+    据此重绘画布（右侧画布跟随 AI 绘制）。
+    """
+    topic = sop_topic(current_tenant_id(), sop_id)
+    subscription = get_event_bus().subscribe(topic, last_event_id)
+
+    async def generator():
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(
+                        subscription.__anext__(),
+                        timeout=_SOP_KEEPALIVE_S,
+                    )
+                except asyncio.TimeoutError:
+                    yield f": keepalive {now_ms()}\n\n"
+                    continue
+                except StopAsyncIteration:
+                    break
+                payload = json.dumps(
+                    {"event": event.data, "seq": event.seq},
+                    ensure_ascii=False,
+                    default=str,
+                )
+                yield f"id: {event.seq}\ndata: {payload}\n\n"
+        except asyncio.CancelledError:
+            pass
+        finally:
+            subscription.close()
+
+    return StreamingResponse(
+        generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 class SopRollbackBody(BaseModel):
@@ -803,6 +1026,19 @@ async def rollback_sop(
             detail="SOP or target version not found",
         )
     return sop
+
+
+@router.post("/sops/{sop_id}/duplicate", status_code=201, response_model=SopRecord)
+async def duplicate_sop(sop_id: str, body: SopDuplicateBody) -> SopRecord:
+    """复制式复用：任意 SOP 复制为目标员工的私有草稿（不复制绑定/版本链）."""
+    await _require_expert(body.target_expert_id)
+    record = await get_sop_store().duplicate_sop(
+        sop_id,
+        target_expert_id=body.target_expert_id,
+    )
+    if record is None:
+        raise HTTPException(status_code=404, detail="Source SOP not found")
+    return record
 
 
 @router.get("/sops/{sop_id}/versions")

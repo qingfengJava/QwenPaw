@@ -31,10 +31,13 @@ const KNOWN_LANG_KEYS = new Set(LANGUAGE_LIST.map((lang) => lang.key));
 
 interface LanguageSwitcherProps {
   persistRemotely?: boolean;
+  /** 图标按钮无可读文本，由调用方给出可访问名称（同时作为原生 title 提示）。 */
+  ariaLabel?: string;
 }
 
 export default function LanguageSwitcher({
   persistRemotely = true,
+  ariaLabel,
 }: LanguageSwitcherProps) {
   const { i18n } = useTranslation();
 
@@ -74,7 +77,12 @@ export default function LanguageSwitcher({
       // 其透传 Tooltip 触发的弃用误报已在 main.tsx 统一过滤
       overlayClassName={styles.languageDropdown}
     >
-      <Button icon={iconMap[currentLangKey]} type="text" />
+      <Button
+        icon={iconMap[currentLangKey]}
+        type="text"
+        aria-label={ariaLabel}
+        title={ariaLabel}
+      />
     </Dropdown>
   );
 }

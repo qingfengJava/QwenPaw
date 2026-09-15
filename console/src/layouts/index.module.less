@@ -1,7 +1,43 @@
 // ─── MainLayout ───────────────────────────────────────────────────────────────
+// 壳层（顶标 + 侧栏）设计 token：与工作台同一品牌色系（蓝 #1a71ff / 紫 #7c5cd6 /
+// 青 #0f9d8f），解决“侧栏选中态橙色、内容区蓝紫色”的断层。token 定在 .mainLayout
+// 上供 .header / .sider 及其内部 antd 菜单消费，暗色仅重新赋值 token。
 .mainLayout {
+  /* 壳层画布：直接引用全站唯一色标 --pg-canvas（定义见 styles/page-tokens.css）。
+     亮 #eef3ff→#ffffff，暗 #171b25→#131419；暗色值由 html.dark-mode 重赋，
+     此处无需再写一份。整页只铺一张渐变，顶标 / 侧栏 / 卡片外 8px 槽
+     全部透明共用它，消除“壳层死白、内容有色”的断层。
+     top / bottom 两个端点色给 sticky 元素遮底用（不能透明，否则滚动内容透穿）*/
+  --sh-canvas: var(--pg-canvas);
+  --sh-canvas-top: var(--pg-canvas-top);
+  --sh-canvas-bottom: var(--pg-canvas-bottom);
+
+  --sh-surface: #ffffff;
+  --sh-surface-2: #fbfcfe;
+  --sh-line: #e6eaf3;
+  --sh-ink: #101623;
+  --sh-ink-2: #4c5670;
+  --sh-ink-3: #828ca6;
+  --sh-brand: #1a71ff;
+  --sh-brand-2: #7c5cd6;
+  --sh-brand-ink: #1a5fd0;
+  --sh-hover: rgba(16, 22, 35, 0.045);
+  --sh-active: rgba(16, 22, 35, 0.075);
+  --sh-tint: rgba(26, 113, 255, 0.09);
+  --sh-tint-strong: rgba(26, 113, 255, 0.16);
+  // 画布已带淡蓝底，胶囊/控件组改用纯白才能“浮起来”（原 #f4f6fb 在蓝底上会直接隐形）
+  --sh-chip-bg: #ffffff;
+
   height: 100vh;
   min-height: 100vh;
+  background: var(--sh-canvas) !important;
+
+  /* 内层 Layout 与 Content 交回透明：否则 layout.css 的 #fcfcfc 会把画布切断，
+     侧栏与卡片之间那条 8px 槽会出现“蓝-灰-白”三条色带 */
+  :global(.qwenpaw-layout),
+  :global(.qwenpaw-layout-content) {
+    background: transparent !important;
+  }
 }
 
 @supports (height: 100dvh) {
@@ -13,15 +49,16 @@
   }
 }
 
-// ─── Header ───────────────────────────────────────────────────────────────────
+// ─── Header ──────────────────────────────────────────────────────────────────
 .header {
   height: 64px;
-  padding: 0 24px 0 0;
+  padding: 0 20px 0 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: #ffffff;
-  border-bottom: 1px solid #e3e7f1;
+  // 顶标不铺自己的底色，直接吃 .mainLayout 画布的最蓝一段
+  background: transparent;
+  border-bottom: 1px solid var(--sh-line);
 
   :global {
     .qwenpaw-space-item {
@@ -29,10 +66,67 @@
       align-items: center;
       justify-content: center;
     }
+
+    /* 图标按钮统一尺寸与状态：透明底 + hover 浅底，按下再深一档做触感反馈 */
+    .qwenpaw-btn-text {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid transparent;
+      border-radius: 10px;
+      background: transparent;
+      // 图标尺寸统一 16px：语言/主题按钮的 icon 未传 size，靠此处继承
+      font-size: 16px;
+      color: var(--sh-ink-2);
+      box-shadow: none !important;
+      transition-property: background-color, color, border-color, transform;
+      transition-duration: 160ms;
+      transition-timing-function: ease-out;
+
+      &:hover {
+        border-color: var(--sh-line);
+        background: var(--sh-hover);
+        color: var(--sh-ink) !important;
+      }
+
+      &:active {
+        background: var(--sh-active);
+        transform: scale(0.96);
+      }
+
+      &:focus-visible {
+        outline: 2px solid color-mix(in srgb, var(--sh-brand) 55%, transparent);
+        outline-offset: 2px;
+      }
+    }
   }
 
   .showOnMobile {
     display: none;
+  }
+}
+
+/* 顶标右侧控件组：语言 / 主题收进一个浅底分段容器，两个按钮成为“一组”而不是
+   两个散落图标；外圆角 12 = 内圆角 10 + 2px 内边距，保持同心关系。 */
+.headerControls {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--sh-line);
+  border-radius: 12px;
+  background: var(--sh-chip-bg);
+
+  :global(.qwenpaw-btn-text) {
+    width: 30px;
+    height: 30px;
+    border-radius: 10px;
+
+    // 容器已是白底，hover 改为中性浅灰才能看出按下层次
+    &:hover {
+      border-color: transparent;
+      background: var(--sh-hover);
+    }
   }
 }
 
@@ -69,14 +163,21 @@
   white-space: nowrap;
 }
 
-// ─── Sidebar ─────────────────────────────────────────────────────────────────
+/* 系统段菜单（设置 / 数据与安全 / 高级 / 平台管理）与上方平台段拉开一段距离：
+   两个 Menu 实例之间没有分隔线，只靠这段空白区分区块归属。 */
+.settingsMenu {
+  margin-top: 12px;
+}
+
+// ─── Sidebar ──────────────────────────────────────────────────────────────────
 .sider {
-  background: #ffffff !important;
+  // 侧栏同样透明：渐变由 .mainLayout 一张画布连续下来，不另铺白底
+  background: transparent !important;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   height: calc(100vh - 64px) !important;
-  padding: 0 16px;
+  padding: 10px 16px 0;
 
   // antd wraps Sider children in .qwenpaw-layout-sider-children (block by
   // default); every sidebar mode needs it as a flex column. It is the
@@ -90,10 +191,22 @@
       flex-direction: column;
       min-height: 0;
       overflow-y: auto;
-      scrollbar-width: none;
+      // 导航溢出时要给出可发现的滚动线索（原来完全隐藏），细窄 + 中性色不抢注意力
+      scrollbar-width: thin;
+      scrollbar-color: rgba(16, 22, 35, 0.16) transparent;
 
       &::-webkit-scrollbar {
-        display: none;
+        display: block;
+        width: 5px;
+      }
+
+      &::-webkit-scrollbar-track {
+        background: transparent;
+      }
+
+      &::-webkit-scrollbar-thumb {
+        border-radius: 999px;
+        background: rgba(16, 22, 35, 0.16);
       }
     }
   }
@@ -139,7 +252,8 @@
     z-index: 10;
     margin-bottom: 4px;
     // Opaque background so scrolled content is hidden behind
-    background: #f9f7f3;
+    // 遮底色取画布顶端色（不能透明，否则滚动项会从底下透穿上来）
+    background: var(--sh-canvas-top);
     border-radius: 12px 12px 0 0;
   }
 
@@ -285,28 +399,170 @@
   :global {
     .qwenpaw-menu {
       border-inline-end: 0 !important;
+      padding-block: 2px;
     }
 
-    /* 手风琴父菜单标题：正文字号/颜色，保留 antd 默认 hover 与展开箭头；
-       仅压缩左内边距与顶级项对齐 */
+    /* ── 行几何：一级 38 / 子项 34，圆角 10 与顶标品牌标、内容卡片同心 ── */
+    .qwenpaw-menu-item,
     .qwenpaw-menu-submenu-title {
-      padding-left: 8px !important;
+      height: 38px;
+      margin-block: 1px !important;
+      border-radius: 10px;
+      color: var(--sh-ink-2);
+      font-size: 14px;
+      transition-property: background-color, color;
+      transition-duration: 150ms;
+      transition-timing-function: ease-out;
     }
 
-    /* Menu item padding - top-level items only; submenu children keep
-       antd's per-level inline indent (the :not() guard keeps this rule
-       from flattening nested ul.qwenpaw-menu-sub items back to 8px) */
-    .qwenpaw-menu:not(.qwenpaw-menu-sub) > .qwenpaw-menu-item {
-      padding-left: 8px !important;
+    /* 分组节奏：顶级条目之间拉开到 10px，组内子项仍为 2px，
+       让“一个组”在视觉上先成为区块，再谈层级 */
+    .qwenpaw-menu:not(.qwenpaw-menu-sub) > li + li {
+      margin-top: 10px !important;
     }
 
-    /* Selected item */
+    /* icon 列：统一 16px 网格 + 比正文低一级的冷灰，hover/选中才提亮 */
+    .qwenpaw-menu-item-icon,
+    .qwenpaw-menu-item > .anticon,
+    .qwenpaw-menu-submenu-title > .anticon {
+      display: inline-grid;
+      place-items: center;
+      width: 16px;
+      min-width: 16px;
+      margin-inline-end: 10px !important;
+      font-size: 16px;
+      color: var(--sh-ink-3);
+      transition-property: color;
+      transition-duration: 150ms;
+    }
+
+    /* 一级行左内边距 8px（侧栏已有 16px + antd 行外边距 4px），
+       使 icon 落在 x=28 网格线上，与顶标品牌标对齐 */
+    .qwenpaw-menu:not(.qwenpaw-menu-sub) > .qwenpaw-menu-item,
+    .qwenpaw-menu:not(.qwenpaw-menu-sub)
+      > .qwenpaw-menu-submenu
+      > .qwenpaw-menu-submenu-title {
+      padding-inline-start: 8px !important;
+    }
+
+    /* 子项：缩进 32（icon 列落在一级 label 起点 x=52）、行高 34、字号 13，
+       层级由“缩进 + 行高 + 字号”三者共同表达，而不是只靠一条引导线 */
+    .qwenpaw-menu-sub.qwenpaw-menu-inline > .qwenpaw-menu-item {
+      height: 34px;
+      padding-inline-start: 32px !important;
+      border-radius: 9px;
+      font-size: 13px;
+    }
+
+    .qwenpaw-menu-sub .qwenpaw-menu-item-icon,
+    .qwenpaw-menu-sub .qwenpaw-menu-item > .anticon {
+      width: 15px;
+      min-width: 15px;
+      margin-inline-end: 9px !important;
+      font-size: 15px;
+    }
+
+    /* hover / press：中性浅底 + 正文色，图标同步提亮；选中行不参与 hover 变色 */
+    .qwenpaw-menu-item:hover:not(.qwenpaw-menu-item-selected),
+    .qwenpaw-menu-submenu-title:hover {
+      background: var(--sh-hover) !important;
+      color: var(--sh-ink) !important;
+
+      .qwenpaw-menu-item-icon,
+      > .anticon {
+        color: var(--sh-ink-2);
+      }
+    }
+
+    .qwenpaw-menu-item:active:not(.qwenpaw-menu-item-selected),
+    .qwenpaw-menu-submenu-title:active {
+      background: var(--sh-active) !important;
+    }
+
+    /* 键盘可达：焦点环画在行内，避免撑破侧栏宽度 */
+    .qwenpaw-menu-item:focus-visible,
+    .qwenpaw-menu-submenu-title:focus-visible {
+      outline: 2px solid color-mix(in srgb, var(--sh-brand) 55%, transparent);
+      outline-offset: -2px;
+    }
+
+    /* 手风琴父菜单标题：容器语义，字重 500；组内有选中项时整组转品牌色 */
+    .qwenpaw-menu-submenu-title {
+      font-weight: 500;
+    }
+
+    .qwenpaw-menu-submenu-selected > .qwenpaw-menu-submenu-title {
+      color: var(--sh-brand-ink) !important;
+
+      > .qwenpaw-menu-item-icon,
+      > .anticon {
+        color: var(--sh-brand) !important;
+      }
+    }
+
+    /* 展开箭头：12px、靠右 10px、比正文低两级；展开后略提亮。
+       layout.css 里有一条同效全局 !important，此处必须以 !important 夺回控制权 */
+    .qwenpaw-menu-submenu-arrow {
+      inset-inline-end: 10px;
+      font-size: 12px;
+      color: var(--sh-ink-3) !important;
+      transition-property: color, transform;
+      transition-duration: 180ms;
+      transition-timing-function: ease-out;
+    }
+
+    .qwenpaw-menu-submenu-open > .qwenpaw-menu-submenu-title .qwenpaw-menu-submenu-arrow {
+      color: var(--sh-ink-2) !important;
+    }
+
+    /* 子菜单左侧引导线：对齐一级 icon 中心（绝对 x=36 → ul 内 20px），
+       把父组与其子项连成一棵完整的树；仅限 inline 展开态，
+       不包括折叠态 hover 弹出的 vertical popup 菜单 */
+    .qwenpaw-menu-sub.qwenpaw-menu-inline {
+      position: relative;
+      padding: 2px 0 4px;
+      background: transparent !important;
+
+      &::before {
+        content: "";
+        position: absolute;
+        top: 4px;
+        bottom: 6px;
+        left: 20px;
+        width: 1px;
+        background: var(--sh-line);
+      }
+    }
+
+    /* 选中项：品牌底色 + 品牌文字/图标 + 左侧渐变指示条 + 等宽字重 600 */
     .qwenpaw-menu-item-selected {
-      background: rgba(43, 18, 0, 0.08) !important;
-      color: inherit !important;
+      position: relative;
+      background: var(--sh-tint) !important;
+      color: var(--sh-brand-ink) !important;
+      font-weight: 600;
       display: flex !important;
       align-items: center !important;
-      justify-content: center !important;
+      justify-content: flex-start !important;
+
+      &::before {
+        content: "";
+        position: absolute;
+        top: 50%;
+        left: 0;
+        width: 3px;
+        height: 18px;
+        border-radius: 0 3px 3px 0;
+        transform: translateY(-50%);
+        background: linear-gradient(
+          180deg,
+          var(--sh-brand),
+          var(--sh-brand-2)
+        );
+      }
+
+      .qwenpaw-menu-item-icon {
+        color: var(--sh-brand) !important;
+      }
 
       .qwenpaw-menu-title-content {
         display: flex !important;
@@ -314,63 +570,71 @@
       }
     }
 
-    /* Selected submenu item - keep text color unchanged */
-    .qwenpaw-menu-submenu .qwenpaw-menu-item-selected {
-      color: inherit !important;
+    /* 选中行 hover：底色加深一档，保证鼠标经时仍有反馈（不参与通用 hover 变色） */
+    .qwenpaw-menu-item-selected:hover {
+      background: var(--sh-tint-strong) !important;
+    }
+
+    /* 子项行高更矮，指示条同步收窄，保持同一套比例 */
+    .qwenpaw-menu-sub .qwenpaw-menu-item-selected::before {
+      height: 14px;
     }
   }
 }
 
+/* 暗色侧栏：只负责抹平 antd dark theme 自带的菜单底色与文字色，
+   选中/hover 的品牌色与壳层画布都由 token 驱动（见 .mainLayout 暗色覆盖），
+   不再重复一套颜色，避免两套主题走样。 */
 .siderDark {
-  background: #1a1a1a !important;
-
-  // Sticky container background (dark mode)
-  .agentSelectorContainer {
-    background: #1e1e1e;
-  }
-
-  // Sticky bottom bar background (dark mode)
-  .collapseToggleContainer {
-    background: #1a1a1a;
-  }
+  // 与亮色同一张画布，不另铺底色（否则后定义的同特异度规则会盖掉 .sider 的透明）
+  background: transparent !important;
 
   // Chat button (dark mode)
   .stickyChatButton {
-    color: rgba(255, 255, 255, 0.75);
+    color: var(--sh-ink-2);
 
     &:hover {
-      background: rgba(255, 255, 255, 0.1);
-      color: rgba(255, 255, 255, 0.95);
+      background: var(--sh-hover);
+      color: var(--sh-ink);
     }
   }
 
   .stickyChatButtonActive {
-    background: rgba(255, 127, 22, 0.5);
-    color: #18181a;
+    background: var(--sh-tint-strong);
+    color: var(--sh-brand);
   }
 
   :global {
-    .qwenpaw-menu {
-      background: #1a1a1a !important;
+    /* antd dark theme 会给菜单根节点画一层 #141414，这里交给侧栏底色 */
+    .qwenpaw-menu,
+    .qwenpaw-menu-dark,
+    .qwenpaw-menu-dark.qwenpaw-menu-inline {
+      background: transparent !important;
       border-inline-end: 0 !important;
     }
 
-    /* 手风琴父菜单标题：交由 antd dark theme 默认色与 hover */
     /* Regular menu item */
-    .qwenpaw-menu-item {
-      color: rgba(255, 255, 255, 0.75) !important;
+    .qwenpaw-menu-dark.qwenpaw-menu-inline .qwenpaw-menu-item,
+    .qwenpaw-menu-dark .qwenpaw-menu-submenu > .qwenpaw-menu-submenu-title {
+      color: var(--sh-ink-2);
     }
 
-    /* Hover state - only for menu items, not group titles */
-    .qwenpaw-menu-item:hover {
-      background: rgba(255, 255, 255, 0.1) !important;
-      color: rgba(255, 255, 255, 0.95) !important;
+    /* Hover / Selected：与亮色同一套 token，仅换为暗色提亮变体 */
+    .qwenpaw-menu-dark.qwenpaw-menu-inline .qwenpaw-menu-item:hover,
+    .qwenpaw-menu-dark .qwenpaw-menu-submenu-title:hover {
+      background: var(--sh-hover) !important;
+      color: var(--sh-ink) !important;
     }
 
-    /* Selected item */
-    .qwenpaw-menu-item-selected {
-      background: rgba(255, 127, 22, 0.5) !important;
-      color: #18181a !important;
+    .qwenpaw-menu-dark.qwenpaw-menu-inline .qwenpaw-menu-item-selected {
+      background: var(--sh-tint) !important;
+      color: var(--sh-brand) !important;
+    }
+
+    .qwenpaw-menu-dark.qwenpaw-menu-inline
+      .qwenpaw-menu-item-selected
+      .qwenpaw-menu-item-icon {
+      color: var(--sh-brand) !important;
     }
   }
 }
@@ -378,21 +642,40 @@
 .logoWrapper {
   display: flex;
   align-items: center;
-  gap: 0;
-  width: 240px;
+  gap: 10px;
   height: 100%;
-  padding: 0 20px;
+  // 折叠态侧栏只有 72px，写死 240 会在顶标左侧留出一段空白；改为内容自适应，
+  // 用 padding-left 把品牌标压在 x=28，与侧栏 icon 列共用同一条竖向网格线。
+  padding: 0 16px 0 28px;
   box-sizing: border-box;
   flex-shrink: 0;
+  user-select: none;
+}
+
+/* 品牌锁定：品牌徽章（components/BrandMark，自带渐变方底）+ 字标；
+   Slot 默认内容，插件仍可整体替换 */
+.brandLockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  transition-property: opacity, transform;
+  transition-duration: 160ms;
+  transition-timing-function: ease-out;
+
+  &:active {
+    opacity: 0.72;
+    transform: scale(0.98);
+  }
 }
 
 .brandText {
   font-family: "PingFang SC", "Helvetica Neue", sans-serif;
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 700;
-  letter-spacing: 0.5px;
+  letter-spacing: -0.011em;
   line-height: 1;
-  color: #1a1716;
+  color: var(--sh-ink);
   user-select: none;
   white-space: nowrap;
 }
@@ -407,32 +690,57 @@
 }
 
 .logoDivider {
-  width: 16px;
-  height: 0px;
-  transform: rotate(90deg);
-  border-top: 1px solid rgba(234, 232, 231, 1);
-  margin: 0 8px;
+  width: 1px;
+  height: 18px;
+  flex-shrink: 0;
+  background: var(--sh-line);
 }
 
 .headerDivider {
-  width: 16px;
-  height: 0px;
-  transform: rotate(90deg);
+  width: 1px;
+  height: 18px;
   z-index: 4;
-  border-top: 1px solid rgba(234, 232, 231, 1);
+  margin: 0 4px;
+  background: var(--sh-line);
 }
 
+/* 版本 chip：胶囊形态（与 10px 方角体系区分开，明确它是“标签”不是“按钮”），
+   等宽数字防止版本号位数变化时宽度跳动；有更新时才转品牌色。 */
 .versionBadge {
-  font-size: 12px;
-  color: #1a171673;
-  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid var(--sh-line);
+  border-radius: 999px;
+  background: var(--sh-chip-bg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
   line-height: 1;
+  color: var(--sh-ink-3);
   position: relative;
-  top: 3px;
+  top: 1px;
+  font-variant-numeric: tabular-nums;
+  transition-property: color, border-color, background-color;
+  transition-duration: 160ms;
+
+  &:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--sh-brand) 55%, transparent);
+    outline-offset: 2px;
+  }
 }
 
 .versionBadgeClickable {
   cursor: pointer;
+  border-color: var(--sh-tint-strong);
+  background: var(--sh-tint);
+  color: var(--sh-brand-ink);
+
+  &:hover {
+    border-color: var(--sh-brand);
+  }
 }
 
 .versionBadgeDefault {
@@ -447,19 +755,29 @@
 // ─── Auth actions (account + logout) ──────────────────────────────────────────
 .authActions {
   flex-shrink: 0;
-  padding: 8px 16px 12px;
+  padding: 6px 12px 2px;
 }
 
 .authBtn {
   display: flex;
   align-items: center;
   gap: 8px;
+  height: 32px;
   justify-content: flex-start;
-  color: rgba(0, 0, 0, 0.65);
+  border-radius: 9px;
+  font-size: 13px;
+  color: var(--sh-ink-2);
+  transition-property: background-color, color;
+  transition-duration: 160ms;
 
   &:hover {
-    color: rgba(0, 0, 0, 0.88) !important;
-    background: rgba(0, 0, 0, 0.04) !important;
+    color: var(--sh-ink) !important;
+    background: var(--sh-hover) !important;
+  }
+
+  &:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--sh-brand) 55%, transparent);
+    outline-offset: -2px;
   }
 }
 
@@ -567,7 +885,8 @@
   background-color: rgba(255, 255, 255, 0.08) !important;
 }
 
-/* Collapse Toggle Button */
+/* 侧栏底栏：把设置 / 折叠两个图标按钮与导航用一条分隔线隔开，
+   否则两个小图标像浮在空白里，没有归属 */
 .collapseToggleContainer {
   flex-shrink: 0;
   position: sticky;
@@ -575,28 +894,49 @@
   z-index: 10;
   width: calc(100% + 32px);
   margin: auto -16px 0; // auto top: pin to bottom when content is short
-  padding: 8px 16px;
+  padding: 10px 16px;
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 4px;
-  background: #ffffff; // match sider background so scrolled content is hidden
-}
+  border-top: 1px solid var(--sh-line);
+  // 遮底色取画布底端色（渐变到 74% 已是纯白/最暗值），与下方无缝衔接
+  background: var(--sh-canvas-bottom);
 
-.collapseToggle {
-  color: rgba(0, 0, 0, 0.45);
-  border-radius: 8px;
-  transition: all 0.2s;
+  /* 嵌套一层把特异度抬到 (0,2,0)：antd 运行时注入的 .qwenpaw-btn 高度为 32px，
+     同特异度下后注入者赢，不嵌套就会被 antd 压回 32px 点击区 */
+  .collapseToggle {
+    width: 36px;
+    height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--sh-ink-3);
+    border-radius: 10px;
+    transition-property: background-color, color, transform;
+    transition-duration: 160ms;
+    transition-timing-function: ease-out;
 
-  &:hover {
-    background: rgba(0, 0, 0, 0.06) !important;
-    color: #18181a !important;
+    &:hover {
+      background: var(--sh-hover) !important;
+      color: var(--sh-ink) !important;
+    }
+
+    &:active {
+      background: var(--sh-active) !important;
+      transform: scale(0.96);
+    }
+
+    &:focus-visible {
+      outline: 2px solid color-mix(in srgb, var(--sh-brand) 55%, transparent);
+      outline-offset: -2px;
+    }
   }
 }
 
 .modeToggleActive {
-  color: #18181a !important;
-  background: rgba(255, 127, 22, 0.08);
+  color: var(--sh-brand-ink) !important;
+  background: var(--sh-tint);
 }
 
 // ─── Simple mode: flat nav + session list ─────────────────────────────────────
@@ -740,16 +1080,17 @@
   padding: 0 12px;
   margin: 4px 0;
   border: none;
-  border-radius: 8px;
-  background: rgba(255, 127, 22, 0.08);
-  color: #18181a;
+  border-radius: 10px;
+  background: var(--sh-tint);
+  color: var(--sh-brand-ink);
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 600;
   cursor: pointer;
-  transition: background 0.2s;
+  transition-property: background-color, color;
+  transition-duration: 160ms;
 
   &:hover {
-    background: rgba(255, 127, 22, 0.14);
+    background: var(--sh-tint-strong);
   }
 }
 
@@ -765,28 +1106,28 @@
   align-items: center;
   gap: 10px;
   width: 100%;
-  height: 36px;
-  padding: 0 12px;
+  height: 38px;
+  padding: 0 10px;
   border: none;
-  border-radius: 8px;
+  border-radius: 10px;
   background: transparent;
-  color: rgba(0, 0, 0, 0.75);
+  color: var(--sh-ink-2);
   font-size: 14px;
   cursor: pointer;
-  transition:
-    background 0.15s,
-    color 0.15s;
+  transition-property: background-color, color;
+  transition-duration: 150ms;
   text-align: left;
 
   &:hover {
-    background: rgba(0, 0, 0, 0.06);
-    color: rgba(0, 0, 0, 0.88);
+    background: var(--sh-hover);
+    color: var(--sh-ink);
   }
 }
 
 .simpleNavItemActive {
-  background: rgba(43, 18, 0, 0.08);
-  color: rgba(0, 0, 0, 0.88);
+  background: var(--sh-tint);
+  color: var(--sh-brand-ink);
+  font-weight: 600;
 }
 
 // Session list container
@@ -799,10 +1140,12 @@
 }
 
 .simpleSessionHeader {
-  font-size: 12px;
-  font-weight: 500;
-  color: rgba(26, 23, 22, 0.35);
-  padding: 4px 12px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--sh-ink-3);
+  padding: 8px 10px 6px;
   flex-shrink: 0;
 }
 
@@ -843,7 +1186,7 @@
 }
 
 .simpleSessionItemActive {
-  background: rgba(43, 18, 0, 0.08);
+  background: var(--sh-tint);
 }
 
 .simpleSessionItemDisabled {
@@ -856,7 +1199,7 @@
   min-width: 0;
   font-size: 13px;
   line-height: 20px;
-  color: rgba(0, 0, 0, 0.75);
+  color: var(--sh-ink-2);
   text-overflow: ellipsis;
   white-space: nowrap;
   overflow: hidden;
@@ -910,8 +1253,13 @@
   flex-direction: column;
   align-items: center;
   gap: 4px;
-  padding: 4px 0;
-  overflow: hidden;
+  padding: 8px 0 4px;
+  overflow-y: auto;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 .collapsedNavPinned {
@@ -938,22 +1286,45 @@
   }
 }
 
+/* 折叠 rail 内部分隔：平台组与系统组之间一条短线，避免 30 个图标连成一片 */
+.railDivider {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 1px;
+  margin: 6px 0;
+  border-radius: 1px;
+  background: var(--sh-line);
+}
+
 .collapsedNavItem {
+  position: relative;
   width: 40px;
   height: 40px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 10px;
+  border-radius: 11px;
   border: none;
   background: transparent;
   cursor: pointer;
-  color: rgba(0, 0, 0, 0.55);
-  transition: all 0.15s;
+  color: var(--sh-ink-3);
+  transition-property: background-color, color, transform;
+  transition-duration: 160ms;
+  transition-timing-function: ease-out;
 
   &:hover {
-    background: rgba(0, 0, 0, 0.06);
-    color: rgba(0, 0, 0, 0.88);
+    background: var(--sh-hover);
+    color: var(--sh-ink);
+  }
+
+  &:active {
+    background: var(--sh-active);
+    transform: scale(0.96);
+  }
+
+  &:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--sh-brand) 55%, transparent);
+    outline-offset: -2px;
   }
 
   &.inboxShake {
@@ -962,8 +1333,21 @@
 }
 
 .collapsedNavItemActive {
-  background: rgba(43, 18, 0, 0.08) !important;
-  color: rgba(0, 0, 0, 0.88) !important;
+  background: var(--sh-tint) !important;
+  color: var(--sh-brand-ink) !important;
+
+  // 与展开态同一种指示条：左侧 3px 渐变短条，两种模式语义一致
+  &::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: -10px;
+    width: 3px;
+    height: 16px;
+    border-radius: 0 3px 3px 0;
+    transform: translateY(-50%);
+    background: linear-gradient(180deg, var(--sh-brand), var(--sh-brand-2));
+  }
 }
 
 @media (max-width: 768px) {
@@ -1167,21 +1551,41 @@
   color: #999;
 }
 
-/* ─── Dark mode overrides ─────────────────────────────────────────────────── */
+/* ─── Dark mode overrides ──────────────────────────────────────────────────── */
 :global(.dark-mode) {
+  /* 壳层暗色 token：深面 + 白色 alpha 线 + 品牌色提亮降饱和（非反色）。
+     下面各块只消费 var(--sh-*)，不再散写十六进制，两套主题同源。 */
+  .mainLayout {
+    /* 画布三色标不在此重复：--sh-canvas* 已引用 --pg-canvas*，
+       暗色值由 page-tokens.css 的 html.dark-mode 统一供给（单一来源）。
+       这里只覆盖壳层专有的面 / 线 / 墨 / tint。 */
+    --sh-surface: #1a1e27;
+    --sh-surface-2: #1f242f;
+    --sh-line: rgba(255, 255, 255, 0.08);
+    --sh-ink: rgba(255, 255, 255, 0.92);
+    --sh-ink-2: rgba(255, 255, 255, 0.68);
+    --sh-ink-3: rgba(255, 255, 255, 0.56);
+    --sh-brand: #6ba6ff;
+    --sh-brand-2: #a98ef0;
+    --sh-brand-ink: #9dc0ff;
+    --sh-hover: rgba(255, 255, 255, 0.06);
+    --sh-active: rgba(255, 255, 255, 0.1);
+    --sh-tint: rgba(96, 150, 240, 0.16);
+    --sh-tint-strong: rgba(96, 150, 240, 0.28);
+    --sh-chip-bg: rgba(255, 255, 255, 0.06);
+  }
+
   .header {
-    background: #1a1a1a !important;
-    border-bottom-color: rgba(255, 255, 255, 0.08) !important;
-    color: rgba(255, 255, 255, 0.85);
+    color: var(--sh-ink);
 
     /* Text buttons (Docs / FAQ / GitHub / Changelog) */
     :global(.qwenpaw-btn-text),
     :global(.ant-btn-text) {
-      color: rgba(255, 255, 255, 0.75) !important;
+      color: var(--sh-ink-2) !important;
 
       &:hover {
-        color: #fff !important;
-        background: rgba(255, 255, 255, 0.08) !important;
+        color: var(--sh-ink) !important;
+        background: var(--sh-hover) !important;
       }
 
       .anticon,
@@ -1192,42 +1596,24 @@
 
     /* Fallback: any icon or text directly inside header */
     :global(.anticon) {
-      color: rgba(255, 255, 255, 0.75);
+      color: var(--sh-ink-2);
     }
   }
 
   .headerTitle {
-    color: rgba(255, 255, 255, 0.85);
-  }
-
-  .sider {
-    background: #1a1a1a !important;
-    border-right-color: rgba(255, 255, 255, 0.08) !important;
+    color: var(--sh-ink);
   }
 
   .siderTop {
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  }
-
-  .versionBadge {
-    color: rgba(255, 255, 255, 0.45);
+    border-bottom: 1px solid var(--sh-line);
   }
 
   .collapseBtn {
-    color: #18181a;
+    color: var(--sh-ink);
   }
 
   .authActions {
-    border-top-color: rgba(255, 255, 255, 0.08);
-  }
-
-  .authBtn {
-    color: rgba(255, 255, 255, 0.75);
-
-    &:hover {
-      color: rgba(255, 255, 255, 0.9) !important;
-      background: rgba(255, 255, 255, 0.06) !important;
-    }
+    border-top-color: var(--sh-line);
   }
 
   .accountIdentity {
@@ -1254,31 +1640,42 @@
   }
 
   .collapseToggle {
-    color: rgba(255, 255, 255, 0.45);
+    color: var(--sh-ink-3);
 
     &:hover {
-      background: rgba(255, 255, 255, 0.08);
-      color: #18181a;
+      background: var(--sh-hover);
+      color: var(--sh-ink);
     }
   }
 
   .modeToggleActive {
-    color: #18181a !important;
-    background: rgba(255, 127, 22, 0.12);
+    color: var(--sh-brand-ink) !important;
+    background: var(--sh-tint);
+  }
+
+  .sider {
+    // 暗色滚动条换成白色 alpha，否则深色底上看不见
+    :global(.qwenpaw-layout-sider-children) {
+      scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+
+      &::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.2);
+      }
+    }
   }
 
   .collapsedNavItem {
-    color: rgba(255, 255, 255, 0.5);
+    color: var(--sh-ink-3);
 
     &:hover {
-      background: rgba(255, 255, 255, 0.08);
-      color: rgba(255, 255, 255, 0.88);
+      background: var(--sh-hover);
+      color: var(--sh-ink);
     }
   }
 
   .collapsedNavItemActive {
-    background: rgba(255, 127, 22, 0.5) !important;
-    color: rgba(255, 255, 255, 0.88) !important;
+    background: var(--sh-tint) !important;
+    color: var(--sh-brand-ink) !important;
   }
 
   .codeBlock {
@@ -1307,16 +1704,17 @@
   padding: 0 12px;
   margin: 4px 0;
   border: none;
-  border-radius: 8px;
-  background: rgba(255, 127, 22, 0.08);
-  color: #18181a;
+  border-radius: 10px;
+  background: var(--sh-tint);
+  color: var(--sh-brand-ink);
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 600;
   cursor: pointer;
-  transition: background 0.2s;
+  transition-property: background-color, color;
+  transition-duration: 160ms;
 
   &:hover {
-    background: rgba(255, 127, 22, 0.14);
+    background: var(--sh-tint-strong);
   }
 }
 
@@ -1332,28 +1730,28 @@
   align-items: center;
   gap: 10px;
   width: 100%;
-  height: 36px;
-  padding: 0 12px;
+  height: 38px;
+  padding: 0 10px;
   border: none;
-  border-radius: 8px;
+  border-radius: 10px;
   background: transparent;
-  color: rgba(0, 0, 0, 0.75);
+  color: var(--sh-ink-2);
   font-size: 14px;
   cursor: pointer;
-  transition:
-    background 0.15s,
-    color 0.15s;
+  transition-property: background-color, color;
+  transition-duration: 150ms;
   text-align: left;
 
   &:hover {
-    background: rgba(0, 0, 0, 0.06);
-    color: rgba(0, 0, 0, 0.88);
+    background: var(--sh-hover);
+    color: var(--sh-ink);
   }
 }
 
 .simpleNavItemActive {
-  background: rgba(43, 18, 0, 0.08);
-  color: rgba(0, 0, 0, 0.88);
+  background: var(--sh-tint);
+  color: var(--sh-brand-ink);
+  font-weight: 600;
 }
 
 // Session list container
@@ -1366,10 +1764,12 @@
 }
 
 .simpleSessionHeader {
-  font-size: 12px;
-  font-weight: 500;
-  color: rgba(26, 23, 22, 0.35);
-  padding: 4px 12px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--sh-ink-3);
+  padding: 8px 10px 6px;
   flex-shrink: 0;
 }
 
@@ -1410,7 +1810,7 @@
 }
 
 .simpleSessionItemActive {
-  background: rgba(43, 18, 0, 0.08);
+  background: var(--sh-tint);
 }
 
 .simpleSessionItemDisabled {
@@ -1423,7 +1823,7 @@
   min-width: 0;
   font-size: 13px;
   line-height: 20px;
-  color: rgba(0, 0, 0, 0.75);
+  color: var(--sh-ink-2);
   text-overflow: ellipsis;
   white-space: nowrap;
   overflow: hidden;
@@ -1474,80 +1874,76 @@
 .siderSimple {
   :global(.dark-mode) & {
     .simpleAgentDisclosure {
-      color: rgba(255, 255, 255, 0.48);
+      color: var(--sh-ink-3);
 
       &:hover,
       &:focus-visible,
       &[aria-expanded="true"] {
-        color: #ff8f32;
+        color: var(--sh-brand);
       }
     }
 
     .simpleAgentDisclosureLine {
-      background: linear-gradient(
-        90deg,
-        transparent,
-        rgba(255, 255, 255, 0.13)
-      );
+      background: linear-gradient(90deg, transparent, var(--sh-line));
     }
 
     .simpleAgentDisclosureHandle {
-      border-color: rgba(255, 255, 255, 0.1);
-      background: rgba(255, 255, 255, 0.045);
+      border-color: var(--sh-line);
+      background: var(--sh-hover);
       box-shadow: none;
     }
 
     .simpleNewChat {
-      background: rgba(255, 127, 22, 0.12);
-      color: #18181a;
+      background: var(--sh-tint);
+      color: var(--sh-brand-ink);
 
       &:hover {
-        background: rgba(255, 127, 22, 0.2);
+        background: var(--sh-tint-strong);
       }
     }
 
     .simpleNavItem {
-      color: rgba(255, 255, 255, 0.75);
+      color: var(--sh-ink-2);
 
       &:hover {
-        background: rgba(255, 255, 255, 0.08);
-        color: rgba(255, 255, 255, 0.95);
+        background: var(--sh-hover);
+        color: var(--sh-ink);
       }
     }
 
     .simpleNavItemActive {
-      background: rgba(255, 127, 22, 0.5);
-      color: #18181a;
+      background: var(--sh-tint);
+      color: var(--sh-brand-ink);
     }
 
     .simpleSessionHeader {
-      color: rgba(255, 255, 255, 0.35);
+      color: var(--sh-ink-3);
     }
 
     .simpleSessionItem {
       &:hover {
-        background: rgba(255, 255, 255, 0.08);
+        background: var(--sh-hover);
       }
     }
 
     .simpleSessionItemActive {
-      background: rgba(255, 255, 255, 0.08);
+      background: var(--sh-tint);
     }
 
     .simpleSessionName {
-      color: rgba(255, 255, 255, 0.75);
+      color: var(--sh-ink-2);
     }
 
     .simpleSessionTime {
-      color: rgba(255, 255, 255, 0.35);
+      color: var(--sh-ink-3);
     }
 
     .simpleSessionActionBtn {
-      color: rgba(255, 255, 255, 0.45);
+      color: var(--sh-ink-3);
 
       &:hover {
-        color: rgba(255, 255, 255, 0.88);
-        background: rgba(255, 255, 255, 0.08);
+        color: var(--sh-ink);
+        background: var(--sh-hover);
       }
     }
   }

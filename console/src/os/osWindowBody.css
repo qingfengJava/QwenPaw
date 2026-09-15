@@ -17,6 +17,12 @@
   padding-bottom: 0;
 }
 
+/* 窗口内已有自己的容器边距，页面正文不再叠加全局内缩槽（--pg-gutter），
+   否则会出现双重留白。画布渐变仍保留（窗口内容需要自己的底色）。*/
+.os-window-body .page-content {
+  padding: 0;
+}
+
 /* In-window app overlays (see OsAppHost.tsx). Modal/Drawer mounted into
  * the window's overlay root via useOverlayContainer() position against the
  * window instead of the viewport; the window root's overflow keeps them

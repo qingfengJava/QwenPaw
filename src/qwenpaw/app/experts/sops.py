@@ -21,7 +21,10 @@ from typing import Dict, List, Optional
 from sqlalchemy import text
 
 from ..enterprise import current_tenant_id, new_id, require_enterprise_engine
+from ..agent_docs.store import environment_for_agent
 from .models import (
+    SOP_ENVIRONMENT_DRAFT,
+    SOP_ENVIRONMENT_PRODUCTION,
     SOP_STATUS_ARCHIVED,
     SOP_STATUS_DRAFT,
     SOP_STATUS_PUBLISHED,
@@ -31,12 +34,12 @@ from .models import (
 
 _COLS = (
     "id, name, description, business_domain, goal, nodes, edges, slots, "
-    "status, version, owner_id, created_at, updated_at"
+    "status, version, owner_id, environment, created_at, updated_at"
 )
 
 _LIGHT_COLS = (
     "id, name, description, business_domain, goal, status, version, "
-    "owner_id, created_at, updated_at"
+    "owner_id, environment, created_at, updated_at"
 )
 
 
@@ -67,6 +70,7 @@ def _row_to_sop(row, *, light: bool = False) -> SopRecord:
         status=row.status,
         version=row.version,
         owner_id=row.owner_id,
+        environment=getattr(row, "environment", SOP_ENVIRONMENT_PRODUCTION),
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -86,8 +90,13 @@ class SopStore:
         slots: Optional[List[dict]] = None,
         owner_id: Optional[str] = None,
         sop_id: Optional[str] = None,
+        environment: str = SOP_ENVIRONMENT_PRODUCTION,
     ) -> SopRecord:
-        """Insert a draft SOP (version=1, no snapshot until publish)."""
+        """Insert one SOP row in the given environment.
+
+        默认写 production（兼容旧调用面）；UI/AI 新建草稿时显式传
+        ``environment='draft'``，promote 后才进线上。
+        """
         tid = current_tenant_id()
         sop_id = sop_id or new_id("sop")
         engine = require_enterprise_engine()
@@ -96,10 +105,10 @@ class SopStore:
                 text(
                     "INSERT INTO sops (tenant_id, id, name, description, "
                     "business_domain, goal, nodes, edges, slots, status, "
-                    "version, owner_id) VALUES (:tid, :id, :name, :desc, "
-                    ":domain, :goal, CAST(:nodes AS JSONB), "
+                    "version, owner_id, environment) VALUES (:tid, :id, "
+                    ":name, :desc, :domain, :goal, CAST(:nodes AS JSONB), "
                     "CAST(:edges AS JSONB), CAST(:slots AS JSONB), "
-                    ":status, 1, :owner) RETURNING " + _COLS
+                    ":status, 1, :owner, :env) RETURNING " + _COLS
                 ),
                 {
                     "tid": tid,
@@ -113,19 +122,29 @@ class SopStore:
                     "slots": json.dumps(slots or []),
                     "status": SOP_STATUS_DRAFT,
                     "owner": owner_id,
+                    "env": environment,
                 },
             )
             return _row_to_sop(result.one())
 
-    async def get_sop(self, sop_id: str) -> Optional[SopRecord]:
+    async def get_sop(
+        self,
+        sop_id: str,
+        environment: str = SOP_ENVIRONMENT_PRODUCTION,
+    ) -> Optional[SopRecord]:
         engine = require_enterprise_engine()
         async with engine.connect() as conn:
             result = await conn.execute(
                 text(
                     "SELECT " + _COLS + " FROM sops "
-                    "WHERE tenant_id = :tid AND id = :id"
+                    "WHERE tenant_id = :tid AND id = :id "
+                    "AND environment = :env"
                 ),
-                {"tid": current_tenant_id(), "id": sop_id},
+                {
+                    "tid": current_tenant_id(),
+                    "id": sop_id,
+                    "env": environment,
+                },
             )
             row = result.first()
             return _row_to_sop(row) if row else None
@@ -135,11 +154,16 @@ class SopStore:
         status: str = "",
         owner_id: str = "",
         q: str = "",
+        full: bool = False,
+        environment: str = SOP_ENVIRONMENT_PRODUCTION,
     ) -> List[SopRecord]:
-        """List SOPs (light projection for list pages)."""
+        """List SOPs in one environment (light projection by default)."""
         engine = require_enterprise_engine()
-        clauses = ["tenant_id = :tid"]
-        params: Dict[str, object] = {"tid": current_tenant_id()}
+        clauses = ["tenant_id = :tid", "environment = :env"]
+        params: Dict[str, object] = {
+            "tid": current_tenant_id(),
+            "env": environment,
+        }
         if status:
             clauses.append("status = :status")
             params["status"] = status
@@ -149,35 +173,43 @@ class SopStore:
         if q:
             clauses.append("(name ILIKE :kw OR description ILIKE :kw)")
             params["kw"] = f"%{q}%"
+        cols = _COLS if full else _LIGHT_COLS
         async with engine.connect() as conn:
             result = await conn.execute(
                 text(
                     "SELECT "
-                    + _LIGHT_COLS
+                    + cols
                     + " FROM sops WHERE "
                     + " AND ".join(clauses)
                     + " ORDER BY updated_at DESC"
                 ),
                 params,
             )
-            return [_row_to_sop(r, light=True) for r in result]
+            return [_row_to_sop(r, light=not full) for r in result]
 
-    async def update_sop(self, sop_id: str, **fields) -> Optional[SopRecord]:
-        """Draft-only field update (published SOPs mutate via versions).
+    async def update_sop(
+        self,
+        sop_id: str,
+        environment: str = SOP_ENVIRONMENT_PRODUCTION,
+        **fields,
+    ) -> Optional[SopRecord]:
+        """Update content fields of one environment row.
 
-        任何字段改动都会把已发布 SOP 打回 draft 语义之外的状态保护：
-        published/archived 直接拒绝，避免"绕过版本链改线上资产"。
+        环境隔离语义：草稿行（environment=draft）随便改，不污染线上；
+        线上行（production）仅 archived 拒绝编辑。运行时按 agent 环境读
+        对应行现值，「发布/promote」才把草稿行升为线上新版本写快照。
         """
-        current = await self.get_sop(sop_id)
+        current = await self.get_sop(sop_id, environment=environment)
         if current is None:
             return None
-        if current.status != SOP_STATUS_DRAFT:
-            raise ValueError("only draft SOPs can be edited directly")
+        if current.status == SOP_STATUS_ARCHIVED:
+            raise ValueError("archived SOPs cannot be edited")
 
         sets = []
         params: Dict[str, object] = {
             "tid": current_tenant_id(),
             "id": sop_id,
+            "env": environment,
         }
         if fields.get("name") is not None:
             sets.append("name = :name")
@@ -209,7 +241,7 @@ class SopStore:
                     "UPDATE sops SET "
                     + ", ".join(sets)
                     + ", updated_at = now() WHERE tenant_id = :tid "
-                    "AND id = :id RETURNING " + _COLS
+                    "AND id = :id AND environment = :env RETURNING " + _COLS
                 ),
                 params,
             )
@@ -222,7 +254,11 @@ class SopStore:
         published_by: str = "",
         change_note: str = "",
     ) -> Optional[SopRecord]:
-        """Publish: version+1 + immutable snapshot (idempotent-safe)."""
+        """Publish the production row: version+1 + immutable snapshot.
+
+        保留旧语义（直接发布线上行）供演进提案/回滚链路复用；
+        工作台草稿发布走 :meth:`promote_sop`（draft→production）。
+        """
         engine = require_enterprise_engine()
         tid = current_tenant_id()
         async with engine.begin() as conn:
@@ -231,13 +267,15 @@ class SopStore:
                     "UPDATE sops SET status = :status, "
                     "version = version + 1, updated_at = now() "
                     "WHERE tenant_id = :tid AND id = :id "
-                    "AND status <> :archived RETURNING " + _COLS
+                    "AND environment = :env AND status <> :archived "
+                    "RETURNING " + _COLS
                 ),
                 {
                     "tid": tid,
                     "id": sop_id,
                     "status": SOP_STATUS_PUBLISHED,
                     "archived": SOP_STATUS_ARCHIVED,
+                    "env": SOP_ENVIRONMENT_PRODUCTION,
                 },
             )
             row = result.first()
@@ -245,6 +283,109 @@ class SopStore:
                 return None
             record = _row_to_sop(row)
             # 发布即快照（ON CONFLICT DO NOTHING 保证同版本幂等）
+            await conn.execute(
+                text(
+                    "INSERT INTO sop_versions (tenant_id, sop_id, version, "
+                    "snapshot, change_note, published_by) VALUES "
+                    "(:tid, :sid, :version, CAST(:snapshot AS JSONB), "
+                    ":note, :by) ON CONFLICT (tenant_id, sop_id, version) "
+                    "DO NOTHING"
+                ),
+                {
+                    "tid": tid,
+                    "sid": sop_id,
+                    "version": record.version,
+                    "snapshot": json.dumps(_snapshot_of(record)),
+                    "note": change_note,
+                    "by": published_by,
+                },
+            )
+            return record
+
+    async def promote_sop(
+        self,
+        sop_id: str,
+        published_by: str = "",
+        change_note: str = "",
+    ) -> Optional[SopRecord]:
+        """Promote the draft row into the production row (publish gate).
+
+        对齐 agent_documents 的 promote 语义：读草稿行内容，UPSERT 到
+        production 行（已存在则 version+1，否则 version=1），写不可变
+        版本快照。草稿行保留作为后续可编辑工作副本（与线上分叉即
+        “有未发布变更”）。无草稿行时退回直接发布 production 行。
+        """
+        engine = require_enterprise_engine()
+        tid = current_tenant_id()
+        async with engine.begin() as conn:
+            draft = await conn.execute(
+                text(
+                    "SELECT " + _COLS + " FROM sops WHERE tenant_id = :tid "
+                    "AND id = :id AND environment = :draft"
+                ),
+                {"tid": tid, "id": sop_id, "draft": SOP_ENVIRONMENT_DRAFT},
+            )
+            draft_row = draft.first()
+            if draft_row is None:
+                # 无草稿行（存量 production-only SOP）：退回直接发布
+                return await self.publish_sop(
+                    sop_id,
+                    published_by=published_by,
+                    change_note=change_note,
+                )
+            draft_record = _row_to_sop(draft_row)
+            # 取当前 production 行版本号（不存在则 0，首次 promote 为 v1）
+            prod = await conn.execute(
+                text(
+                    "SELECT version FROM sops WHERE tenant_id = :tid "
+                    "AND id = :id AND environment = :prod"
+                ),
+                {
+                    "tid": tid,
+                    "id": sop_id,
+                    "prod": SOP_ENVIRONMENT_PRODUCTION,
+                },
+            )
+            prod_row = prod.first()
+            next_version = (prod_row.version + 1) if prod_row else 1
+            result = await conn.execute(
+                text(
+                    "INSERT INTO sops (tenant_id, id, name, description, "
+                    "business_domain, goal, nodes, edges, slots, status, "
+                    "version, owner_id, environment) VALUES (:tid, :id, "
+                    ":name, :desc, :domain, :goal, CAST(:nodes AS JSONB), "
+                    "CAST(:edges AS JSONB), CAST(:slots AS JSONB), "
+                    ":status, :version, :owner, :prod) "
+                    "ON CONFLICT (tenant_id, id, environment) DO UPDATE SET "
+                    "name = EXCLUDED.name, description = EXCLUDED.description, "
+                    "business_domain = EXCLUDED.business_domain, "
+                    "goal = EXCLUDED.goal, nodes = EXCLUDED.nodes, "
+                    "edges = EXCLUDED.edges, slots = EXCLUDED.slots, "
+                    "status = EXCLUDED.status, version = EXCLUDED.version, "
+                    "owner_id = EXCLUDED.owner_id, updated_at = now() "
+                    "RETURNING " + _COLS
+                ),
+                {
+                    "tid": tid,
+                    "id": sop_id,
+                    "name": draft_record.name,
+                    "desc": draft_record.description,
+                    "domain": draft_record.business_domain,
+                    "goal": draft_record.goal,
+                    "nodes": json.dumps(draft_record.nodes),
+                    "edges": json.dumps(draft_record.edges),
+                    "slots": json.dumps(draft_record.slots),
+                    "status": SOP_STATUS_PUBLISHED,
+                    "version": next_version,
+                    "owner": draft_record.owner_id,
+                    "prod": SOP_ENVIRONMENT_PRODUCTION,
+                },
+            )
+            row = result.first()
+            if row is None:
+                return None
+            record = _row_to_sop(row)
+            # promote 即快照（同版本幂等）
             await conn.execute(
                 text(
                     "INSERT INTO sop_versions (tenant_id, sop_id, version, "
@@ -297,7 +438,8 @@ class SopStore:
                     "slots = CAST(:slots AS JSONB), status = :status, "
                     "version = version + 1, updated_at = now() "
                     "WHERE tenant_id = :tid AND id = :id AND "
-                    "status <> :archived RETURNING " + _COLS
+                    "environment = :env AND status <> :archived "
+                    "RETURNING " + _COLS
                 ),
                 {
                     "tid": tid,
@@ -311,6 +453,7 @@ class SopStore:
                     "slots": json.dumps(snapshot.get("slots", [])),
                     "status": SOP_STATUS_PUBLISHED,
                     "archived": SOP_STATUS_ARCHIVED,
+                    "env": SOP_ENVIRONMENT_PRODUCTION,
                 },
             )
             row = result.first()
@@ -374,12 +517,14 @@ class SopStore:
                     "UPDATE sops SET "
                     + ", ".join(sets)
                     + " WHERE tenant_id = :tid AND id = :id "
-                    "AND status <> :archived RETURNING " + _COLS
+                    "AND environment = :env AND status <> :archived "
+                    "RETURNING " + _COLS
                 ),
                 {
                     "tid": tid,
                     "id": sop_id,
                     "archived": SOP_STATUS_ARCHIVED,
+                    "env": SOP_ENVIRONMENT_PRODUCTION,
                 },
             )
             row = result.first()
@@ -430,26 +575,78 @@ class SopStore:
                 for r in result
             ]
 
+    async def duplicate_sop(
+        self,
+        sop_id: str,
+        target_expert_id: str,
+        new_sop_id: Optional[str] = None,
+        environment: str = SOP_ENVIRONMENT_DRAFT,
+    ) -> Optional[SopRecord]:
+        """Copy one SOP as a fresh draft owned by the target expert.
+
+        复制式复用（用户决策）：副本是全新资产（新 id、draft、
+        version=1），只复制业务内容，不复制绑定、不复制版本链。
+        源行优先取草稿行（工作台可见态），无则取 production 行。
+        """
+        source = await self.get_sop(
+            sop_id,
+            environment=SOP_ENVIRONMENT_DRAFT,
+        ) or await self.get_sop(
+            sop_id,
+            environment=SOP_ENVIRONMENT_PRODUCTION,
+        )
+        if source is None:
+            return None
+        return await self.create_sop(
+            name=source.name,
+            description=source.description,
+            business_domain=source.business_domain,
+            goal=source.goal,
+            nodes=source.nodes,
+            edges=source.edges,
+            slots=source.slots,
+            owner_id=target_expert_id,
+            sop_id=new_sop_id,
+            environment=environment,
+        )
+
     async def archive_sop(self, sop_id: str) -> Optional[SopRecord]:
-        """Archive (published history stays auditable)."""
+        """Archive both environment rows (published history stays auditable)."""
         engine = require_enterprise_engine()
         async with engine.begin() as conn:
             result = await conn.execute(
                 text(
                     "UPDATE sops SET status = :status, updated_at = now() "
-                    "WHERE tenant_id = :tid AND id = :id RETURNING " + _COLS
+                    "WHERE tenant_id = :tid AND id = :id "
+                    "AND environment = :env RETURNING " + _COLS
                 ),
                 {
                     "tid": current_tenant_id(),
                     "id": sop_id,
                     "status": SOP_STATUS_ARCHIVED,
+                    "env": SOP_ENVIRONMENT_PRODUCTION,
                 },
             )
             row = result.first()
+            # 归档时一并丢弃草稿行（线上已归档，草稿无继续编辑意义）
+            await conn.execute(
+                text(
+                    "DELETE FROM sops WHERE tenant_id = :tid AND id = :id "
+                    "AND environment = :draft"
+                ),
+                {
+                    "tid": current_tenant_id(),
+                    "id": sop_id,
+                    "draft": SOP_ENVIRONMENT_DRAFT,
+                },
+            )
             return _row_to_sop(row) if row else None
 
     async def delete_sop(self, sop_id: str) -> bool:
-        """Drafts only: physical delete plus its version rows."""
+        """Physical delete both environment rows + version rows.
+
+        router 层保证只对无绑定 SOP 调用；draft 与 production 一并物理删。
+        """
         engine = require_enterprise_engine()
         tid = current_tenant_id()
         async with engine.begin() as conn:
@@ -462,12 +659,68 @@ class SopStore:
             )
             result = await conn.execute(
                 text(
-                    "DELETE FROM sops WHERE tenant_id = :tid AND id = :id "
-                    "AND status = :draft"
+                    "DELETE FROM sops WHERE tenant_id = :tid AND id = :id"
                 ),
-                {"tid": tid, "id": sop_id, "draft": SOP_STATUS_DRAFT},
+                {"tid": tid, "id": sop_id},
             )
             return result.rowcount > 0
+
+    async def ensure_draft_row(
+        self,
+        sop_id: str,
+    ) -> Optional[SopRecord]:
+        """Return the editable draft row, forking from production if absent.
+
+        存量 SOP（仅 production 行）首次进画布编辑时调用：把线上行内容
+        复制一份到 draft 行作为工作副本，返回草稿。无 production 行时
+        返回 None（SOP 不存在）。
+        """
+        draft = await self.get_sop(
+            sop_id,
+            environment=SOP_ENVIRONMENT_DRAFT,
+        )
+        if draft is not None:
+            return draft
+        source = await self.get_sop(
+            sop_id,
+            environment=SOP_ENVIRONMENT_PRODUCTION,
+        )
+        if source is None:
+            return None
+        engine = require_enterprise_engine()
+        async with engine.begin() as conn:
+            result = await conn.execute(
+                text(
+                    "INSERT INTO sops (tenant_id, id, name, description, "
+                    "business_domain, goal, nodes, edges, slots, status, "
+                    "version, owner_id, environment) VALUES (:tid, :id, "
+                    ":name, :desc, :domain, :goal, CAST(:nodes AS JSONB), "
+                    "CAST(:edges AS JSONB), CAST(:slots AS JSONB), "
+                    ":status, 1, :owner, :draft) "
+                    "ON CONFLICT (tenant_id, id, environment) DO UPDATE SET "
+                    "name = EXCLUDED.name, description = EXCLUDED.description, "
+                    "business_domain = EXCLUDED.business_domain, "
+                    "goal = EXCLUDED.goal, nodes = EXCLUDED.nodes, "
+                    "edges = EXCLUDED.edges, slots = EXCLUDED.slots, "
+                    "updated_at = now() RETURNING " + _COLS
+                ),
+                {
+                    "tid": current_tenant_id(),
+                    "id": sop_id,
+                    "name": source.name,
+                    "desc": source.description,
+                    "domain": source.business_domain,
+                    "goal": source.goal,
+                    "nodes": json.dumps(source.nodes),
+                    "edges": json.dumps(source.edges),
+                    "slots": json.dumps(source.slots),
+                    "status": SOP_STATUS_DRAFT,
+                    "owner": source.owner_id,
+                    "draft": SOP_ENVIRONMENT_DRAFT,
+                },
+            )
+            row = result.first()
+            return _row_to_sop(row) if row else None
 
 
 _store: SopStore | None = None
@@ -479,3 +732,12 @@ def get_sop_store() -> SopStore:
     if _store is None:
         _store = SopStore()
     return _store
+
+
+def sop_environment_for_agent(agent_id: str) -> str:
+    """Map a running agent id to the SOP environment it should read.
+
+    复用 agent_documents 的 ``__draft`` 后缀约定：工作台调试实例
+    （``expert_{id}__draft``）读 draft 行，线上实例读 production 行。
+    """
+    return environment_for_agent(agent_id)

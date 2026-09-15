@@ -6,6 +6,8 @@
  * SOP 资产版本链、演进提案生命周期。
  */
 import { request } from "../../request";
+import { getApiUrl } from "../../config";
+import { buildAuthHeaders } from "../../authHeaders";
 import type { ExpertRecord } from "./experts";
 
 // ---------------------------------------------------------------------------
@@ -35,8 +37,23 @@ export interface SopRecord {
   status: "draft" | "published" | "archived";
   version: number;
   owner_id?: string | null;
+  /** 环境: draft-调试草稿, production-线上发布（对齐 agent_documents） */
+  environment?: "draft" | "production";
   created_at?: string | null;
   updated_at?: string | null;
+}
+
+/** SOP 实时编辑事件（AI tool / 画布保存后后端向 SSE topic 广播的全量快照）。 */
+export interface SopLiveEvent {
+  action: "created" | "updated" | "published";
+  sop_id: string;
+  environment: "draft" | "production";
+  version: number;
+  name: string;
+  goal: string;
+  nodes: SopNode[];
+  edges: SopEdge[];
+  slots: SopSlot[];
 }
 
 export interface SopNode {
@@ -374,12 +391,22 @@ export const expertCapabilityApi = {
 // ---------------------------------------------------------------------------
 
 export const sopApi = {
-  list: (status = "", q = "") =>
+  list: (status = "", q = "", ownerId = "", full = false, environment = "") =>
     request<SopRecord[]>(
-      `/admin/sops?status=${enc(status)}&q=${enc(q)}`,
+      `/admin/sops?status=${enc(status)}&q=${enc(q)}`
+      + `&owner_id=${enc(ownerId)}&full=${full}&environment=${enc(environment)}`,
     ),
 
-  get: (sopId: string) => request<SopRecord>(`/admin/sops/${enc(sopId)}`),
+  get: (sopId: string, environment = "draft") =>
+    request<SopRecord>(
+      `/admin/sops/${enc(sopId)}?environment=${enc(environment)}`,
+    ),
+
+  /** 存量线上 SOP 首次编辑：fork 出可编辑草稿行（无则新建）。 */
+  ensureDraft: (sopId: string) =>
+    request<SopRecord>(`/admin/sops/${enc(sopId)}/ensure-draft`, {
+      method: "POST",
+    }),
 
   create: (body: {
     name: string;
@@ -389,6 +416,8 @@ export const sopApi = {
     nodes?: SopNode[];
     edges?: SopEdge[];
     slots?: SopSlot[];
+    /** 归属员工 id（SOP 私有能力化：员工页新建必传） */
+    owner_expert_id?: string;
   }) =>
     request<SopRecord>("/admin/sops", {
       method: "POST",
@@ -406,18 +435,29 @@ export const sopApi = {
       edges: SopEdge[];
       slots: SopSlot[];
     }>,
+    environment = "draft",
   ) =>
-    request<SopRecord>(`/admin/sops/${enc(sopId)}`, {
-      method: "PATCH",
-      body: JSON.stringify(body),
-    }),
+    request<SopRecord>(
+      `/admin/sops/${enc(sopId)}?environment=${enc(environment)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      },
+    ),
 
   remove: (sopId: string) =>
     request<void>(`/admin/sops/${enc(sopId)}`, { method: "DELETE" }),
 
-  publish: (sopId: string) =>
+  publish: (sopId: string, expertId = "") =>
     request<SopRecord>(`/admin/sops/${enc(sopId)}/publish`, {
       method: "POST",
+      body: JSON.stringify(expertId ? { expert_id: expertId } : {}),
+    }),
+
+  duplicate: (sopId: string, targetExpertId: string) =>
+    request<SopRecord>(`/admin/sops/${enc(sopId)}/duplicate`, {
+      method: "POST",
+      body: JSON.stringify({ target_expert_id: targetExpertId }),
     }),
 
   rollback: (sopId: string, toVersion: number) =>
@@ -435,6 +475,55 @@ export const sopApi = {
     request<SopRecord>(`/admin/sops/${enc(sopId)}/archive`, {
       method: "POST",
     }),
+
+  /**
+   * 订阅一条 SOP 的实时编辑流（AI tool / 画布保存后全量快照）。
+   *
+   * 采用 fetch + buildAuthHeaders 手动读流（EventSource 不能带自定义
+   * 鉴权 header，与 streamBackupJob 同款）；onEvent 每收到一条 SSE
+   * data 帧回调一次，signal 中止时流自然结束。回调异常不影响后续帧。
+   */
+  streamEvents: async (
+    sopId: string,
+    onEvent: (event: SopLiveEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<void> => {
+    const url = getApiUrl(`/admin/sops/${enc(sopId)}/events`);
+    const res = await fetch(url, {
+      headers: { ...buildAuthHeaders(), Accept: "text/event-stream" },
+      signal,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(text || `SSE connection failed: ${res.status}`);
+    }
+    if (!res.body) throw new Error("No SOP event stream received");
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    // 逐块读取 → 按 SSE 帧分隔符（空行）切分 → 仅消费 data: 帧
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const frames = buffer.split("\n\n");
+      buffer = frames.pop() ?? "";
+      for (const frame of frames) {
+        const dataLine = frame
+          .split("\n")
+          .find((line) => line.startsWith("data: "));
+        if (!dataLine) continue;
+        try {
+          const parsed = JSON.parse(dataLine.slice(6)) as {
+            event?: SopLiveEvent;
+          };
+          if (parsed.event) onEvent(parsed.event);
+        } catch {
+          // 心跳/非 JSON 帧忽略
+        }
+      }
+    }
+  },
 };
 
 // ---------------------------------------------------------------------------

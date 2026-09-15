@@ -1,3 +1,5 @@
+// 平台级渠道接入页：本文件无暗色分支，取色一律走全站 --pg-* token，
+// 否则暗色下会残留 rgba(0,0,0,.45) 一类隐形字（对比度 1.14:1）。
 .channelWrap {
   display: flex;
   flex-direction: column;
@@ -8,7 +10,7 @@
 
 .platformHint {
   font-size: 12px;
-  color: rgba(0, 0, 0, 0.45);
+  color: var(--pg-ink-3);
 }
 
 .agentGrid {
@@ -25,7 +27,7 @@
     border-color 0.2s ease;
 
   &:hover {
-    border-color: #1a71ff;
+    border-color: var(--pg-brand);
   }
 }
 
@@ -61,15 +63,15 @@
   gap: 5px;
   padding: 3px 8px;
   border-radius: 6px;
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--pg-surface-sunken);
   font-size: 12px;
-  color: rgba(0, 0, 0, 0.75);
+  color: var(--pg-ink-2);
 }
 
 .emptyText {
   margin-top: 10px;
   font-size: 12px;
-  color: rgba(0, 0, 0, 0.35);
+  color: var(--pg-ink-3);
 }
 
 .loadingWrap {

@@ -212,7 +212,7 @@
     "restoreAll": "Восстановить все",
     "returnToConsole": "Вернуться в консоль",
     "desktopMode": "Режим рабочего стола",
-    "qwenpawMenu": "Меню QwenPaw",
+    "qwenpawMenu": "Меню {{brand}}",
     "restoredAll": "Все приложения восстановлены",
     "sortBy": "Сортировать по",
     "sortFree": "Свободное расположение",
@@ -3442,7 +3442,7 @@
     }
   },
   "login": {
-    "title": "Вход в QwenPaw",
+    "title": "Вход в {{brand}}",
     "registerTitle": "Создание аккаунта",
     "firstUserHint": "Создайте учётную запись администратора для начала работы",
     "usernamePlaceholder": "Имя пользователя",

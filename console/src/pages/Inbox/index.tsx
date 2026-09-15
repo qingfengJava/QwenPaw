@@ -398,7 +398,8 @@ export default function InboxPage() {
           <Bell size={16} />
           {t("inbox.tabPushMessages")}
           {summary.pushMessages.unread > 0 && (
-            <Badge count={summary.pushMessages.unread} color="#ff7f16" />
+            /* 未读计数徽章：白字压橙底 #ff7f16 仅 2.53:1，改用品牌实色蓝（4.79:1）*/
+            <Badge count={summary.pushMessages.unread} color="#2f6fd8" />
           )}
         </span>
       ),
@@ -517,7 +518,7 @@ export default function InboxPage() {
         <span className={styles.tabLabel}>
           <PackageOpen size={16} />
           {t("inbox.tabApprovals")}
-          {approvalCount > 0 && <Badge count={approvalCount} color="#ff7f16" />}
+          {approvalCount > 0 && <Badge count={approvalCount} color="#2f6fd8" />}
         </span>
       ),
       children: (

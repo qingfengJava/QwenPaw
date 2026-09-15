@@ -12,7 +12,14 @@ const ICONS: Record<ThemeMode, ReactNode> = {
   system: <SunMoon size="1em" />,
 };
 
-export default function ThemeToggleButton() {
+interface ThemeToggleButtonProps {
+  /** 图标按钮无可读文本，由调用方（顶标控件组）给出可访问名称。 */
+  ariaLabel?: string;
+}
+
+export default function ThemeToggleButton({
+  ariaLabel,
+}: ThemeToggleButtonProps) {
   const { themeMode, isDark, setThemeMode } = useTheme();
   const { t } = useTranslation();
 
@@ -45,7 +52,13 @@ export default function ThemeToggleButton() {
       // 其透传 Tooltip 触发的弃用误报已在 main.tsx 统一过滤
       overlayClassName={styles.themeDropdown}
     >
-      <Button className={styles.toggleBtn} type="text" icon={icon} />
+      <Button
+        className={styles.toggleBtn}
+        type="text"
+        icon={icon}
+        aria-label={ariaLabel}
+        title={ariaLabel}
+      />
     </Dropdown>
   );
 }

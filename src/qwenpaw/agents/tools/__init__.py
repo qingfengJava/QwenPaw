@@ -62,6 +62,11 @@ from .make_skill_tools import materialize_skill  # noqa: E402
 from .ast_tool import ast_search  # noqa: E402
 from .run_tool_batch import run_tool_batch  # noqa: E402
 from .mail_f1_tool import activate_f1_exploration_mode  # noqa: E402
+from .sop_ops import (  # noqa: E402
+    sop_create_draft,
+    sop_update_draft,
+    sop_publish_draft,
+)
 
 _BETA_NOTICE_LOGGED = False
 

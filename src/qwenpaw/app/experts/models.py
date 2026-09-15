@@ -310,6 +310,12 @@ SOP_STATUS_PUBLISHED = "published"
 SOP_STATUS_ARCHIVED = "archived"
 SOP_STATUSES = (SOP_STATUS_DRAFT, SOP_STATUS_PUBLISHED, SOP_STATUS_ARCHIVED)
 
+#: SOP 环境（sops.environment；对齐 agent_documents 的 draft/production 双行）
+#: draft-工作台调试草稿行，production-线上发布行；同一 SOP 两环境各存一行。
+SOP_ENVIRONMENT_DRAFT = "draft"
+SOP_ENVIRONMENT_PRODUCTION = "production"
+SOP_ENVIRONMENTS = (SOP_ENVIRONMENT_DRAFT, SOP_ENVIRONMENT_PRODUCTION)
+
 #: 定时任务状态（expert_scheduled_tasks.status）
 TASK_STATUS_ACTIVE = "active"
 TASK_STATUS_PAUSED = "paused"
@@ -383,6 +389,8 @@ class SopRecord(BaseModel):
     status: str = SOP_STATUS_DRAFT
     version: int = 1
     owner_id: Optional[str] = None
+    #: 环境: draft-调试草稿, production-线上发布（对齐 agent_documents）
+    environment: str = SOP_ENVIRONMENT_PRODUCTION
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -395,6 +403,21 @@ class SopCreateBody(BaseModel):
     nodes: List[Dict[str, Any]] = Field(default_factory=list)
     edges: List[Dict[str, Any]] = Field(default_factory=list)
     slots: List[Dict[str, Any]] = Field(default_factory=list)
+    #: 归属员工 id（SOP 私有能力化：员工详情页新建时显式传入；
+    #: 省略时回退记录操作人，兼容旧调用面）
+    owner_expert_id: Optional[str] = None
+
+
+class SopPublishBody(BaseModel):
+    """Publish payload; expert_id 指定时发布并自动绑定该员工（省略=用 owner）."""
+
+    expert_id: Optional[str] = None
+
+
+class SopDuplicateBody(BaseModel):
+    """Copy source SOP as a fresh draft owned by target expert."""
+
+    target_expert_id: str
 
 
 class SopUpdateBody(BaseModel):

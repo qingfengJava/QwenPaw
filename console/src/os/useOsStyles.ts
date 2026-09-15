@@ -610,15 +610,10 @@ const useOsStylesBase = createStyles(({ css }, { p }: { p: OsPalette }) => ({
     gap: 18px;
     color: ${ACCENT};
     pointer-events: none;
-    opacity: 0.055;
+    /* 品牌徽章是整块渐变（不像旧吉祥物 PNG 本身大面积透明），
+       所以水印不透明度需略高于原值，否则在深色壁纸上完全读不出 */
+    opacity: 0.09;
     z-index: 0;
-    img {
-      width: 88px;
-      height: 88px;
-      border-radius: 50%;
-      object-fit: contain;
-      filter: drop-shadow(0 8px 28px rgba(0, 0, 0, 0.4));
-    }
   `,
   emptyBrandName: css`
     font-family:

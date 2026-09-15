@@ -980,6 +980,19 @@
     }
   }
 
+  /* 亮色侧 .directoryContext[data-root="workspace"] .directoryIdentityText 特异性为
+     (0,3,1)，高于上面那条 (0,2,1)，会残留 #5f4e98 紫字压在深棕底上（对比度 2.41）。
+     此处用同特异性选择器覆盖，保证知识库根目录场景暗色可读。*/
+  .directoryContext[data-root="workspace"] .directoryIdentityText {
+    strong {
+      color: #d3c8f5;
+    }
+
+    span {
+      color: #a99dc9;
+    }
+  }
+
   .navigator[data-root="workspace"] {
     .sourceTab[data-source="workspace"].sourceTabActive {
       color: #b8a8ee;

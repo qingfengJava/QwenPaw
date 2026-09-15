@@ -214,7 +214,7 @@
     "restoreAll": "Restaurar tudo",
     "returnToConsole": "Voltar ao console",
     "desktopMode": "Modo desktop",
-    "qwenpawMenu": "Menu QwenPaw",
+    "qwenpawMenu": "Menu {{brand}}",
     "restoredAll": "Todos os aplicativos restaurados",
     "sortBy": "Ordenar por",
     "sortFree": "Organização livre",
@@ -3701,7 +3701,7 @@
     }
   },
   "login": {
-    "title": "Login to QwenPaw",
+    "title": "Login to {{brand}}",
     "registerTitle": "Criar Account",
     "firstUserHint": "Create your admin account to get started",
     "usernamePlaceholder": "Username",

@@ -14,7 +14,7 @@ router 级联清理绑定行。
 from __future__ import annotations
 
 import json
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from sqlalchemy import text
 
@@ -90,6 +90,36 @@ class CapabilityStore:
                 },
             )
             return [r.expert_id for r in result]
+
+    async def ensure_binding(
+        self,
+        expert_id: str,
+        resource_type: str,
+        resource_id: str,
+        metadata: Optional[Dict[str, object]] = None,
+    ) -> None:
+        """Insert one enabled binding if absent (publish auto-bind).
+
+        发布组合动作的原子写入：ON CONFLICT DO NOTHING 保证幂等，
+        不整表替换、不影响同员工其它类型绑定。
+        """
+        engine = require_enterprise_engine()
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO expert_resource_bindings (tenant_id, "
+                    "expert_id, resource_type, resource_id, enabled, seq, "
+                    "metadata) VALUES (:tid, :eid, :rtype, :rid, TRUE, 0, "
+                    "CAST(:meta AS JSONB)) ON CONFLICT DO NOTHING"
+                ),
+                {
+                    "tid": current_tenant_id(),
+                    "eid": expert_id,
+                    "rtype": resource_type,
+                    "rid": resource_id,
+                    "meta": json.dumps(metadata or {}),
+                },
+            )
 
     async def replace_bindings(
         self,
@@ -171,6 +201,7 @@ class CapabilityStore:
     async def member_capability_snapshot(
         self,
         expert_ids: List[str],
+        environment: str = "production",
     ) -> Dict[str, Dict[str, list]]:
         """Batched capability snapshot for workforce planning (P1 接线).
 
@@ -181,6 +212,8 @@ class CapabilityStore:
         - kb_ids：绑定的知识库 id（存在性过滤，kb 缺失静默剔除）；
         - tools：绑定的工具名。
 
+        ``environment`` 区分读哪一环境行：production-线上（默认），
+        draft-工作台调试预览。SOP 环境化隔离保证草稿不污染线上注入。
         每类一次批查（ANY(:ids)），无 N+1；任何异常由调用方降级。
         """
         ids = [e for e in expert_ids if e]
@@ -212,9 +245,9 @@ class CapabilityStore:
                         text(
                             "SELECT id, name, goal, nodes FROM sops "
                             "WHERE tenant_id = :tid AND id = ANY(:ids) "
-                            "AND status = 'published'"
+                            "AND environment = :env AND status = 'published'"
                         ),
-                        {"tid": tid, "ids": sop_ids},
+                        {"tid": tid, "ids": sop_ids, "env": environment},
                     )
                 ).all()
         sop_index = {s.id: s for s in sops}

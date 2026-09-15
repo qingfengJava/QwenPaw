@@ -574,7 +574,8 @@
   width: 52px;
   height: 52px;
   border-radius: 10px;
-  background: #f7f5f3;
+  /* 走全站 muted 面：写死 #f7f5f3 会在暗色页面里留 13 个刺眼白斑 */
+  background: var(--pg-surface-muted);
   font-size: 28px;
   line-height: 1;
   display: inline-flex;

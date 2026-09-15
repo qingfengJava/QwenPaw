@@ -137,6 +137,16 @@ export default function AgentsGalleryPage() {
     openAgentWorkbench(agent.id);
   }, []);
 
+  const handleOpenDetail = useCallback(
+    (agent: AgentSummary) => {
+      // 箭头「进入」与卡片主体一致：一律新标签页打开工作台（原生 agent 与
+      // 数字员工行为统一）。数字员工的能力配置（SOP/记忆/定时任务）在工作台
+      // 「能力」Tab 内即可编辑，无需跳内嵌详情页（20260915 恢复旧导航）。
+      openAgentWorkbench(agent.id);
+    },
+    [],
+  );
+
   const handleDelete = async (agentId: string) => {
     try {
       await deleteAgent(agentId);
@@ -408,6 +418,7 @@ export default function AgentsGalleryPage() {
           reordering={reordering}
           expertIcons={expertIcons}
           onOpen={handleOpen}
+          onOpenDetail={handleOpenDetail}
           onEdit={handleEdit}
           onCopy={handleOpenCopy}
           onDelete={handleDelete}

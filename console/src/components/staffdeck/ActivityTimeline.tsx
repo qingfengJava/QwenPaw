@@ -128,8 +128,9 @@ export function ActivityTimeline({
                   padding: "4px 12px",
                   borderRadius: "var(--sd-radius-pill)",
                   background:
-                    mode === m ? "var(--sd-ink)" : "var(--sd-gray-bg)",
-                  color: mode === m ? "#fff" : "var(--sd-text-2)",
+                    mode === m ? "var(--sd-solid)" : "var(--sd-gray-bg)",
+                  color:
+                    mode === m ? "var(--sd-on-solid)" : "var(--sd-text-2)",
                 }}
               >
                 {t(`staffdeck.timeline.${m}`, m.toUpperCase())}

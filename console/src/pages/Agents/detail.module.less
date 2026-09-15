@@ -2,7 +2,8 @@
 //
 // 双栏：左 280px 员工档案栏（sticky）+ 右工作区（借壳页面）。
 // 颜色/圆角/阴影全部取自 staffdeck-tokens.css 的 --sd-* 令牌，
-// 暗色主题沿用 :global([data-theme="dark"]) / :global(.dark) 双选择器。
+// 暗色主题统一用 :global(html.dark-mode) 前缀（全站由 ThemeContext 往
+// documentElement 加 dark-mode 类，勿再用 [data-theme="dark"]/.dark，否则规则永不命中）。
 
 .detailPage {
   display: flex;
@@ -33,8 +34,7 @@
   overflow: hidden;
 }
 
-:global([data-theme="dark"]) .profileCard,
-:global(.dark) .profileCard {
+:global(html.dark-mode) .profileCard {
   background: rgba(255, 255, 255, 0.04);
   border-color: rgba(255, 255, 255, 0.1);
 }
@@ -93,8 +93,7 @@
   white-space: nowrap;
 }
 
-:global([data-theme="dark"]) .profileName,
-:global(.dark) .profileName {
+:global(html.dark-mode) .profileName {
   color: rgba(255, 255, 255, 0.92);
 }
 
@@ -115,8 +114,7 @@
   min-height: 38px;
 }
 
-:global([data-theme="dark"]) .profileDesc,
-:global(.dark) .profileDesc {
+:global(html.dark-mode) .profileDesc {
   color: rgba(255, 255, 255, 0.55);
 }
 
@@ -131,8 +129,7 @@
   background: var(--sd-bg);
 }
 
-:global([data-theme="dark"]) .profileMeta,
-:global(.dark) .profileMeta {
+:global(html.dark-mode) .profileMeta {
   border-color: rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.03);
 }
@@ -163,8 +160,7 @@
   cursor: default;
 }
 
-:global([data-theme="dark"]) .metaRow,
-:global(.dark) .metaRow {
+:global(html.dark-mode) .metaRow {
   dt {
     color: rgba(255, 255, 255, 0.4);
   }
@@ -182,8 +178,7 @@
   overflow: hidden;
 }
 
-:global([data-theme="dark"]) .miniStats,
-:global(.dark) .miniStats {
+:global(html.dark-mode) .miniStats {
   border-color: rgba(255, 255, 255, 0.1);
 }
 
@@ -196,8 +191,7 @@
   }
 }
 
-:global([data-theme="dark"]) .miniStatCell + .miniStatCell,
-:global(.dark) .miniStatCell + .miniStatCell {
+:global(html.dark-mode) .miniStatCell + .miniStatCell {
   border-left-color: rgba(255, 255, 255, 0.1);
 }
 
@@ -214,13 +208,11 @@
   line-height: 16px;
 }
 
-:global([data-theme="dark"]) .miniStatValue,
-:global(.dark) .miniStatValue {
+:global(html.dark-mode) .miniStatValue {
   color: rgba(255, 255, 255, 0.92);
 }
 
-:global([data-theme="dark"]) .miniStatLabel,
-:global(.dark) .miniStatLabel {
+:global(html.dark-mode) .miniStatLabel {
   color: rgba(255, 255, 255, 0.45);
 }
 
@@ -247,8 +239,7 @@
   padding-top: 10px;
 }
 
-:global([data-theme="dark"]) .asideNav,
-:global(.dark) .asideNav {
+:global(html.dark-mode) .asideNav {
   border-top-color: rgba(255, 255, 255, 0.1);
 }
 
@@ -271,12 +262,12 @@
   border-radius: var(--sd-radius-sm);
 
   &:hover {
-    background: rgba(0, 0, 0, 0.04);
+    /* 主题中性 hover 浅底：对 --sd-ink 取 6%，亮色浅灰 / 暗色浅白 */
+    background: color-mix(in srgb, var(--sd-ink) 6%, transparent);
   }
 }
 
-:global([data-theme="dark"]) .asideNavGroupHeader,
-:global(.dark) .asideNavGroupHeader {
+:global(html.dark-mode) .asideNavGroupHeader {
   color: rgba(255, 255, 255, 0.4);
 
   &:hover {
@@ -289,8 +280,7 @@
   font-weight: 600;
 }
 
-:global([data-theme="dark"]) .asideNavGroupLabelActive,
-:global(.dark) .asideNavGroupLabelActive {
+:global(html.dark-mode) .asideNavGroupLabelActive {
   color: rgba(255, 255, 255, 0.92);
 }
 
@@ -324,18 +314,18 @@
     width: 3px;
     height: 0;
     border-radius: 2px;
-    background: var(--sd-ink);
+    /* 选中指示条为实色强调，走 --sd-solid（暗色下自动转浅色）*/
+    background: var(--sd-solid);
     transition: height 0.15s ease;
   }
 
   &:hover {
-    background: rgba(0, 0, 0, 0.05);
+    background: color-mix(in srgb, var(--sd-ink) 8%, transparent);
     color: var(--sd-ink);
   }
 }
 
-:global([data-theme="dark"]) .asideNavItem,
-:global(.dark) .asideNavItem {
+:global(html.dark-mode) .asideNavItem {
   color: rgba(255, 255, 255, 0.65);
 
   &::before {
@@ -363,8 +353,7 @@
   }
 }
 
-:global([data-theme="dark"]) .asideNavItemActive,
-:global(.dark) .asideNavItemActive {
+:global(html.dark-mode) .asideNavItemActive {
   background: rgba(255, 255, 255, 0.1);
   color: #fff;
 
@@ -438,8 +427,7 @@
   color: var(--sd-ink);
 }
 
-:global([data-theme="dark"]) .sectionTitle,
-:global(.dark) .sectionTitle {
+:global(html.dark-mode) .sectionTitle {
   color: rgba(255, 255, 255, 0.92);
 }
 
@@ -503,13 +491,11 @@
   overflow: hidden;
 }
 
-:global([data-theme="dark"]) .heroName,
-:global(.dark) .heroName {
+:global(html.dark-mode) .heroName {
   color: rgba(255, 255, 255, 0.92);
 }
 
-:global([data-theme="dark"]) .heroDesc,
-:global(.dark) .heroDesc {
+:global(html.dark-mode) .heroDesc {
   color: rgba(255, 255, 255, 0.6);
 }
 
@@ -546,11 +532,11 @@
   padding: 3px 8px;
   border-radius: var(--sd-radius-pill);
   color: var(--sd-text-3);
-  background: rgba(0, 0, 0, 0.04);
+  /* 主题中性浅底：对 --sd-ink 取 6%，亮色浅灰 / 暗色浅白 */
+  background: color-mix(in srgb, var(--sd-ink) 6%, transparent);
 }
 
-:global([data-theme="dark"]) .modelFollowTag,
-:global(.dark) .modelFollowTag {
+:global(html.dark-mode) .modelFollowTag {
   background: rgba(255, 255, 255, 0.06);
 }
 
@@ -583,8 +569,7 @@
 }
 
 .configChipActive,
-:global([data-theme="dark"]) .configChipActive,
-:global(.dark) .configChipActive {
+:global(html.dark-mode) .configChipActive {
   background: var(--sd-blue-bg);
   border-color: var(--sd-link);
   color: var(--sd-link);
@@ -608,8 +593,7 @@
   }
 }
 
-:global([data-theme="dark"]) .configChip,
-:global(.dark) .configChip {
+:global(html.dark-mode) .configChip {
   background: transparent;
   border-color: rgba(255, 255, 255, 0.12);
   color: rgba(255, 255, 255, 0.6);
@@ -634,8 +618,7 @@
   word-break: break-all;
 }
 
-:global([data-theme="dark"]) .configJson,
-:global(.dark) .configJson {
+:global(html.dark-mode) .configJson {
   background: rgba(255, 255, 255, 0.04);
   border-color: rgba(255, 255, 255, 0.1);
   color: rgba(255, 255, 255, 0.7);
@@ -728,8 +711,7 @@
   }
 }
 
-:global([data-theme="dark"]) .mdBody,
-:global(.dark) .mdBody {
+:global(html.dark-mode) .mdBody {
   color: rgba(255, 255, 255, 0.65);
 
   h1,
@@ -765,8 +747,7 @@
   color: var(--sd-ink);
 }
 
-:global([data-theme="dark"]) .docHeading,
-:global(.dark) .docHeading {
+:global(html.dark-mode) .docHeading {
   color: rgba(255, 255, 255, 0.92);
 }
 
@@ -778,8 +759,7 @@
   white-space: pre-wrap;
 }
 
-:global([data-theme="dark"]) .docBody,
-:global(.dark) .docBody {
+:global(html.dark-mode) .docBody {
   color: rgba(255, 255, 255, 0.65);
 }
 
@@ -809,8 +789,7 @@
   }
 }
 
-:global([data-theme="dark"]) .promptChip,
-:global(.dark) .promptChip {
+:global(html.dark-mode) .promptChip {
   background: rgba(255, 255, 255, 0.06);
   border-color: rgba(255, 255, 255, 0.12);
   color: rgba(255, 255, 255, 0.65);

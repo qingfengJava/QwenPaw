@@ -134,6 +134,39 @@ async def _promote_publish_documents(
         )
 
 
+async def _promote_publish_sops(expert_id: str, published_by: str) -> None:
+    """发布闸门联动：把本员工绑定的 SOP 草稿行 promote 到线上。
+
+    员工发布 = 档案 + SOP 一起升线上。遍历本员工绑定的 sop 资源，对
+    存在草稿行（environment=draft）的调 ``promote_sop``（draft→production
+    + 版本快照）；无草稿行的跳过（已是最新线上态）。best-effort：单条
+    失败仅告警，不阻断发布主链路。
+    """
+    try:
+        from .capability import get_capability_store
+        from .sops import SOP_ENVIRONMENT_DRAFT, get_sop_store
+
+        bindings = await get_capability_store().list_bindings(expert_id, "sop")
+        sop_store = get_sop_store()
+        for binding in bindings:
+            draft = await sop_store.get_sop(
+                binding.resource_id,
+                environment=SOP_ENVIRONMENT_DRAFT,
+            )
+            if draft is None:
+                continue
+            await sop_store.promote_sop(
+                binding.resource_id,
+                published_by=published_by,
+            )
+    except Exception:  # pylint: disable=broad-except
+        logger.warning(
+            "expert %s publish sop promote failed (docs already live)",
+            expert_id,
+            exc_info=True,
+        )
+
+
 def _experts_root() -> Path:
     from ...constant import WORKING_DIR
 
@@ -542,6 +575,9 @@ async def publish_expert(
         documents,
         published_by,
     )
+    # 员工发布联动 SOP promote：本员工绑定的 SOP 草稿行一并升线上
+    # （档案 + SOP 同一发布闸门，语义对齐）。
+    await _promote_publish_sops(expert_id, published_by)
 
     await store.insert_snapshot(
         expert_id,

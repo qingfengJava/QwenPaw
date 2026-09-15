@@ -16,6 +16,7 @@ import { Grid2X2, Image as ImageIcon, Trash2 } from "lucide-react";
 import { useRoutes } from "../plugins/registry/hooks";
 import { uninstallPlugin } from "../api/modules/plugin";
 import { ChunkErrorBoundary } from "../components/ChunkErrorBoundary";
+import BrandMark, { OS_BRAND_NAME } from "../components/BrandMark";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { useAgentStore } from "../stores/agentStore";
 import { useSyncCodingMode } from "../stores/useSyncCodingMode";
@@ -456,12 +457,12 @@ export default function DesktopOS() {
         </div>
       )}
 
-      {/* Persistent background watermark — QwenPaw OS brand mark. Sits at the
+      {/* Persistent background watermark — SmartWork brand mark. Sits at the
           lowest layer and never intercepts pointer events, so it reads as a
           backdrop behind icons and app windows rather than a card. */}
       <div className={styles.emptyHint}>
-        <img src="/qwenpaw.png" alt="" />
-        <div className={styles.emptyBrandName}>QwenPaw OS</div>
+        <BrandMark size={88} />
+        <div className={styles.emptyBrandName}>{OS_BRAND_NAME}</div>
       </div>
 
       {/* Windows layer */}

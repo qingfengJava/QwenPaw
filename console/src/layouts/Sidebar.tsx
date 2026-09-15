@@ -11,7 +11,7 @@ import {
   Popconfirm,
   Divider,
 } from "antd";
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { ShieldCheck, RotateCw } from "lucide-react";
@@ -375,15 +375,18 @@ export default function Sidebar({
         )}
       </span>
     );
-    const flat = [
-      ...flattenMenu(agentMenu, routes, 18),
-      ...flattenMenu(settingsMenu, routes, 18),
-    ];
-    return flat.map((entry) =>
-      entry.key === "core.inbox"
-        ? { ...entry, icon: decorateInboxIcon(entry.icon) }
-        : entry,
-    );
+    // 平台段与系统段各自扁平化后拼接，并记下分界下标：rail 模式在该处插一条
+    // 分隔线，否则三十来个图标连成一片，看不出分组。
+    const platformItems = flattenMenu(agentMenu, routes, 18);
+    const adminItems = flattenMenu(settingsMenu, routes, 18);
+    return {
+      splitIndex: platformItems.length,
+      items: [...platformItems, ...adminItems].map((entry) =>
+        entry.key === "core.inbox"
+          ? { ...entry, icon: decorateInboxIcon(entry.icon) }
+          : entry,
+      ),
+    };
   }, [agentMenu, settingsMenu, routes, hasInboxUnread, inboxDotColor]);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
@@ -509,40 +512,51 @@ export default function Sidebar({
     >
       {collapsed ? (
         <nav className={styles.collapsedNav}>
-          {collapsedNavItems.map((item) => {
+          {collapsedNavItems.items.map((item, index) => {
             const isActive = selectedKey === item.key;
             return (
-              <Tooltip
-                key={item.key}
-                title={item.label}
-                placement="right"
-                overlayInnerStyle={{
-                  background: "rgba(0,0,0,0.75)",
-                  color: "#fff",
-                }}
-              >
-                <button
-                  className={`${styles.collapsedNavItem} ${
-                    isActive ? styles.collapsedNavItemActive : ""
-                  }${
-                    item.key === "core.inbox" && effectiveShake
-                      ? ` ${styles.inboxShake}`
-                      : ""
-                  }`}
-                  onClick={() => {
-                    if (item.href) {
-                      window.open(item.href, "_blank", "noopener,noreferrer");
-                    } else {
-                      navigate(item.path);
-                    }
+              <Fragment key={item.key}>
+                {/* 平台段 / 系统段之间的分隔线，只在两侧都有条目时出现 */}
+                {index === collapsedNavItems.splitIndex &&
+                  index < collapsedNavItems.items.length - 1 && (
+                    <span
+                      className={styles.railDivider}
+                      aria-hidden="true"
+                    />
+                  )}
+                <Tooltip
+                  title={item.label}
+                  placement="right"
+                  styles={{
+                    body: { background: "rgba(0,0,0,0.75)", color: "#fff" },
                   }}
-                  onMouseEnter={
-                    item.key === "core.inbox" ? handleInboxHover : undefined
-                  }
                 >
-                  {item.icon}
-                </button>
-              </Tooltip>
+                  <button
+                    aria-label={
+                      typeof item.label === "string" ? item.label : undefined
+                    }
+                    className={`${styles.collapsedNavItem} ${
+                      isActive ? styles.collapsedNavItemActive : ""
+                    }${
+                      item.key === "core.inbox" && effectiveShake
+                        ? ` ${styles.inboxShake}`
+                        : ""
+                    }`}
+                    onClick={() => {
+                      if (item.href) {
+                        window.open(item.href, "_blank", "noopener,noreferrer");
+                      } else {
+                        navigate(item.path);
+                      }
+                    }}
+                    onMouseEnter={
+                      item.key === "core.inbox" ? handleInboxHover : undefined
+                    }
+                  >
+                    {item.icon}
+                  </button>
+                </Tooltip>
+              </Fragment>
             );
           })}
         </nav>
@@ -634,7 +648,7 @@ export default function Sidebar({
             onClick={({ key }) => handleMenuClick(String(key), settingsMenu)}
             items={settingsMenuItems}
             theme={isDark ? "dark" : "light"}
-            className={styles.sideMenu}
+            className={`${styles.sideMenu} ${styles.settingsMenu}`}
           />
           <Slot name="sider.bottom" kind="fill" />
         </>
@@ -701,6 +715,8 @@ export default function Sidebar({
             ref={settingsButtonRef}
             type="text"
             icon={<SparkSettingLine size={18} />}
+            aria-label={t("sidebar.settingsPanel", "Sidebar settings")}
+            title={t("sidebar.settingsPanel", "Sidebar settings")}
             className={styles.collapseToggle}
           />
         </Popover>
@@ -714,6 +730,16 @@ export default function Sidebar({
             )
           }
           onClick={() => setCollapsed(!collapsed)}
+          aria-label={
+            collapsed
+              ? t("sidebar.expand", "Expand sidebar")
+              : t("sidebar.collapse", "Collapse sidebar")
+          }
+          title={
+            collapsed
+              ? t("sidebar.expand", "Expand sidebar")
+              : t("sidebar.collapse", "Collapse sidebar")
+          }
           className={styles.collapseToggle}
         />
       </div>

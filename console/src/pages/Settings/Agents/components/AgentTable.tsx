@@ -50,8 +50,10 @@ interface AgentTableProps {
   reordering: boolean;
   /** 数字员工形象映射（expertId → experts.icon 原始值）；缺省时组件内自动分配。 */
   expertIcons?: Record<string, string>;
-  /** 当提供时，名称可点击且操作列首位出现「进入」按钮，跳转员工详情页。 */
+  /** 当提供时，名称可点击且操作列首位出现「进入」按钮，跳转员工工作台。 */
   onOpen?: (agent: AgentSummary) => void;
+  /** 「进入详情」箭头专属动作（行/名称仍走 onOpen 去工作台）；缺省回退 onOpen。 */
+  onOpenDetail?: (agent: AgentSummary) => void;
   onEdit: (agent: AgentSummary) => void;
   onCopy: (agent: AgentSummary) => void;
   onDelete: (agentId: string) => void;
@@ -66,6 +68,7 @@ export function AgentTable({
   reordering,
   expertIcons,
   onOpen,
+  onOpenDetail,
   onEdit,
   onCopy,
   onDelete,
@@ -298,7 +301,9 @@ export function AgentTable({
                   size="middle"
                   aria-label={t("agent.openDetail")}
                   icon={<RightOutlined />}
-                  onClick={() => onOpen(record)}
+                  onClick={() =>
+                    (onOpenDetail ?? onOpen)(record)
+                  }
                   style={iconStyle}
                 />
               </Tooltip>

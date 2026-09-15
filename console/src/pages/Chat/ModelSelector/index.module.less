@@ -979,21 +979,24 @@
 .agentSelectDropdown,
 .panelWithConfig,
 .configPane {
-  --ms-primary: var(--qwenpaw-color-primary, var(--colorPrimary, #ff7f16));
-  --ms-accent: var(--qwenpaw-color-primary, var(--colorPrimary, #ff7f16));
+  --ms-primary: var(--qwenpaw-color-primary, var(--colorPrimary, #18181a));
+  --ms-accent: var(--qwenpaw-color-primary, var(--colorPrimary, #18181a));
   --ms-accent-strong: var(--qwenpaw-color-primary-hover, var(--ms-accent));
   /* StaffDeck 主题下主色为墨色，antd cssVar 会运行时注入
    --qwenpaw-color-primary-bg: #545559（墨色种子生成的深灰），
    严禁引用该变量作选中/hover 底色；改为对主色本身做 color-mix
    浅色调和：墨色 → 极浅灰、彩色主色 → 该色浅色调 */
   --ms-accent-soft: color-mix(in srgb, var(--ms-accent) 8%, transparent);
-  --ms-surface: var(--qwenpaw-color-bg-container, #ffffff);
-  --ms-surface-muted: var(--qwenpaw-color-fill-quaternary, #f5f5f5);
-  --ms-border: var(--qwenpaw-color-border-secondary, #e8e8e8);
-  --ms-border-strong: var(--qwenpaw-color-border, #d9d9d9);
-  --ms-text: var(--qwenpaw-color-text, #1f1f1f);
-  --ms-text-muted: var(--qwenpaw-color-text-secondary, rgba(0, 0, 0, 0.65));
-  --ms-text-faint: var(--qwenpaw-color-text-tertiary, rgba(0, 0, 0, 0.45));
+  /* 面 / 线 / 墨一律取自全站 --pg-*：旧写法 var(--qwenpaw-color-bg-container, #ffffff)
+     在暗色下会被 antd cssVar 运行时定为纯白（App.tsx 旧版无条件写死
+     colorBgContainer），fallback 永不生效，面板变白底叠近白文字后不可读。*/
+  --ms-surface: var(--pg-surface);
+  --ms-surface-muted: var(--pg-surface-muted);
+  --ms-border: var(--pg-line);
+  --ms-border-strong: var(--pg-line-strong);
+  --ms-text: var(--pg-ink);
+  --ms-text-muted: var(--pg-ink-2);
+  --ms-text-faint: var(--pg-ink-3);
   --ms-focus: color-mix(in srgb, var(--ms-primary) 34%, transparent);
 }
 

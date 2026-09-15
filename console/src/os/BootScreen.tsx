@@ -1,5 +1,5 @@
 /**
- * BootScreen.tsx — QwenPaw OS power-on splash.
+ * BootScreen.tsx — SmartWork OS power-on splash.
  *
  * Shown once when the desktop mounts (entering /os). Displays the brand mark,
  * an indeterminate-feel progress bar, then fades out and hands control to the
@@ -8,7 +8,7 @@
  */
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Command } from "lucide-react";
+import BrandMark, { OS_BRAND_NAME } from "../components/BrandMark";
 import { useOsStyles } from "./useOsStyles";
 
 interface BootScreenProps {
@@ -54,8 +54,8 @@ export default function BootScreen({
   return (
     <div className={cx(styles.boot, exiting && styles.bootExit)}>
       <div className={styles.bootBrand}>
-        <Command size={54} strokeWidth={1.6} />
-        <div className={styles.bootName}>QwenPaw OS</div>
+        <BrandMark size={62} />
+        <div className={styles.bootName}>{OS_BRAND_NAME}</div>
       </div>
       <div className={styles.bootBar}>
         <div className={styles.bootBarFill} style={{ width: `${progress}%` }} />

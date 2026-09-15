@@ -67,7 +67,8 @@ export function UnderlineTabs({
                   width: 20,
                   height: 3,
                   borderRadius: 2,
-                  background: "var(--sd-ink)",
+                  // 选中下划线为实色，暗色下随 --sd-solid 翻转为浅色（与上方浅色字同调）
+                  background: "var(--sd-solid)",
                 }}
               />
             ) : null}

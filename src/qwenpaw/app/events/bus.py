@@ -194,6 +194,15 @@ def feed_topic(tenant_id: str, project_id: str) -> str:
     return f"feed:{tenant_id}:{project_id}"
 
 
+def sop_topic(tenant_id: str, sop_id: str) -> str:
+    """Canonical topic name for one SOP's live-edit channel.
+
+    SOP 环境化改造：AI tool / 画布保存写草稿行后向本 topic publish，
+    前端 SopFlowCanvas 经 SSE 订阅实时重绘。
+    """
+    return f"sop:{tenant_id}:{sop_id}"
+
+
 def now_ms() -> int:
     """Epoch milliseconds (event timestamps for clients)."""
     return int(time.time() * 1000)

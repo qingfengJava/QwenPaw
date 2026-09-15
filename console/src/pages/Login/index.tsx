@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { authApi } from "../../api/modules/auth";
 import { setAuthToken } from "../../api/config";
+import BrandMark, { BRAND_NAME } from "../../components/BrandMark";
 import { useTheme } from "../../contexts/ThemeContext";
 import { getPostLoginHref } from "../../utils/navigationMode";
 import styles from "./index.module.less";
@@ -180,13 +181,23 @@ export default function LoginPage() {
         }}
       >
         <div style={{ textAlign: "center", marginBottom: 32 }}>
-          <img
-            src={isDark ? "/logo-dark.svg" : "/logo-light.svg"}
-            alt="QwenPaw"
-            style={{ height: 48, marginBottom: 12 }}
-          />
+          <BrandMark size={52} />
+          <div
+            style={{
+              marginTop: 12,
+              marginBottom: 10,
+              fontSize: 19,
+              fontWeight: 700,
+              letterSpacing: "-0.011em",
+              color: isDark ? "rgba(255,255,255,0.92)" : "#101623",
+            }}
+          >
+            {BRAND_NAME}
+          </div>
           <h2 style={{ margin: 0, fontWeight: 600, fontSize: 20 }}>
-            {isRegister ? t("login.registerTitle") : t("login.title")}
+            {isRegister
+              ? t("login.registerTitle")
+              : t("login.title", { brand: BRAND_NAME })}
           </h2>
           {!hasUsers && (
             <p

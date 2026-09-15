@@ -7,12 +7,20 @@
  */
 
 :root {
-  /* 墨色与辅助文字 */
+  /* 墨色与辅助文字（纯文本语义：暗色下由 page-tokens.css 翻转为浅色）*/
   --sd-ink: #18181a;
   --sd-ink-hover: #303030;
   --sd-text-2: #757f9c;
   --sd-text-3: #858b9c;
   --sd-text-4: #464c5e;
+
+  /* 实色填充三件套（主按钮底 / 悬停底 / 上面对应的字色）。
+     --sd-ink 同时被当作“文字色”和“按钮底色”使用，但暗色下两者需要相反方向
+     （文字要变浅、按钮底若也变浅则白字压白底），因此凡用作 background 的地方
+     必须改用 --sd-solid，配套文字用 --sd-on-solid，禁止再复用 --sd-ink。*/
+  --sd-solid: #18181a;
+  --sd-solid-hover: #303030;
+  --sd-on-solid: #ffffff;
 
   /* antd 主按钮文字色：@agentscope-ai/design 的全局按钮样式消费该变量，
      但 antd cssVar 模式不会注册它，缺失会导致主按钮黑底黑字（主色为墨色时） */
@@ -65,18 +73,20 @@
   border-color: var(--sd-line);
 }
 
-/* StaffDeck 式主按钮（黑底白字，hover 微亮） */
+/* StaffDeck 式主按钮（亮色墨底白字，hover 微亮；暗色由 --sd-solid 翻转为浅底墨字）*/
 .sd-btn-primary {
-  background: var(--sd-ink);
-  color: #fff;
+  background: var(--sd-solid);
+  color: var(--sd-on-solid);
   border: none;
   border-radius: var(--sd-radius-md);
-  transition: background 150ms ease;
+  transition:
+    background 150ms ease,
+    color 150ms ease;
 }
 
 .sd-btn-primary:hover {
-  background: var(--sd-ink-hover) !important;
-  color: #fff !important;
+  background: var(--sd-solid-hover) !important;
+  color: var(--sd-on-solid) !important;
 }
 
 /* 状态胶囊（表驱动 tone 配 StatusPill 组件使用） */

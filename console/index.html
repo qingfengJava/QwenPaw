@@ -31,10 +31,23 @@
         flex-direction: column;
         gap: 18px;
       }
-      .qwenpaw-boot__logo {
-        height: 68px;
-        object-fit: contain;
+      /* 启动占位品牌徽章：几何与色值镜像 src/components/BrandMark（React 尚未加载，
+         此处只能静态内联）；改品牌标时两处必须同步。尺寸比例：圆角 0.34、图形 0.62。 */
+      .qwenpaw-boot__badge {
+        display: grid;
+        place-items: center;
         width: 68px;
+        height: 68px;
+        border-radius: 23px;
+        background: linear-gradient(140deg, #1a71ff 0%, #6f4fe0 58%, #0f9d8f 130%);
+        box-shadow:
+          inset 0 0 0 1px rgba(255, 255, 255, 0.16),
+          0 12px 26px -16px rgba(26, 84, 180, 0.75);
+        color: #fff;
+      }
+      .qwenpaw-boot__badge svg {
+        width: 62%;
+        height: 62%;
       }
       .qwenpaw-boot__label {
         color: #70706c;
@@ -50,6 +63,12 @@
         .qwenpaw-boot__label {
           color: #a6a6a0;
         }
+        .qwenpaw-boot__badge {
+          background: linear-gradient(140deg, #2f6fd8 0%, #6a4bc4 58%, #177f74 130%);
+          box-shadow:
+            inset 0 0 0 1px rgba(255, 255, 255, 0.12),
+            0 12px 28px -16px rgba(0, 0, 0, 0.85);
+        }
       }
     </style>
   </head>
@@ -57,7 +76,30 @@
     <div id="root">
       <div class="qwenpaw-boot" role="status" aria-live="polite">
         <div class="qwenpaw-boot__content">
-          <img class="qwenpaw-boot__logo" src="/qwenpaw.png" alt="QwenPaw" />
+          <span class="qwenpaw-boot__badge" role="img" aria-label="SmartWork">
+            <svg viewBox="0 0 24 24" fill="none">
+              <path
+                d="M9.5 11.9a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z"
+                fill="currentColor"
+              />
+              <path
+                d="M3.2 19.2c0-3.5 2.8-6.1 6.3-6.1s6.3 2.6 6.3 6.1z"
+                fill="currentColor"
+              />
+              <path
+                d="M17.1 11.3l1 2.2 2.2 1-2.2 1-1 2.2-1-2.2-2.2-1 2.2-1z"
+                fill="currentColor"
+              />
+              <path
+                d="M15.4 19.2c.3-2.7 2-4.4 4.3-4.4"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.9"
+                stroke-linecap="round"
+                opacity="0.7"
+              />
+            </svg>
+          </span>
           <span class="qwenpaw-boot__label">Loading Console</span>
         </div>
       </div>

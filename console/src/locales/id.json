@@ -214,7 +214,7 @@
     "restoreAll": "Pulihkan semua",
     "returnToConsole": "Kembali ke konsol",
     "desktopMode": "Mode desktop",
-    "qwenpawMenu": "Menu QwenPaw",
+    "qwenpawMenu": "Menu {{brand}}",
     "restoredAll": "Semua aplikasi dipulihkan",
     "sortBy": "Urutkan berdasarkan",
     "sortFree": "Susunan bebas",
@@ -610,7 +610,7 @@
     }
   },
   "login": {
-    "title": "Masuk ke QwenPaw",
+    "title": "Masuk ke {{brand}}",
     "registerTitle": "Buat Akun",
     "firstUserHint": "Buat akun admin untuk memulai",
     "usernamePlaceholder": "Nama pengguna",

@@ -13,6 +13,7 @@ import LanguageSwitcher, {
   LANGUAGE_LIST,
 } from "../components/LanguageSwitcher/index";
 import ThemeToggleButton from "../components/ThemeToggleButton";
+import BrandMark, { BRAND_NAME } from "../components/BrandMark";
 import { useTranslation } from "react-i18next";
 import { Button, Modal } from "@agentscope-ai/design";
 import styles from "./index.module.less";
@@ -346,32 +347,52 @@ export default function Header() {
             Slot lets a plugin replace the brand logo (e.g. a per-agent
             branding override). When no plugin registers a replacement —
             or when the registered render returns null — the host default
-            <img> below paints.
+            lockup below paints.
           */}
           <Slot name="header.logo" kind="replace">
-            <span className={styles.brandText}>SmartWork</span>
+            <span className={styles.brandLockup}>
+              <BrandMark size={30} />
+              <span className={styles.brandText}>{BRAND_NAME}</span>
+            </span>
           </Slot>
-          <div className={styles.logoDivider} />
+          {/* 分隔线只在真有版本信息时出现，否则右侧无内容会留下一条孤线 */}
           {version && (
-            <Badge
-              dot={!!hasUpdate && !isReady && !isBackgroundActive}
-              color="#1a71ff"
-              offset={[4, 28]}
-            >
-              <span
-                className={`${styles.versionBadge} ${
-                  hasUpdate || isReady
-                    ? styles.versionBadgeClickable
-                    : styles.versionBadgeDefault
-                }`}
-                onClick={() => {
-                  if (isReady) return; // handled by Popover
-                  if (hasUpdate) handleOpenUpdateModal();
-                }}
+            <>
+              <div className={styles.logoDivider} />
+              <Badge
+                dot={!!hasUpdate && !isReady && !isBackgroundActive}
+                color="#1a71ff"
+                offset={[4, 28]}
               >
-                v{version}
-              </span>
-            </Badge>
+                <span
+                  className={`${styles.versionBadge} ${
+                    hasUpdate || isReady
+                      ? styles.versionBadgeClickable
+                      : styles.versionBadgeDefault
+                  }`}
+                  // 该 span 承担开按钮行为（查看更新），必须可聚焦、可键盘触发
+                  role={hasUpdate || isReady ? "button" : undefined}
+                  tabIndex={hasUpdate || isReady ? 0 : undefined}
+                  aria-label={
+                    hasUpdate || isReady
+                      ? t("header.updateAvailable", "查看版本更新")
+                      : undefined
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter" && e.key !== " ") return;
+                    e.preventDefault();
+                    if (isReady) return;
+                    if (hasUpdate) handleOpenUpdateModal();
+                  }}
+                  onClick={() => {
+                    if (isReady) return; // handled by Popover
+                    if (hasUpdate) handleOpenUpdateModal();
+                  }}
+                >
+                  v{version}
+                </span>
+              </Badge>
+            </>
           )}
           {isBackgroundActive && (
             <Tooltip title={backgroundDownloadTitle}>
@@ -432,12 +453,12 @@ export default function Header() {
         <Space size="middle">
           <Slot name="header.right" kind="fill" />
           <div className={styles.headerDivider} />
-          <span className={styles.hideOnMobile}>
-            <LanguageSwitcher />
-          </span>
-          <span className={styles.hideOnMobile}>
-            <ThemeToggleButton />
-          </span>
+          {/* 语言 / 主题两个切换按钮收进一个浅底控件组；可访问名称由各组件内部
+              的 Button 承载（Tooltip 包组件会因未转发 ref 而失效） */}
+          <div className={`${styles.headerControls} ${styles.hideOnMobile}`}>
+            <LanguageSwitcher ariaLabel={t("sidebar.settings.language")} />
+            <ThemeToggleButton ariaLabel={t("sidebar.settings.theme")} />
+          </div>
           <Dropdown menu={{ items: mobileMenuItems }} placement="bottomRight">
             <Button
               type="text"

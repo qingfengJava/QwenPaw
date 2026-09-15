@@ -226,6 +226,12 @@ function ExpertsPage() {
     <Dropdown
       menu={{
         items: [
+          // 已发布卡片主体点击直达工作台，详情页（SOP/记忆/定时任务等
+          // 能力配置）唯一入口收敛在此菜单，补齐导航断点（20260914）
+          {
+            key: "detail",
+            label: t("staffdeck.detail.menuEntry", "能力配置（详情）"),
+          },
           { key: "edit", label: t("common.edit", "Edit") },
           ...(expert.status !== "archived"
             ? [{ key: "publish", label: t("admin.experts.publish", "Publish") }]
@@ -238,7 +244,9 @@ function ExpertsPage() {
             : []),
         ],
         onClick: ({ key }) => {
-          if (key === "edit") openEditor(expert);
+          if (key === "detail") {
+            navigate(`/agents/manage/${expert.id}`);
+          } else if (key === "edit") openEditor(expert);
           else if (key === "publish") void handlePublish(expert);
           else if (key === "archive") void handleArchive(expert);
           else if (key === "delete") {

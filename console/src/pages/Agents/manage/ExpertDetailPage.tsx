@@ -14,7 +14,6 @@ import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   Button,
-  Drawer,
   Empty,
   Form,
   Input,
@@ -27,10 +26,9 @@ import {
 } from "antd";
 import { useTranslation } from "react-i18next";
 import { PageHeader } from "@/components/PageHeader";
-import { SopFlowCanvas } from "@/components/sop/SopFlowCanvas";
+import { ExpertSopPanel } from "@/components/sop/ExpertSopPanel";
 import {
   ActivityTimeline,
-  SopFlowPreview,
   StatCard,
   StatusPill,
   UnderlineTabs,
@@ -42,7 +40,6 @@ import {
   adminExpertsApi,
   expertCapabilityApi,
   evolutionApi,
-  sopApi,
   type ApiKeyRecord,
   type CapabilityCounts,
   type EvolutionProposal,
@@ -50,7 +47,6 @@ import {
   type ResourceBinding,
   type ResourceType,
   type ScheduledTask,
-  type SopRecord,
   type TaskRun,
   type WorkRecord,
 } from "../../../api/modules/admin";
@@ -872,7 +868,7 @@ function MemoriesTab({ expertId }: { expertId: string }) {
 }
 
 // ---------------------------------------------------------------------------
-// 能力资产（技能 + SOP/知识/工具挂载）
+// 能力资产（技能 + SOP 私有能力 + 知识/工具挂载）
 // ---------------------------------------------------------------------------
 
 function ResourcesTab({
@@ -887,19 +883,13 @@ function ResourcesTab({
   const [grouped, setGrouped] = useState<
     Record<string, ResourceBinding[]>
   >({});
-  const [sops, setSops] = useState<SopRecord[]>([]);
-  const [adding, setAdding] = useState<"sop" | "knowledge_base" | "tool" | null>(null);
-  // SOP 只读流程图预览（查看抽屉）
-  const [previewSopId, setPreviewSopId] = useState("");
-  // SOP 画布编辑（缺口④：React Flow 编辑器全屏抽屉）
-  const [editingSop, setEditingSop] = useState<SopRecord | null>(null);
+  const [adding, setAdding] = useState<"knowledge_base" | "tool" | null>(null);
   const [form] = Form.useForm();
 
   const load = useCallback(async () => {
     try {
       const res = await expertCapabilityApi.listResources(expert.id);
       setGrouped(res.bindings ?? {});
-      setSops(await sopApi.list());
     } catch (err) {
       message.error(String(err));
     }
@@ -920,8 +910,7 @@ function ResourcesTab({
     onChanged();
   };
 
-  const sections: Array<{ type: "sop" | "knowledge_base" | "tool"; label: string }> = [
-    { type: "sop", label: t("staffdeck.res.sop", "SOP 流程资产") },
+  const sections: Array<{ type: "knowledge_base" | "tool"; label: string }> = [
     { type: "knowledge_base", label: t("staffdeck.res.kb", "知识库") },
     { type: "tool", label: t("staffdeck.res.tool", "工具") },
   ];
@@ -945,6 +934,15 @@ function ResourcesTab({
           )}
         </div>
       </div>
+
+      {/* SOP 私有能力面板（SOP 私有能力化，20260914） */}
+      <ExpertSopPanel
+        expertId={expert.id}
+        onChanged={async () => {
+          await load();
+          onChanged();
+        }}
+      />
 
       {sections.map((section) => {
         const rows = grouped[section.type] ?? [];
@@ -985,38 +983,6 @@ function ResourcesTab({
                       <span style={{ fontSize: 12, color: "var(--sd-text-3)" }}>
                         {row.resource_id}
                       </span>
-                      {section.type === "sop" ? (
-                        <>
-                          <Button
-                            size="small"
-                            onClick={() => setPreviewSopId(row.resource_id)}
-                          >
-                            {t("staffdeck.res.view", "查看")}
-                          </Button>
-                          <Button
-                            size="small"
-                            type="primary"
-                            ghost
-                            onClick={() => {
-                              const target = sops.find(
-                                (s) => s.id === row.resource_id,
-                              );
-                              if (target) {
-                                setEditingSop(target);
-                              } else {
-                                message.error(
-                                  t(
-                                    "staffdeck.res.sopMissing",
-                                    "SOP 不存在或已删除",
-                                  ),
-                                );
-                              }
-                            }}
-                          >
-                            {t("staffdeck.res.edit", "编辑")}
-                          </Button>
-                        </>
-                      ) : null}
                       <Popconfirm
                         title={t("staffdeck.res.removeConfirm", "卸载该能力？")}
                         onConfirm={() => {
@@ -1051,8 +1017,7 @@ function ResourcesTab({
           const values = await form.validateFields();
           const type = adding;
           if (!type) return;
-          const resourceId =
-            type === "sop" ? values.sop_id : values.resource_id;
+          const resourceId = values.resource_id;
           if (!resourceId) return;
           const next = { ...grouped };
           const list = next[type] ?? [];
@@ -1067,14 +1032,7 @@ function ResourcesTab({
               resource_type: type,
               resource_id: resourceId,
               enabled: true,
-              metadata:
-                type === "sop"
-                  ? {
-                      name: sops.find((s) => s.id === resourceId)?.name,
-                    }
-                  : values.name
-                    ? { name: values.name }
-                    : {},
+              metadata: values.name ? { name: values.name } : {},
             },
           ];
           try {
@@ -1088,88 +1046,24 @@ function ResourcesTab({
         destroyOnHidden
       >
         <Form form={form} layout="vertical" preserve={false}>
-          {adding === "sop" ? (
-            <Form.Item
-              name="sop_id"
-              label={t("staffdeck.res.pickSop", "选择 SOP")}
-              rules={[{ required: true }]}
-            >
-              <Select
-                options={sops
-                  .filter((s) => s.status === "published")
-                  .map((s) => ({ value: s.id, label: `${s.name} (v${s.version})` }))}
-                placeholder={t("staffdeck.res.pickSopHint", "仅已发布的 SOP 可挂载")}
-              />
-            </Form.Item>
-          ) : (
-            <>
-              <Form.Item
-                name="resource_id"
-                label={t("staffdeck.res.resourceId", "资源 ID")}
-                rules={[{ required: true }]}
-              >
-                <Input
-                  placeholder={
-                    adding === "knowledge_base"
-                      ? t("staffdeck.res.kbHint", "知识库 ID")
-                      : t("staffdeck.res.toolHint", "工具名（如 web_search）")
-                  }
-                />
-              </Form.Item>
-              <Form.Item name="name" label={t("staffdeck.res.displayName", "显示名（可选）")}>
-                <Input />
-              </Form.Item>
-            </>
-          )}
+          <Form.Item
+            name="resource_id"
+            label={t("staffdeck.res.resourceId", "资源 ID")}
+            rules={[{ required: true }]}
+          >
+            <Input
+              placeholder={
+                adding === "knowledge_base"
+                  ? t("staffdeck.res.kbHint", "知识库 ID")
+                  : t("staffdeck.res.toolHint", "工具名（如 web_search）")
+              }
+            />
+          </Form.Item>
+          <Form.Item name="name" label={t("staffdeck.res.displayName", "显示名（可选）")}>
+            <Input />
+          </Form.Item>
         </Form>
       </Modal>
-
-      {/* SOP 只读流程图预览 */}
-      <Drawer
-        title={t("staffdeck.sop.preview", "SOP 流程预览")}
-        open={previewSopId !== ""}
-        onClose={() => setPreviewSopId("")}
-        width={520}
-        destroyOnHidden
-      >
-        {previewSopId ? <SopFlowPreview sopId={previewSopId} /> : null}
-      </Drawer>
-
-      {/* SOP 画布编辑器（缺口④：React Flow，编辑态全屏抽屉） */}
-      <Drawer
-        title={
-          editingSop
-            ? `${t("staffdeck.canvas.editorTitle", "SOP 画布编辑")} · ${editingSop.name} (v${editingSop.version})`
-            : t("staffdeck.canvas.editorTitle", "SOP 画布编辑")
-        }
-        open={editingSop !== null}
-        onClose={() => setEditingSop(null)}
-        width="94vw"
-        destroyOnHidden
-        styles={{ body: { padding: 12, height: "calc(100% - 55px)" } }}
-      >
-        {editingSop ? (
-          <SopFlowCanvas
-            sop={editingSop}
-            onSave={async (payload) => {
-              try {
-                const updated = await sopApi.update(editingSop.id, {
-                  nodes: payload.nodes,
-                  edges: payload.edges,
-                  slots: payload.slots,
-                });
-                setEditingSop(updated);
-                await load();
-                message.success(
-                  t("staffdeck.canvas.saved", "已保存"),
-                );
-              } catch (err) {
-                message.error(String(err));
-              }
-            }}
-          />
-        ) : null}
-      </Drawer>
     </div>
   );
 }

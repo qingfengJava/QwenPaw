@@ -1,8 +1,8 @@
 // workbench.module.less — 数字员工工作台（/studio/:aid，独立浏览器标签）。
 //
 // 全屏三段：顶栏（身份 + 调试开关 + 发布）+ 左固定聊天面板 + 右信息 Tab。
-// 颜色/圆角沿用 staffdeck-tokens.css 的 --sd-* 令牌，暗色主题用
-// :global([data-theme="dark"]) / :global(.dark) 双选择器（同 detail.module.less）。
+// 颜色/圆角沿用 staffdeck-tokens.css 的 --sd-* 令牌，暗色主题统一用
+// :global(html.dark-mode) 前缀（同 detail.module.less，全站 dark-mode 类驱动）。
 
 .workbench {
   display: flex;
@@ -13,8 +13,7 @@
   background: var(--sd-bg);
 }
 
-:global([data-theme="dark"]) .workbench,
-:global(.dark) .workbench {
+:global(html.dark-mode) .workbench {
   background: #141414;
 }
 
@@ -31,8 +30,7 @@
   border-bottom: 0.5px solid var(--sd-line);
 }
 
-:global([data-theme="dark"]) .topBar,
-:global(.dark) .topBar {
+:global(html.dark-mode) .topBar {
   background: rgba(255, 255, 255, 0.04);
   border-bottom-color: rgba(255, 255, 255, 0.1);
 }
@@ -48,13 +46,13 @@
   border-radius: var(--sd-radius-sm);
 
   &:hover {
-    background: rgba(0, 0, 0, 0.05);
+    /* 主题中性 hover 浅底：对 --sd-ink 取 8%，亮色浅灰 / 暗色浅白 */
+    background: color-mix(in srgb, var(--sd-ink) 8%, transparent);
     color: var(--sd-ink);
   }
 }
 
-:global([data-theme="dark"]) .homeBtn,
-:global(.dark) .homeBtn {
+:global(html.dark-mode) .homeBtn {
   color: rgba(255, 255, 255, 0.55);
 
   &:hover {
@@ -78,8 +76,7 @@
   white-space: nowrap;
 }
 
-:global([data-theme="dark"]) .agentName,
-:global(.dark) .agentName {
+:global(html.dark-mode) .agentName {
   color: rgba(255, 255, 255, 0.92);
 }
 
@@ -122,8 +119,7 @@
   overflow: hidden;
 }
 
-:global([data-theme="dark"]) .chatPanel,
-:global(.dark) .chatPanel {
+:global(html.dark-mode) .chatPanel {
   background: rgba(255, 255, 255, 0.04);
   border-right-color: rgba(255, 255, 255, 0.1);
 }
@@ -143,8 +139,7 @@
   border-bottom: 0.5px solid var(--sd-line);
 }
 
-:global([data-theme="dark"]) .chatPanelHeader,
-:global(.dark) .chatPanelHeader {
+:global(html.dark-mode) .chatPanelHeader {
   border-bottom-color: rgba(255, 255, 255, 0.1);
 }
 
@@ -184,13 +179,13 @@
   border-radius: var(--sd-radius-sm);
 
   &:hover {
-    background: rgba(0, 0, 0, 0.05);
+    /* 主题中性 hover 浅底：对 --sd-ink 取 8%，亮色浅灰 / 暗色浅白 */
+    background: color-mix(in srgb, var(--sd-ink) 8%, transparent);
     color: var(--sd-ink);
   }
 }
 
-:global([data-theme="dark"]) .headerBtn,
-:global(.dark) .headerBtn {
+:global(html.dark-mode) .headerBtn {
   color: rgba(255, 255, 255, 0.55);
 
   &:hover {
@@ -255,8 +250,7 @@
   border-bottom: 0.5px solid var(--sd-line);
 }
 
-:global([data-theme="dark"]) .tabBar,
-:global(.dark) .tabBar {
+:global(html.dark-mode) .tabBar {
   background: rgba(255, 255, 255, 0.04);
   border-bottom-color: rgba(255, 255, 255, 0.1);
 }

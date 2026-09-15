@@ -216,7 +216,7 @@
     "restoreAll": "Khôi phục tất cả",
     "returnToConsole": "Quay lại bảng điều khiển",
     "desktopMode": "Chế độ màn hình nền",
-    "qwenpawMenu": "Menu QwenPaw",
+    "qwenpawMenu": "Menu {{brand}}",
     "restoredAll": "Đã khôi phục tất cả ứng dụng",
     "sortBy": "Sắp xếp theo",
     "sortFree": "Sắp xếp tự do",
@@ -596,8 +596,8 @@
     }
   },
   "login": {
-    "title": "Đăng nhập",
-    "description": "Nhập mật khẩu để truy cập QwenPaw Console.",
+    "title": "Đăng nhập {{brand}}",
+    "description": "Nhập mật khẩu để truy cập SmartWork Console.",
     "passwordLabel": "Mật khẩu",
     "passwordPlaceholder": "Nhập mật khẩu",
     "submit": "Đăng nhập",

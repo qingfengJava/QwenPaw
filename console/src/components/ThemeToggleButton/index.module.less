@@ -1,25 +1,15 @@
 /* ---- Theme toggle button ---- */
+/* 尺寸、圆角、hover 底色统一由顶标壳层（.headerControls / .qwenpaw-btn-text）
+   接管，本处只保留按钮自身必要的布局属性，避免两套主题互相覆盖。 */
 .toggleBtn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 32px;
   border: none;
-  border-radius: 8px;
   background: transparent;
   cursor: pointer;
-  transition:
-    background 0.15s ease,
-    color 0.15s ease;
-  color: rgba(0, 0, 0, 0.65);
   padding: 0;
   flex-shrink: 0;
-  font-size: 24px;
-
-  &:hover {
-    background: rgba(97, 92, 237, 0.08);
-    color: #18181a;
-  }
 }
 
 /* ---- Theme Dropdown ---- */
@@ -44,15 +34,6 @@
 
 /* Dark mode overrides */
 :global(.dark-mode) {
-  .toggleBtn {
-    color: rgba(255, 255, 255, 0.65);
-
-    &:hover {
-      background: rgba(255, 255, 255, 0.1);
-      color: #fff;
-    }
-  }
-
   .themeDropdown {
     border: 1px solid rgba(255, 255, 255, 0.1) !important;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5) !important;

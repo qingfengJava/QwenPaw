@@ -25,6 +25,7 @@ import { resolveAppDef } from "./osAppRegistry";
 import { useOsStyles } from "./useOsStyles";
 import { getConsoleRootHref } from "../utils/navigationMode";
 import LanguageSwitcher from "../components/LanguageSwitcher";
+import { BRAND_NAME } from "../components/BrandMark";
 
 function useClock() {
   const [now, setNow] = useState(() => new Date());
@@ -55,6 +56,11 @@ export default function MenuBar({ hidden = false }: { hidden?: boolean }) {
     approvals: approvalCount,
     inbox: inboxCount,
     defaultValue: `Approvals ${approvalCount} · Inbox ${inboxCount}`,
+  });
+  // 品牌菜单的可访问名称：产品名由 BRAND_NAME 插值注入，不再硬编码上游项目名
+  const brandMenuLabel = t("os.qwenpawMenu", {
+    brand: BRAND_NAME,
+    defaultValue: `${BRAND_NAME} menu`,
   });
   const now = useClock();
 
@@ -105,10 +111,11 @@ export default function MenuBar({ hidden = false }: { hidden?: boolean }) {
           <button
             type="button"
             className={styles.menubarBrand}
-            title={t("os.qwenpawMenu", "QwenPaw menu")}
-            aria-label={t("os.qwenpawMenu", "QwenPaw menu")}
+            title={brandMenuLabel}
+            aria-label={brandMenuLabel}
           >
-            <img src="/qwenpaw.png" alt="QwenPaw" />
+            {/* 吉祥物图标准装饰处理：按钮已带 aria-label，再给图名字会读两遍 */}
+            <img src="/qwenpaw.png" alt="" />
           </button>
         </Dropdown>
         <Tooltip

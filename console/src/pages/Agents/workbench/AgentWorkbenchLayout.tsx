@@ -78,9 +78,13 @@ const ChannelsPage = lazyImportWithRetry("../../pages/Control/Channels");
 const AgentConfigPage = lazyImportWithRetry("../../pages/Agent/Config");
 const AgentStatsPage = lazyImportWithRetry("../../pages/Settings/AgentStats");
 const HeartbeatPage = lazyImportWithRetry("../../pages/Control/Heartbeat");
+// SOP 私有能力子页（expert 专属，GroupPane 按 isExpert 过滤可见性）
+const WorkbenchSopPage = lazyImportWithRetry(
+  "../../pages/Agents/workbench/WorkbenchSopTab",
+);
 
 /** 顶层 Tab → 分组键映射（能力 / 运维各为一个二级分组 Tab）。 */
-const CAPABILITY_KEYS = ["files", "skills", "tools", "mcp", "acp", "cron-jobs"];
+const CAPABILITY_KEYS = ["files", "skills", "tools", "sop", "mcp", "acp", "cron-jobs"];
 const OPS_KEYS = ["channels", "config", "checkpoints", "stats", "heartbeat"];
 
 /** 全部子页面组件索引（key 与 TABS 对齐）。 */
@@ -92,6 +96,7 @@ const PAGE_COMPONENTS: Record<string, ComponentType> = {
   tools: ToolsPage,
   mcp: MCPPage,
   acp: ACPPage,
+  sop: WorkbenchSopPage,
   checkpoints: CheckpointsPage,
   channels: ChannelsPage,
   config: AgentConfigPage,
@@ -257,6 +262,18 @@ function AgentWorkbenchShell({ chatRoute = false }: { chatRoute?: boolean }) {
     stashAiTunePrompt(prompt);
     setChatKey((k) => k + 1);
   };
+
+  // 跨借壳子页的「让 AI 帮我画」入口：SOP 面板 dispatch 本事件，
+  // 外壳统一切左侧聊天并预填（子页无需持有 handleAiTune）。
+  useEffect(() => {
+    const onAiTuneRequest = (e: Event) => {
+      const detail = (e as CustomEvent<string>).detail;
+      if (detail) handleAiTune(detail);
+    };
+    window.addEventListener("qwenpaw:ai-tune-request", onAiTuneRequest);
+    return () =>
+      window.removeEventListener("qwenpaw:ai-tune-request", onAiTuneRequest);
+  }, []);
 
   // ── 调试开关：ON 物化草稿实例并切数据域；OFF 回线上并销毁实例 ──
   const handleDebugToggle = async (next: boolean) => {
@@ -451,7 +468,7 @@ function AgentWorkbenchShell({ chatRoute = false }: { chatRoute?: boolean }) {
             ) : top === "activity" ? (
               <AgentActivityTab aid={aid} />
             ) : top === "capability" ? (
-              <GroupPane group="capability" sub={sub} aid={aid} />
+              <GroupPane group="capability" sub={sub} aid={aid} isExpert={isExpert} />
             ) : top === "ops" ? (
               <GroupPane group="ops" sub={sub} aid={aid} />
             ) : top === "versions" && isExpert && expertId ? (
@@ -483,14 +500,19 @@ function GroupPane({
   group,
   sub,
   aid,
+  isExpert = true,
 }: {
   group: "capability" | "ops";
   sub: string | null;
   aid: string;
+  /** SOP 子页仅 expert 实例可见（非管理员/原生 agent 不展示，避免 admin 接口 403） */
+  isExpert?: boolean;
 }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const keys = group === "capability" ? CAPABILITY_KEYS : OPS_KEYS;
+  const keys = (group === "capability" ? CAPABILITY_KEYS : OPS_KEYS).filter(
+    (key) => key !== "sop" || isExpert,
+  );
   const items = keys
     .map((key) => {
       const tab = TABS.find((item) => item.key === key);

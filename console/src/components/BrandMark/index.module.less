@@ -1,0 +1,29 @@
+/* 品牌徽章（渐变方底）：SmartWork 品牌底色的唯一来源。
+   顶栏 / 登录页 / 启动页 / OS 品牌位统一走 BrandMark，禁止再各自复制一份渐变。
+   尺寸由 --bm-size 驱动：圆角 0.34、内部图形 0.62 按比例派生，新增品牌位无需改样式。 */
+.badge {
+  display: inline-grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: var(--bm-size, 30px);
+  height: var(--bm-size, 30px);
+  border-radius: calc(var(--bm-size, 30px) * 0.34);
+  background: linear-gradient(140deg, #1a71ff 0%, #6f4fe0 58%, #0f9d8f 130%);
+  // 内圈高光让渐变方底在亮/暗两面都不糊，外阴影与工作台 hero 同一光源
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.16),
+    0 6px 14px -8px rgba(26, 84, 180, 0.75);
+  color: #fff;
+
+  svg {
+    width: 62%;
+    height: 62%;
+  }
+}
+
+:global(html.dark-mode) .badge {
+  background: linear-gradient(140deg, #2f6fd8 0%, #6a4bc4 58%, #177f74 130%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.12),
+    0 6px 16px -8px rgba(0, 0, 0, 0.85);
+}

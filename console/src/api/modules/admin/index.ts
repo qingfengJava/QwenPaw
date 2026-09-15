@@ -64,6 +64,7 @@ export type {
   SopNode,
   SopEdge,
   SopSlot,
+  SopLiveEvent,
   SopVersion,
   MemoryRecord,
   ScheduledTask,

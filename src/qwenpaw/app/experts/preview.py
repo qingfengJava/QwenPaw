@@ -260,12 +260,17 @@ def _stable_json(value: Any) -> str:
 
 
 async def _load_capability_snapshot(expert_id: str) -> Optional[dict]:
-    """能力挂载快照（失败降级为 None，PROFILE.md 保持原形态）。"""
+    """能力挂载快照（失败降级为 None，PROFILE.md 保持原形态）。
+
+    预览面向草稿调试实例，SOP 读 draft 环境行（工作台未发布变更即时
+    反映到调试会话），与线上 production 注入天然隔离。
+    """
     try:
         from .capability import get_capability_store
 
         snapshot = await get_capability_store().member_capability_snapshot(
             [expert_id],
+            environment="draft",
         )
         return snapshot.get(expert_id)
     except Exception:  # pylint: disable=broad-except

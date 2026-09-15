@@ -16,6 +16,9 @@ export const TABS: DetailTab[] = [
   { key: "files", labelKey: "nav.files", fallback: "Files", group: "capability" },
   { key: "skills", labelKey: "nav.skills", fallback: "Skills", group: "capability" },
   { key: "tools", labelKey: "nav.tools", fallback: "Tools", group: "capability" },
+  // SOP 私有能力面板（SOP 私有能力化，20260914）：仅 expert 实例可见，
+  // 可见性由工作台外壳按 isExpert 过滤（非 Tab 定义层职责）
+  { key: "sop", labelKey: "workbench.tabSop", fallback: "SOP", group: "capability" },
   { key: "mcp", labelKey: "nav.mcp", fallback: "MCP", group: "capability" },
   { key: "acp", labelKey: "nav.acp", fallback: "ACP", group: "capability" },
   { key: "checkpoints", labelKey: "checkpoints.nav", fallback: "Checkpoints", group: "ops" },

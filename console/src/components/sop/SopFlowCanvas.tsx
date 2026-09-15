@@ -10,7 +10,7 @@
  *    流转条件、无选中时展示 SOP 元信息 + 槽位表格；
  *  - 样式全部走 staffdeck tokens，不引入额外 CSS 框架。
  */
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   addEdge,
   Background,
@@ -31,7 +31,7 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Button, Empty, Input, Popconfirm, Tag, Tooltip } from "antd";
+import { Button, Empty, Input, Modal, Popconfirm, Tag, Tooltip } from "antd";
 import {
   ArrowLeftRight,
   LayoutTemplate,
@@ -43,7 +43,7 @@ import {
 import { useTranslation } from "react-i18next";
 
 import { useAppMessage } from "@/hooks/useAppMessage";
-import type { SopRecord, SopSlot } from "@/api/modules/admin";
+import { sopApi, type SopLiveEvent, type SopRecord, type SopSlot } from "@/api/modules/admin";
 import {
   flowToSop,
   layoutSopGraph,
@@ -86,8 +86,8 @@ function SopNodeCard({ data, selected }: NodeProps<SopFlowNode>) {
             width: 20,
             height: 20,
             borderRadius: "50%",
-            background: "var(--sd-ink, #18181a)",
-            color: "#fff",
+            background: "var(--sd-solid, #18181a)",
+            color: "var(--sd-on-solid, #fff)",
             fontSize: 11,
             display: "inline-flex",
             alignItems: "center",
@@ -317,11 +317,76 @@ function CanvasInner({ sop, readOnly = false, onSave }: SopFlowCanvasProps) {
   } | null>(null);
   const [saving, setSaving] = useState(false);
   const history = useHistory();
+  // 本地是否有未保存编辑（AI 实时事件到达时用于冲突判定）
+  const dirtyRef = useRef(false);
+
+  // ---- AI 实时联动：应用后端广播的草稿全量快照 ----
+
+  const applyLiveGraph = useCallback(
+    (event: SopLiveEvent) => {
+      const laid = layoutInitial({
+        nodes: event.nodes,
+        edges: event.edges,
+      } as SopRecord);
+      setNodes(laid.nodes);
+      setEdges(laid.edges);
+      setSlots([...(event.slots ?? [])]);
+      dirtyRef.current = false;
+      requestAnimationFrame(() => fitView({ padding: 0.15, duration: 300 }));
+    },
+    [fitView, setEdges, setNodes],
+  );
+
+  // 订阅本 SOP 的实时编辑流：AI tool / 保存写草稿行后画布跟随重绘。
+  // 仅编辑态订阅；本地有未保存 diff 时弹确认，避免覆盖用户手改。
+  useEffect(() => {
+    if (readOnly) return;
+    const controller = new AbortController();
+    let cancelled = false;
+    void (async () => {
+      try {
+        await sopApi.streamEvents(
+          sop.id,
+          (event) => {
+            if (cancelled || event.environment !== "draft") return;
+            if (dirtyRef.current) {
+              Modal.confirm({
+                title: t(
+                  "staffdeck.canvas.liveConflictTitle",
+                  "AI 已更新草稿",
+                ),
+                content: t(
+                  "staffdeck.canvas.liveConflictBody",
+                  "AI 刚刚修改了这条 SOP 的草稿内容，是否放弃本地未保存编辑、加载最新？",
+                ),
+                okText: t("staffdeck.canvas.liveConflictOk", "加载最新"),
+                cancelText: t(
+                  "staffdeck.canvas.liveConflictCancel",
+                  "保留我的编辑",
+                ),
+                onOk: () => applyLiveGraph(event),
+              });
+              return;
+            }
+            applyLiveGraph(event);
+          },
+          controller.signal,
+        );
+      } catch {
+        // 流中断（关抽屉/网络抖动）静默——下次打开从 PG 取现值
+      }
+    })();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [sop.id, readOnly, applyLiveGraph, t]);
 
   // ---- 工具条动作 ----
 
   const addNode = useCallback(() => {
     history.push({ nodes, edges });
+    dirtyRef.current = true;
     const id = nextNodeId(nodes.map((n) => n.id));
     const maxY = nodes.reduce((acc, n) => Math.max(acc, n.position.y), 0);
     const newNode: SopFlowNode = {
@@ -337,6 +402,7 @@ function CanvasInner({ sop, readOnly = false, onSave }: SopFlowCanvasProps) {
   const deleteSelected = useCallback(() => {
     if (!selected || readOnly) return;
     history.push({ nodes, edges });
+    dirtyRef.current = true;
     if (selected.kind === "node") {
       setNodes((nds) => nds.filter((n) => n.id !== selected.id));
       setEdges((eds) =>
@@ -351,6 +417,7 @@ function CanvasInner({ sop, readOnly = false, onSave }: SopFlowCanvasProps) {
   const onConnect = useCallback(
     (connection: Connection) => {
       history.push({ nodes, edges });
+      dirtyRef.current = true;
       setEdges((eds) =>
         addEdge(
           { ...connection, type: "sopCondition", label: "" },
@@ -363,6 +430,7 @@ function CanvasInner({ sop, readOnly = false, onSave }: SopFlowCanvasProps) {
 
   const autoLayout = useCallback(() => {
     history.push({ nodes, edges });
+    dirtyRef.current = true;
     const laid = withSeqs(layoutSopGraph({ nodes, edges }));
     setNodes(laid.nodes);
     requestAnimationFrame(() => fitView({ padding: 0.15, duration: 300 }));
@@ -371,6 +439,7 @@ function CanvasInner({ sop, readOnly = false, onSave }: SopFlowCanvasProps) {
   const applyHistory = useCallback(
     (snapshot: SopGraph | null) => {
       if (!snapshot) return;
+      dirtyRef.current = true;
       setNodes(snapshot.nodes);
       setEdges(snapshot.edges);
     },
@@ -389,6 +458,7 @@ function CanvasInner({ sop, readOnly = false, onSave }: SopFlowCanvasProps) {
 
   const updateNodeData = useCallback(
     (id: string, patch: Partial<SopNodeData>) => {
+      dirtyRef.current = true;
       setNodes((nds) =>
         nds.map((node) =>
           node.id === id
@@ -402,6 +472,7 @@ function CanvasInner({ sop, readOnly = false, onSave }: SopFlowCanvasProps) {
 
   const updateEdgeLabel = useCallback(
     (id: string, label: string) => {
+      dirtyRef.current = true;
       setEdges((eds) =>
         eds.map((edge) =>
           edge.id === id ? { ...edge, label } : edge,
@@ -415,6 +486,7 @@ function CanvasInner({ sop, readOnly = false, onSave }: SopFlowCanvasProps) {
 
   const updateSlot = useCallback(
     (index: number, patch: Partial<SopSlot>) => {
+      dirtyRef.current = true;
       setSlots((prev) =>
         prev.map((slot, i) => (i === index ? { ...slot, ...patch } : slot)),
       );
@@ -423,10 +495,12 @@ function CanvasInner({ sop, readOnly = false, onSave }: SopFlowCanvasProps) {
   );
 
   const removeSlot = useCallback((index: number) => {
+    dirtyRef.current = true;
     setSlots((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
   const addSlot = useCallback(() => {
+    dirtyRef.current = true;
     setSlots((prev) => [
       ...prev,
       { key: `slot_${prev.length + 1}`, label: "", required: false, ask_prompt: "" },
@@ -447,6 +521,8 @@ function CanvasInner({ sop, readOnly = false, onSave }: SopFlowCanvasProps) {
     setSaving(true);
     try {
       await onSave?.({ ...payload, slots });
+      // 保存成功：本地与后端一致，清除 dirty（后续 AI 事件可直接应用）
+      dirtyRef.current = false;
     } finally {
       setSaving(false);
     }
@@ -553,7 +629,9 @@ function CanvasInner({ sop, readOnly = false, onSave }: SopFlowCanvasProps) {
               type="primary"
               style={{
                 ...toolButtonStyle,
-                background: "var(--sd-ink, #18181a)",
+                // 主按钮为实色底，暗色下 --sd-solid 翻转为浅色底，字色必须跟着变深
+                background: "var(--sd-solid, #18181a)",
+                color: "var(--sd-on-solid, #fff)",
               }}
               loading={saving}
               onClick={() => void handleSave()}

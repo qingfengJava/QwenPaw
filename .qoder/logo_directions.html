@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>SmartWork 品牌标识方向对比</title>
+<style>
+  :root {
+    --tile-light: linear-gradient(140deg, #1a71ff 0%, #6f4fe0 58%, #0f9d8f 130%);
+    --tile-dark: linear-gradient(140deg, #2f6fd8 0%, #6a4bc4 58%, #177f74 130%);
+    --ink: #101623;
+    --ink-2: #4c5670;
+    --ink-3: #828ca6;
+    --line: #e6eaf3;
+    --brand: #1a71ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 40px 44px 72px;
+    font-family: "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif;
+    color: var(--ink);
+    background: #f7f9fe;
+  }
+  h1 { font-size: 26px; margin: 0 0 6px; letter-spacing: -0.02em; }
+  .lede { margin: 0 0 34px; color: var(--ink-2); font-size: 14px; line-height: 1.7; }
+  .card {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 22px 24px 26px;
+    margin-bottom: 22px;
+    box-shadow: 0 10px 26px -20px rgba(20, 40, 90, 0.5);
+  }
+  .card-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
+  .tag {
+    display: inline-flex; align-items: center; padding: 3px 9px; border-radius: 999px;
+    background: rgba(26,113,255,.1); color: var(--brand); font-size: 11px; font-weight: 700; letter-spacing: .02em;
+  }
+  .tag.rec { background: rgba(15,157,143,.13); color: #0b7a6e; }
+  .tag.base { background: rgba(130,140,166,.15); color: var(--ink-2); }
+  .card h2 { font-size: 17px; margin: 0; letter-spacing: -0.01em; }
+  .why { margin: 6px 0 20px; color: var(--ink-2); font-size: 13px; line-height: 1.75; max-width: 980px; }
+  .row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 34px; }
+  .cell { display: flex; flex-direction: column; align-items: center; gap: 9px; }
+  .cap { font-size: 11px; color: var(--ink-3); letter-spacing: .02em; }
+  .stage-light, .stage-dark {
+    display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 12px;
+  }
+  .stage-light { background: linear-gradient(180deg,#eef3ff 0%,#ffffff 100%); border: 1px solid var(--line); }
+  .stage-dark { background: #171b25; border: 1px solid #262c3a; }
+  .word-light { font-size: 15px; font-weight: 700; letter-spacing: -0.011em; color: var(--ink); }
+  .word-dark { font-size: 15px; font-weight: 700; letter-spacing: -0.011em; color: rgba(255,255,255,.92); }
+  .tile {
+    display: grid; place-items: center; color: #fff;
+    background: var(--tile-light);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.16), 0 6px 14px -8px rgba(26,84,180,.75);
+  }
+  .tile.t30 { width: 30px; height: 30px; border-radius: 10px; }
+  .tile.t46 { width: 46px; height: 46px; border-radius: 14px; }
+  .stage-dark .tile {
+    background: var(--tile-dark);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.12), 0 6px 16px -8px rgba(0,0,0,.85);
+  }
+  .bare { display: grid; place-items: center; color: var(--ink); }
+  .bare.onbrand { color: var(--brand); }
+  .bare.onwhite { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 8px; }
+  .bare.onblack { background: #171b25; color: #fff; border-radius: 10px; padding: 8px; }
+  .sizes { display: flex; align-items: flex-end; gap: 18px; }
+  .note { margin-top: 18px; padding-top: 14px; border-top: 1px dashed var(--line); font-size: 12.5px; color: var(--ink-2); line-height: 1.8; }
+  .note b { color: var(--ink); }
+</style>
+</head>
+<body>
+<h1>SmartWork 品牌标识重设计 · 方向对比</h1>
+<p class="lede">
+  每枚标识均以行内 SVG（24 视框）绘制，可在顶栏 30px、折叠态 16px、登录页 48px、favicon 之间无损复用；<br />
+  全部为 currentColor 驱动，亮/暗两套主题共用同一份图形，无需位图资源。
+</p>
+
+<!-- ═══════════ 现状 ═══════════ -->
+<div class="card">
+  <div class="card-head"><span class="tag base">现状</span><h2>渐变方底 + 四角星（Sparkle）</h2></div>
+  <p class="why">问题：sparkle 只承载"智能/AI"这一层，任何 AI 产品都能套用，读不出"员工"；卫星点是纯装饰，无语义。</p>
+  <div class="row">
+    <div class="cell"><div class="stage-light"><span class="tile t30"><svg width="17" height="17" viewBox="0 0 24 24"><path d="M11.2 2.6l2.6 6 6 2.6-6 2.6-2.6 6-2.6-6-6-2.6 6-2.6z" fill="currentColor"/><circle cx="19.4" cy="19.4" r="2.2" fill="currentColor" opacity=".72"/></svg></span><span class="word-light">SmartWork</span></div><span class="cap">顶栏 30px · 亮</span></div>
+    <div class="cell"><div class="stage-dark"><span class="tile t30"><svg width="17" height="17" viewBox="0 0 24 24"><path d="M11.2 2.6l2.6 6 6 2.6-6 2.6-2.6 6-2.6-6-6-2.6 6-2.6z" fill="currentColor"/><circle cx="19.4" cy="19.4" r="2.2" fill="currentColor" opacity=".72"/></svg></span><span class="word-dark">SmartWork</span></div><span class="cap">顶栏 30px · 暗</span></div>
+    <div class="cell"><div class="bare"><svg width="46" height="46" viewBox="0 0 24 24"><path d="M11.2 2.6l2.6 6 6 2.6-6 2.6-2.6 6-2.6-6-6-2.6 6-2.6z" fill="currentColor"/><circle cx="19.4" cy="19.4" r="2.2" fill="currentColor" opacity=".72"/></svg></div><span class="cap">46px 裸形</span></div>
+  </div>
+</div>
+
+<!-- ═══════════ A 编队 ═══════════ -->
+<div class="card">
+  <div class="card-head"><span class="tag rec">方向 A · 推荐</span><h2>数字团队编队（Crew）</h2></div>
+  <p class="why">
+    语义：一个实心员工 + 一个线框员工前后错位并列 = "你带的 AI 团队"。<br />
+    关键设计：线框那一位的头部用<b>四角星</b>代替圆点 —— sparkle 从"主角"降级为"数字员工"的身份标记，AI 感保留但不落入通用模板。<br />
+    与产品既有的 DiceBear 圆形头像语言同源（圆头 + 肩弧），品牌一致性最高。
+  </p>
+  <div class="row">
+    <div class="cell"><div class="stage-light"><span class="tile t30"><svg width="19" height="19" viewBox="0 0 24 24"><path d="M9.5 11.9a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z" fill="currentColor"/><path d="M3.2 19.2c0-3.5 2.8-6.1 6.3-6.1s6.3 2.6 6.3 6.1z" fill="currentColor"/><path d="M17.1 11.3l1 2.2 2.2 1-2.2 1-1 2.2-1-2.2-2.2-1 2.2-1z" fill="currentColor" opacity=".9"/><path d="M15.4 19.2c.3-2.7 2-4.4 4.3-4.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" opacity=".62"/></svg></span><span class="word-light">SmartWork</span></div><span class="cap">顶栏 30px · 亮</span></div>
+    <div class="cell"><div class="stage-dark"><span class="tile t30"><svg width="19" height="19" viewBox="0 0 24 24"><path d="M9.5 11.9a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z" fill="currentColor"/><path d="M3.2 19.2c0-3.5 2.8-6.1 6.3-6.1s6.3 2.6 6.3 6.1z" fill="currentColor"/><path d="M17.1 11.3l1 2.2 2.2 1-2.2 1-1 2.2-1-2.2-2.2-1 2.2-1z" fill="currentColor" opacity=".9"/><path d="M15.4 19.2c.3-2.7 2-4.4 4.3-4.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" opacity=".62"/></svg></span><span class="word-dark">SmartWork</span></div><span class="cap">顶栏 30px · 暗</span></div>
+    <div class="cell"><div class="sizes">
+      <div class="cell"><div class="bare onwhite"><svg width="16" height="16" viewBox="0 0 24 24"><path d="M9.5 11.9a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z" fill="currentColor"/><path d="M3.2 19.2c0-3.5 2.8-6.1 6.3-6.1s6.3 2.6 6.3 6.1z" fill="currentColor"/><path d="M17.1 11.3l1 2.2 2.2 1-2.2 1-1 2.2-1-2.2-2.2-1 2.2-1z" fill="currentColor"/><path d="M15.4 19.2c.3-2.7 2-4.4 4.3-4.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity=".6"/></svg></div><span class="cap">16px</span></div>
+      <div class="cell"><div class="bare onwhite"><svg width="30" height="30" viewBox="0 0 24 24"><path d="M9.5 11.9a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z" fill="currentColor"/><path d="M3.2 19.2c0-3.5 2.8-6.1 6.3-6.1s6.3 2.6 6.3 6.1z" fill="currentColor"/><path d="M17.1 11.3l1 2.2 2.2 1-2.2 1-1 2.2-1-2.2-2.2-1 2.2-1z" fill="currentColor"/><path d="M15.4 19.2c.3-2.7 2-4.4 4.3-4.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" opacity=".6"/></svg></div><span class="cap">30px</span></div>
+      <div class="cell"><div class="bare onwhite"><svg width="48" height="48" viewBox="0 0 24 24"><path d="M9.5 11.9a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z" fill="currentColor"/><path d="M3.2 19.2c0-3.5 2.8-6.1 6.3-6.1s6.3 2.6 6.3 6.1z" fill="currentColor"/><path d="M17.1 11.3l1 2.2 2.2 1-2.2 1-1 2.2-1-2.2-2.2-1 2.2-1z" fill="currentColor"/><path d="M15.4 19.2c.3-2.7 2-4.4 4.3-4.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" opacity=".6"/></svg></div><span class="cap">48px</span></div>
+      <div class="cell"><div class="bare onblack"><svg width="48" height="48" viewBox="0 0 24 24"><path d="M9.5 11.9a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z" fill="currentColor"/><path d="M3.2 19.2c0-3.5 2.8-6.1 6.3-6.1s6.3 2.6 6.3 6.1z" fill="currentColor"/><path d="M17.1 11.3l1 2.2 2.2 1-2.2 1-1 2.2-1-2.2-2.2-1 2.2-1z" fill="currentColor"/><path d="M15.4 19.2c.3-2.7 2-4.4 4.3-4.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" opacity=".6"/></svg></div><span class="cap">反白 48px</span></div>
+    </div><span class="cap">尺寸阶梯</span></div>
+  </div>
+  <p class="note"><b>取舍：</b>语义最准（团队 + 数字），且和员工头像体系呼应；16px 下肩弧与星形仍可辨，是最稳的一枚。</p>
+</div>
+
+<!-- ═══════════ B 工牌 ═══════════ -->
+<div class="card">
+  <div class="card-head"><span class="tag">方向 B</span><h2>员工工牌（Badge，负空间挖孔）</h2></div>
+  <p class="why">
+    语义：一张挂绳工牌，牌内用<b>负空间</b>挖出"头像 + 肩线"，顶部挖出挂绳孔。<br />
+    关键设计：整枚是实心白牌，人形靠"透出的渐变底"呈现 —— 无论方底什么颜色，人形自动是背景色，天然适配亮暗双主题，且比描边版更耐小尺寸。
+  </p>
+  <div class="row">
+    <div class="cell"><div class="stage-light"><span class="tile t30"><svg width="18" height="18" viewBox="0 0 24 24"><path fill="currentColor" fill-rule="evenodd" d="M8.6 2.6h6.8a4.8 4.8 0 0 1 4.8 4.8v9.2a4.8 4.8 0 0 1-4.8 4.8H8.6a4.8 4.8 0 0 1-4.8-4.8V7.4a4.8 4.8 0 0 1 4.8-4.8zM10.2 5.9a1.15 1.15 0 0 0 0 2.3h3.6a1.15 1.15 0 0 0 0-2.3zM12 13.2a2.55 2.55 0 1 0 0-5.1 2.55 2.55 0 0 0 0 5.1zM7.4 18.9c.6-2.3 2.3-3.6 4.6-3.6s4 1.3 4.6 3.6z"/></svg></span><span class="word-light">SmartWork</span></div><span class="cap">顶栏 30px · 亮</span></div>
+    <div class="cell"><div class="stage-dark"><span class="tile t30"><svg width="18" height="18" viewBox="0 0 24 24"><path fill="currentColor" fill-rule="evenodd" d="M8.6 2.6h6.8a4.8 4.8 0 0 1 4.8 4.8v9.2a4.8 4.8 0 0 1-4.8 4.8H8.6a4.8 4.8 0 0 1-4.8-4.8V7.4a4.8 4.8 0 0 1 4.8-4.8zM10.2 5.9a1.15 1.15 0 0 0 0 2.3h3.6a1.15 1.15 0 0 0 0-2.3zM12 13.2a2.55 2.55 0 1 0 0-5.1 2.55 2.55 0 0 0 0 5.1zM7.4 18.9c.6-2.3 2.3-3.6 4.6-3.6s4 1.3 4.6 3.6z"/></svg></span><span class="word-dark">SmartWork</span></div><span class="cap">顶栏 30px · 暗</span></div>
+    <div class="cell"><div class="sizes">
+      <div class="cell"><div class="bare onwhite"><svg width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" fill-rule="evenodd" d="M8.6 2.6h6.8a4.8 4.8 0 0 1 4.8 4.8v9.2a4.8 4.8 0 0 1-4.8 4.8H8.6a4.8 4.8 0 0 1-4.8-4.8V7.4a4.8 4.8 0 0 1 4.8-4.8zM10.2 5.9a1.15 1.15 0 0 0 0 2.3h3.6a1.15 1.15 0 0 0 0-2.3zM12 13.2a2.55 2.55 0 1 0 0-5.1 2.55 2.55 0 0 0 0 5.1zM7.4 18.9c.6-2.3 2.3-3.6 4.6-3.6s4 1.3 4.6 3.6z"/></svg></div><span class="cap">16px</span></div>
+      <div class="cell"><div class="bare onwhite"><svg width="30" height="30" viewBox="0 0 24 24"><path fill="currentColor" fill-rule="evenodd" d="M8.6 2.6h6.8a4.8 4.8 0 0 1 4.8 4.8v9.2a4.8 4.8 0 0 1-4.8 4.8H8.6a4.8 4.8 0 0 1-4.8-4.8V7.4a4.8 4.8 0 0 1 4.8-4.8zM10.2 5.9a1.15 1.15 0 0 0 0 2.3h3.6a1.15 1.15 0 0 0 0-2.3zM12 13.2a2.55 2.55 0 1 0 0-5.1 2.55 2.55 0 0 0 0 5.1zM7.4 18.9c.6-2.3 2.3-3.6 4.6-3.6s4 1.3 4.6 3.6z"/></svg></div><span class="cap">30px</span></div>
+      <div class="cell"><div class="bare onwhite"><svg width="48" height="48" viewBox="0 0 24 24"><path fill="currentColor" fill-rule="evenodd" d="M8.6 2.6h6.8a4.8 4.8 0 0 1 4.8 4.8v9.2a4.8 4.8 0 0 1-4.8 4.8H8.6a4.8 4.8 0 0 1-4.8-4.8V7.4a4.8 4.8 0 0 1 4.8-4.8zM10.2 5.9a1.15 1.15 0 0 0 0 2.3h3.6a1.15 1.15 0 0 0 0-2.3zM12 13.2a2.55 2.55 0 1 0 0-5.1 2.55 2.55 0 0 0 0 5.1zM7.4 18.9c.6-2.3 2.3-3.6 4.6-3.6s4 1.3 4.6 3.6z"/></svg></div><span class="cap">48px</span></div>
+      <div class="cell"><div class="bare onblack"><svg width="48" height="48" viewBox="0 0 24 24"><path fill="currentColor" fill-rule="evenodd" d="M8.6 2.6h6.8a4.8 4.8 0 0 1 4.8 4.8v9.2a4.8 4.8 0 0 1-4.8 4.8H8.6a4.8 4.8 0 0 1-4.8-4.8V7.4a4.8 4.8 0 0 1 4.8-4.8zM10.2 5.9a1.15 1.15 0 0 0 0 2.3h3.6a1.15 1.15 0 0 0 0-2.3zM12 13.2a2.55 2.55 0 1 0 0-5.1 2.55 2.55 0 0 0 0 5.1zM7.4 18.9c.6-2.3 2.3-3.6 4.6-3.6s4 1.3 4.6 3.6z"/></svg></div><span class="cap">反白 48px</span></div>
+    </div><span class="cap">尺寸阶梯</span></div>
+  </div>
+  <p class="note"><b>取舍：</b>"员工"读得最直接（工牌=身份），单色版也最完整；但外形偏"卡片"，与工作台大量圆角卡片有一定撞形风险。</p>
+</div>
+
+<!-- ═══════════ C 领口领带 ═══════════ -->
+<div class="card">
+  <div class="card-head"><span class="tag">方向 C</span><h2>正装领口 + 领带（Collar &amp; Tie）</h2></div>
+  <p class="why">
+    语义：V 字衬衫领 + 一条领带，<b>领带结用四角星</b> —— "穿正装的 AI"，把智能符号藏进职业符号里。<br />
+    气质：商务、克制、高辨识度；同类 AI 产品几乎无人使用，差异化最强。
+  </p>
+  <div class="row">
+    <div class="cell"><div class="stage-light"><span class="tile t30"><svg width="18" height="18" viewBox="0 0 24 24"><path d="M4.6 4.2 12 10.6l7.4-6.4" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linejoin="round" stroke-linecap="round"/><path d="M12 10.9l2 2.2-2 2.2-2-2.2z" fill="currentColor"/><path d="M10.4 16.4h3.2l1.1 3.9-2.7 1.7-2.7-1.7z" fill="currentColor"/></svg></span><span class="word-light">SmartWork</span></div><span class="cap">顶栏 30px · 亮</span></div>
+    <div class="cell"><div class="stage-dark"><span class="tile t30"><svg width="18" height="18" viewBox="0 0 24 24"><path d="M4.6 4.2 12 10.6l7.4-6.4" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linejoin="round" stroke-linecap="round"/><path d="M12 10.9l2 2.2-2 2.2-2-2.2z" fill="currentColor"/><path d="M10.4 16.4h3.2l1.1 3.9-2.7 1.7-2.7-1.7z" fill="currentColor"/></svg></span><span class="word-dark">SmartWork</span></div><span class="cap">顶栏 30px · 暗</span></div>
+    <div class="cell"><div class="sizes">
+      <div class="cell"><div class="bare onwhite"><svg width="16" height="16" viewBox="0 0 24 24"><path d="M4.6 4.2 12 10.6l7.4-6.4" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linejoin="round" stroke-linecap="round"/><path d="M12 10.9l2 2.2-2 2.2-2-2.2z" fill="currentColor"/><path d="M10.4 16.4h3.2l1.1 3.9-2.7 1.7-2.7-1.7z" fill="currentColor"/></svg></div><span class="cap">16px</span></div>
+      <div class="cell"><div class="bare onwhite"><svg width="30" height="30" viewBox="0 0 24 24"><path d="M4.6 4.2 12 10.6l7.4-6.4" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linejoin="round" stroke-linecap="round"/><path d="M12 10.9l2 2.2-2 2.2-2-2.2z" fill="currentColor"/><path d="M10.4 16.4h3.2l1.1 3.9-2.7 1.7-2.7-1.7z" fill="currentColor"/></svg></div><span class="cap">30px</span></div>
+      <div class="cell"><div class="bare onwhite"><svg width="48" height="48" viewBox="0 0 24 24"><path d="M4.6 4.2 12 10.6l7.4-6.4" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linejoin="round" stroke-linecap="round"/><path d="M12 10.9l2 2.2-2 2.2-2-2.2z" fill="currentColor"/><path d="M10.4 16.4h3.2l1.1 3.9-2.7 1.7-2.7-1.7z" fill="currentColor"/></svg></div><span class="cap">48px</span></div>
+      <div class="cell"><div class="bare onblack"><svg width="48" height="48" viewBox="0 0 24 24"><path d="M4.6 4.2 12 10.6l7.4-6.4" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linejoin="round" stroke-linecap="round"/><path d="M12 10.9l2 2.2-2 2.2-2-2.2z" fill="currentColor"/><path d="M10.4 16.4h3.2l1.1 3.9-2.7 1.7-2.7-1.7z" fill="currentColor"/></svg></div><span class="cap">反白 48px</span></div>
+    </div><span class="cap">尺寸阶梯</span></div>
+  </div>
+  <p class="note"><b>取舍：</b>差异化与"职业感"最强，但图形偏抽象，第一次看到需要 1 秒解读；领带在 16px 下是最脆弱的部件。</p>
+</div>
+
+<!-- ═══════════ D 像素员工 ═══════════ -->
+<div class="card">
+  <div class="card-head"><span class="tag">方向 D</span><h2>像素构成的员工（Pixel Staff）</h2></div>
+  <p class="why">
+    语义：头 = 一枚圆角像素，身 = 三枚像素并排（对应"多员工/多技能拼装"），右上角一枚<b>脱离轨道的比特</b>表达"由数据构成、可自由编排"。<br />
+    气质：工程感、极客感最强，纯几何，缩放最稳。
+  </p>
+  <div class="row">
+    <div class="cell"><div class="stage-light"><span class="tile t30"><svg width="18" height="18" viewBox="0 0 24 24"><rect x="8.7" y="2.8" width="6.6" height="6.6" rx="2.3" fill="currentColor"/><rect x="2.9" y="11.6" width="5.5" height="5.5" rx="1.9" fill="currentColor" opacity=".62"/><rect x="9.25" y="11.6" width="5.5" height="5.5" rx="1.9" fill="currentColor"/><rect x="15.6" y="11.6" width="5.5" height="5.5" rx="1.9" fill="currentColor" opacity=".62"/><circle cx="19.9" cy="5.4" r="2" fill="currentColor" opacity=".85"/></svg></span><span class="word-light">SmartWork</span></div><span class="cap">顶栏 30px · 亮</span></div>
+    <div class="cell"><div class="stage-dark"><span class="tile t30"><svg width="18" height="18" viewBox="0 0 24 24"><rect x="8.7" y="2.8" width="6.6" height="6.6" rx="2.3" fill="currentColor"/><rect x="2.9" y="11.6" width="5.5" height="5.5" rx="1.9" fill="currentColor" opacity=".62"/><rect x="9.25" y="11.6" width="5.5" height="5.5" rx="1.9" fill="currentColor"/><rect x="15.6" y="11.6" width="5.5" height="5.5" rx="1.9" fill="currentColor" opacity=".62"/><circle cx="19.9" cy="5.4" r="2" fill="currentColor" opacity=".85"/></svg></span><span class="word-dark">SmartWork</span></div><span class="cap">顶栏 30px · 暗</span></div>
+    <div class="cell"><div class="sizes">
+      <div class="cell"><div class="bare onwhite"><svg width="16" height="16" viewBox="0 0 24 24"><rect x="8.7" y="2.8" width="6.6" height="6.6" rx="2.3" fill="currentColor"/><rect x="2.9" y="11.6" width="5.5" height="5.5" rx="1.9" fill="currentColor" opacity=".62"/><rect x="9.25" y="11.6" width="5.5" height="5.5" rx="1.9" fill="currentColor"/><rect x="15.6" y="11.6" width="5.5" height="5.5" rx="1.9" fill="currentColor" opacity=".62"/><circle cx="19.9" cy="5.4" r="2" fill="currentColor" opacity=".85"/></svg></div><span class="cap">16px</span></div>
+      <div class="cell"><div class="bare onwhite"><svg width="30" height="30" viewBox="0 0 24 24"><rect x="8.7" y="2.8" width="6.6" height="6.6" rx="2.3" fill="currentColor"/><rect x="2.9" y="11.6" width="5.5" height="5.5" rx="1.9" fill="currentColor" opacity=".62"/><rect x="9.25" y="11.6" width="5.5" height="5.5" rx="1.9" fill="currentColor"/><rect x="15.6" y="11.6" width="5.5" height="5.5" rx="1.9" fill="currentColor" opacity=".62"/><circle cx="19.9" cy="5.4" r="2" fill="currentColor" opacity=".85"/></svg></div><span class="cap">30px</span></div>
+      <div class="cell"><div class="bare onwhite"><svg width="48" height="48" viewBox="0 0 24 24"><rect x="8.7" y="2.8" width="6.6" height="6.6" rx="2.3" fill="currentColor"/><rect x="2.9" y="11.6" width="5.5" height="5.5" rx="1.9" fill="currentColor" opacity=".62"/><rect x="9.25" y="11.6" width="5.5" height="5.5" rx="1.9" fill="currentColor"/><rect x="15.6" y="11.6" width="5.5" height="5.5" rx="1.9" fill="currentColor" opacity=".62"/><circle cx="19.9" cy="5.4" r="2" fill="currentColor" opacity=".85"/></svg></div><span class="cap">48px</span></div>
+      <div class="cell"><div class="bare onblack"><svg width="48" height="48" viewBox="0 0 24 24"><rect x="8.7" y="2.8" width="6.6" height="6.6" rx="2.3" fill="currentColor"/><rect x="2.9" y="11.6" width="5.5" height="5.5" rx="1.9" fill="currentColor" opacity=".62"/><rect x="9.25" y="11.6" width="5.5" height="5.5" rx="1.9" fill="currentColor"/><rect x="15.6" y="11.6" width="5.5" height="5.5" rx="1.9" fill="currentColor" opacity=".62"/><circle cx="19.9" cy="5.4" r="2" fill="currentColor" opacity=".85"/></svg></div><span class="cap">反白 48px</span></div>
+    </div><span class="cap">尺寸阶梯</span></div>
+  </div>
+  <p class="note"><b>取舍：</b>最"数字"、最耐缩放，但"员工"语义最弱（无脸/无身份物），且方块拼贴在 SaaS 里也较常见。</p>
+</div>
+
+<!-- ═══════════ 字标配对建议 ═══════════ -->
+<div class="card">
+  <div class="card-head"><span class="tag">附加</span><h2>字标（Wordmark）配对建议</h2></div>
+  <p class="why">标识选定后，字标可做一处微调即可显著提升品牌感：把 Smart / Work 做<b>双色分段</b>，Work 用品牌蓝，语义上"数字员工 = Work"。</p>
+  <div class="row">
+    <div class="cell"><div class="stage-light"><span class="tile t30"><svg width="19" height="19" viewBox="0 0 24 24"><path d="M9.5 11.9a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z" fill="currentColor"/><path d="M3.2 19.2c0-3.5 2.8-6.1 6.3-6.1s6.3 2.6 6.3 6.1z" fill="currentColor"/><path d="M17.1 11.3l1 2.2 2.2 1-2.2 1-1 2.2-1-2.2-2.2-1 2.2-1z" fill="currentColor" opacity=".9"/><path d="M15.4 19.2c.3-2.7 2-4.4 4.3-4.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" opacity=".62"/></svg></span><span class="word-light">Smart<span style="color:#1a71ff">Work</span></span></div><span class="cap">双色分段（推荐）</span></div>
+    <div class="cell"><div class="stage-light"><span class="tile t30"><svg width="19" height="19" viewBox="0 0 24 24"><path d="M9.5 11.9a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z" fill="currentColor"/><path d="M3.2 19.2c0-3.5 2.8-6.1 6.3-6.1s6.3 2.6 6.3 6.1z" fill="currentColor"/><path d="M17.1 11.3l1 2.2 2.2 1-2.2 1-1 2.2-1-2.2-2.2-1 2.2-1z" fill="currentColor" opacity=".9"/><path d="M15.4 19.2c.3-2.7 2-4.4 4.3-4.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" opacity=".62"/></svg></span><span class="word-light">SmartWork<span style="margin-left:6px;font-size:11px;font-weight:500;color:#828ca6">数字员工平台</span></span></div><span class="cap">加中文副标</span></div>
+    <div class="cell"><div class="stage-light"><span class="tile t30"><svg width="19" height="19" viewBox="0 0 24 24"><path d="M9.5 11.9a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z" fill="currentColor"/><path d="M3.2 19.2c0-3.5 2.8-6.1 6.3-6.1s6.3 2.6 6.3 6.1z" fill="currentColor"/><path d="M17.1 11.3l1 2.2 2.2 1-2.2 1-1 2.2-1-2.2-2.2-1 2.2-1z" fill="currentColor" opacity=".9"/><path d="M15.4 19.2c.3-2.7 2-4.4 4.3-4.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" opacity=".62"/></svg></span><span class="word-light" style="font-weight:800;letter-spacing:-0.03em">SmartWork</span></div><span class="cap">字重 800 / 收紧字距</span></div>
+  </div>
+</div>
+
+</body>
+</html>

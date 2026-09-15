@@ -1,14 +1,20 @@
+/* 页面标题带：全站“画布 → 面”两层结构中的画布层（背景透明，
+   让 .page-content 的渐变底在标题区露出来），标题左侧给一条品牌渐变
+   竖线作为视觉锚点（与工作台 section 标题同源）。 */
 .pageHeader {
   display: flex;
   justify-content: space-between;
   align-items: center;
   position: relative;
-  padding: 20px;
-  border-bottom: 1px solid #eae9e7;
+  /* 左右不再自行缩进：正文内缩由 .page-content 的 --pg-gutter 统一控制，
+     保证标题与下方白面左边缘对齐 */
+  padding: 18px 2px 14px;
+  background: transparent;
+  border-bottom: 1px solid var(--pg-line);
   flex-shrink: 0;
 
   @media (max-width: 768px) {
-    padding: 12px;
+    padding: 12px 2px;
     gap: 6px;
   }
 }
@@ -41,19 +47,34 @@
 }
 
 .breadcrumbParent {
-  color: #999;
+  color: var(--pg-ink-3);
   font-weight: 400;
 }
 
 .breadcrumbSeparator {
-  color: #ccc;
+  color: var(--pg-line-strong);
   margin: 0 4px;
 }
 
+/* 当前页标题：品牌渐变竖线锚点 + 22px/650 重字重，
+   作为画布带上唯一的视觉主角（正文面内的信息层级仍由卡片/表格承担）*/
 .breadcrumbCurrent {
-  color: #333;
-  font-weight: 600;
-  font-size: 20px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--pg-ink);
+  font-weight: 650;
+  font-size: 22px;
+  letter-spacing: -0.015em;
+
+  &::before {
+    content: "";
+    display: inline-block;
+    width: 3px;
+    height: 15px;
+    margin-right: 9px;
+    border-radius: 2px;
+    background: var(--pg-brand-rule);
+  }
 }
 
 .center {
@@ -73,7 +94,7 @@
   .pageHeader {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
-    padding: 12px 16px;
+    padding: 12px 2px;
     gap: 8px;
   }
 
@@ -107,7 +128,12 @@
   }
 
   .breadcrumbCurrent {
-    font-size: 16px;
+    font-size: 17px;
+
+    &::before {
+      height: 13px;
+      margin-right: 7px;
+    }
   }
 
   .extra {
@@ -135,21 +161,21 @@
   }
 }
 
-/* ─── Dark mode ─────────────────────────────────────────────────────────────── */
+/* ─── Dark mode：只重映射到 --pg-* token，不再重复 rgba 字面量 ────────────── */
 :global(.dark-mode) {
   .pageHeader {
-    border-bottom-color: rgba(255, 255, 255, 0.12);
+    border-bottom-color: var(--pg-line);
   }
 
   .breadcrumbParent {
-    color: rgba(255, 255, 255, 0.35);
+    color: var(--pg-ink-3);
   }
 
   .breadcrumbSeparator {
-    color: rgba(255, 255, 255, 0.2);
+    color: var(--pg-line-strong);
   }
 
   .breadcrumbCurrent {
-    color: rgba(255, 255, 255, 0.85);
+    color: var(--pg-ink);
   }
 }

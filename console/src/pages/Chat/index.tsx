@@ -340,6 +340,23 @@ function clearSenderAttachments(): void {
   }, 0);
 }
 
+/**
+ * 未发送新会话的占位 key 前缀。跨标签页的 Web Locks 与消息队列 localStorage
+ * 都是按整个 origin 共享的，若占位只用裸 "new"，不同数字员工的新会话会抢同
+ * 一把 owner/send 锁、串同一个队列桶。故占位必须带上员工（agent）维度。
+ */
+const NEW_QUEUE_SESSION_PREFIX = "new:";
+
+/** 生成某员工新会话的占位 queue session id。 */
+function newQueueSessionId(agentId: string): string {
+  return `${NEW_QUEUE_SESSION_PREFIX}${agentId || "default"}`;
+}
+
+/** 判断给定 id 是否为未发送新会话的占位（兼容历史裸 "new"）。 */
+function isPlaceholderQueueSession(id: string): boolean {
+  return id === "new" || id.startsWith(NEW_QUEUE_SESSION_PREFIX);
+}
+
 async function startBackgroundQueue(
   queueKey: string,
   backendSessionId: string,
@@ -1213,7 +1230,11 @@ export default function ChatPage({
     () => getSessionIdFromPath(location.pathname),
     [location.pathname],
   );
-  const queueSessionId = chatId ?? sessionApi.lastActiveChatId ?? "new";
+  // 未发送新会话的占位按员工隔离（见 newQueueSessionId），避免不同数字员工的
+  // New Chat 抢同一把全局 owner/send 锁、串同一个队列桶。
+  const queueSessionId =
+    chatId ?? sessionApi.lastActiveChatId ?? newQueueSessionId(selectedAgent);
+  const isNewQueueSession = isPlaceholderQueueSession(queueSessionId);
   const backendChatId = resolveBackendChatId(chatId);
   const pendingProjectDir = backendChatId
     ? undefined
@@ -1438,14 +1459,14 @@ export default function ChatPage({
   const syncLoopModeStatus = useCallback(() => {
     const backendSessionId =
       window.currentSessionId ||
-      (queueSessionId !== "new"
+      (queueSessionId !== "new" && !isNewQueueSession
         ? sessionApi.getBackendSessionId(queueSessionId)
         : "");
     return fetchActiveLoopMode({
       chatId,
       sessionId: backendSessionId,
     });
-  }, [chatId, queueSessionId]);
+  }, [chatId, queueSessionId, isNewQueueSession]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1483,7 +1504,7 @@ export default function ChatPage({
     // Invalidate immediately so A→B never briefly filters/shows A's tasks.
     setBgBackendSessionId("");
 
-    if (!queueSessionId || queueSessionId === "new") {
+    if (!queueSessionId || isNewQueueSession) {
       stopBackgroundWatchersNotInSession("");
       return;
     }
@@ -2517,13 +2538,20 @@ export default function ChatPage({
     sessionApi.onSessionCreated = (sessionId) => {
       if (!isChatActiveRef.current) return;
       const agentId = selectedAgentRef.current;
-      migratePendingProjectDirectory(agentId, "new", sessionId);
-      const fromScopeKey = sessionFilesScopeKey(agentId, "new");
+      migratePendingProjectDirectory(
+        agentId,
+        newQueueSessionId(agentId),
+        sessionId,
+      );
+      const fromScopeKey = sessionFilesScopeKey(
+        agentId,
+        newQueueSessionId(agentId),
+      );
       const toScopeKey = sessionFilesScopeKey(agentId, sessionId);
       useCodingTabsStore.getState().migrateScope(fromScopeKey, toScopeKey);
       useFilesSurfaceStore.getState().migrateSession(fromScopeKey, toScopeKey);
       try {
-        useMessageQueueStore.getState().clear("new");
+        useMessageQueueStore.getState().clear(newQueueSessionId(agentId));
       } catch {
         // ignore
       }
