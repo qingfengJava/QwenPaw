@@ -144,6 +144,8 @@ EXTERNAL_USER_QUERY_MESSAGE_TAG = "external_user_query"
 AUTO_CONTINUE_MESSAGE_TAG = "auto_continue"
 LOOP_CONTINUATION_MESSAGE_TAG = "loop_continuation"
 RUBRIC_EVALUATION_MESSAGE_TAG = "rubric_evaluation"
+# 独立验收未通过时注入的返工指令：属运行时合成消息，不得被当成新请求
+VERIFY_REPAIR_MESSAGE_TAG = "verify_repair"
 # User-role messages the runtime injects to keep a turn going. They are NOT
 # new requests: the scroll active-turn anchor (live scan + SQL floor) must
 # skip them, or the anchor jumps to the stub and the REAL request becomes
@@ -153,6 +155,7 @@ SYNTHETIC_USER_MESSAGE_TAGS = frozenset(
         AUTO_CONTINUE_MESSAGE_TAG,
         LOOP_CONTINUATION_MESSAGE_TAG,
         RUBRIC_EVALUATION_MESSAGE_TAG,
+        VERIFY_REPAIR_MESSAGE_TAG,
     },
 )
 AUTO_MEMORY_SEARCH_TEXT = (

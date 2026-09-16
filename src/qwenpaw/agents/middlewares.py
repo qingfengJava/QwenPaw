@@ -30,10 +30,6 @@ from .tools.utils import (
     DEFAULT_MAX_BYTES,
     ToolResultPruner,
 )
-from ..constant import (
-    EXTERNAL_USER_QUERY_MESSAGE_TAG,
-    QWENPAW_MESSAGE_TAG_KEY,
-)
 from ..utils.io_utils import run_sync_io
 
 if TYPE_CHECKING:
@@ -610,27 +606,27 @@ class MemoryMiddleware(MiddlewareBase):
 
     @staticmethod
     def _message_tag(msg: "Msg") -> str:
-        metadata = getattr(msg, "metadata", None)
-        if not isinstance(metadata, dict):
-            return ""
-        return str(metadata.get(QWENPAW_MESSAGE_TAG_KEY) or "")
+        """Delegate to the shared tag reader (single source of truth)."""
+        from ..utils.message_tags import message_tag
+
+        return message_tag(msg)
 
     @classmethod
     def _is_external_user_query(cls, msg: "Msg") -> bool:
-        return (
-            msg.role == "user"
-            and cls._message_tag(msg) == EXTERNAL_USER_QUERY_MESSAGE_TAG
-        )
+        """Delegate to the shared predicate (one rule for gates/memory)."""
+        from ..utils.message_tags import is_external_user_query
+
+        return is_external_user_query(msg)
 
     @classmethod
     def _latest_external_user_query(
         cls,
         messages: list["Msg"],
     ) -> "Msg | None":
-        for msg in reversed(messages):
-            if cls._is_external_user_query(msg):
-                return msg
-        return None
+        """Delegate to the shared reverse scan."""
+        from ..utils.message_tags import latest_external_user_query
+
+        return latest_external_user_query(messages)
 
     @classmethod
     def _latest_user_turn_marker(cls, messages: list["Msg"]) -> str:

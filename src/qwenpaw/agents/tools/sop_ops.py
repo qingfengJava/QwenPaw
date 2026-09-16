@@ -3,9 +3,9 @@
 
 SOP 环境化改造：AI 在对话中通过本组工具创建/编辑 SOP，全部只作用于
 ``environment='draft'`` 草稿行，绝不触碰线上 production 行，保证数据库
-内容一致性（结构化 JSON 参数经 SopStore 落 PG，无文件平面漂移）。每次
-写成功后向 SOP 实时编辑 topic publish 全量快照，右侧画布经 SSE 订阅
-跟随重绘（AI 边画、画布边变）。
+内容一致性（结构化 JSON 参数经 SopStore 落 PG，无文件平面漂移）。实时
+联动由 SopStore 写方法在事务提交后统一双通道广播（sop 级全量快照供
+画布重绘 + 员工级轻量索引供面板跟随），本模块不再自行 publish。
 
 作者统一 qingfeng。
 """
@@ -20,10 +20,7 @@ from agentscope.message import TextBlock, ToolResultState
 from agentscope.tool import ToolChunk
 
 from ...app.agent_context import get_current_agent_id
-from ...app.experts.models import (
-    SOP_ENVIRONMENT_DRAFT,
-    SopRecord,
-)
+from ...app.experts.models import SOP_ENVIRONMENT_DRAFT
 from ...app.experts.sops import get_sop_store
 from ...runtime.tool_registry import tool_descriptor
 
@@ -48,36 +45,6 @@ def _current_expert_id() -> str:
     if stripped.endswith(_DRAFT_SUFFIX):
         stripped = stripped[: -len(_DRAFT_SUFFIX)]
     return stripped
-
-
-async def _publish_sop_event(action: str, record: SopRecord) -> None:
-    """Broadcast one SOP draft write on its live-edit topic (canvas follows).
-
-    携带全量 nodes/edges/slots，前端直接 setNodes 重绘；广播失败绝不影响
-    工具主链路（画布下次打开从 PG 取现值）。
-    """
-    try:
-        from ...app.enterprise import current_tenant_id
-        from ...app.events.bus import get_event_bus, sop_topic
-
-        await get_event_bus().publish(
-            sop_topic(current_tenant_id(), record.id),
-            {
-                "action": action,
-                "sop_id": record.id,
-                "environment": record.environment,
-                "version": record.version,
-                "name": record.name,
-                "goal": record.goal,
-                "nodes": record.nodes,
-                "edges": record.edges,
-                "slots": record.slots,
-            },
-        )
-    except Exception:  # pylint: disable=broad-except
-        logger.warning(
-            "sop %s tool event publish failed", record.id, exc_info=True,
-        )
 
 
 def _ok(text: str) -> ToolChunk:
@@ -147,7 +114,6 @@ async def sop_create_draft(
         )
     except Exception as exc:  # pylint: disable=broad-except
         return _err(f"Error: failed to create SOP draft: {exc}")
-    await _publish_sop_event("created", record)
     return _ok(
         json.dumps(
             {
@@ -224,7 +190,6 @@ async def sop_update_draft(
             f"Error: draft SOP '{clean_id}' not found "
             "(create it first via sop_create_draft).",
         )
-    await _publish_sop_event("updated", record)
     return _ok(
         json.dumps(
             {
@@ -301,7 +266,6 @@ async def sop_publish_draft(
                 owner,
                 exc_info=True,
             )
-    await _publish_sop_event("published", record)
     return _ok(
         json.dumps(
             {

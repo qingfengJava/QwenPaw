@@ -14,8 +14,10 @@ Specification 的数据载体），定义中央大脑（L1 Workforce ReAct）与
 - :class:`RunPolicy`       熔断策略（纯计数器，不依赖模型自觉）
 - :class:`OrchestrationSpec` expert_teams.orchestration JSONB 的 schema
 
-硬约束：本文件只允许依赖 pydantic / 标准库，禁止 import 任何引擎
-模块（import 方向单向：引擎 → 契约），保证契约可独立单测与跨层复用。
+硬约束：本文件只允许依赖 pydantic / 标准库 / ``verification.kernel``
+（纯契约层，无引擎依赖），禁止 import 任何引擎模块（import 方向单向：
+引擎 → 契约），保证契约可独立单测与跨层复用。裁决常量与返工指令字段
+集以 ``verification.kernel`` 为单一来源，本文件只保留 L1 专属字段。
 
 @author qingfeng
 """
@@ -25,6 +27,16 @@ from __future__ import annotations
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
+
+from ...verification.kernel import (
+    FAILURE_KIND_DEPENDENCY_CHANGED,
+    FAILURE_KIND_REPAIRABLE,
+    FAILURE_KIND_STRUCTURAL,
+    RepairBrief,
+    VERDICT_ESCALATE,
+    VERDICT_FAIL,
+    VERDICT_PASS,
+)
 
 # ---------------------------------------------------------------------------
 # 状态常量（run 级 / 节点级状态机，与 team_runs / team_run_nodes 表对齐）
@@ -123,12 +135,8 @@ NODE_TYPE_FINAL = "final"
 #: 节点类型：澄清节点（需求不明时向用户提问）
 NODE_TYPE_CLARIFY = "clarify"
 
-#: 验收裁决：通过
-VERDICT_PASS = "PASS"
-#: 验收裁决：不通过（需返工）
-VERDICT_FAIL = "FAIL"
-#: 验收裁决：熔断升级人工（超限或验收器无法裁决）
-VERDICT_ESCALATE = "ESCALATE"
+#: 验收裁决三态（VERDICT_PASS / VERDICT_FAIL / VERDICT_ESCALATE）单一来源为
+#: ``verification.kernel``，本模块仅顶部 import 后 re-export，禁止在此重定义
 
 #: ResultContract 的完成状态枚举
 RESULT_STATUS_COMPLETED = "COMPLETED"
@@ -235,25 +243,16 @@ class ResultContract(BaseModel):
     token_cost: int = 0
 
 
-class RepairContract(BaseModel):
+class RepairContract(RepairBrief):
     """验收失败后的返工指令（对齐用户架构方案第二十节）。
 
-    返工不是"重新给一个新 Prompt"，而是结构化的修复任务：明确
-    问题、期望修改、需保留内容与复验标准，重跑时附加进上下文束。
+    字段集以裁决内核 :class:`~qwenpaw.verification.kernel.RepairBrief` 为
+    单一来源（L1/L2 共用），本类只额外把 ``original_task`` 收回必填：
+    专家团节点级返工必须知道被返工的原节点。
     """
 
-    #: 被返工的原节点标识
-    original_task: str
-    #: 问题清单（验收裁决发现的具体问题）
-    issues: List[str] = Field(default_factory=list)
-    #: 期望修改（每个问题对应的期望改动）
-    expected_change: List[str] = Field(default_factory=list)
-    #: 需保留内容（返工时不得破坏的已有产出）
-    preserve: List[str] = Field(default_factory=list)
-    #: 复验标准（返工后按此重新裁决）
-    acceptance: List[str] = Field(default_factory=list)
-    #: 返工轮次（第 N 次返工，用于熔断计数展示）
-    attempt: int = 1
+    #: 被返工的原节点标识（L1 硬约束：不允许缺省）
+    original_task: str = Field(...)
 
 
 class HandoverContract(BaseModel):

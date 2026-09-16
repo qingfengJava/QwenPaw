@@ -131,6 +131,15 @@ export interface RubricGateConfig {
   in_loop_modes: boolean;
 }
 
+/** 独立验收门：复杂任务由独立模型裁决，未通过按返工指令修正 */
+export interface IndependentVerifyGateConfig {
+  enabled: boolean;
+  max_repairs: number;
+  timeout_seconds: number;
+  min_objective_chars: number;
+  escalate_notice: boolean;
+}
+
 export type CustomGateType =
   | "iteration"
   | "doom_loop"
@@ -138,6 +147,7 @@ export type CustomGateType =
   | "timeout"
   | "tool_call_budget"
   | "qualitative_rubric"
+  | "independent_verify"
   | "completion_rubric";
 
 export interface GateInstanceConfig {
@@ -172,6 +182,7 @@ export interface LoopConfig {
   iteration?: IterationGateConfig;
   doom_loop: DoomLoopConfig;
   rubric?: RubricGateConfig;
+  independent_verify?: IndependentVerifyGateConfig;
   goal?: GoalLoopModeConfig;
   mission?: MissionLoopModeConfig;
   custom_modes?: CustomLoopModeConfig[];

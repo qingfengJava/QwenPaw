@@ -129,6 +129,77 @@ class DepartmentMemberRow(TenantMixin, TimestampMixin, Base):
     )
 
 
+class EmployeeGovernanceRow(TenantMixin, TimestampMixin, Base):
+    """Governance row of one digital employee (org plane).
+
+    The single authority for *department ownership* and *visibility*
+    across every employee shape (plain agent / expert / expert team /
+    future workflow), keyed by the runtime ``agent_id``. Runtime access
+    control is untouched: the governance service projects each write
+    onto the RBAC ``agent_grants`` plane (departments already mirror as
+    ``dept:{path}`` teams), so this table only backs the editing and
+    listing surface. A missing row means "unassigned + org-wide".
+    """
+
+    __tablename__ = "employee_governance"
+
+    agent_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    entity_kind: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="agent",
+        server_default="agent",
+    )
+    entity_id: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="",
+        server_default="",
+    )
+    department_id: Mapped[Optional[str]] = mapped_column(
+        String(64),
+        nullable=True,
+    )
+    visibility: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="org",
+        server_default="org",
+    )
+    granted_departments: Mapped[list[Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default="[]",
+    )
+    owner_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    updated_by: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="",
+        server_default="",
+    )
+
+    __table_args__ = (
+        PrimaryKeyConstraint(
+            "tenant_id",
+            "agent_id",
+            name="pk_employee_governance",
+        ),
+        Index(
+            "ix_employee_governance_department",
+            "tenant_id",
+            "department_id",
+        ),
+        Index(
+            "ix_employee_governance_visibility",
+            "tenant_id",
+            "visibility",
+        ),
+        Index("ix_employee_governance_kind", "tenant_id", "entity_kind"),
+    )
+
+
 class ProjectRow(TenantMixin, TimestampMixin, Base):
     """One collaboration project shared by org members.
 

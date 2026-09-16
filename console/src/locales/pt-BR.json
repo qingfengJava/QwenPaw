@@ -1789,7 +1789,8 @@
       "user": "Entrada do Usuário",
       "intent": "Reconhecimento de Intenção",
       "llm": "Raciocínio do LLM",
-      "end": "Conclusão"
+      "end": "Conclusão",
+      "verify": "Verificação independente"
     },
     "tools": {
       "web_search": "Busca na Web",
@@ -2583,7 +2584,16 @@
       "safeTemplate": "Execução segura",
       "researchTemplate": "Pesquisa com orçamento",
       "qualityTemplate": "Qualidade primeiro",
-      "blankTemplate": "Pipeline vazio"
+      "blankTemplate": "Pipeline vazio",
+      "independentVerifyTitle": "Verificação independente",
+      "independentVerifyDescription": "Avalia o resultado de tarefas complexas com um modelo separado e devolve instruções estruturadas de correção",
+      "maxRepairs": "Rodadas máximas de correção",
+      "maxRepairsHelp": "Quantas vezes o resultado volta para correção; ao exceder, os requisitos não atendidos são reportados a você",
+      "verifyTimeout": "Tempo limite da verificação (s)",
+      "verifyMinChars": "Comprimento mínimo da solicitação",
+      "verifyMinCharsHelp": "Solicitações mais curtas não são verificadas, então perguntas rápidas não têm custo extra",
+      "verifyEscalateNotice": "Reportar requisitos não atendidos ao esgotar o orçamento de correção",
+      "independentVerifyHelp": "Somente solicitações classificadas como complexas (múltiplos entregáveis, áreas distintas) disparam a verificação; o resultado é avaliado por um contexto de modelo separado, não pelo próprio agente"
     },
     "doomLoopEnabled": "Proteção contra Repetição",
     "doomLoopEnabledTooltip": "Intervir automaticamente quando o agente fica preso repetindo as mesmas ações",

@@ -43,9 +43,7 @@ const TokenUsagePage = lazyImportWithRetry("../../pages/Settings/TokenUsage");
 const VoiceTranscriptionPage = lazyImportWithRetry(
   "../../pages/Settings/VoiceTranscription",
 );
-const AgentsPage = lazyImportWithRetry(
-  "../../pages/Agents/AgentsGalleryPage.tsx",
-);
+const AgentsPage = lazyImportWithRetry("../../pages/Agents/AgentsConsolePage");
 const DebugPage = lazyImportWithRetry("../../pages/Settings/Debug");
 const BackupsPage = lazyImportWithRetry("../../pages/Settings/Backups");
 const AppCenterPage = lazyImportWithRetry("../../pages/AppCenter");

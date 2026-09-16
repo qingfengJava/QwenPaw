@@ -2228,7 +2228,8 @@
       "user": "Input Pengguna",
       "intent": "Pengenalan Niat",
       "llm": "LLM Berpikir",
-      "end": "Selesai"
+      "end": "Selesai",
+      "verify": "Verifikasi independen"
     },
     "tools": {
       "web_search": "Pencarian Web",
@@ -3198,7 +3199,16 @@
       "safeTemplate": "Jalankan aman",
       "researchTemplate": "Riset beranggaran",
       "qualityTemplate": "Utamakan kualitas",
-      "blankTemplate": "Pipeline kosong"
+      "blankTemplate": "Pipeline kosong",
+      "independentVerifyTitle": "Verifikasi independen",
+      "independentVerifyDescription": "Menilai hasil tugas kompleks dengan model terpisah dan mengirim balik instruksi perbaikan yang terstruktur",
+      "maxRepairs": "Ronde perbaikan maksimum",
+      "maxRepairsHelp": "Berapa kali hasil dikirim ulang untuk diperbaiki; setelah batas ini, syarat yang belum terpenuhi dilaporkan ke Anda",
+      "verifyTimeout": "Batas waktu verifikasi (detik)",
+      "verifyMinChars": "Panjang permintaan minimum",
+      "verifyMinCharsHelp": "Permintaan yang lebih pendek tidak diverifikasi sehingga pertanyaan singkat tetap bebas biaya",
+      "verifyEscalateNotice": "Laporkan syarat yang belum terpenuhi saat jatah perbaikan habis",
+      "independentVerifyHelp": "Hanya permintaan berkategori kompleks (banyak luaran, lintas disiplin) yang memicu panggilan verifikasi; hasil dinilai oleh konteks model terpisah, bukan dinilai sendiri oleh agen"
     },
     "doomLoopEnabled": "Perlindungan Perilaku Berulang",
     "doomLoopEnabledTooltip": "Intervensi otomatis saat agen terjebak mengulangi tindakan yang sama",

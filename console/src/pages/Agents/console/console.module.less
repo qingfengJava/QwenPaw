@@ -1,0 +1,440 @@
+/**
+ * Agents/console/console.module.less — 数字员工控制台样式。
+ *
+ * 全站「画布 → 面」两层语言不变：本文件只负责面内部的节奏与容器查询，
+ * 颜色/圆角/阴影一律引用 --pg-* 令牌（见 styles/page-tokens.css），
+ * 禁止在此抄色标；徽标复用全局 .pg-pill[data-tone]。
+ */
+
+.console {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* ── 指标卡行：恒定 4 列等宽，窄容器降为 2×2（容器查询而非视口媒体）── */
+
+.metrics {
+  container-type: inline-size;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.metrics > * {
+  /* 覆盖 StatCard 内联 minWidth:140，保证窄格子不溢出 */
+  min-width: 0 !important;
+}
+
+@container (max-width: 720px) {
+  .metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ── 分类 Tab 与工具行 ─────────────────────────────────────────────── */
+
+.tabCard {
+  padding: 4px 20px 0;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+  padding-bottom: 18px;
+}
+
+.toolbarSpacer {
+  flex: 1 1 auto;
+}
+
+.subFilter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.subLabel {
+  font-size: 12px;
+  color: var(--pg-ink-3);
+}
+
+/* ── 员工网格 ─────────────────────────────────────────────────────── */
+
+.grid {
+  container-type: inline-size;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 18px;
+  margin-top: 22px;
+}
+
+@container (max-width: 660px) {
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.groupBlock {
+  margin-top: 26px;
+}
+
+.groupHead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.groupName {
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--pg-ink);
+}
+
+.groupCount {
+  padding: 1px 8px;
+  border-radius: var(--pg-radius-pill);
+  background: var(--pg-tone-gray-bg);
+  color: var(--pg-tone-gray-ink);
+  font-size: 12px;
+}
+
+.groupHint {
+  font-size: 12px;
+  color: var(--pg-ink-3);
+}
+
+/* ── 员工卡 ───────────────────────────────────────────────────────── */
+
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 18px;
+  border: 1px solid var(--pg-line);
+  border-radius: var(--pg-radius-surface);
+  background: var(--pg-surface);
+  box-shadow: var(--pg-shadow-sm);
+  cursor: pointer;
+  transition: box-shadow 200ms ease, transform 200ms ease,
+    border-color 200ms ease;
+}
+
+.card:hover,
+.card:focus-visible {
+  box-shadow: var(--pg-shadow-md);
+  border-color: var(--pg-line-strong);
+  transform: translateY(-2px);
+}
+
+.cardAccent {
+  position: absolute;
+  top: 0;
+  left: 18px;
+  right: 18px;
+  height: 2px;
+  border-radius: 0 0 3px 3px;
+  background: var(--pg-brand-rule);
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+
+.card:hover .cardAccent,
+.card:focus-visible .cardAccent {
+  opacity: 1;
+}
+
+.cardHead {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.cardTitleWrap {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.nameRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.name {
+  overflow: hidden;
+  color: var(--pg-ink);
+  font-size: 15px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pinIcon {
+  flex-shrink: 0;
+  color: var(--pg-brand);
+}
+
+.sub {
+  overflow: hidden;
+  margin-top: 3px;
+  color: var(--pg-ink-3);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cardActions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 2px;
+}
+
+.desc {
+  display: -webkit-box;
+  overflow: hidden;
+  min-height: 42px;
+  margin: 14px 0 0;
+  color: var(--pg-ink-2);
+  font-size: 13px;
+  line-height: 21px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.descEmpty {
+  color: var(--pg-ink-3);
+}
+
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--pg-line);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 160px;
+  padding: 3px 9px;
+  overflow: hidden;
+  border-radius: var(--pg-radius-pill);
+  background: var(--pg-surface-sunken);
+  color: var(--pg-ink-2);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.footArrow {
+  margin-left: auto;
+  color: var(--pg-ink-3);
+  transition: transform 200ms ease, color 200ms ease;
+}
+
+.card:hover .footArrow {
+  color: var(--pg-brand);
+  transform: translateX(3px);
+}
+
+/* ── 专家团成员头像堆叠 ───────────────────────────────────────────── */
+
+.memberStack {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-top: 12px;
+}
+
+.memberChip {
+  margin-left: -8px;
+  border: 2px solid var(--pg-surface);
+  border-radius: 50%;
+  line-height: 0;
+}
+
+.memberChip:first-child {
+  margin-left: 0;
+}
+
+.memberMore {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-left: -8px;
+  border: 2px solid var(--pg-surface);
+  border-radius: 50%;
+  background: var(--pg-surface-sunken);
+  color: var(--pg-ink-2);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* ── 治理表格视图 ─────────────────────────────────────────────────── */
+
+.tableWrap {
+  margin-top: 22px;
+}
+
+.batchBar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 18px 0 -6px;
+  padding: 10px 16px;
+  border: 1px solid var(--pg-line);
+  border-radius: var(--pg-radius-tile);
+  background: var(--pg-brand-wash);
+}
+
+.batchCount {
+  color: var(--pg-ink-2);
+  font-size: 13px;
+}
+
+.cellName {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.cellNameText {
+  overflow: hidden;
+  color: var(--pg-ink);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── 空态 / 骨架 ──────────────────────────────────────────────────── */
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  margin-top: 30px;
+  padding: 56px 24px;
+  border: 1px dashed var(--pg-line-strong);
+  border-radius: var(--pg-radius-surface);
+  background: var(--pg-surface-muted);
+  text-align: center;
+}
+
+.emptyTile {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+}
+
+.emptyTitle {
+  color: var(--pg-ink);
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.emptyDesc {
+  max-width: 460px;
+  color: var(--pg-ink-3);
+  font-size: 13px;
+  line-height: 21px;
+}
+
+.skeletonGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 18px;
+  margin-top: 22px;
+}
+
+.skeletonCard {
+  height: 208px;
+  border: 1px solid var(--pg-line);
+  border-radius: var(--pg-radius-surface);
+  background: linear-gradient(
+    100deg,
+    var(--pg-surface-muted) 30%,
+    var(--pg-surface-sunken) 50%,
+    var(--pg-surface-muted) 70%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 120% 0;
+  }
+
+  to {
+    background-position: -20% 0;
+  }
+}
+
+/* ── 治理弹窗 ─────────────────────────────────────────────────────── */
+
+.modalBody {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding-top: 6px;
+}
+
+.fieldLabel {
+  margin-bottom: 6px;
+  color: var(--pg-ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.fieldHint {
+  margin-top: 6px;
+  color: var(--pg-ink-3);
+  font-size: 12px;
+  line-height: 19px;
+}
+
+.impactNote {
+  padding: 12px 14px;
+  border: 1px solid var(--pg-line);
+  border-radius: var(--pg-radius-tile);
+  background: var(--pg-surface-muted);
+  color: var(--pg-ink-2);
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.targetList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-height: 132px;
+  overflow-y: auto;
+}
+
+.targetChip {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

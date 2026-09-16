@@ -65,7 +65,12 @@ from ...experts.sops import get_sop_store
 from ...experts.store import get_expert_store
 from ...experts.worklog import get_worklog_service
 from ...enterprise import current_tenant_id
-from ...events.bus import get_event_bus, now_ms, sop_topic
+from ...events.bus import (
+    get_event_bus,
+    now_ms,
+    sop_expert_topic,
+    sop_topic,
+)
 from ...rbac import PERM_ADMIN_EXPERTS, require_perm
 
 logger = logging.getLogger(__name__)
@@ -850,7 +855,6 @@ async def update_sop(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if sop is None:
         raise HTTPException(status_code=404, detail="SOP not found")
-    await _publish_sop_event("updated", sop)
     return sop
 
 
@@ -892,7 +896,6 @@ async def publish_sop(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if record is None:
         raise HTTPException(status_code=404, detail="SOP not found or archived")
-    await _publish_sop_event("published", record)
     target = (body.expert_id if body else "") or record.owner_id or ""
     if not target:
         return record
@@ -925,31 +928,6 @@ async def publish_sop(
     return record
 
 
-async def _publish_sop_event(action: str, record: SopRecord) -> None:
-    """Broadcast one SOP write on its live-edit topic (canvas follows).
-
-    携带全量 nodes/edges/slots，前端直接 setNodes 重绘，无需再发 GET。
-    """
-    try:
-        await get_event_bus().publish(
-            sop_topic(current_tenant_id(), record.id),
-            {
-                "action": action,
-                "sop_id": record.id,
-                "environment": record.environment,
-                "version": record.version,
-                "name": record.name,
-                "goal": record.goal,
-                "nodes": record.nodes,
-                "edges": record.edges,
-                "slots": record.slots,
-            },
-        )
-    except Exception:  # pylint: disable=broad-except
-        # 广播失败绝不影响写主链路（画布下次打开从 PG 取现值）
-        logger.warning("sop %s event publish failed", record.id, exc_info=True)
-
-
 #: SSE keepalive 间隔，防代理切断空闲流
 _SOP_KEEPALIVE_S = 25.0
 
@@ -965,6 +943,56 @@ async def sop_events(
     据此重绘画布（右侧画布跟随 AI 绘制）。
     """
     topic = sop_topic(current_tenant_id(), sop_id)
+    subscription = get_event_bus().subscribe(topic, last_event_id)
+
+    async def generator():
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(
+                        subscription.__anext__(),
+                        timeout=_SOP_KEEPALIVE_S,
+                    )
+                except asyncio.TimeoutError:
+                    yield f": keepalive {now_ms()}\n\n"
+                    continue
+                except StopAsyncIteration:
+                    break
+                payload = json.dumps(
+                    {"event": event.data, "seq": event.seq},
+                    ensure_ascii=False,
+                    default=str,
+                )
+                yield f"id: {event.seq}\ndata: {payload}\n\n"
+        except asyncio.CancelledError:
+            pass
+        finally:
+            subscription.close()
+
+    return StreamingResponse(
+        generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.get("/experts/{expert_id}/sops/events")
+async def expert_sop_events(
+    expert_id: str,
+    last_event_id: str = Header(default="", alias="Last-Event-ID"),
+) -> StreamingResponse:
+    """SSE stream of one expert's SOP activity (panel follows AI authoring).
+
+    员工级轻量事件流（不含图数据）：AI 对话新建 SOP 时前端尚不知
+    sop_id，面板订阅本端点感知 created 后自动打开画布（画布内再由
+    sop 级流接管实时重绘），updated/published 用于刷新列表与状态。
+    """
+    await _require_expert(expert_id)
+    topic = sop_expert_topic(current_tenant_id(), expert_id)
     subscription = get_event_bus().subscribe(topic, last_event_id)
 
     async def generator():

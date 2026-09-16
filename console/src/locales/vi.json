@@ -1961,7 +1961,16 @@
       "safeTemplate": "Chạy an toàn",
       "researchTemplate": "Nghiên cứu có ngân sách",
       "qualityTemplate": "Ưu tiên chất lượng",
-      "blankTemplate": "Pipeline trống"
+      "blankTemplate": "Pipeline trống",
+      "independentVerifyTitle": "Nghiệm độc lập",
+      "independentVerifyDescription": "Chấm điểm kết quả của tác vụ phức tạp bằng mô hình riêng và yêu cầu làm lại theo hướng dẫn cụ thể",
+      "maxRepairs": "Số vòng làm lại tối đa",
+      "maxRepairsHelp": "Số lần kết quả bị trả về để làm lại; vượt ngưỡng sẽ báo các yêu cầu chưa đạt cho bạn",
+      "verifyTimeout": "Thời gian chờ nghiệm thu (giây)",
+      "verifyMinChars": "Độ dài tối thiểu để kích hoạt nghiệm thu",
+      "verifyMinCharsHelp": "Yêu cầu ngắn hơn mức này không nghiệm thu, câu hỏi ngắn không tốn thêm chi phí",
+      "verifyEscalateNotice": "Báo cáo yêu cầu chưa đạt khi ngân sách làm lại cạn",
+      "independentVerifyHelp": "Chỉ yêu cầu được xếp loại phức tạp (nhiều sản phẩm, liên chuyên môn) mới gọi nghiệm thu; kết quả do một mô hình độc lập chấm, không phải tự chấm"
     },
     "doomLoopEnabled": "Bảo vệ hành vi lặp lại",
     "doomLoopEnabledTooltip": "Tự động can thiệp khi agent bị kẹt lặp lại cùng một hành động",
@@ -2695,7 +2704,8 @@
       "user": "Đầu vào người dùng",
       "intent": "Nhận diện ý định",
       "llm": "LLM suy nghĩ",
-      "end": "Kết thúc"
+      "end": "Kết thúc",
+      "verify": "Nghiệm độc lập"
     },
     "tools": {
       "web_search": "Tìm kiếm web",

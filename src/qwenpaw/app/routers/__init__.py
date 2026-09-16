@@ -4,6 +4,7 @@
 from fastapi import APIRouter
 
 from .agents import router as agents_router
+from ..employees.api import router as employee_registry_router
 from .config import router as config_router
 from .local_models import router as local_models_router
 from .providers import router as providers_router
@@ -42,6 +43,9 @@ from .open_api import router as open_api_router
 
 router = APIRouter()
 
+# 注册表路由必须先于 agents_router 注册：agents 平面存在动态段路由
+# GET /agents/{agentId}，晚注册会把 /agents/registry 误吞为 agentId="registry"。
+router.include_router(employee_registry_router)
 router.include_router(agents_router)
 router.include_router(config_router)
 router.include_router(console_router)

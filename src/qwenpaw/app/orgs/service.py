@@ -175,7 +175,26 @@ class OrgService:
             )
             record = _row_to_dept(result.one())
         await self._sync_department_team(record)
+        # 子树继承补齐：授权了本部门任一祖先员工的 ACL 重新投影
+        # （函数内导入避开 employees ↔ orgs 的模块级循环）
+        await self._refresh_governance_for_new_department(record)
         return record
+
+    @staticmethod
+    async def _refresh_governance_for_new_department(
+        record: DepartmentRecord,
+    ) -> None:
+        """新建部门后重投影祖先授权员工（失败仅告警，不阻断建部门）。"""
+        try:
+            from ..employees.projection import refresh_for_new_department
+
+            await refresh_for_new_department(record)
+        except Exception:  # pylint: disable=broad-except
+            logger.warning(
+                "governance re-projection skipped for new dept %s",
+                record.id,
+                exc_info=True,
+            )
 
     async def update_department(
         self,
@@ -257,7 +276,42 @@ class OrgService:
                 logger.warning(
                     "dept team cleanup failed for %s", dept_id, exc_info=True
                 )
+            # 治理引用同步清理：避免归属/授权指向已删部门形成悬空 ACL
+            await self._clear_governance_department_reference(
+                dept_id,
+                dept_path,
+            )
         return deleted
+
+    @staticmethod
+    async def _clear_governance_department_reference(
+        dept_id: str,
+        dept_path: str = "",
+    ) -> None:
+        """部门删除后清理治理引用（失败仅告警，不阻断删部门）。"""
+        try:
+            from ..employees.projection import (
+                clear_department_reference,
+                refresh_for_removed_department,
+            )
+
+            cleared = await clear_department_reference(dept_id)
+            # 子树继承是写入时展开的：删掉的子部门仍挂在父部门员工的 grant 里
+            reparented = await refresh_for_removed_department(dept_path)
+            if cleared or reparented:
+                logger.info(
+                    "governance refs of department %s: %d rows cleared, "
+                    "%d ancestor grants reprojected",
+                    dept_id,
+                    cleared,
+                    reparented,
+                )
+        except Exception:  # pylint: disable=broad-except
+            logger.warning(
+                "governance reference cleanup skipped for dept %s",
+                dept_id,
+                exc_info=True,
+            )
 
     async def list_departments(self) -> List[DepartmentRecord]:
         tid = current_tenant_id()

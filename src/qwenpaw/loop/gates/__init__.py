@@ -6,7 +6,7 @@ Public API:
     IterationGate, BudgetGate, DoomLoopGate,
     StopHandler, StopHandlerResult, StopHandlerRegistration,
     RubricStrategy, GoalStatusRubric, RubricVerdict,
-    RubricEvaluation, DefaultRubric, SubAgentRubric.
+    RubricEvaluation, DefaultRubric, IndependentVerifierGate.
 """
 from .base import (
     StopAction,
@@ -20,6 +20,7 @@ from .configured import ConfiguredGate
 from .doom_loop import DoomLoopGate
 from .file_loop_gate import FileLoopGate
 from .handler import StopHandler
+from .independent_verify import IndependentVerifierGate
 from .iteration import IterationGate
 from .limits import TimeoutGate, TokenBudgetGate, ToolCallBudgetGate
 from .runner import run_stop_handlers
@@ -31,7 +32,6 @@ from .rubric import (
     RubricEvaluation,
     RubricStrategy,
     RubricVerdict,
-    SubAgentRubric,
 )
 
 __all__ = [
@@ -43,6 +43,7 @@ __all__ = [
     "DoomLoopGate",
     "FileLoopGate",
     "GoalStatusRubric",
+    "IndependentVerifierGate",
     "IterationGate",
     "LoopGate",
     "RubricEvaluation",
@@ -53,7 +54,6 @@ __all__ = [
     "StopHandler",
     "StopHandlerRegistration",
     "StopHandlerResult",
-    "SubAgentRubric",
     "TimeoutGate",
     "TokenBudgetGate",
     "ToolCallBudgetGate",

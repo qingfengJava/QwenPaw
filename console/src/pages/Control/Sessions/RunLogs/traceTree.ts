@@ -38,6 +38,7 @@ export type TraceNodeKind =
   | "llm"
   | "toolCall"
   | "tool"
+  | "verify"
   | "end";
 
 export interface TraceNode {
@@ -319,6 +320,7 @@ export function buildTraceTree(trace: RunLogTrace): TraceNode {
  *   ├─ Agent 容器           — all llm/tool spans, start-ordered
  *   │   ├─ LLM 思考        — llm span (title = model name -> i18n kind)
  *   │   │   └─ tool_name   — tool span (parent = owning llm span)
+ *   │   ├─ 独立验收        — verify span (independent grading of the draft)
  *   │   └─ …
  *   └─ 逻辑结束              — reply span
  */
@@ -388,7 +390,10 @@ export function buildSpanTree(trace: RunLogTrace): TraceNode {
       replyNode.title = "end";
       continue;
     }
-    const node = makeNode(span.kind === "tool" ? "tool" : "llm", span);
+    // verify spans are independent grading steps, not model thinking turns
+    const nodeKind: TraceNodeKind =
+      span.kind === "tool" ? "tool" : span.kind === "verify" ? "verify" : "llm";
+    const node = makeNode(nodeKind, span);
     byId.set(span.span_id, node);
     const parentSpanId = span.parent_span_id
       ? byId.get(span.parent_span_id)

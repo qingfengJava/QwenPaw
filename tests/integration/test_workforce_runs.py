@@ -32,8 +32,8 @@ DSN = os.environ.get("QWENPAW_TEST_PG_DSN", "").strip()
 _TRUNCATE_SQL = (
     "TRUNCATE team_run_nodes, team_runs, feed_events, project_members, "
     "tasks, projects, expert_team_members, expert_skills, "
-    "published_experts, expert_teams, experts, token_usage_events "
-    "RESTART IDENTITY"
+    "published_experts, expert_teams, experts, employee_governance, "
+    "token_usage_events RESTART IDENTITY"
 )
 
 

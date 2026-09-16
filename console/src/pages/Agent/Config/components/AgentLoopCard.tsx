@@ -797,6 +797,22 @@ const GATE_DEFINITIONS: GateDefinition[] = [
     exclusiveGroup: "completion_rubric",
   },
   {
+    type: "independent_verify",
+    title: "Independent verification",
+    titleKey: "agentConfig.loopMode.independentVerifyTitle",
+    description:
+      "Grade complex-task drafts with a separate model call and rework them on structured repair instructions.",
+    descriptionKey: "agentConfig.loopMode.independentVerifyDescription",
+    icon: <Target size={15} />,
+    defaults: {
+      max_repairs: 1,
+      timeout_seconds: 60,
+      min_objective_chars: 24,
+      escalate_notice: true,
+    },
+    exclusiveGroup: "completion_rubric",
+  },
+  {
     type: "completion_rubric",
     title: "Completion signal check",
     titleKey: "agentConfig.loopMode.completionRubricTitle",
@@ -1075,6 +1091,65 @@ function GateParamsEditor({
         >
           <Input.TextArea autoSize={{ minRows: 2, maxRows: 5 }} />
         </Form.Item>
+      </>
+    );
+  }
+  if (type === "independent_verify") {
+    return (
+      <>
+        <div className={loopStyles.fieldGrid}>
+          <Form.Item
+            name={[...base, "max_repairs"]}
+            label={t(
+              "agentConfig.loopMode.maxRepairs",
+              "Maximum repair rounds",
+            )}
+            tooltip={t(
+              "agentConfig.loopMode.maxRepairsHelp",
+              "How many times a draft may be sent back for rework before QwenPaw reports the unmet requirements to you instead.",
+            )}
+          >
+            <InputNumber min={0} max={5} style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item
+            name={[...base, "timeout_seconds"]}
+            label={t(
+              "agentConfig.loopMode.verifyTimeout",
+              "Verification timeout (s)",
+            )}
+          >
+            <InputNumber min={5} max={600} style={{ width: "100%" }} />
+          </Form.Item>
+        </div>
+        <Form.Item
+          name={[...base, "min_objective_chars"]}
+          label={t(
+            "agentConfig.loopMode.verifyMinChars",
+            "Minimum request length",
+          )}
+          tooltip={t(
+            "agentConfig.loopMode.verifyMinCharsHelp",
+            "Shorter requests are never verified, so quick follow-ups stay free.",
+          )}
+        >
+          <InputNumber min={1} max={2000} style={{ width: "100%" }} />
+        </Form.Item>
+        <Form.Item
+          name={[...base, "escalate_notice"]}
+          valuePropName="checked"
+          label={t(
+            "agentConfig.loopMode.verifyEscalateNotice",
+            "Report unmet requirements when the repair budget runs out",
+          )}
+        >
+          <Switch />
+        </Form.Item>
+        <p className={loopStyles.editorHint}>
+          {t(
+            "agentConfig.loopMode.independentVerifyHelp",
+            "Only requests graded as complex (multiple deliverables, cross-discipline work) trigger a verification call; the draft is graded by a separate model context instead of the agent grading itself.",
+          )}
+        </p>
       </>
     );
   }
@@ -1418,7 +1493,7 @@ function CustomModeEditor({
 const TEMPLATES: Record<string, CustomGateType[]> = {
   safe: ["iteration", "token_budget", "doom_loop", "qualitative_rubric"],
   research: ["iteration", "timeout", "tool_call_budget", "doom_loop"],
-  quality: ["iteration", "token_budget", "doom_loop", "completion_rubric"],
+  quality: ["iteration", "token_budget", "doom_loop", "independent_verify"],
   blank: [],
 };
 

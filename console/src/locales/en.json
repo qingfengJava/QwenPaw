@@ -2010,7 +2010,8 @@
       "user": "User Input",
       "intent": "Intent Recognition",
       "llm": "LLM Thinking",
-      "end": "Finish"
+      "end": "Finish",
+      "verify": "Independent verification"
     },
     "tools": {
       "web_search": "Web Search",
@@ -2881,7 +2882,16 @@
       "safeTemplate": "Safe run",
       "researchTemplate": "Budgeted research",
       "qualityTemplate": "Quality first",
-      "blankTemplate": "Blank pipeline"
+      "blankTemplate": "Blank pipeline",
+      "independentVerifyTitle": "Independent verification",
+      "independentVerifyDescription": "Grade complex-task drafts with a separate model and rework them on structured repair instructions.",
+      "maxRepairs": "Maximum repair rounds",
+      "maxRepairsHelp": "How many times a draft may be sent back for rework before the unmet requirements are reported to you instead.",
+      "verifyTimeout": "Verification timeout (s)",
+      "verifyMinChars": "Minimum request length",
+      "verifyMinCharsHelp": "Requests shorter than this are never verified, so quick follow-ups stay free.",
+      "verifyEscalateNotice": "Report unmet requirements when the repair budget runs out",
+      "independentVerifyHelp": "Only requests graded as complex (multiple deliverables, cross-discipline work) trigger a verification call; the draft is graded by a separate model context instead of the agent grading itself."
     },
     "doomLoopEnabled": "Repetition Protection",
     "doomLoopEnabledTooltip": "Automatically intervene when the agent gets stuck repeating the same actions",
@@ -4861,6 +4871,131 @@
       "dayEvents": "Events of the day",
       "empty": "No activity recorded for this day.",
       "monthLabel": "{{month}} {{year}}"
+    }
+  },
+  "employee": {
+    "kind": {
+      "agent": "Agent",
+      "expert": "Digital employee",
+      "team": "Expert team",
+      "workflow": "Workflow"
+    },
+    "visibility": {
+      "org": "Org-wide",
+      "department": "Department only",
+      "private": "Owner only"
+    },
+    "lifecycle": {
+      "draft": "Draft",
+      "published": "Published",
+      "archived": "Archived"
+    },
+    "teamMode": {
+      "router": "Smart routing",
+      "pipeline": "Sequential pipeline"
+    },
+    "team": {
+      "memberCount": "{{count}} members collaborating",
+      "sharedTo": "Shared to"
+    },
+    "tab": {
+      "all": "All employees",
+      "agents": "Agents",
+      "teams": "Expert teams",
+      "workflow": "Workflows"
+    },
+    "metric": {
+      "total": "Employees",
+      "running": "Running",
+      "teams": "Expert teams",
+      "unassigned": "Unassigned",
+      "unassignedHint": "No department yet"
+    },
+    "agentSub": {
+      "all": "All",
+      "native": "Native agents"
+    },
+    "filter": {
+      "department": "Department",
+      "visibility": "Visibility",
+      "lifecycle": "Publish state",
+      "search": "Search name / title / description",
+      "reset": "Reset filters",
+      "groupByDepartment": "Group by department"
+    },
+    "view": {
+      "grid": "Card view",
+      "table": "Governance table"
+    },
+    "action": {
+      "governance": "Ownership & visibility",
+      "capabilities": "Capabilities",
+      "editBasic": "Edit profile",
+      "enterWorkbench": "Open workbench",
+      "moveUp": "Move up",
+      "moveDown": "Move down",
+      "pin": "Pin",
+      "unpin": "Unpin",
+      "organization": "Departments"
+    },
+    "create": "New employee",
+    "createOf": {
+      "agent": "New agent",
+      "expert": "Hire digital employee",
+      "team": "Build expert team"
+    },
+    "governance": {
+      "title": "Ownership & visibility",
+      "department": "Owning department",
+      "departmentPlaceholder": "Pick a department (leave empty for platform-wide)",
+      "departmentHint": "Ownership decides who can use it by default under department scope.",
+      "visibility": "Visibility",
+      "visibilityHint": {
+        "org": "Org-wide: every account sees and can use this employee.",
+        "department": "Department only: visible and usable by the owning plus granted departments (subtrees included).",
+        "private": "Owner only: only the owner sees and can use it, for personal assistants."
+      },
+      "granted": "Additionally granted departments",
+      "grantedPlaceholder": "Pick more departments allowed to use it",
+      "grantedHint": "Effective set = owning ∪ granted departments, including their subtrees.",
+      "needDepartment": "Department scope needs at least one department",
+      "impact": "Takes effect immediately: list visibility and runtime access share one projection, so nothing is visible-but-unusable.",
+      "saved": "Governance saved",
+      "failed": "Failed to save governance"
+    },
+    "batch": {
+      "selected": "{{count}} employees selected",
+      "govern": "Set ownership & visibility",
+      "clear": "Clear selection"
+    },
+    "group": {
+      "unassigned": "Unassigned"
+    },
+    "table": {
+      "colName": "Name",
+      "colKind": "Kind",
+      "colDepartment": "Department",
+      "colVisibility": "Visibility",
+      "colShared": "Shared with",
+      "colStatus": "Status",
+      "colModel": "Model",
+      "colMembers": "Members",
+      "colActions": "Actions"
+    },
+    "empty": {
+      "title": "No matching employees",
+      "desc": "Adjust the tab or filters, or hire a new digital employee."
+    },
+    "workflow": {
+      "emptyTitle": "Workflow platform integration in progress",
+      "emptyDesc": "Workflows are the third employee shape next to agents and expert teams: deterministic nodes for compliance-heavy, fixed-step processes.",
+      "emptyHint": "The category is ready; employees from an external workflow platform will appear here without further UI changes."
+    },
+    "loadFailed": "Failed to load employees",
+    "retry": "Reload",
+    "reorderFailed": "Failed to save order",
+    "hint": {
+      "notPublished": "This employee is not published yet, no workbench available"
     }
   }
 }

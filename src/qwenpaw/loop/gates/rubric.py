@@ -4,8 +4,10 @@
 Architecture:
     RubricStrategy (ABC)
     ├── DefaultRubric     — always SATISFIED (no rubric)
-    ├── GoalStatusRubric  — checks session.active
-    └── SubAgentRubric    — placeholder for subagent eval
+    └── GoalStatusRubric  — checks session.active
+
+独立验收（非自评）不再在本模块占位：裁决能力已下沉到
+:mod:`qwenpaw.verification` 与 :class:`IndependentVerifierGate`。
 """
 from __future__ import annotations
 
@@ -118,39 +120,6 @@ class GoalStatusRubric(RubricStrategy):
         )
 
 
-class SubAgentRubric(RubricStrategy):
-    """Placeholder for subagent-based verification.
-
-    Concrete implementation should follow the
-    oh-my-claudecode/ralph pattern: spawn a subagent
-    to verify, then check state file key-values for
-    the verdict (not LLM output parsing).
-
-    TODO: implement file-based state verification.
-    """
-
-    def __init__(
-        self,
-        spawn_fn: Any = None,
-        fork: bool = False,
-    ) -> None:
-        self._spawn_fn = spawn_fn
-        self._fork = fork
-
-    async def evaluate(
-        self,
-        goal: str,
-        agent_output: str,
-        iteration: int,
-    ) -> RubricEvaluation:
-        """Placeholder — returns GRADER_ERROR."""
-        return RubricEvaluation(
-            iteration=iteration,
-            verdict=RubricVerdict.GRADER_ERROR,
-            explanation=("SubAgentRubric not yet implemented"),
-        )
-
-
 @dataclass
 class _QualitativeRubricState:
     """Per-session qualitative evaluation count."""
@@ -243,5 +212,4 @@ __all__ = [
     "RubricEvaluation",
     "RubricStrategy",
     "RubricVerdict",
-    "SubAgentRubric",
 ]

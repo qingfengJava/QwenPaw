@@ -14,6 +14,7 @@ import {
   Globe,
   Lightbulb,
   Search,
+  ShieldCheck,
   User,
   Wrench,
 } from "lucide-react";
@@ -35,6 +36,9 @@ function buildTitleMap(
     user: t("runLogs.tree.user", "用户输入"),
     intent: t("runLogs.tree.intent", "意图识别"),
     llm: t("runLogs.tree.llm", "LLM 思考"),
+    verify: t("runLogs.tree.verify", "独立验收"),
+    // 验收 span 携带的 span.name（优先按 title 查表）
+    independent_verify: t("runLogs.tree.verify", "独立验收"),
     end: t("runLogs.tree.end", "逻辑结束"),
     // Common tool names — anything unmapped keeps its original name.
     web_search: t("runLogs.tools.web_search", "联网搜索"),
@@ -62,6 +66,7 @@ const KIND_ICONS: Record<TraceNodeKind, typeof Globe> = {
   llm: Lightbulb,
   toolCall: Wrench,
   tool: Wrench,
+  verify: ShieldCheck,
   end: Flag,
 };
 

@@ -11,6 +11,7 @@ from ..config.config import DoomLoopConfig, DoomLoopStageConfig
 from .gates.base import StopGate
 from .gates.completion import CompletionRubricGate
 from .gates.doom_loop import DoomLoopGate
+from .gates.independent_verify import IndependentVerifierGate
 from .gates.iteration import IterationGate
 from .gates.limits import TimeoutGate, TokenBudgetGate, ToolCallBudgetGate
 from .gates.rubric import QualitativeRubricGate
@@ -92,6 +93,15 @@ class QualitativeRubricParams(_Params):
         max_length=8192,
     )
     max_evaluations: int = Field(default=1, ge=1, le=10)
+
+
+class IndependentVerifyParams(_Params):
+    """Independent verification gate parameters."""
+
+    max_repairs: int = Field(default=1, ge=0, le=5)
+    timeout_seconds: int = Field(default=60, ge=5, le=600)
+    min_objective_chars: int = Field(default=24, ge=1, le=2000)
+    escalate_notice: bool = Field(default=True)
 
 
 class CompletionRubricParams(_Params):
@@ -253,6 +263,19 @@ def _entries() -> list[GateCatalogEntry]:
             category="quality",
             params_model=QualitativeRubricParams,
             factory=lambda params: QualitativeRubricGate(**_dump(params)),
+            exclusive_group="completion_rubric",
+        ),
+        GateCatalogEntry(
+            type="independent_verify",
+            title="Independent verification",
+            description=(
+                "Grade complex-task drafts with a separate model call and "
+                "rework structured repair instructions before stopping."
+            ),
+            category="quality",
+            params_model=IndependentVerifyParams,
+            factory=lambda params: IndependentVerifierGate(**_dump(params)),
+            cost="model_call",
             exclusive_group="completion_rubric",
         ),
         GateCatalogEntry(

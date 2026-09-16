@@ -324,9 +324,11 @@ function CanvasInner({ sop, readOnly = false, onSave }: SopFlowCanvasProps) {
 
   const applyLiveGraph = useCallback(
     (event: SopLiveEvent) => {
+      // sop 级事件始终携带全量图数据；?? [] 仅作类型兜底（员工级轻量
+      // 事件不含图数据，但本回调只被 sop 级订阅调用）
       const laid = layoutInitial({
-        nodes: event.nodes,
-        edges: event.edges,
+        nodes: event.nodes ?? [],
+        edges: event.edges ?? [],
       } as SopRecord);
       setNodes(laid.nodes);
       setEdges(laid.edges);

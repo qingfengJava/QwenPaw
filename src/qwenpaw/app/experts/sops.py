@@ -16,6 +16,7 @@ docs/design/2026-08-30-digital-employee-capability-layer.md）。
 from __future__ import annotations
 
 import json
+import logging
 from typing import Dict, List, Optional
 
 from sqlalchemy import text
@@ -31,6 +32,8 @@ from .models import (
     SopRecord,
     SopVersionRecord,
 )
+
+logger = logging.getLogger(__name__)
 
 _COLS = (
     "id, name, description, business_domain, goal, nodes, edges, slots, "
@@ -125,7 +128,10 @@ class SopStore:
                     "env": environment,
                 },
             )
-            return _row_to_sop(result.one())
+            record = _row_to_sop(result.one())
+        # 提交后双通道广播（sop 级全量快照 + 员工级轻量索引，面板跟随）
+        await broadcast_sop_event("created", record)
+        return record
 
     async def get_sop(
         self,
@@ -246,7 +252,11 @@ class SopStore:
                 params,
             )
             row = result.first()
-            return _row_to_sop(row) if row else None
+            record = _row_to_sop(row) if row else None
+        if record is not None:
+            # 提交后双通道广播（画布重绘 + 面板跟随）
+            await broadcast_sop_event("updated", record)
+        return record
 
     async def publish_sop(
         self,
@@ -300,7 +310,9 @@ class SopStore:
                     "by": published_by,
                 },
             )
-            return record
+        # 提交后双通道广播（画布重绘 + 面板跟随）
+        await broadcast_sop_event("published", record)
+        return record
 
     async def promote_sop(
         self,
@@ -403,7 +415,9 @@ class SopStore:
                     "by": published_by,
                 },
             )
-            return record
+        # 提交后双通道广播（画布重绘 + 面板跟随）
+        await broadcast_sop_event("published", record)
+        return record
 
     async def rollback_sop(
         self,
@@ -477,7 +491,9 @@ class SopStore:
                     "by": published_by,
                 },
             )
-            return record
+        # 提交后双通道广播（回滚即发布语义，画布重绘 + 面板跟随）
+        await broadcast_sop_event("published", record)
+        return record
 
     async def publish_new_version(
         self,
@@ -721,6 +737,50 @@ class SopStore:
             )
             row = result.first()
             return _row_to_sop(row) if row else None
+
+
+async def broadcast_sop_event(action: str, record: SopRecord) -> None:
+    """Broadcast one SOP write on both live topics (canvas + panel follows).
+
+    双通道广播（AI 边画、画布边变、面板跟随）：
+    - sop 级 topic 携带全量 nodes/edges/slots，SopFlowCanvas 订阅后
+      直接 setNodes 重绘；
+    - 员工级 topic 只发轻量索引事件（不含图数据）：AI 新建时前端尚
+      不知 sop_id，面板经此感知 created 后自动打开画布/刷新列表。
+    广播失败绝不影响写主链路（画布/列表下次从 PG 取现值）。
+    """
+    try:
+        from ..events.bus import get_event_bus, sop_expert_topic, sop_topic
+
+        tid = current_tenant_id()
+        await get_event_bus().publish(
+            sop_topic(tid, record.id),
+            {
+                "action": action,
+                "sop_id": record.id,
+                "environment": record.environment,
+                "version": record.version,
+                "name": record.name,
+                "goal": record.goal,
+                "nodes": record.nodes,
+                "edges": record.edges,
+                "slots": record.slots,
+            },
+        )
+        if record.owner_id:
+            await get_event_bus().publish(
+                sop_expert_topic(tid, record.owner_id),
+                {
+                    "action": action,
+                    "sop_id": record.id,
+                    "name": record.name,
+                    "environment": record.environment,
+                    "version": record.version,
+                    "owner_id": record.owner_id,
+                },
+            )
+    except Exception:  # pylint: disable=broad-except
+        logger.warning("sop %s event publish failed", record.id, exc_info=True)
 
 
 _store: SopStore | None = None

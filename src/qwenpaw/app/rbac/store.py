@@ -343,6 +343,26 @@ class RbacStore:
             return True
         return any(team in grant.teams for team in user_team_names)
 
+    @staticmethod
+    def grant_allows(
+        grant: Optional[GrantRecord],
+        username: str,
+        user_role_names: List[str],
+        user_team_names: List[str],
+    ) -> bool:
+        """Public ACL check over a *preloaded* grant snapshot.
+
+        列表类接口（如数字员工注册表）需要先一次性取回全部 grants / roles /
+        teams 再逐行判定，避免每行触发一次文件加载；判定语义与
+        :meth:`_grant_allows` 完全一致，保证「列表可见」与「运行期可用」同源。
+        """
+        return RbacStore._grant_allows(
+            grant,
+            username,
+            user_role_names,
+            user_team_names,
+        )
+
     def agent_allowed(
         self,
         username: str,

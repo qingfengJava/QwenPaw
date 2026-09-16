@@ -1562,7 +1562,8 @@
       "user": "ユーザー入力",
       "intent": "意図認識",
       "llm": "LLM 思考",
-      "end": "処理完了"
+      "end": "処理完了",
+      "verify": "独立検証"
     },
     "tools": {
       "web_search": "ウェブ検索",
@@ -2345,7 +2346,16 @@
       "safeTemplate": "安全な実行",
       "researchTemplate": "予算付き調査",
       "qualityTemplate": "品質優先",
-      "blankTemplate": "空のパイプライン"
+      "blankTemplate": "空のパイプライン",
+      "independentVerifyTitle": "独立検証",
+      "independentVerifyDescription": "複雑なタスクの成果物を別モデルで採点し、やり直し指示で修正させます",
+      "maxRepairs": "最大やり直し回数",
+      "maxRepairsHelp": "成果物をやり直しさせる回数の上限。超過した場合は未達の要件をユーザーに報告します",
+      "verifyTimeout": "検証タイムアウト（秒）",
+      "verifyMinChars": "検証を有効化する最小のリクエスト長",
+      "verifyMinCharsHelp": "これより短いリクエストは検証しないため、短い追加質問は無料です",
+      "verifyEscalateNotice": "やり直し上限到達時に未達の要件を報告する",
+      "independentVerifyHelp": "複雑（複数成果物・専門横断）と判定されたリクエストのみ検証呼び出しが発生します。成果物は実行モデル自身ではなく別コンテキストのモデルが採点"
     },
     "doomLoopEnabled": "繰り返し行動保護",
     "doomLoopEnabledTooltip": "エージェントが同じ操作を繰り返している場合に自動的に介入します",
@@ -4173,5 +4183,130 @@
     "docEditChat": "チャットで編集",
     "docEditChatTitle": "{{file}} のチャット編集を開始",
     "docEditPrompt": "@ {{file}} の編集を手伝ってください。始める前に具体的な変更内容を私に確認してください。"
+  },
+  "employee": {
+    "kind": {
+      "agent": "エージェント",
+      "expert": "デジタル社員",
+      "team": "エキスパートチーム",
+      "workflow": "ワークフロー"
+    },
+    "visibility": {
+      "org": "全社共有",
+      "department": "部門限定",
+      "private": "作成者のみ"
+    },
+    "lifecycle": {
+      "draft": "下書き",
+      "published": "公開済み",
+      "archived": "アーカイブ済み"
+    },
+    "teamMode": {
+      "router": "スマート振り分け",
+      "pipeline": "逐次パイプライン"
+    },
+    "team": {
+      "memberCount": "{{count}} 名で協働",
+      "sharedTo": "共有先"
+    },
+    "tab": {
+      "all": "すべての社員",
+      "agents": "エージェント",
+      "teams": "エキスパートチーム",
+      "workflow": "ワークフロー"
+    },
+    "metric": {
+      "total": "在籍社員",
+      "running": "稼働中",
+      "teams": "チーム",
+      "unassigned": "未所属",
+      "unassignedHint": "所属未設定"
+    },
+    "agentSub": {
+      "all": "すべて",
+      "native": "原生エージェント"
+    },
+    "filter": {
+      "department": "所属部門",
+      "visibility": "公開範囲",
+      "lifecycle": "公開状態",
+      "search": "名前 / 役職 / 説明を検索",
+      "reset": "条件をリセット",
+      "groupByDepartment": "部門でグループ化"
+    },
+    "view": {
+      "grid": "カード表示",
+      "table": "管理テーブル"
+    },
+    "action": {
+      "governance": "所属と公開範囲",
+      "capabilities": "能力設定",
+      "editBasic": "基本情報を編集",
+      "enterWorkbench": "ワークベンチへ",
+      "moveUp": "上へ",
+      "moveDown": "下へ",
+      "pin": "ピン留め",
+      "unpin": "ピン解除",
+      "organization": "部門管理"
+    },
+    "create": "社員を追加",
+    "createOf": {
+      "agent": "エージェントを作成",
+      "expert": "デジタル社員を採用",
+      "team": "チームを編成"
+    },
+    "governance": {
+      "title": "所属と公開範囲",
+      "department": "所属部門",
+      "departmentPlaceholder": "部門を選択（空欄はプラットフォーム級）",
+      "departmentHint": "部門限定の場合、所属部門が既定の利用範囲になります。",
+      "visibility": "公開範囲",
+      "visibilityHint": {
+        "org": "全社共有：すべてのアカウントが一覧と対話画面で利用できます。",
+        "department": "部門限定：所属部門と追加授権部門（下部部門を含む）のメンバーのみ利用できます。",
+        "private": "作成者のみ：所属者のみが利用できます。"
+      },
+      "granted": "追加授権部門",
+      "grantedPlaceholder": "利用を許可する部門を選択",
+      "grantedHint": "有効範囲 = 所属 ∪ 授権部門（下部部門を含む）。",
+      "needDepartment": "部門限定には少なくとも 1 つの部門が必要です",
+      "impact": "保存後すぐに反映されます：一覧の表示と実行時の権限は同じ投影から決まるため「見えるが使えない」は発生しません。",
+      "saved": "管理設定を保存しました",
+      "failed": "管理設定の保存に失敗しました"
+    },
+    "batch": {
+      "selected": "{{count}} 名を選択中",
+      "govern": "一括で所属と公開範囲を設定",
+      "clear": "選択を解除"
+    },
+    "group": {
+      "unassigned": "未所属"
+    },
+    "table": {
+      "colName": "名前",
+      "colKind": "種別",
+      "colDepartment": "所属部門",
+      "colVisibility": "公開範囲",
+      "colShared": "共有先",
+      "colStatus": "ステータス",
+      "colModel": "モデル",
+      "colMembers": "メンバー",
+      "colActions": "操作"
+    },
+    "empty": {
+      "title": "該当する社員がいません",
+      "desc": "タブや条件を調整するか、新しい社員を追加してください。"
+    },
+    "workflow": {
+      "emptyTitle": "ワークフロー連携は準備中",
+      "emptyDesc": "ワークフローはエージェント・チームに並ぶ第3の形態で、確定性のノード構成による厳格な業務フローを想定しています。",
+      "emptyHint": "分類枠は用意済みです。外部プラットフォーム連携後に自動で表示されます。"
+    },
+    "loadFailed": "社員一覧の取得に失敗しました",
+    "retry": "再読み込み",
+    "reorderFailed": "並び順の保存に失敗しました",
+    "hint": {
+      "notPublished": "未公開のためワークベンチはありません"
+    }
   }
 }

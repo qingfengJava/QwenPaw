@@ -623,6 +623,53 @@ async def test_sop_private_semantics(enterprise_env):
 
 
 @pytest.mark.asyncio
+async def test_sop_expert_topic_broadcast(enterprise_env):
+    """员工级 SOP 活动流：写操作向 sop-expert topic 发轻量索引事件。
+
+    面板跟随底座：AI 新建 SOP 时前端尚不知 sop_id，created 事件供
+    面板自动开画布；事件不含图数据（全量快照走 sop 级通道）。
+    """
+    import asyncio
+
+    from qwenpaw.app.enterprise import current_tenant_id
+    from qwenpaw.app.events.bus import get_event_bus, sop_expert_topic
+    from qwenpaw.app.experts.sops import get_sop_store
+
+    store = get_sop_store()
+    subscription = get_event_bus().subscribe(
+        sop_expert_topic(current_tenant_id(), "captest_expert_ev"), "",
+    )
+    try:
+        created = await store.create_sop(
+            name="事件流程",
+            sop_id="captest_sop_ev",
+            owner_id="captest_expert_ev",
+            nodes=[{"id": "n1", "title": "步骤一"}],
+        )
+        assert created.owner_id == "captest_expert_ev"
+        # created：轻量索引事件（开画布信号），无图数据
+        ev1 = await asyncio.wait_for(subscription.__anext__(), timeout=2.0)
+        assert ev1.data["action"] == "created"
+        assert ev1.data["sop_id"] == "captest_sop_ev"
+        assert ev1.data["owner_id"] == "captest_expert_ev"
+        assert "nodes" not in ev1.data
+
+        await store.update_sop("captest_sop_ev", goal="新目标")
+        ev2 = await asyncio.wait_for(subscription.__anext__(), timeout=2.0)
+        assert ev2.data["action"] == "updated"
+        assert ev2.data["sop_id"] == "captest_sop_ev"
+
+        # 无主 SOP（owner_id 为空）不产生员工级事件
+        await store.create_sop(
+            name="无主流", sop_id="captest_sop_ev_free", owner_id=None,
+        )
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(subscription.__anext__(), timeout=0.3)
+    finally:
+        subscription.close()
+
+
+@pytest.mark.asyncio
 async def test_ensure_binding_idempotent(enterprise_env):
     """ensure_binding 重复调用只落一行（发布自动绑定的幂等底座）。"""
     from qwenpaw.app.experts.capability import get_capability_store

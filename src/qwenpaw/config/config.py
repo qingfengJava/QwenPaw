@@ -1496,6 +1496,53 @@ class RubricGateConfig(BaseModel):
     )
 
 
+class IndependentVerifyConfig(BaseModel):
+    """Independent verification gate configuration (L2 ReAct loop).
+
+    数字员工的「核验」不再依赖模型自觉：判定为复杂的任务在产出前由
+    独立模型裁决一次，未通过则按结构化返工指令修正，超限则熔断告知用户。
+    """
+
+    enabled: bool = Field(
+        default=True,
+        description=(
+            "Run independent verification for complex tasks. "
+            "Set to false to restore the previous self-graded behaviour."
+        ),
+    )
+    max_repairs: int = Field(
+        default=1,
+        ge=0,
+        le=5,
+        description=(
+            "Max repair rounds per turn. 0 = verify only, never rework; "
+            "unmet requirements are reported to the user directly."
+        ),
+    )
+    timeout_seconds: int = Field(
+        default=60,
+        ge=5,
+        le=600,
+        description="Hard bound for one verification model call.",
+    )
+    min_objective_chars: int = Field(
+        default=24,
+        ge=1,
+        le=2000,
+        description=(
+            "Requests shorter than this are never graded as complex, so "
+            "short follow-ups stay free of verification calls."
+        ),
+    )
+    escalate_notice: bool = Field(
+        default=True,
+        description=(
+            "Append the unresolved verification gaps to the reply when the "
+            "repair budget is exhausted instead of a silent pass."
+        ),
+    )
+
+
 class GateInstanceConfig(BaseModel):
     """One built-in gate configured in a custom loop mode."""
 
@@ -1602,6 +1649,10 @@ class LoopConfig(BaseModel):
     rubric: RubricGateConfig = Field(
         default_factory=RubricGateConfig,
         description="Completion check settings",
+    )
+    independent_verify: IndependentVerifyConfig = Field(
+        default_factory=IndependentVerifyConfig,
+        description="Independent (non self-graded) verification settings",
     )
     goal: GoalLoopModeConfig = Field(
         default_factory=GoalLoopModeConfig,
@@ -2277,6 +2328,13 @@ class AgentProfileConfig(BaseModel):
     subagent_model: Optional["ModelSlotConfig"] = Field(
         default=None,
         description="Optional cheaper model used by spawned subagents",
+    )
+    verifier_model: Optional["ModelSlotConfig"] = Field(
+        default=None,
+        description=(
+            "Optional model used by the independent verification gate "
+            "(None = reuse this agent's active model)"
+        ),
     )
     thinking_level: Literal[
         "inherit",

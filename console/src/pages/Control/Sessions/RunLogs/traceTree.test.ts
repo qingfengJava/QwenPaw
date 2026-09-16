@@ -5,6 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  buildSpanTree,
   buildTraceTree,
   truncateDetail,
 } from "./traceTree";
@@ -174,5 +175,62 @@ describe("buildTraceTree", () => {
       "user",
       "intent",
     ]);
+  });
+});
+
+describe("buildSpanTree", () => {
+  function spanOf(
+    spanId: string,
+    kind: string,
+    extra: Record<string, unknown> = {},
+  ) {
+    return {
+      span_id: spanId,
+      kind,
+      name: null,
+      parent_span_id: null,
+      started_at: 1000,
+      duration_ms: 10,
+      input: null,
+      output: null,
+      ...extra,
+    };
+  }
+
+  function spanTrace(spans: unknown[]): RunLogTrace {
+    return {
+      run_id: "run-1",
+      created_at: 1000,
+      completed_at: 1050,
+      status: "success",
+      meta: { query: "出报告和方案" },
+      spans,
+    } as unknown as RunLogTrace;
+  }
+
+  it("renders verify spans as their own node kind", () => {
+    const tree = buildSpanTree(
+      spanTrace([
+        spanOf("s1", "llm", { name: "qwen3-max" }),
+        spanOf("s2", "verify", {
+          name: "independent_verify",
+          output: { verdict: "FAIL", issues: ["缺定价"] },
+        }),
+      ]),
+    );
+    const agent = tree.children[tree.children.length - 1];
+    expect(agent?.kind).toBe("agent");
+    expect(agent?.children.map((node) => node.kind)).toEqual([
+      "llm",
+      "verify",
+    ]);
+    // verify 节点标题回退到 span.name，由前端 i18n 映射为「独立验收」
+    expect(agent?.children[1]?.title).toBe("independent_verify");
+  });
+
+  it("keeps unknown span kinds on the llm node", () => {
+    const tree = buildSpanTree(spanTrace([spanOf("s1", "future_kind")]));
+    const agent = tree.children[tree.children.length - 1];
+    expect(agent?.children[0]?.kind).toBe("llm");
   });
 });

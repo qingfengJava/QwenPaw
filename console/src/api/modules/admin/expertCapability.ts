@@ -43,17 +43,22 @@ export interface SopRecord {
   updated_at?: string | null;
 }
 
-/** SOP 实时编辑事件（AI tool / 画布保存后后端向 SSE topic 广播的全量快照）。 */
+/** SOP 实时编辑事件（AI tool / 画布保存后后端向 SSE topic 广播的全量快照）。
+ *
+ * 员工级面板流（streamExpertEvents）只发轻量索引事件：不含
+ * goal/nodes/edges/slots 图数据，仅用于感知 created 开画布与刷列表。
+ */
 export interface SopLiveEvent {
   action: "created" | "updated" | "published";
   sop_id: string;
   environment: "draft" | "production";
   version: number;
   name: string;
-  goal: string;
-  nodes: SopNode[];
-  edges: SopEdge[];
-  slots: SopSlot[];
+  goal?: string;
+  nodes?: SopNode[];
+  edges?: SopEdge[];
+  slots?: SopSlot[];
+  owner_id?: string;
 }
 
 export interface SopNode {
@@ -390,6 +395,52 @@ export const expertCapabilityApi = {
 // SOP 资产
 // ---------------------------------------------------------------------------
 
+/**
+ * 手动读一条 SSE 流并按帧回调（EventSource 不能带自定义鉴权 header，
+ * 与 streamBackupJob 同款）；onEvent 每收到一条 data 帧回调一次，
+ * signal 中止时流自然结束。回调异常不影响后续帧。
+ */
+async function readSopEventStream(
+  url: string,
+  onEvent: (event: SopLiveEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch(url, {
+    headers: { ...buildAuthHeaders(), Accept: "text/event-stream" },
+    signal,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `SSE connection failed: ${res.status}`);
+  }
+  if (!res.body) throw new Error("No SOP event stream received");
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  // 逐块读取 → 按 SSE 帧分隔符（空行）切分 → 仅消费 data: 帧
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const frames = buffer.split("\n\n");
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) {
+      const dataLine = frame
+        .split("\n")
+        .find((line) => line.startsWith("data: "));
+      if (!dataLine) continue;
+      try {
+        const parsed = JSON.parse(dataLine.slice(6)) as {
+          event?: SopLiveEvent;
+        };
+        if (parsed.event) onEvent(parsed.event);
+      } catch {
+        // 心跳/非 JSON 帧忽略
+      }
+    }
+  }
+}
+
 export const sopApi = {
   list: (status = "", q = "", ownerId = "", full = false, environment = "") =>
     request<SopRecord[]>(
@@ -478,52 +529,35 @@ export const sopApi = {
 
   /**
    * 订阅一条 SOP 的实时编辑流（AI tool / 画布保存后全量快照）。
-   *
-   * 采用 fetch + buildAuthHeaders 手动读流（EventSource 不能带自定义
-   * 鉴权 header，与 streamBackupJob 同款）；onEvent 每收到一条 SSE
-   * data 帧回调一次，signal 中止时流自然结束。回调异常不影响后续帧。
    */
-  streamEvents: async (
+  streamEvents: (
     sopId: string,
     onEvent: (event: SopLiveEvent) => void,
     signal?: AbortSignal,
-  ): Promise<void> => {
-    const url = getApiUrl(`/admin/sops/${enc(sopId)}/events`);
-    const res = await fetch(url, {
-      headers: { ...buildAuthHeaders(), Accept: "text/event-stream" },
+  ): Promise<void> =>
+    readSopEventStream(
+      getApiUrl(`/admin/sops/${enc(sopId)}/events`),
+      onEvent,
       signal,
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new Error(text || `SSE connection failed: ${res.status}`);
-    }
-    if (!res.body) throw new Error("No SOP event stream received");
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    // 逐块读取 → 按 SSE 帧分隔符（空行）切分 → 仅消费 data: 帧
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const frames = buffer.split("\n\n");
-      buffer = frames.pop() ?? "";
-      for (const frame of frames) {
-        const dataLine = frame
-          .split("\n")
-          .find((line) => line.startsWith("data: "));
-        if (!dataLine) continue;
-        try {
-          const parsed = JSON.parse(dataLine.slice(6)) as {
-            event?: SopLiveEvent;
-          };
-          if (parsed.event) onEvent(parsed.event);
-        } catch {
-          // 心跳/非 JSON 帧忽略
-        }
-      }
-    }
-  },
+    ),
+
+  /**
+   * 订阅一位员工的 SOP 活动流（轻量索引事件，不含图数据）。
+   *
+   * AI 对话新建 SOP 时前端尚不知 sop_id；面板订阅本流感知 created
+   * 后自动打开画布（画布内再由 streamEvents 接管实时重绘），
+   * updated/published 用于刷新列表与状态胶囊。
+   */
+  streamExpertEvents: (
+    expertId: string,
+    onEvent: (event: SopLiveEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<void> =>
+    readSopEventStream(
+      getApiUrl(`/admin/experts/${enc(expertId)}/sops/events`),
+      onEvent,
+      signal,
+    ),
 };
 
 // ---------------------------------------------------------------------------

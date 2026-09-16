@@ -25,11 +25,19 @@ describe("buildCustomLoopMode", () => {
       "iteration",
       "token_budget",
       "doom_loop",
-      "completion_rubric",
+      "independent_verify",
     ]);
-    expect(second.gates[second.gates.length - 1]?.params.max_evaluations).toBe(
-      3,
-    );
+    // quality 模板以独立验收收尾（不再用模型自评的 completion 信号门）
+    expect(
+      second.gates[second.gates.length - 1]?.params.max_repairs,
+    ).toBe(1);
+  });
+
+  it("keeps the self-graded rubric available as an explicit choice", () => {
+    const mode = buildCustomLoopMode([], "Strict", "strict", "safe", 1);
+
+    // safe 模板仍用自评式 qualitative rubric，两套质量门共存
+    expect(mode.gates.map((gate) => gate.type)).toContain("qualitative_rubric");
   });
 
   it("keeps generated identity within backend limits", () => {

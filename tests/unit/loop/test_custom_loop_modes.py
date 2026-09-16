@@ -222,7 +222,7 @@ def test_compiler_preserves_pipeline_order() -> None:
     assert [gate.priority for gate in handler.gates] == [0, 10]
 
 
-def test_catalog_contains_only_seven_builtin_gates() -> None:
+def test_catalog_contains_only_eight_builtin_gates() -> None:
     entries = get_gate_catalog().describe()
 
     assert {entry["type"] for entry in entries} == {
@@ -232,12 +232,17 @@ def test_catalog_contains_only_seven_builtin_gates() -> None:
         "timeout",
         "tool_call_budget",
         "qualitative_rubric",
+        "independent_verify",
         "completion_rubric",
     }
     groups = {entry["type"]: entry["exclusive_group"] for entry in entries}
     assert groups["qualitative_rubric"] == "completion_rubric"
     assert groups["completion_rubric"] == "completion_rubric"
+    # 独立验收与自评门互斥：同一 exclusive group 只能启用一个
+    assert groups["independent_verify"] == "completion_rubric"
     assert groups["iteration"] is None
+    costs = {entry["type"]: entry["cost"] for entry in entries}
+    assert costs["independent_verify"] == "model_call"
 
 
 def _rubric_context() -> tuple[dict, Msg]:

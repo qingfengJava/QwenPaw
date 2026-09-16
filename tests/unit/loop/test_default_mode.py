@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from qwenpaw.loop.gates.doom_loop import DoomLoopGate
+from qwenpaw.loop.gates.independent_verify import IndependentVerifierGate
 from qwenpaw.loop.gates.iteration import IterationGate
 from qwenpaw.modes.default import DefaultMode
 
@@ -26,6 +27,7 @@ def _running_config(
     max_iters=100,
     doom_enabled=True,
     rubric_enabled=True,
+    independent_verify_enabled=True,
 ):
     doom_stage = SimpleNamespace(
         after=3,
@@ -47,10 +49,18 @@ def _running_config(
         prompt="continue working",
         max_interventions=1,
     )
+    independent_verify = SimpleNamespace(
+        enabled=independent_verify_enabled,
+        max_repairs=1,
+        timeout_seconds=60,
+        min_objective_chars=24,
+        escalate_notice=True,
+    )
     loop = SimpleNamespace(
         iteration=iteration,
         doom_loop=doom,
         rubric=rubric,
+        independent_verify=independent_verify,
     )
     return SimpleNamespace(
         max_iters=max_iters,
@@ -96,8 +106,13 @@ async def test_turn_start_builds_configured_gates():
 
     await mode.on_turn_start(_context(_running_config()))
 
-    assert len(mode.handler.gates) == 3
+    assert len(mode.handler.gates) == 4
     assert _find_gate(mode, IterationGate)._state() is not None
+    # 独立验收门默认挂载（不需要时由 loop.independent_verify.enabled 关掉）
+    assert isinstance(
+        _find_gate(mode, IndependentVerifierGate),
+        IndependentVerifierGate,
+    )
 
 
 @pytest.mark.asyncio
@@ -151,6 +166,7 @@ async def test_config_change_rebuilds_without_duplicate_registration():
             _running_config(
                 doom_enabled=False,
                 rubric_enabled=False,
+                independent_verify_enabled=False,
             ),
         ),
     )

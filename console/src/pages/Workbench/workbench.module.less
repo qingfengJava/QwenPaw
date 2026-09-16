@@ -737,6 +737,57 @@
   color: var(--wb-ink-3);
 }
 
+/* 卡片内的治理标识行：部门 / 可见范围 / 编排模式，胶囊沿用 .pill 配色 */
+.agentCardBadges {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* 专家团成员头像堆叠：负边距压叠，超出折叠为 +N */
+.memberRow {
+  display: flex;
+  align-items: center;
+  min-height: 26px;
+}
+
+.memberChip {
+  margin-left: -8px;
+  border: 2px solid var(--wb-surface);
+  border-radius: 50%;
+  line-height: 0;
+}
+
+.memberChip:first-child {
+  margin-left: 0;
+}
+
+.memberMore {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-left: -8px;
+  border: 2px solid var(--wb-surface);
+  border-radius: 50%;
+  background: var(--wb-surface-muted);
+  color: var(--wb-ink-2);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* 首屏占位卡：只撑住网格节奏，不画任何内容 */
+.agentCardSkeleton {
+  min-height: 158px;
+  border: 1px dashed var(--wb-line);
+  border-radius: var(--wb-radius-card);
+  background: var(--wb-surface-muted);
+  animation: wbSkeletonPulse 1.4s ease-in-out infinite;
+}
+
 /* 停用态：降饱和而非整卡压透明度（保证文字对比度达标）*/
 .agentCardDisabled {
   background: var(--wb-surface-muted);
@@ -832,6 +883,11 @@
 .pill[data-tone="gray"] {
   --wb-pill-bg: var(--wb-tone-gray-bg);
   --wb-pill-ink: var(--wb-tone-gray-ink);
+}
+
+.pill[data-tone="teal"] {
+  --wb-pill-bg: var(--wb-tone-teal-bg);
+  --wb-pill-ink: var(--wb-tone-teal-ink);
 }
 
 /* ─── 快捷入口 ─────────────────────────────────────────────────────────── */
@@ -995,6 +1051,17 @@
   animation-delay: -2s;
 }
 
+@keyframes wbSkeletonPulse {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
 /* ─── 响应式（容器查询：内容区宽度随侧栏折叠变化）───────────────────────── */
 
 @container (max-width: 1180px) {
@@ -1079,7 +1146,8 @@
 @media (prefers-reduced-motion: reduce) {
   .rise,
   .heroVisualOrb,
-  .heroLead {
+  .heroLead,
+  .agentCardSkeleton {
     animation: none;
   }
 

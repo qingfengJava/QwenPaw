@@ -1868,7 +1868,8 @@
       "user": "用户输入",
       "intent": "意图识别",
       "llm": "LLM 思考",
-      "end": "逻辑结束"
+      "end": "逻辑结束",
+      "verify": "独立验收"
     },
     "tools": {
       "web_search": "联网搜索",
@@ -2739,7 +2740,16 @@
       "safeTemplate": "安全运行",
       "researchTemplate": "预算研究",
       "qualityTemplate": "质量优先",
-      "blankTemplate": "空白流程"
+      "blankTemplate": "空白流程",
+      "independentVerifyTitle": "独立验收",
+      "independentVerifyDescription": "复杂任务的产出由独立模型裁决，未通过时按返工指令修正",
+      "maxRepairs": "最大返工轮次",
+      "maxRepairsHelp": "产出被打回返工的次数上限；超出后直接把未达成的要求反馈给你",
+      "verifyTimeout": "验收超时（秒）",
+      "verifyMinChars": "启用验收的最小请求长度",
+      "verifyMinCharsHelp": "短于该长度的请求不做验收，保证简短追问零额外成本",
+      "verifyEscalateNotice": "返工预算用尽时反馈未达成的要求",
+      "independentVerifyHelp": "只有被判定为复杂（多交付物、跨专业）的请求才会发起验收调用；产出由独立模型上下文裁决，而不是执行模型自评"
     },
     "doomLoopEnabled": "重复行为保护",
     "doomLoopEnabledTooltip": "当 Agent 陷入重复相同操作时自动介入",
@@ -5094,6 +5104,131 @@
       "time": "时间",
       "tool": "工具",
       "toolName": "工具名"
+    }
+  },
+  "employee": {
+    "kind": {
+      "agent": "原生智能体",
+      "expert": "数字员工",
+      "team": "专家团",
+      "workflow": "工作流"
+    },
+    "visibility": {
+      "org": "全员共享",
+      "department": "部门专属",
+      "private": "仅创建者"
+    },
+    "lifecycle": {
+      "draft": "草稿",
+      "published": "已发布",
+      "archived": "已归档"
+    },
+    "teamMode": {
+      "router": "智能调度",
+      "pipeline": "顺序流水线"
+    },
+    "team": {
+      "memberCount": "{{count}} 位成员协同",
+      "sharedTo": "共享至"
+    },
+    "tab": {
+      "all": "全部员工",
+      "agents": "智能体",
+      "teams": "专家团",
+      "workflow": "工作流"
+    },
+    "metric": {
+      "total": "在册员工",
+      "running": "运行中",
+      "teams": "专家团",
+      "unassigned": "待归属部门",
+      "unassignedHint": "尚未指定归属"
+    },
+    "agentSub": {
+      "all": "全部",
+      "native": "原生智能体"
+    },
+    "filter": {
+      "department": "归属部门",
+      "visibility": "可见范围",
+      "lifecycle": "发布状态",
+      "search": "搜索名称 / 职称 / 描述",
+      "reset": "重置筛选",
+      "groupByDepartment": "按部门分组"
+    },
+    "view": {
+      "grid": "卡片视图",
+      "table": "治理表格"
+    },
+    "action": {
+      "governance": "归属与可见性",
+      "capabilities": "能力配置",
+      "editBasic": "编辑基础信息",
+      "enterWorkbench": "进入工作台",
+      "moveUp": "上移",
+      "moveDown": "下移",
+      "pin": "置顶",
+      "unpin": "取消置顶",
+      "organization": "组织部门"
+    },
+    "create": "新建员工",
+    "createOf": {
+      "agent": "新建智能体",
+      "expert": "招聘数字员工",
+      "team": "组建专家团"
+    },
+    "governance": {
+      "title": "归属与可见性",
+      "department": "归属部门",
+      "departmentPlaceholder": "选择归属部门（可留空表示平台级员工）",
+      "departmentHint": "归属决定「部门专属」时默认谁能用；平台级员工不归属任何部门。",
+      "visibility": "可见范围",
+      "visibilityHint": {
+        "org": "全员共享：所有部门的账号都能在数字员工列表与对话入口看到并使用。",
+        "department": "部门专属：仅归属部门与额外授权部门（含下属部门）的成员可见可用。",
+        "private": "仅创建者：只有该员工的归属人可见可用，用于个人专属助理。"
+      },
+      "granted": "额外授权部门",
+      "grantedPlaceholder": "选择还可使用该员工的部门",
+      "grantedHint": "可见集合 = 归属部门 ∪ 授权部门，授权自动覆盖其下属部门。",
+      "needDepartment": "部门专属至少需要一个归属部门或授权部门",
+      "impact": "保存后立即生效：列表可见性与对话运行期权限由同一份治理投影决定，不会出现「看得到却用不了」。",
+      "saved": "治理设置已保存",
+      "failed": "治理设置保存失败"
+    },
+    "batch": {
+      "selected": "已选择 {{count}} 位员工",
+      "govern": "批量设置归属与可见性",
+      "clear": "取消选择"
+    },
+    "group": {
+      "unassigned": "未归属部门"
+    },
+    "table": {
+      "colName": "员工",
+      "colKind": "形态",
+      "colDepartment": "归属部门",
+      "colVisibility": "可见范围",
+      "colShared": "共享部门",
+      "colStatus": "状态",
+      "colModel": "模型",
+      "colMembers": "成员",
+      "colActions": "操作"
+    },
+    "empty": {
+      "title": "没有匹配的数字员工",
+      "desc": "调整分类 Tab 或筛选条件，也可以新建一位数字员工。"
+    },
+    "workflow": {
+      "emptyTitle": "工作流平台对接中",
+      "emptyDesc": "工作流是与智能体、专家团并列的第三种数字员工形态：以确定性节点编排流程，适合强合规、步骤固定的业务链路。",
+      "emptyHint": "该分类骨架已就绪，接入外部工作流平台后会自动出现在此处，无需再改页面结构。"
+    },
+    "loadFailed": "数字员工列表加载失败",
+    "retry": "重新加载",
+    "reorderFailed": "排序保存失败",
+    "hint": {
+      "notPublished": "该员工尚未发布，暂无工作台"
     }
   }
 }

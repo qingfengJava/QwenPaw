@@ -8,7 +8,7 @@
  * 设计依据: docs/superpowers/specs/2026-09-14-sop-employee-owned-capability-design.md
  * @author qingfeng
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Button,
   Drawer,
@@ -90,6 +90,68 @@ export function ExpertSopPanel({
     await load();
     await onChanged();
   };
+
+  // ---- AI 实时联动：订阅员工级 SOP 活动流（画布跟随 + 列表同步） ----
+
+  // 最新 refresh 经 ref 传递：onChanged 引用每次渲染都变，避免重订阅
+  const refreshRef = useRef(refresh);
+  refreshRef.current = refresh;
+  // 列表刷新节流定时器（AI 逐步 update 密集事件，800ms trailing 合并）
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 面板级订阅：AI 新建 SOP 时前端尚不知 sop_id，经员工级轻量流感知
+  // created 后自动打开画布（ensureDraft 拿草稿）；画布打开后的实时
+  // 重绘由 SopFlowCanvas 内部的 sop 级订阅接管，面板只管列表与状态。
+  useEffect(() => {
+    if (!expertId) {
+      return;
+    }
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        await sopApi.streamExpertEvents(
+          expertId,
+          (event) => {
+            if (event.action === "created") {
+              // AI 刚新建草稿：刷新列表并自动弹出画布；
+              // 画布已开同一条则不覆盖（内部实时重绘继续）
+              void refreshRef.current();
+              void (async () => {
+                try {
+                  const draft = await sopApi.ensureDraft(event.sop_id);
+                  setEditingSop((current) =>
+                    current?.id === draft.id ? current : draft,
+                  );
+                } catch {
+                  // 拉草稿失败静默：列表里仍可手动打开
+                }
+              })();
+              return;
+            }
+            // updated（草稿编辑）/published（升版本+绑定）只刷列表与
+            // 状态；画布开着时实时重绘由画布内 sop 级订阅负责
+            if (refreshTimer.current) {
+              return;
+            }
+            refreshTimer.current = setTimeout(() => {
+              refreshTimer.current = null;
+              void refreshRef.current();
+            }, 800);
+          },
+          controller.signal,
+        );
+      } catch {
+        // 流中断（切页/网络抖动）静默——下次进入面板重新订阅
+      }
+    })();
+    return () => {
+      controller.abort();
+      if (refreshTimer.current) {
+        clearTimeout(refreshTimer.current);
+        refreshTimer.current = null;
+      }
+    };
+  }, [expertId]);
 
   /** 状态胶囊：区分草稿环境（未发布变更/纯草稿）与线上环境（生效/未生效）。 */
   const statusOf = (sop: SopRecord) => {

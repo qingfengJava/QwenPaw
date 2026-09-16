@@ -203,6 +203,16 @@ def sop_topic(tenant_id: str, sop_id: str) -> str:
     return f"sop:{tenant_id}:{sop_id}"
 
 
+def sop_expert_topic(tenant_id: str, expert_id: str) -> str:
+    """Canonical topic name for one expert's SOP activity stream.
+
+    员工级轻量事件通道（不含图数据）：AI 新建 SOP 时前端尚不知
+    sop_id，无法订阅 sop 级 topic；面板经本 topic 感知 created 事件
+    后自动打开画布，再由 sop 级订阅接管实时重绘。
+    """
+    return f"sop-expert:{tenant_id}:{expert_id}"
+
+
 def now_ms() -> int:
     """Epoch milliseconds (event timestamps for clients)."""
     return int(time.time() * 1000)

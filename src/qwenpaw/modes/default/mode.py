@@ -12,6 +12,7 @@ from ...loop.gates import (
     StopHandlerRegistration,
 )
 from ...loop.gates.doom_loop import DoomLoopGate
+from ...loop.gates.independent_verify import IndependentVerifierGate
 from ...loop.gates.iteration import IterationGate
 from ...loop.gates.rubric import QualitativeRubricGate
 from ...loop.gates.runner import clear_pending_gate_state
@@ -119,6 +120,17 @@ class DefaultMode(AgentMode):
                 QualitativeRubricGate(
                     rubric=loop_config.rubric.prompt,
                     max_evaluations=(loop_config.rubric.max_interventions),
+                ),
+            )
+        # 独立验收：由 verification 内核裁决，不再让执行模型自评
+        independent_verify = loop_config.independent_verify
+        if independent_verify.enabled:
+            gates.append(
+                IndependentVerifierGate(
+                    max_repairs=independent_verify.max_repairs,
+                    timeout_seconds=independent_verify.timeout_seconds,
+                    min_objective_chars=independent_verify.min_objective_chars,
+                    escalate_notice=independent_verify.escalate_notice,
                 ),
             )
 
