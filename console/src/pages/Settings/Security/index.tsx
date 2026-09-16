@@ -8,6 +8,7 @@ import {
   SkillScannerSection,
   FileGuardSection,
   AllowNoAuthHostsTab,
+  AccountAuthTab,
 } from "./components";
 import { PageHeader } from "@/components/PageHeader";
 import styles from "./index.module.less";
@@ -98,6 +99,15 @@ function SecurityPage() {
           activeKey={activeTab}
           onChange={setActiveTab}
           items={[
+            {
+              key: "accountAuth",
+              label: (
+                <span className={styles.tabLabel}>
+                  {t("security.accountAuth.tab")}
+                </span>
+              ),
+              children: <AccountAuthTab />,
+            },
             {
               key: "toolGuard",
               label: (

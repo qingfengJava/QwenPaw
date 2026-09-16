@@ -114,6 +114,21 @@ export interface AllowNoAuthHostsUpdateBody {
   hosts: string[];
 }
 
+// ── Account Auth Toggle types ──────────────────────────────
+
+export interface AuthEnabledResponse {
+  /** Whether account authentication is currently required. */
+  auth_enabled: boolean;
+  /** True when QWENPAW_AUTH_ENABLED env overrides the config value. */
+  env_overridden: boolean;
+  /** Whether at least one account is registered (precondition hint). */
+  has_users: boolean;
+}
+
+export interface AuthEnabledUpdateBody {
+  auth_enabled: boolean;
+}
+
 export const securityApi = {
   // ── Tool Guard ──────────────────────────────────────────────────
 
@@ -224,6 +239,17 @@ export const securityApi = {
 
   updateAllowNoAuthHosts: (body: AllowNoAuthHostsUpdateBody) =>
     request<AllowNoAuthHostsResponse>("/config/security/allow-no-auth-hosts", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+
+  // ── Account Auth Toggle ───────────────────────────────────
+
+  getAuthEnabled: () =>
+    request<AuthEnabledResponse>("/config/security/auth-enabled"),
+
+  updateAuthEnabled: (body: AuthEnabledUpdateBody) =>
+    request<AuthEnabledResponse>("/config/security/auth-enabled", {
       method: "PUT",
       body: JSON.stringify(body),
     }),

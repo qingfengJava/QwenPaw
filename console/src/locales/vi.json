@@ -642,7 +642,9 @@
     "runtimeRestartConfirmDescription": "Tác vụ đang chạy sẽ bị gián đoạn trong khi khởi động lại.",
     "runtimeRestart": "Khởi động lại môi trường",
     "runtimeRestartSuccess": "Đã khởi động lại môi trường",
-    "runtimeRestartFailed": "Không thể khởi động lại môi trường"
+    "runtimeRestartFailed": "Không thể khởi động lại môi trường",
+    "displayName": "Display name",
+    "displayNamePlaceholder": "Enter a display name"
   },
   "chat": {
     "groups": {
@@ -2333,6 +2335,25 @@
       "saveSuccess": "Đã lưu cài đặt Skill Scanner",
       "saveFailed": "Lưu thất bại",
       "loadFailed": "Tải thất bại"
+    },
+    "accountAuth": {
+      "tab": "Account Auth",
+      "title": "Account authentication",
+      "description": "Off = local single-user mode (no login). On = every API requires a Bearer token; the loopback whitelist still bypasses auth.",
+      "envOverridden": "Controlled by QWENPAW_AUTH_ENABLED; the switch is read-only.",
+      "switchLabel": "Enable account authentication",
+      "statusOn": "On: login required",
+      "statusOff": "Off: local, no login",
+      "loadFailed": "Failed to load auth status",
+      "saveFailed": "Failed to save auth setting",
+      "enableSuccess": "Account authentication enabled",
+      "disableSuccess": "Account authentication disabled",
+      "reloginHint": "Sign in with an account after enabling",
+      "noUserTitle": "No account registered",
+      "noUserContent": "Register an admin account before enabling auth, otherwise remote users will be locked out. Go to the login page to complete the first registration?",
+      "goRegister": "Go register",
+      "enableConfirmTitle": "Enable account authentication?",
+      "enableConfirmContent": "After enabling, unauthenticated users cannot access the API. Make sure a usable account is already registered."
     }
   },
   "channels": {
@@ -2721,7 +2742,8 @@
       "get_skills": "Lấy kỹ năng",
       "browser_navigate": "Mở trang",
       "browser_click": "Bấm trang"
-    }
+    },
+    "userEmpty": "No users"
   },
   "loop": {
     "gotoSettings": "Cài đặt Loop Agent",
@@ -2890,6 +2912,20 @@
       "emptyDesc": "Luồng công việc là hình thái nhân viên số thứ ba bên cạnh agent và đội chuyên gia: biên soạn quy trình bằng các bước xác định, phù hợp chuỗi nghiệp vụ tuân thủ chặt chẽ và cố định.",
       "emptyHint": "Khung phân loại đã sẵn sàng: sau khi kết nối nền tảng luồng công việc bên ngoài, nội dung sẽ tự xuất hiện tại đây, không cần sửa cấu trúc trang.",
       "emptyTitle": "Đang chờ kết nối nền tảng luồng công việc"
+    }
+  },
+  "admin": {
+    "users": {
+      "bindingsTitle": "Channel identity bindings",
+      "bindingsAdd": "New binding",
+      "bindingsEmpty": "No channel identities bound to accounts yet",
+      "bindingsChannel": "Channel",
+      "bindingsExternal": "External user id",
+      "bindingsAccount": "Account",
+      "bindingsChannelPlaceholder": "Select or type a channel",
+      "bindingCreated": "Binding created",
+      "bindingDeleted": "Binding removed",
+      "bindingDeleteConfirm": "Remove this binding?"
     }
   }
 }

@@ -227,6 +227,39 @@ async def test_query_environment_and_channel_filters(index_dir: Path):
 
 
 @pytest.mark.asyncio
+async def test_query_user_id_filter(index_dir: Path):
+    """P0：运行日志按发起用户筛选（user_id 精确匹配）。"""
+    await store.append_run_index(_row("run-alice", user_id="alice"))
+    await store.append_run_index(_row("run-bob", user_id="bob"))
+
+    items, total = await store.query_run_logs(user_id="alice")
+    assert total == 1
+    assert [i["run_id"] for i in items] == ["run-alice"]
+
+    # 未指定 user_id 时不过滤（两条都在）。
+    _, total_all = await store.query_run_logs()
+    assert total_all == 2
+
+
+@pytest.mark.asyncio
+async def test_list_run_users_distinct_and_scoped(index_dir: Path):
+    """P0：distinct 发起人列表，按 agent 收窄且跳过空身份。"""
+    await store.append_run_index(_row("r1", user_id="alice", agent_id="agent-a"))
+    await store.append_run_index(_row("r2", user_id="bob", agent_id="agent-a"))
+    await store.append_run_index(_row("r3", user_id="alice", agent_id="agent-a"))
+    await store.append_run_index(_row("r4", user_id="", agent_id="agent-a"))
+    await store.append_run_index(_row("r5", user_id="carol", agent_id="agent-b"))
+
+    # 全域 distinct（去重 + 去空），不区分 agent。
+    users = await store.list_run_users()
+    assert set(users) == {"alice", "bob", "carol"}
+
+    # 指定 agent 时只收该数据域内的发起人。
+    scoped = await store.list_run_users(agent_id="agent-a")
+    assert set(scoped) == {"alice", "bob"}
+
+
+@pytest.mark.asyncio
 async def test_query_prunes_shards_outside_time_window(
     index_dir: Path,
     monkeypatch: pytest.MonkeyPatch,

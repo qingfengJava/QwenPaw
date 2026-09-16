@@ -138,6 +138,7 @@ def _matches(
     channel: str | None,
     source: str | None,
     environment: str | None,
+    user_id: str | None,
     keyword: str | None,
     start_ts: float | None,
     end_ts: float | None,
@@ -152,6 +153,8 @@ def _matches(
     if source is not None and row.get("source") != source:
         return False
     if environment is not None and row.get("environment") != environment:
+        return False
+    if user_id is not None and (row.get("user_id") or "") != user_id:
         return False
     started_at = row.get("started_at")
     if start_ts is not None and isinstance(started_at, (int, float)):
@@ -293,6 +296,7 @@ async def query_run_logs(
     channel: str | None = None,
     source: str | None = None,
     environment: str | None = None,
+    user_id: str | None = None,
     keyword: str | None = None,
     start_ts: float | None = None,
     end_ts: float | None = None,
@@ -335,6 +339,7 @@ async def query_run_logs(
                 channel=channel,
                 source=source,
                 environment=environment,
+                user_id=user_id,
                 keyword=keyword,
                 start_ts=start_ts,
                 end_ts=end_ts,
@@ -346,9 +351,50 @@ async def query_run_logs(
     return page, total
 
 
+# 用户筛选下拉的选项上限（30 天窗口内 distinct 发起用户数远小于此值）。
+_MAX_DISTINCT_USERS = 200
+
+
+async def list_run_users(
+    *,
+    agent_id: str | None = None,
+) -> list[str]:
+    """Return distinct non-empty ``user_id`` values across the index.
+
+    Feeds the run-log page's user filter dropdown; rows without an
+    identity (legacy/anonymised) are skipped. Newest shards first so a
+    hit ``_MAX_DISTINCT_USERS`` cap keeps the most recent senders.
+    """
+    # 无索引目录时直接返回空列表，避免无意义的 glob。
+    if not _INDEX_DIR.exists():
+        return []
+
+    # 分片按天名倒序，新用户先入集合。
+    shard_paths = sorted(
+        (p for p in _INDEX_DIR.glob("index-*.jsonl")),
+        key=lambda p: p.name,
+        reverse=True,
+    )
+    seen: dict[str, None] = {}
+    for path in shard_paths:
+        rows = await run_sync_io(_read_shard_rows, path)
+        for row in reversed(rows):
+            # 仅统计同域 agent（未指定时跨 agent 全量）。
+            if agent_id is not None and row.get("agent_id") != agent_id:
+                continue
+            user = str(row.get("user_id") or "").strip()
+            if not user:
+                continue
+            seen.setdefault(user, None)
+            if len(seen) >= _MAX_DISTINCT_USERS:
+                return list(seen)
+    return list(seen)
+
+
 __all__ = [
     "RETENTION_DAYS",
     "append_run_index",
+    "list_run_users",
     "normalize_index_entry",
     "query_run_logs",
     "startup_sweep",

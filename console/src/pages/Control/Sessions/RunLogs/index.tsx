@@ -67,11 +67,21 @@ function StatusIcon({ status }: { status: string }) {
   );
 }
 
-/** DiceBear avatar for the chatting user (stable seed = user_id). */
-function RunUserAvatar({ userId }: { userId: string }) {
-  const avatar = useExpertAvatarUri(null, userId);
-  if (avatar) {
-    return <img className={styles.userAvatar} src={avatar} alt="" />;
+/**
+ * Avatar for the chatting user: a custom profile avatar URL wins, otherwise
+ * fall back to DiceBear (stable seed = user_id), then to an initial letter.
+ */
+function RunUserAvatar({
+  userId,
+  avatarUrl,
+}: {
+  userId: string;
+  avatarUrl?: string;
+}) {
+  const generated = useExpertAvatarUri(null, userId);
+  const src = avatarUrl || generated;
+  if (src) {
+    return <img className={styles.userAvatar} src={src} alt="" />;
   }
   return (
     <span className={styles.userAvatarFallback}>
@@ -105,6 +115,8 @@ export default function RunLogsPage() {
     setPage,
     reset,
     refresh,
+    runUsers,
+    profiles,
   } = useRunLogs(effectiveAgent);
   // Column visibility (competitor's column-settings popover).
   const [visibleKeys, setVisibleKeys] = useState<string[]>([]);
@@ -149,17 +161,22 @@ export default function RunLogsPage() {
         key: "user_id",
         title: t("runLogs.column.user", "用户"),
         dataIndex: "user_id",
-        width: 140,
+        width: 160,
         ellipsis: true,
-        render: (text: string) =>
-          text ? (
+        render: (text: string) => {
+          if (!text) {
+            return "—";
+          }
+          // 昵称优先取展示资料（display_name），无则回退 username；头像同理。
+          const profile = profiles.get(text);
+          const label = profile?.display_name || text;
+          return (
             <span className={styles.userCell} title={text}>
-              <RunUserAvatar userId={text} />
-              <span className={styles.userName}>{text}</span>
+              <RunUserAvatar userId={text} avatarUrl={profile?.avatar} />
+              <span className={styles.userName}>{label}</span>
             </span>
-          ) : (
-            "—"
-          ),
+          );
+        },
       },
       {
         key: "started_at",
@@ -253,7 +270,7 @@ export default function RunLogsPage() {
         },
       },
     ],
-    [t, openRunDetail],
+    [t, openRunDetail, profiles],
   );
 
   // 列可见性：空数组 = 默认全部显示；用户取消勾选后才记录“白名单”。
@@ -321,6 +338,21 @@ export default function RunLogsPage() {
             { value: "online", label: t("runLogs.env.online", "线上") },
             { value: "debug", label: t("runLogs.env.debug", "调试") },
           ]}
+        />
+        <Select
+          allowClear
+          showSearch
+          className={styles.userSelect}
+          placeholder={t("runLogs.column.user", "用户")}
+          value={query.user || undefined}
+          onChange={(value) => patchQuery({ user: (value ?? "") as string })}
+          // 选项 = distinct 发起人；展示昵称（display_name）优先，无则 username。
+          options={runUsers.map((user) => ({
+            value: user,
+            label: profiles.get(user)?.display_name || user,
+          }))}
+          optionFilterProp="label"
+          notFoundContent={t("runLogs.userEmpty", "暂无用户")}
         />
         <RangePicker
           className={styles.rangePicker}

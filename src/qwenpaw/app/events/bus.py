@@ -50,8 +50,13 @@ class EventBus(Protocol):
         self,
         topic: str,
         last_event_id: str = "",
+        replay: bool = True,
     ) -> AsyncIterator[BusEvent]:
-        """Stream events for *topic*, replaying from *last_event_id*."""
+        """Stream events for *topic*, replaying from *last_event_id*.
+
+        ``replay=False`` skips the retained-buffer replay and only
+        delivers events published after the subscription registers.
+        """
 
 
 class InProcessEventBus:
@@ -83,13 +88,20 @@ class InProcessEventBus:
         for subscriber in subscribers:
             subscriber.push(bus_event)
 
-    def subscribe(self, topic: str, last_event_id: str = ""):
+    def subscribe(
+        self,
+        topic: str,
+        last_event_id: str = "",
+        replay: bool = True,
+    ):
         """Return an async iterator over *topic* events.
 
         ``last_event_id`` (the SSE ``Last-Event-ID`` header) replays the
-        retained buffer tail so brief disconnects are seamless.
+        retained buffer tail so brief disconnects are seamless. Pass
+        ``replay=False`` to skip history entirely (side-effect consumers
+        that must not react to buffered events).
         """
-        return _Subscription(self, topic, last_event_id)
+        return _Subscription(self, topic, last_event_id, replay)
 
     # -- internals used by _Subscription ------------------------------
 
@@ -124,6 +136,7 @@ class _Subscription:
     bus: InProcessEventBus
     topic: str
     last_event_id: str
+    replay: bool = True
     _queue: "asyncio.Queue[BusEvent | None]" = field(
         default_factory=lambda: asyncio.Queue(maxsize=_BUFFER_SIZE),
     )
@@ -151,14 +164,17 @@ class _Subscription:
         if not self._registered:
             self.bus._register(self)
             self._registered = True
-            last_seq = 0
-            if self.last_event_id:
-                try:
-                    last_seq = int(self.last_event_id)
-                except ValueError:
-                    last_seq = 0
-            for event in self.bus._replay(self.topic, last_seq):
-                self.push(event)
+            # replay=False：跳过缓冲重放，仅收注册后新发布的事件。SOP
+            # 自动下钻等副作用消费方不得响应连接时回放的历史 created。
+            if self.replay:
+                last_seq = 0
+                if self.last_event_id:
+                    try:
+                        last_seq = int(self.last_event_id)
+                    except ValueError:
+                        last_seq = 0
+                for event in self.bus._replay(self.topic, last_seq):
+                    self.push(event)
         if self._closed:
             raise StopAsyncIteration
         event = await self._queue.get()

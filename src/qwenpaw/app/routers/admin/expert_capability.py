@@ -26,7 +26,7 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -984,16 +984,20 @@ async def sop_events(
 async def expert_sop_events(
     expert_id: str,
     last_event_id: str = Header(default="", alias="Last-Event-ID"),
+    replay: bool = Query(default=True),
 ) -> StreamingResponse:
     """SSE stream of one expert's SOP activity (panel follows AI authoring).
 
     员工级轻量事件流（不含图数据）：AI 对话新建 SOP 时前端尚不知
     sop_id，面板订阅本端点感知 created 后自动打开画布（画布内再由
     sop 级流接管实时重绘），updated/published 用于刷新列表与状态。
+
+    ``replay=false`` 跳过事件总线缓冲重放：自动开画布是副作用，连接时
+    回放历史 created 会导致一进入页面就误开画布，前端订阅默认传此参。
     """
     await _require_expert(expert_id)
     topic = sop_expert_topic(current_tenant_id(), expert_id)
-    subscription = get_event_bus().subscribe(topic, last_event_id)
+    subscription = get_event_bus().subscribe(topic, last_event_id, replay)
 
     async def generator():
         try:

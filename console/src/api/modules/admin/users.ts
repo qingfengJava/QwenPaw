@@ -2,7 +2,7 @@
  * admin/users.ts — `/admin/users` client (M4-6 backend, M5 frontend).
  */
 import { request } from "../../request";
-import type { AdminUserView } from "./types";
+import type { AdminUserView, IdentityBindingView } from "./types";
 
 export interface CreateUserBody {
   username: string;
@@ -50,4 +50,21 @@ export const adminUsersApi = {
     request<void>(`/admin/users/${enc(username)}/roles/${enc(role)}`, {
       method: "DELETE",
     }),
+
+  // ── Channel identity bindings ────────────────────────────
+
+  listIdentityBindings: () =>
+    request<IdentityBindingView[]>("/admin/users/identity-bindings"),
+
+  createIdentityBinding: (body: IdentityBindingView) =>
+    request<IdentityBindingView>("/admin/users/identity-bindings", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  deleteIdentityBinding: (channel: string, externalUserId: string) =>
+    request<void>(
+      `/admin/users/identity-bindings/${enc(channel)}/${enc(externalUserId)}`,
+      { method: "DELETE" },
+    ),
 };

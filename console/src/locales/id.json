@@ -1373,6 +1373,25 @@
       "edit": "Edit",
       "delete": "Hapus",
       "add": "Tambah Aturan"
+    },
+    "accountAuth": {
+      "tab": "Account Auth",
+      "title": "Account authentication",
+      "description": "Off = local single-user mode (no login). On = every API requires a Bearer token; the loopback whitelist still bypasses auth.",
+      "envOverridden": "Controlled by QWENPAW_AUTH_ENABLED; the switch is read-only.",
+      "switchLabel": "Enable account authentication",
+      "statusOn": "On: login required",
+      "statusOff": "Off: local, no login",
+      "loadFailed": "Failed to load auth status",
+      "saveFailed": "Failed to save auth setting",
+      "enableSuccess": "Account authentication enabled",
+      "disableSuccess": "Account authentication disabled",
+      "reloginHint": "Sign in with an account after enabling",
+      "noUserTitle": "No account registered",
+      "noUserContent": "Register an admin account before enabling auth, otherwise remote users will be locked out. Go to the login page to complete the first registration?",
+      "goRegister": "Go register",
+      "enableConfirmTitle": "Enable account authentication?",
+      "enableConfirmContent": "After enabling, unauthenticated users cannot access the API. Make sure a usable account is already registered."
     }
   },
   "checkpoints": {
@@ -2245,7 +2264,8 @@
       "get_skills": "Ambil Skill",
       "browser_navigate": "Buka Halaman",
       "browser_click": "Klik Halaman"
-    }
+    },
+    "userEmpty": "No users"
   },
   "environments": {
     "parent": "Pengaturan",
@@ -2398,7 +2418,9 @@
     "runtimeRestartConfirmDescription": "Tugas yang berjalan akan dihentikan selama runtime dimulai ulang.",
     "runtimeRestart": "Mulai ulang runtime",
     "runtimeRestartSuccess": "Runtime berhasil dimulai ulang",
-    "runtimeRestartFailed": "Gagal memulai ulang runtime"
+    "runtimeRestartFailed": "Gagal memulai ulang runtime",
+    "displayName": "Display name",
+    "displayNamePlaceholder": "Enter a display name"
   },
   "voiceTranscription": {
     "title": "Transkripsi Suara",
@@ -3702,6 +3724,20 @@
       "emptyDesc": "Alur kerja adalah bentuk karyawan digital ketiga di samping agen dan tim ahli: orkestrasi node deterministik untuk rantai bisnis yang padat regulasi dan langkahnya tetap.",
       "emptyHint": "Kerangka kategori sudah siap: setelah platform alur kerja eksternal terhubung, konten muncul otomatis di sini tanpa mengubah struktur halaman.",
       "emptyTitle": "Menunggu integrasi platform alur kerja"
+    }
+  },
+  "admin": {
+    "users": {
+      "bindingsTitle": "Channel identity bindings",
+      "bindingsAdd": "New binding",
+      "bindingsEmpty": "No channel identities bound to accounts yet",
+      "bindingsChannel": "Channel",
+      "bindingsExternal": "External user id",
+      "bindingsAccount": "Account",
+      "bindingsChannelPlaceholder": "Select or type a channel",
+      "bindingCreated": "Binding created",
+      "bindingDeleted": "Binding removed",
+      "bindingDeleteConfirm": "Remove this binding?"
     }
   }
 }

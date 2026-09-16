@@ -32,6 +32,8 @@ class UserView(BaseModel):
     username: str
     role: str
     display_name: str = ""
+    # 头像 URL（空 = 前端 DiceBear 兑底）。
+    avatar: str = ""
     disabled: bool = False
     created_at: str = ""
     org_id: str = "default"
@@ -74,6 +76,7 @@ def _view(username: str) -> UserView:
         username=user.username,
         role=user.role,
         display_name=user.display_name,
+        avatar=user.avatar,
         disabled=user.disabled,
         created_at=user.created_at.isoformat(),
         org_id=user.org_id,
@@ -169,6 +172,71 @@ async def update_user(
                 detail="org_id update failed",
             )
     return _view(username)
+
+
+# ── Channel identity bindings（渠道外部身份 → 账号绑定管理）──
+# 静态路径必须注册在 GET /{username} 之前，否则会被动态段吞掉。
+
+
+class IdentityBindingView(BaseModel):
+    """One channel-identity → account binding row."""
+
+    channel: str
+    external_user_id: str
+    username: str
+
+
+class IdentityBindingBody(BaseModel):
+    """Create-one-binding request."""
+
+    channel: str = Field(min_length=1, max_length=32)
+    external_user_id: str = Field(min_length=1, max_length=128)
+    username: str = Field(min_length=1, max_length=64)
+
+
+@router.get("/identity-bindings", response_model=List[IdentityBindingView])
+async def list_identity_bindings() -> List[IdentityBindingView]:
+    """List all channel identity bindings（绑定管理页数据源）。"""
+    rows = get_user_store().list_identity_bindings()
+    return [IdentityBindingView(**row) for row in rows]
+
+
+@router.post(
+    "/identity-bindings",
+    status_code=201,
+    response_model=IdentityBindingView,
+)
+async def create_identity_binding(
+    body: IdentityBindingBody,
+) -> IdentityBindingView:
+    """Bind one channel identity to a registered account."""
+    if not get_user_store().bind_identity(
+        body.channel.strip(),
+        body.external_user_id.strip(),
+        body.username.strip(),
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="binding failed (unknown user or invalid payload)",
+        )
+    return IdentityBindingView(
+        channel=body.channel.strip(),
+        external_user_id=body.external_user_id.strip(),
+        username=body.username.strip(),
+    )
+
+
+@router.delete(
+    "/identity-bindings/{channel}/{external_user_id}",
+    status_code=204,
+)
+async def delete_identity_binding(
+    channel: str,
+    external_user_id: str,
+) -> None:
+    """Remove one channel identity binding."""
+    if not get_user_store().unbind_identity(channel, external_user_id):
+        raise HTTPException(status_code=404, detail="Binding not found")
 
 
 @router.post("/{username}/password", status_code=204)

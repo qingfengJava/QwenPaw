@@ -32,6 +32,8 @@ class UserRecord(BaseModel):
     password_algo: str = PASSWORD_ALGO_ARGON2
     role: str = ROLE_EMPLOYEE
     display_name: str = ""
+    # 头像 URL（为空时前端按 username 作 DiceBear 种子生成，零存储成本）。
+    avatar: str = ""
     disabled: bool = False
     # XianWork enterprise: tenant (organization) this account belongs to.
     # Department membership lives in the PG ``department_members`` table;

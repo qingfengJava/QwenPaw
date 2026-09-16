@@ -2974,6 +2974,18 @@ class SkillScannerConfig(BaseModel):
 class SecurityConfig(BaseModel):
     """Top-level ``security`` section in config.json."""
 
+    # 账号认证总开关（运行时可在安全设置页切换）。环境变量
+    # QWENPAW_AUTH_ENABLED 显式设置时优先于本值（部署级覆盖）。
+    auth_enabled: bool = Field(
+        default=False,
+        description=(
+            "Master switch for account authentication. When True, API "
+            "access requires a registered account (Bearer token); the "
+            "allow_no_auth_hosts whitelist still applies. Keep False for "
+            "zero-config single-user local deployments. A explicit "
+            "QWENPAW_AUTH_ENABLED env var overrides this value."
+        ),
+    )
     tool_guard: ToolGuardConfig = Field(default_factory=ToolGuardConfig)
     file_guard: FileGuardConfig = Field(default_factory=FileGuardConfig)
     skill_scanner: SkillScannerConfig = Field(

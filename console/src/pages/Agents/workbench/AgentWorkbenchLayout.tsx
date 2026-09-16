@@ -22,10 +22,12 @@
  * 调试/发布/版本），无需依赖 id 前缀约定。
  */
 import {
+  Suspense,
   useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import type { ComponentType } from "react";
@@ -52,6 +54,7 @@ import { useAgentStore } from "@/stores/agentStore";
 import { useAppMessage } from "../../../hooks/useAppMessage";
 import {
   adminExpertsApi,
+  sopApi,
   type ExpertPreviewStatus,
 } from "../../../api/modules/admin";
 import WorkbenchChatPanel, {
@@ -81,6 +84,11 @@ const HeartbeatPage = lazyImportWithRetry("../../pages/Control/Heartbeat");
 // SOP 私有能力子页（expert 专属，GroupPane 按 isExpert 过滤可见性）
 const WorkbenchSopPage = lazyImportWithRetry(
   "../../pages/Agents/workbench/WorkbenchSopTab",
+);
+// SOP 画布下钻页（/studio/:aid/sop/:sopId）：懒加载隔离 @xyflow/react 体积，
+// 避免画布编辑器并入 entry chunk（manualChunks 分片门禁）
+const WorkbenchSopCanvasPage = lazyImportWithRetry(
+  "../../pages/Agents/workbench/WorkbenchSopCanvasPage",
 );
 
 /** 顶层 Tab → 分组键映射（能力 / 运维各为一个二级分组 Tab）。 */
@@ -118,6 +126,11 @@ function parseWorkbenchPath(pathname: string, aid: string): {
       top: first,
       sub: second && PAGE_COMPONENTS[second] ? second : null,
     };
+  }
+  // SOP 画布下钻页 /studio/:aid/sop/:sopId：顶部高亮“能力”（SOP 属能力
+  // 组，同 run log 详情归属会话 Tab），实际内容由 tabContent 的 sopCanvasId 分支优先渲染。
+  if (first === "sop") {
+    return { top: "capability", sub: null };
   }
   if (
     first &&
@@ -248,6 +261,10 @@ function AgentWorkbenchShell({ chatRoute = false }: { chatRoute?: boolean }) {
     location.pathname.match(
       /^\/studio\/[^/]+\/sessions\/runs\/([^/?#]+)/,
     )?.[1] ?? null;
+  // SOP 画布下钻页：/studio/:aid/sop/:sopId（画布编辑弹窗页面化，20260916）。
+  const sopCanvasId =
+    location.pathname.match(/^\/studio\/[^/]+\/sop\/([^/?#]+)/)?.[1] ??
+    null;
 
   // 顶层 Tab 恒等跳转（路径由沙箱统一解析）。
   const handleTopTab = (key: string) => {
@@ -274,6 +291,57 @@ function AgentWorkbenchShell({ chatRoute = false }: { chatRoute?: boolean }) {
     return () =>
       window.removeEventListener("qwenpaw:ai-tune-request", onAiTuneRequest);
   }, []);
+
+  // ── SOP 画布自动下钻（AI 绘制体验，20260916）──
+  // 外壳级订阅员工 SOP 活动流：AI 执行 sop_create_draft 的瞬间自动下钻
+  // /studio/:aid/sop/:sopId，无论用户当时在聊天、档案还是任何 Tab。
+  // pathname 经 ref 读取：避免 openSopCanvas 随路由变化重建导致 SSE 反复重连。
+  const pathnameRef = useRef(location.pathname);
+  pathnameRef.current = location.pathname;
+
+  const openSopCanvas = useCallback(
+    (nextSopId: string) => {
+      if (!nextSopId) return;
+      const target = `/studio/${aid}/sop/${nextSopId}`;
+      // 已在同一路径幂等跳过（面板/外壳双订阅同事件不重复导航）
+      if (pathnameRef.current === target) return;
+      navigate(target, { state: { from: pathnameRef.current } });
+    },
+    [aid, navigate],
+  );
+
+  useEffect(() => {
+    if (!expertId) {
+      return;
+    }
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        await sopApi.streamExpertEvents(
+          expertId,
+          (event) => {
+            if (event.action !== "created") {
+              return;
+            }
+            // AI 刚新建草稿：ensureDraft 拿到草稿后自动下钻画布页；
+            // 画布内实时重绘由 SopFlowCanvas 内部 sop 级订阅接管
+            void (async () => {
+              try {
+                const draft = await sopApi.ensureDraft(event.sop_id);
+                openSopCanvas(draft.id);
+              } catch {
+                // 拉草稿失败静默：能力-SOP 列表里仍可手动打开
+              }
+            })();
+          },
+          controller.signal,
+        );
+      } catch {
+        // 流中断（切页/网络抖动）静默——外壳存续期间不重订阅（依赖稳定）
+      }
+    })();
+    return () => controller.abort();
+  }, [expertId, openSopCanvas]);
 
   // ── 调试开关：ON 物化草稿实例并切数据域；OFF 回线上并销毁实例 ──
   const handleDebugToggle = async (next: boolean) => {
@@ -406,7 +474,8 @@ function AgentWorkbenchShell({ chatRoute = false }: { chatRoute?: boolean }) {
         ) : null}
       </header>
 
-      {/* ── 主体：左聊天 + 右信息 ── */}
+      {/* ── 主体：左聊天 + 右信息（SOP 画布下钻页仅替换右侧内容，
+          左侧聊天面板不覆盖、输入框始终可用，对齐 run log 下钻） ── */}
       <div className={styles.workbenchBody}>
         <WorkbenchChatPanel
           width={chatWidth}
@@ -453,7 +522,11 @@ function AgentWorkbenchShell({ chatRoute = false }: { chatRoute?: boolean }) {
             />
           </div>
 
-          <div className={styles.tabContent}>
+          <div
+            className={`${styles.tabContent} ${
+              sopCanvasId ? styles.tabContentFlush : ""
+            }`}
+          >
             {chatRoute ? (
               // /chat/* 会话路由：右侧回退档案页（会话状态看左栏聊天）。
               <AgentOverviewTab
@@ -463,6 +536,12 @@ function AgentWorkbenchShell({ chatRoute = false }: { chatRoute?: boolean }) {
               />
             ) : runId ? (
               <RunLogDetailPage />
+            ) : sopCanvasId ? (
+              // SOP 画布下钻页：仅占据右侧内容区（左侧聊天保留），
+              // 数据域自解析（同 RunLogDetailPage 沙箱模式），无 props 渲染。
+              <Suspense fallback={null}>
+                <WorkbenchSopCanvasPage />
+              </Suspense>
             ) : top === "sessions" ? (
               <SessionsPage />
             ) : top === "activity" ? (

@@ -1346,6 +1346,99 @@ async def remove_from_whitelist(
     return {"removed": True, "skill_name": skill_name}
 
 
+# ── Security / Account Auth Toggle ──────────────────────────────
+
+
+class AuthEnabledResponse(BaseModel):
+    """Response model for the account-auth master switch."""
+
+    auth_enabled: bool = Field(
+        description=(
+            "Whether account authentication is required for API access"
+        ),
+    )
+    # 环境变量覆盖状态：True 时 UI 开关不可改（部署级优先）。
+    env_overridden: bool = Field(
+        description=(
+            "True when QWENPAW_AUTH_ENABLED explicitly overrides the "
+            "config value"
+        ),
+    )
+    # 是否已有注册账号（开启前的前置条件提示用）。
+    has_users: bool = Field(
+        description="Whether at least one account is registered",
+    )
+
+
+class AuthEnabledUpdateBody(BaseModel):
+    """Request body for updating the account-auth master switch."""
+
+    auth_enabled: bool = Field(
+        description="New value for the account-auth master switch",
+    )
+
+
+def _auth_env_override() -> bool:
+    """Whether QWENPAW_AUTH_ENABLED is explicitly set in the env."""
+    from ...constant import EnvVarLoader
+
+    return bool(
+        EnvVarLoader.get_str("QWENPAW_AUTH_ENABLED", "").strip(),
+    )
+
+
+@router.get(
+    "/security/auth-enabled",
+    response_model=AuthEnabledResponse,
+    summary="Get the account-auth master switch",
+)
+async def get_auth_enabled() -> AuthEnabledResponse:
+    """Return the current auth switch plus override/precondition info."""
+    from ...app.users.store import get_user_store
+
+    config = load_config()
+    return AuthEnabledResponse(
+        auth_enabled=config.security.auth_enabled,
+        env_overridden=_auth_env_override(),
+        has_users=get_user_store().has_users(),
+    )
+
+
+@router.put(
+    "/security/auth-enabled",
+    response_model=AuthEnabledResponse,
+    summary="Update the account-auth master switch",
+)
+async def put_auth_enabled(
+    body: AuthEnabledUpdateBody = Body(...),
+) -> AuthEnabledResponse:
+    """Persist the account-auth master switch to config.json.
+
+    环境变量显式覆盖时拒绝写入（400），避免 UI 修改被部署层静默忽略。
+    """
+    from ...app.users.store import get_user_store
+
+    # 部署级覆盖时不允许运行时修改，显式报错而非静默忽略。
+    if _auth_env_override():
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "QWENPAW_AUTH_ENABLED is set in the environment; "
+                "change the env var instead of the config value"
+            ),
+        )
+
+    def apply_auth_enabled(config: Any) -> None:
+        config.security.auth_enabled = bool(body.auth_enabled)
+
+    await run_sync_io(mutate_config, apply_auth_enabled)
+    return AuthEnabledResponse(
+        auth_enabled=bool(body.auth_enabled),
+        env_overridden=False,
+        has_users=get_user_store().has_users(),
+    )
+
+
 # ── Security / Allow No Auth Hosts ────────────────────────────────────
 
 

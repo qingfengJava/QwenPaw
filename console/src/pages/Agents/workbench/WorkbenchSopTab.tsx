@@ -4,17 +4,28 @@
  * 借壳页面模式：数据域（selectedAgent）由工作台外壳同步，本页只做
  * `expert_` 前缀 → 专家域 id 的换算并托管 ExpertSopPanel；外壳已按
  * isExpert 过滤该 Tab，非 expert 实例兜底渲染空态不报错。
+ *
+ * 画布编辑走 onOpenCanvas 上抛：导航到 /studio/:aid/sop/:sopId 下钻页
+ * （画布编辑弹窗页面化，20260916）。注意路径必须挂 URL 中的 aid（线上
+ * 员工 id）——selectedAgent 在调试态可能是 __draft 实例，写进 /studio/:aid
+ * 会被外壳借壳同步切走数据域。
  * @author qingfeng
  */
 import { useMemo } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useAgentStore } from "@/stores/agentStore";
 import { ExpertSopPanel } from "@/components/sop/ExpertSopPanel";
 
 export default function WorkbenchSopTab() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
+  const location = useLocation();
   // 外壳在 layout 阶段把当前员工 aid 同步进 selectedAgent，与其它借壳页一致
   const aid = useAgentStore((s) => s.selectedAgent);
+  // URL 中的 aid：画布页下钻路径的唯一事实来源（见文件头注释）
+  const pathAid =
+    location.pathname.match(/^\/studio\/([^/?#]+)/)?.[1] ?? "";
   // 运行时 agent id = expert_{expertId}；草稿实例（__draft）不允许在此配置
   const expertId = useMemo(() => {
     if (aid.startsWith("expert_") && !aid.includes("__draft")) {
@@ -31,5 +42,16 @@ export default function WorkbenchSopTab() {
     );
   }
 
-  return <ExpertSopPanel expertId={expertId} onChanged={() => {}} />;
+  return (
+    <ExpertSopPanel
+      expertId={expertId}
+      onChanged={() => {}}
+      onOpenCanvas={(sop) =>
+        navigate(`/studio/${pathAid}/sop/${sop.id}`, {
+          // 记录来源页：画布页返回按钮回到打开前的位置
+          state: { from: location.pathname },
+        })
+      }
+    />
+  );
 }

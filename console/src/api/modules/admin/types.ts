@@ -9,11 +9,22 @@ export interface AdminUserView {
   /** M1 flat role: "admin" | "employee". */
   role: string;
   display_name: string;
+  /** Custom avatar URL; empty = front-end DiceBear fallback. */
+  avatar: string;
   disabled: boolean;
   created_at: string;
+  /** Organization (tenant) the account belongs to. */
+  org_id: string;
   /** M4 RBAC roles resolved for this user (flat mapping + explicit grants). */
   rbac_roles: string[];
   teams: string[];
+}
+
+/** One channel-identity → account binding (admin identity-bindings page). */
+export interface IdentityBindingView {
+  channel: string;
+  external_user_id: string;
+  username: string;
 }
 
 export interface RoleRecord {

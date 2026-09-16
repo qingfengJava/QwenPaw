@@ -59,6 +59,15 @@ def _snapshot_of(record: SopRecord) -> dict:
     }
 
 
+def _sop_content_equal(a: SopRecord, b: SopRecord) -> bool:
+    """内容字段键序无关比较（promote 幂等与未发布变更判定共用口径）。"""
+    return json.dumps(
+        _snapshot_of(a), sort_keys=True, ensure_ascii=False, default=str,
+    ) == json.dumps(
+        _snapshot_of(b), sort_keys=True, ensure_ascii=False, default=str,
+    )
+
+
 def _row_to_sop(row, *, light: bool = False) -> SopRecord:
     """Map one sops row (light 投影跳过重 JSONB 列，同 experts 卡片法)."""
     return SopRecord(
@@ -192,6 +201,32 @@ class SopStore:
                 params,
             )
             return [_row_to_sop(r, light=not full) for r in result]
+
+    async def has_unpublished_changes(self, owner_id: str) -> bool:
+        """归属该员工的草稿是否存在未发布变更（员工发布徽标判定用）。
+
+        一次查 owner 的全部 draft 行与 production 行，内存按 id 比对：
+        任一草稿无对应线上行（从未发布）或内容不等，即为有未发布变更。
+        遵循批量查询 + 内存组装，无 N+1。
+        """
+        drafts = await self.list_sops(
+            owner_id=owner_id,
+            full=True,
+            environment=SOP_ENVIRONMENT_DRAFT,
+        )
+        if not drafts:
+            return False
+        productions = await self.list_sops(
+            owner_id=owner_id,
+            full=True,
+            environment=SOP_ENVIRONMENT_PRODUCTION,
+        )
+        prod_by_id = {row.id: row for row in productions}
+        return any(
+            (existing := prod_by_id.get(draft.id)) is None
+            or not _sop_content_equal(draft, existing)
+            for draft in drafts
+        )
 
     async def update_sop(
         self,
@@ -346,10 +381,10 @@ class SopStore:
                     change_note=change_note,
                 )
             draft_record = _row_to_sop(draft_row)
-            # 取当前 production 行版本号（不存在则 0，首次 promote 为 v1）
+            # 取当前 production 行（内容一致则幂等跳过，不 bump 版本）
             prod = await conn.execute(
                 text(
-                    "SELECT version FROM sops WHERE tenant_id = :tid "
+                    "SELECT " + _COLS + " FROM sops WHERE tenant_id = :tid "
                     "AND id = :id AND environment = :prod"
                 ),
                 {
@@ -359,6 +394,11 @@ class SopStore:
                 },
             )
             prod_row = prod.first()
+            if prod_row is not None and _sop_content_equal(
+                draft_record, _row_to_sop(prod_row),
+            ):
+                # 草稿与线上内容一致：无未发布变更，幂等返回线上现值
+                return _row_to_sop(prod_row)
             next_version = (prod_row.version + 1) if prod_row else 1
             result = await conn.execute(
                 text(
@@ -425,9 +465,11 @@ class SopStore:
         to_version: int,
         published_by: str = "",
     ) -> Optional[SopRecord]:
-        """Rollback: restore a historical snapshot as a NEW higher version.
+        """Rollback: restore a historical snapshot into the DRAFT row.
 
-        不改写历史版本行——回滚本身也是一次发布（审计优先）。
+        统一发布闸门语义：回滚只把历史内容恢复到草稿行（environment=
+        draft），不触碰线上 production 行、不 bump 线上版本；用户需再点
+        员工「发布」才 promote 生效。历史快照与线上版本均不被改写。
         """
         engine = require_enterprise_engine()
         tid = current_tenant_id()
@@ -443,16 +485,33 @@ class SopStore:
             if snap_row is None:
                 return None
             snapshot = snap_row.snapshot or {}
+            # 归属沿用现有行（draft/production 同主），无行则 SOP 不存在
+            owner = await conn.execute(
+                text(
+                    "SELECT owner_id FROM sops WHERE tenant_id = :tid "
+                    "AND id = :id LIMIT 1"
+                ),
+                {"tid": tid, "id": sop_id},
+            )
+            owner_row = owner.first()
+            if owner_row is None:
+                return None
+            # 历史快照内容 UPSERT 回草稿行（首次无草稿行则新建），线上行不动
             result = await conn.execute(
                 text(
-                    "UPDATE sops SET name = :name, description = :desc, "
-                    "business_domain = :domain, goal = :goal, "
-                    "nodes = CAST(:nodes AS JSONB), "
-                    "edges = CAST(:edges AS JSONB), "
-                    "slots = CAST(:slots AS JSONB), status = :status, "
-                    "version = version + 1, updated_at = now() "
-                    "WHERE tenant_id = :tid AND id = :id AND "
-                    "environment = :env AND status <> :archived "
+                    "INSERT INTO sops (tenant_id, id, name, description, "
+                    "business_domain, goal, nodes, edges, slots, status, "
+                    "version, owner_id, environment) VALUES (:tid, :id, "
+                    ":name, :desc, :domain, :goal, CAST(:nodes AS JSONB), "
+                    "CAST(:edges AS JSONB), CAST(:slots AS JSONB), "
+                    ":status, 1, :owner, :draft) "
+                    "ON CONFLICT (tenant_id, id, environment) DO UPDATE SET "
+                    "name = EXCLUDED.name, "
+                    "description = EXCLUDED.description, "
+                    "business_domain = EXCLUDED.business_domain, "
+                    "goal = EXCLUDED.goal, nodes = EXCLUDED.nodes, "
+                    "edges = EXCLUDED.edges, slots = EXCLUDED.slots, "
+                    "status = EXCLUDED.status, updated_at = now() "
                     "RETURNING " + _COLS
                 ),
                 {
@@ -465,34 +524,17 @@ class SopStore:
                     "nodes": json.dumps(snapshot.get("nodes", [])),
                     "edges": json.dumps(snapshot.get("edges", [])),
                     "slots": json.dumps(snapshot.get("slots", [])),
-                    "status": SOP_STATUS_PUBLISHED,
-                    "archived": SOP_STATUS_ARCHIVED,
-                    "env": SOP_ENVIRONMENT_PRODUCTION,
+                    "status": SOP_STATUS_DRAFT,
+                    "owner": owner_row.owner_id,
+                    "draft": SOP_ENVIRONMENT_DRAFT,
                 },
             )
             row = result.first()
             if row is None:
                 return None
             record = _row_to_sop(row)
-            await conn.execute(
-                text(
-                    "INSERT INTO sop_versions (tenant_id, sop_id, version, "
-                    "snapshot, change_note, published_by) VALUES "
-                    "(:tid, :sid, :version, CAST(:snapshot AS JSONB), "
-                    ":note, :by) ON CONFLICT (tenant_id, sop_id, version) "
-                    "DO NOTHING"
-                ),
-                {
-                    "tid": tid,
-                    "sid": sop_id,
-                    "version": record.version,
-                    "snapshot": json.dumps(_snapshot_of(record)),
-                    "note": f"rollback to v{to_version}",
-                    "by": published_by,
-                },
-            )
-        # 提交后双通道广播（回滚即发布语义，画布重绘 + 面板跟随）
-        await broadcast_sop_event("published", record)
+        # 提交后广播 updated：画布跟随草稿内容，线上不变（待员工发布 promote）
+        await broadcast_sop_event("updated", record)
         return record
 
     async def publish_new_version(

@@ -91,6 +91,8 @@ export interface RunLogListParams {
   channel?: string;
   source?: string;
   environment?: string;
+  /** Sender identity filter (login username / channel external id). */
+  user?: string;
   q?: string;
   /** Epoch seconds, inclusive. */
   start?: number;
@@ -118,6 +120,7 @@ export const runLogsApi = {
     if (params?.environment) {
       searchParams.append("environment", params.environment);
     }
+    if (params?.user) searchParams.append("user", params.user);
     if (params?.q) searchParams.append("q", params.q);
     if (params?.start !== undefined) {
       searchParams.append("start", String(params.start));
@@ -145,5 +148,14 @@ export const runLogsApi = {
       `/agents/${encodeURIComponent(agentId)}/run-logs/${encodeURIComponent(
         runId,
       )}`,
+    ),
+
+  /**
+   * Distinct sender identities for the user filter dropdown (same data
+   * domain as the list endpoint; backend caps at 200 entries).
+   */
+  listRunUsers: (agentId: string): Promise<{ users: string[] }> =>
+    request<{ users: string[] }>(
+      `/agents/${encodeURIComponent(agentId)}/run-logs/users`,
     ),
 };

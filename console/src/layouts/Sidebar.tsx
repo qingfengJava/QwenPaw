@@ -27,8 +27,10 @@ import {
 import SidebarSettingsPanel from "./SidebarSettingsPanel";
 import { clearAuthToken } from "../api/config";
 import { authApi } from "../api/modules/auth";
+import { userProfilesApi } from "../api/modules/userProfiles";
 import { hubApi } from "../api/modules/hub";
 import api from "../api";
+import { useAuthStore } from "../stores/authStore";
 import { useSidebarModeStore } from "../stores/sidebarModeStore";
 import { useInboxWobble } from "../hooks/useInboxWobble";
 import styles from "./index.module.less";
@@ -121,6 +123,9 @@ export default function Sidebar({
   const [accountLoading, setAccountLoading] = useState(false);
   const [runtimeRestarting, setRuntimeRestarting] = useState(false);
   const [accountForm] = Form.useForm();
+  // 当前登录用户名（资料预填用）+ 打开弹窗时记录的原始昵称（变更判定用）。
+  const currentUsername = useAuthStore((s) => s.username);
+  const initialDisplayNameRef = useRef<string | null>(null);
   // Start collapsed on mobile so the first paint does not overlay/obscure
   // the main content on narrow viewports.
   const [collapsed, setCollapsed] = useState(isMobileSidebarViewport);
@@ -410,9 +415,18 @@ export default function Sidebar({
     currentPassword: string;
     newUsername?: string;
     newPassword?: string;
+    displayName?: string;
   }) => {
     const trimmedUsername = values.newUsername?.trim() || undefined;
     const trimmedPassword = values.newPassword?.trim() || undefined;
+    // 昵称仅在发生变化时才下发（未变则 undefined，后端不动该字段）。
+    const nextDisplayName = values.displayName?.trim() ?? "";
+    const displayNameChanged =
+      initialDisplayNameRef.current !== null &&
+      nextDisplayName !== initialDisplayNameRef.current;
+    const trimmedDisplayName = displayNameChanged
+      ? nextDisplayName
+      : undefined;
 
     if (values.newPassword && !trimmedPassword) {
       message.error(t("account.passwordEmpty"));
@@ -424,7 +438,12 @@ export default function Sidebar({
       return;
     }
 
-    if (!hubMode && !trimmedUsername && !trimmedPassword) {
+    if (
+      !hubMode &&
+      !trimmedUsername &&
+      !trimmedPassword &&
+      trimmedDisplayName === undefined
+    ) {
       message.warning(t("account.nothingToUpdate"));
       return;
     }
@@ -445,16 +464,20 @@ export default function Sidebar({
         setAccountModalOpen(false);
         accountForm.resetFields();
       } else {
-        await authApi.updateProfile(
+        const res = await authApi.updateProfile(
           values.currentPassword,
           trimmedUsername,
           trimmedPassword,
+          trimmedDisplayName,
         );
         message.success(t("account.updateSuccess"));
         setAccountModalOpen(false);
         accountForm.resetFields();
-        clearAuthToken();
-        window.location.href = "/login";
+        // 仅改昵称（token 为空）保持登录态；改了用户名/密码才重新登录。
+        if (res.token) {
+          clearAuthToken();
+          window.location.href = "/login";
+        }
       }
     } catch (err: unknown) {
       const raw = err instanceof Error ? err.message : "";
@@ -471,6 +494,28 @@ export default function Sidebar({
       message.error(msg);
     } finally {
       setAccountLoading(false);
+    }
+  };
+
+  /**
+   * Open the account modal and prefill the current display name so the
+   * nickname field reflects the saved value (change detection baseline).
+   */
+  const openAccountModal = async () => {
+    accountForm.resetFields();
+    initialDisplayNameRef.current = null;
+    setAccountModalOpen(true);
+    if (hubMode || !currentUsername) {
+      return;
+    }
+    try {
+      const profiles = await userProfilesApi.getProfiles([currentUsername]);
+      const name = profiles.get(currentUsername)?.display_name || "";
+      initialDisplayNameRef.current = name;
+      accountForm.setFieldsValue({ displayName: name });
+    } catch {
+      // 预填失败不阻断弹窗（昵称留空，用户可手动输入）。
+      initialDisplayNameRef.current = null;
     }
   };
 
@@ -671,8 +716,7 @@ export default function Sidebar({
             type="text"
             icon={<SparkSearchUserLine size={16} />}
             onClick={() => {
-              accountForm.resetFields();
-              setAccountModalOpen(true);
+              void openAccountModal();
             }}
             block
             className={`${styles.authBtn} ${
@@ -778,6 +822,9 @@ export default function Sidebar({
               </Form.Item>
               <Form.Item name="newUsername" label={t("account.newUsername")}>
                 <Input placeholder={t("account.newUsernamePlaceholder")} />
+              </Form.Item>
+              <Form.Item name="displayName" label={t("account.displayName")}>
+                <Input placeholder={t("account.displayNamePlaceholder")} />
               </Form.Item>
             </>
           )}

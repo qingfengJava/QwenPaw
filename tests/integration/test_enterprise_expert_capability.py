@@ -159,6 +159,10 @@ async def test_resource_bindings_replace_and_clear(enterprise_env):
 
 @pytest.mark.asyncio
 async def test_sop_lifecycle_with_versions(enterprise_env):
+    from qwenpaw.app.experts.models import (
+        SOP_ENVIRONMENT_DRAFT,
+        SOP_ENVIRONMENT_PRODUCTION,
+    )
     from qwenpaw.app.experts.sops import get_sop_store
 
     store = get_sop_store()
@@ -202,15 +206,23 @@ async def test_sop_lifecycle_with_versions(enterprise_env):
     assert again.version == 3
     assert len(await store.list_versions(sop.id)) == 2
 
-    # 回滚到 v2 = 以 v4 新版本恢复 v2 内容（不改历史）
-    # v2 快照发布于 slots/description 编辑之后，回滚应带全部当时字段
+    # 统一发布闸门语义：回滚到 v2 = 把 v2 快照内容恢复到草稿行，
+    # 线上行不动（仍 v3）、不写新快照；需员工发布才 promote 生效
     rolled = await store.rollback_sop(sop.id, to_version=2, published_by="t")
-    assert rolled.version == 4
+    assert rolled.environment == SOP_ENVIRONMENT_DRAFT
+    assert rolled.status == "draft"
     assert rolled.nodes[0]["id"] == "n1"
     assert rolled.slots == [{"key": "contract_text", "required": True}]
     assert rolled.description.startswith("覆盖")
+    # 线上行保持 v3 未被回滚改写
+    prod_now = await store.get_sop(
+        sop.id,
+        environment=SOP_ENVIRONMENT_PRODUCTION,
+    )
+    assert prod_now.version == 3
+    # 回滚不产生新版本快照，版本链仍 [3, 2]
     all_versions = await store.list_versions(sop.id)
-    assert [v.version for v in all_versions] == [4, 3, 2]
+    assert [v.version for v in all_versions] == [3, 2]
 
     # 归档后仍可物理删（store 层不设状态门槛，绑定守卫在 router 层）
     archived = await store.archive_sop(sop.id)
@@ -276,6 +288,13 @@ async def test_sop_environment_isolation_and_promote(enterprise_env):
     versions = await store.list_versions(draft.id)
     assert len(versions) == 1 and versions[0].version == 1
 
+    # promote 幂等：草稿无改动时重复 promote 不 bump 版本、不新增快照
+    again_same = await store.promote_sop(draft.id)
+    assert again_same.version == 1
+    assert len(await store.list_versions(draft.id)) == 1
+    # 无差异 → 归属员工无未发布变更
+    assert not await store.has_unpublished_changes("captest_expert_env")
+
     # 草稿行 promote 后保留（作为后续可编辑工作副本）
     assert await store.get_sop(
         draft.id,
@@ -298,6 +317,16 @@ async def test_sop_environment_isolation_and_promote(enterprise_env):
     )
     assert prod_now.goal == "20 分钟完成退款"
     assert len(await store.list_versions(draft.id)) == 2
+
+    # promote 后草稿与线上一致 → 无未发布变更
+    assert not await store.has_unpublished_changes("captest_expert_env")
+    # 再改草稿 → 出现未发布变更（员工发布徽标依据）
+    await store.update_sop(
+        draft.id,
+        environment=SOP_ENVIRONMENT_DRAFT,
+        goal="10 分钟完成退款",
+    )
+    assert await store.has_unpublished_changes("captest_expert_env")
 
     # 合并列表视图：同 id 草稿优先（代表可编辑工作态）
     merged = await store.list_sops(

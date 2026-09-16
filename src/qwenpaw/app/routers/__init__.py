@@ -23,6 +23,7 @@ from .fork import router as fork_router
 from .token_usage import router as token_usage_router
 from .agent_stats import router as agent_stats_router
 from .auth import router as auth_router
+from .user_profiles import router as user_profiles_router
 from .messages import router as messages_router
 from .files import router as files_router
 from .settings import router as settings_router
@@ -66,6 +67,7 @@ router.include_router(envs_router)
 router.include_router(token_usage_router)
 router.include_router(agent_stats_router)
 router.include_router(auth_router)
+router.include_router(user_profiles_router)
 router.include_router(files_router)
 router.include_router(settings_router)
 router.include_router(plugins_router)

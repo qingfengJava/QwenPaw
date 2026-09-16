@@ -544,9 +544,12 @@ export const sopApi = {
   /**
    * 订阅一位员工的 SOP 活动流（轻量索引事件，不含图数据）。
    *
-   * AI 对话新建 SOP 时前端尚不知 sop_id；面板订阅本流感知 created
+   * AI 对话新建 SOP 时前端尚不知 sop_id；面板/外壳订阅本流感知 created
    * 后自动打开画布（画布内再由 streamEvents 接管实时重绘），
    * updated/published 用于刷新列表与状态胶囊。
+   *
+   * 固定 ?replay=false：自动开画布是副作用，必须跳过事件总线对历史
+   * created 的缓冲重放，否则一进入工作台/详情页就会误开画布。
    */
   streamExpertEvents: (
     expertId: string,
@@ -554,7 +557,7 @@ export const sopApi = {
     signal?: AbortSignal,
   ): Promise<void> =>
     readSopEventStream(
-      getApiUrl(`/admin/experts/${enc(expertId)}/sops/events`),
+      getApiUrl(`/admin/experts/${enc(expertId)}/sops/events?replay=false`),
       onEvent,
       signal,
     ),

@@ -1806,7 +1806,8 @@
       "get_skills": "Obter Skills",
       "browser_navigate": "Abrir Página",
       "browser_click": "Clicar Página"
-    }
+    },
+    "userEmpty": "No users"
   },
   "environments": {
     "parent": "Configuracoes",
@@ -3386,6 +3387,25 @@
         "goToWhitelist": "Go to Whitelist",
         "moreFindings": "{{count}} more issues not shown (see Security → Skill Scanner for the full list)."
       }
+    },
+    "accountAuth": {
+      "tab": "Account Auth",
+      "title": "Account authentication",
+      "description": "Off = local single-user mode (no login). On = every API requires a Bearer token; the loopback whitelist still bypasses auth.",
+      "envOverridden": "Controlled by QWENPAW_AUTH_ENABLED; the switch is read-only.",
+      "switchLabel": "Enable account authentication",
+      "statusOn": "On: login required",
+      "statusOff": "Off: local, no login",
+      "loadFailed": "Failed to load auth status",
+      "saveFailed": "Failed to save auth setting",
+      "enableSuccess": "Account authentication enabled",
+      "disableSuccess": "Account authentication disabled",
+      "reloginHint": "Sign in with an account after enabling",
+      "noUserTitle": "No account registered",
+      "noUserContent": "Register an admin account before enabling auth, otherwise remote users will be locked out. Go to the login page to complete the first registration?",
+      "goRegister": "Go register",
+      "enableConfirmTitle": "Enable account authentication?",
+      "enableConfirmContent": "After enabling, unauthenticated users cannot access the API. Make sure a usable account is already registered."
     }
   },
   "hub": {
@@ -3756,7 +3776,9 @@
     "runtimeRestartConfirmDescription": "As tarefas em execução serão interrompidas durante a reinicialização.",
     "runtimeRestart": "Reiniciar ambiente",
     "runtimeRestartSuccess": "Ambiente reiniciado",
-    "runtimeRestartFailed": "Falha ao reiniciar o ambiente"
+    "runtimeRestartFailed": "Falha ao reiniciar o ambiente",
+    "displayName": "Display name",
+    "displayNamePlaceholder": "Enter a display name"
   },
   "approval": {
     "title": "Seguranca Approval Obrigatorio",
@@ -4363,6 +4385,20 @@
       "emptyDesc": "O fluxo de trabalho é a terceira forma de funcionário digital, ao lado de agentes e equipes: orquestração por nós determinísticos, ideal para processos rígidos e fixos.",
       "emptyHint": "O esqueleto da categoria está pronto: ao conectar uma plataforma externa, os itens aparecem aqui automaticamente, sem alterar a página.",
       "emptyTitle": "Aguardando integração de fluxo de trabalho"
+    }
+  },
+  "admin": {
+    "users": {
+      "bindingsTitle": "Channel identity bindings",
+      "bindingsAdd": "New binding",
+      "bindingsEmpty": "No channel identities bound to accounts yet",
+      "bindingsChannel": "Channel",
+      "bindingsExternal": "External user id",
+      "bindingsAccount": "Account",
+      "bindingsChannelPlaceholder": "Select or type a channel",
+      "bindingCreated": "Binding created",
+      "bindingDeleted": "Binding removed",
+      "bindingDeleteConfirm": "Remove this binding?"
     }
   }
 }

@@ -274,3 +274,77 @@
   justify-content: center;
   padding-top: 18vh;
 }
+
+/* ─── SOP 画布下钻页（/studio/:aid/sop/:sopId，仅占右侧内容区） ── */
+
+/* 画布下钻页贴边：去掉 tabContent 默认内缩与滚动，让画布自撑高度 */
+.tabContentFlush {
+  padding: 0;
+  overflow: hidden;
+}
+
+/* 占满 tabContent（height:100%）；左侧聊天面板不受影响 */
+.sopCanvasPage {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--sd-bg);
+}
+
+:global(html.dark-mode) .sopCanvasPage {
+  background: #141414;
+}
+
+.sopCanvasTopbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  height: 44px;
+  padding: 0 12px;
+  background: var(--sd-card);
+  border-bottom: 0.5px solid var(--sd-line);
+}
+
+:global(html.dark-mode) .sopCanvasTopbar {
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom-color: rgba(255, 255, 255, 0.1);
+}
+
+.sopCanvasTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--sd-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:global(html.dark-mode) .sopCanvasTitle {
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.sopCanvasHost {
+  flex: 1;
+  min-height: 0;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+
+  /* SopFlowCanvas 根节点撑满宿主（内部自布画布 + 属性面板） */
+  > * {
+    flex: 1;
+    min-height: 0;
+  }
+}
+
+.sopCanvasMessage {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: var(--sd-text-3);
+}

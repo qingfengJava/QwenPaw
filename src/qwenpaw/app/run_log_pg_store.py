@@ -292,6 +292,7 @@ async def query_run_logs_pg(
     channel: str | None = None,
     source: str | None = None,
     environment: str | None = None,
+    user_id: str | None = None,
     keyword: str | None = None,
     start_ts: float | None = None,
     end_ts: float | None = None,
@@ -325,6 +326,9 @@ async def query_run_logs_pg(
     if environment:
         clauses.append("environment = :environment")
         params["environment"] = environment
+    if user_id:
+        clauses.append("user_id = :user_id")
+        params["user_id"] = user_id
     if keyword:
         clauses.append("query_preview ILIKE :keyword")
         params["keyword"] = f"%{keyword}%"
@@ -354,6 +358,45 @@ async def query_run_logs_pg(
         )
         items = [_row_to_item(row) for row in result.fetchall()]
     return items, int(total)
+
+
+# 用户筛选下拉的选项上限（与文件路径 run_log_store 保持一致）。
+_MAX_DISTINCT_USERS = 200
+
+
+async def list_run_users_pg(
+    *,
+    agent_id: str | None = None,
+    engine: Any = None,
+) -> list[str]:
+    """Distinct non-empty ``user_id`` values (run-log user filter options).
+
+    Mirrors ``run_log_store.list_run_users`` so the router can swap both
+    stores transparently.
+    """
+    if engine is None:
+        from ..db.engine import create_pg_engine
+
+        engine = create_pg_engine()
+
+    # 常规部署 distinct 用户数远小于上限，LIMIT 兼作防御性裁剪。
+    sql = (
+        "SELECT DISTINCT user_id FROM agent_runs "
+        "WHERE tenant_id = :tenant_id "
+        "AND user_id IS NOT NULL AND user_id <> '' "
+        "LIMIT :cap"
+    )
+    params: dict[str, Any] = {
+        "tenant_id": DEFAULT_TENANT_ID,
+        "cap": _MAX_DISTINCT_USERS,
+    }
+    # 指定 agent 时收窄到该 agent 的数据域。
+    if agent_id:
+        sql = sql.replace("LIMIT :cap", "AND agent_id = :agent_id LIMIT :cap")
+        params["agent_id"] = agent_id
+    async with engine.connect() as conn:
+        rows = await conn.execute(text(sql), params)
+        return [str(row[0]) for row in rows.fetchall()]
 
 
 async def get_run_trace_pg(

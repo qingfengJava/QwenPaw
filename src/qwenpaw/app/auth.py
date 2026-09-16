@@ -361,15 +361,22 @@ def _clean_expired_revocations() -> None:
 
 
 def is_auth_enabled() -> bool:
-    """Check whether authentication is enabled via environment variable.
+    """Return whether authentication is enabled for this deployment.
 
-    Returns ``True`` when ``QWENPAW_AUTH_ENABLED`` is set to a truthy
-    value (``true``, ``1``, ``yes``).  The presence of a registered
-    user is checked separately by the middleware so that the first
-    user can still reach the registration page.
+    判定优先级：环境变量 ``QWENPAW_AUTH_ENABLED`` 显式设置时以其为准
+    （部署级覆盖，容器化场景不改盘即可强制开/关）；未设置时读
+    ``config.security.auth_enabled``（安全设置页运行时开关，mtime 缓存
+    保证修改后立即生效）。默认关，保持本地单用户零配置体验。
     """
     env_flag = EnvVarLoader.get_str("QWENPAW_AUTH_ENABLED", "").strip().lower()
-    return env_flag in ("true", "1", "yes")
+    if env_flag:
+        return env_flag in ("true", "1", "yes")
+    try:
+        cfg, _ = _get_config_cached()
+        return bool(getattr(cfg.security, "auth_enabled", False))
+    except Exception:  # pylint: disable=broad-except
+        logger.debug("auth_enabled config read failed; defaulting off")
+        return False
 
 
 # ---------------------------------------------------------------------------

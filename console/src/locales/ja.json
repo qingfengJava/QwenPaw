@@ -1579,7 +1579,8 @@
       "get_skills": "スキル取得",
       "browser_navigate": "ページを開く",
       "browser_click": "ページクリック"
-    }
+    },
+    "userEmpty": "No users"
   },
   "environments": {
     "parent": "設定",
@@ -3112,6 +3113,25 @@
         "goToWhitelist": "ホワイトリストへ",
         "moreFindings": "他に {{count}} 件は表示していません（一覧は 設定 → セキュリティ → スキルスキャナ を参照）。"
       }
+    },
+    "accountAuth": {
+      "tab": "Account Auth",
+      "title": "Account authentication",
+      "description": "Off = local single-user mode (no login). On = every API requires a Bearer token; the loopback whitelist still bypasses auth.",
+      "envOverridden": "Controlled by QWENPAW_AUTH_ENABLED; the switch is read-only.",
+      "switchLabel": "Enable account authentication",
+      "statusOn": "On: login required",
+      "statusOff": "Off: local, no login",
+      "loadFailed": "Failed to load auth status",
+      "saveFailed": "Failed to save auth setting",
+      "enableSuccess": "Account authentication enabled",
+      "disableSuccess": "Account authentication disabled",
+      "reloginHint": "Sign in with an account after enabling",
+      "noUserTitle": "No account registered",
+      "noUserContent": "Register an admin account before enabling auth, otherwise remote users will be locked out. Go to the login page to complete the first registration?",
+      "goRegister": "Go register",
+      "enableConfirmTitle": "Enable account authentication?",
+      "enableConfirmContent": "After enabling, unauthenticated users cannot access the API. Make sure a usable account is already registered."
     }
   },
   "hub": {
@@ -3482,7 +3502,9 @@
     "runtimeRestartConfirmDescription": "再起動中は実行中のタスクが中断されます。",
     "runtimeRestart": "ランタイムを再起動",
     "runtimeRestartSuccess": "ランタイムを再起動しました",
-    "runtimeRestartFailed": "ランタイムの再起動に失敗しました"
+    "runtimeRestartFailed": "ランタイムの再起動に失敗しました",
+    "displayName": "Display name",
+    "displayNamePlaceholder": "Enter a display name"
   },
   "voiceTranscription": {
     "title": "音声文字起こし",
@@ -4309,5 +4331,19 @@
       "notPublished": "未公開のためワークベンチはありません"
     },
     "reorderPinnedConstraint": "入れ替えを取り消しました：デフォルト/ピン留めの並び順規則に反します"
+  },
+  "admin": {
+    "users": {
+      "bindingsTitle": "Channel identity bindings",
+      "bindingsAdd": "New binding",
+      "bindingsEmpty": "No channel identities bound to accounts yet",
+      "bindingsChannel": "Channel",
+      "bindingsExternal": "External user id",
+      "bindingsAccount": "Account",
+      "bindingsChannelPlaceholder": "Select or type a channel",
+      "bindingCreated": "Binding created",
+      "bindingDeleted": "Binding removed",
+      "bindingDeleteConfirm": "Remove this binding?"
+    }
   }
 }

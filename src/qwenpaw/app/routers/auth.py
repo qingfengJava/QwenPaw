@@ -210,6 +210,9 @@ class UpdateProfileRequest(BaseModel):
     current_password: str
     new_username: str | None = None
     new_password: str | None = None
+    # 展示型资料：已认证会话内可直接改，无需验证 current_password。
+    display_name: str | None = None
+    avatar: str | None = None
     expires_in: int | None = (
         None  # Token expiry in seconds, -1/0 for permanent
     )
@@ -237,7 +240,11 @@ async def update_profile(req: UpdateProfileRequest, request: Request):
     if caller_username is None:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
-    if not req.new_username and not req.new_password:
+    # 凭据变更（用户名/密码）才需要验证 current_password 并重签 token；
+    # 资料（昵称/头像）变更在已认证会话内直接生效，无需登出。
+    has_credential_change = bool(req.new_username or req.new_password)
+    has_profile_change = req.display_name is not None or req.avatar is not None
+    if not has_credential_change and not has_profile_change:
         raise HTTPException(
             status_code=400,
             detail="Nothing to update",
@@ -254,6 +261,24 @@ async def update_profile(req: UpdateProfileRequest, request: Request):
             status_code=400,
             detail="Password cannot be empty",
         )
+
+    # 资料更新先行（不依赖密码验证）；仅改资料时保留当前登录态。
+    if has_profile_change:
+        from ..users.store import get_user_store
+
+        if not get_user_store().set_profile(
+            caller_username,
+            display_name=req.display_name,
+            avatar=req.avatar,
+        ):
+            raise HTTPException(
+                status_code=404,
+                detail="User not found",
+            )
+
+    if not has_credential_change:
+        # 资料-only 更新：token 为空串表示登录态保持不变。
+        return LoginResponse(token="", username=caller_username)
 
     token = update_credentials(
         username=caller_username,

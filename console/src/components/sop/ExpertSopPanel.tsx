@@ -10,6 +10,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  Alert,
   Button,
   Drawer,
   Empty,
@@ -38,16 +39,22 @@ import {
  *
  * @param expertId 归属员工 id（SOP 以 owner_id 强归属本员工）
  * @param onChanged 资产/绑定变更后回调（父级刷新头部计数等）
+ * @param onOpenCanvas 画布打开方式上抛（工作台传入：导航到 /studio/:aid/sop/:sopId
+ *   下钻页）；不传时回落本地 Drawer（管理端 ExpertDetailPage）
  */
 export function ExpertSopPanel({
   expertId,
   onChanged,
+  onOpenCanvas,
 }: {
   expertId: string;
   onChanged: () => Promise<void> | void;
+  onOpenCanvas?: (sop: SopRecord) => void;
 }) {
   const { t } = useTranslation();
   const { message } = useAppMessage();
+  // 工作台宿主（传入 onOpenCanvas）：SOP 发布收敛到员工顶栏统一闸门，隐藏独立发布入口
+  const workbench = Boolean(onOpenCanvas);
 
   // owner=本员工的全部 SOP（full 投影含节点，卡片可显示步骤/槽位数）
   const [sops, setSops] = useState<SopRecord[]>([]);
@@ -61,7 +68,7 @@ export function ExpertSopPanel({
   const [copyKeyword, setCopyKeyword] = useState("");
   const [copyResults, setCopyResults] = useState<SopRecord[]>([]);
   const [copyLoading, setCopyLoading] = useState(false);
-  // 画布编辑 / 只读预览 / 版本历史 抽屉
+  // 画布编辑 / 只读预览 / 版本历史 抽屉（onOpenCanvas 模式下画布抽屉不启用）
   const [editingSop, setEditingSop] = useState<SopRecord | null>(null);
   const [previewSopId, setPreviewSopId] = useState("");
   const [historySop, setHistorySop] = useState<SopRecord | null>(null);
@@ -102,6 +109,12 @@ export function ExpertSopPanel({
   // 面板级订阅：AI 新建 SOP 时前端尚不知 sop_id，经员工级轻量流感知
   // created 后自动打开画布（ensureDraft 拿草稿）；画布打开后的实时
   // 重绘由 SopFlowCanvas 内部的 sop 级订阅接管，面板只管列表与状态。
+  // 工作台模式（onOpenCanvas 上抛）下自动下钻由外壳级订阅负责，
+  // 面板只刷列表，避免双开/双 ensureDraft。
+  // onOpenCanvas 经 ref 读取：调用方内联箭头函数引用每次渲染都变，
+  // 避免订阅 effect 反复重连。
+  const onOpenCanvasRef = useRef(onOpenCanvas);
+  onOpenCanvasRef.current = onOpenCanvas;
   useEffect(() => {
     if (!expertId) {
       return;
@@ -113,9 +126,11 @@ export function ExpertSopPanel({
           expertId,
           (event) => {
             if (event.action === "created") {
-              // AI 刚新建草稿：刷新列表并自动弹出画布；
-              // 画布已开同一条则不覆盖（内部实时重绘继续）
+              // AI 刚新建草稿：刷新列表；画布打开见下方分支
               void refreshRef.current();
+              if (onOpenCanvasRef.current) {
+                return;
+              }
               void (async () => {
                 try {
                   const draft = await sopApi.ensureDraft(event.sop_id);
@@ -186,11 +201,20 @@ export function ExpertSopPanel({
     };
   };
 
+  /** 打开画布统一入口：工作台模式上抛导航（下钻页），管理端回落本地 Drawer。 */
+  const openCanvas = (sop: SopRecord) => {
+    if (onOpenCanvas) {
+      onOpenCanvas(sop);
+      return;
+    }
+    setEditingSop(sop);
+  };
+
   /** 打开画布编辑：存量线上 SOP 先 fork 出可编辑草稿行再进画布。 */
   const openEditor = async (sop: SopRecord) => {
     try {
       const draft = await sopApi.ensureDraft(sop.id);
-      setEditingSop(draft);
+      openCanvas(draft);
     } catch (err) {
       message.error(String(err));
     }
@@ -297,7 +321,7 @@ export function ExpertSopPanel({
     try {
       await sopApi.rollback(historySop.id, version);
       message.success(
-        t("staffdeck.sopPanel.rolledBack", "已回滚并发布为新版本"),
+        t("staffdeck.sopPanel.rolledBack", "已恢复到草稿，点员工『发布』后生效"),
       );
       setVersions((await sopApi.versions(historySop.id)).versions ?? []);
       await refresh();
@@ -341,6 +365,18 @@ export function ExpertSopPanel({
           </Button>
         </Space>
       </div>
+
+      {workbench && sops.length > 0 && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 10 }}
+          message={t(
+            "staffdeck.sopPanel.publishViaExpert",
+            "流程修改后需点右上角『发布』对员工生效",
+          )}
+        />
+      )}
 
       {sops.length === 0 ? (
         <div style={{ fontSize: 13, color: "var(--sd-text-3)" }}>
@@ -426,13 +462,15 @@ export function ExpertSopPanel({
                   >
                     {t("staffdeck.sopPanel.history", "版本历史")}
                   </Button>
-                  <Button
-                    size="small"
-                    className="sd-btn-primary"
-                    onClick={() => void publish(sop.id)}
-                  >
-                    {t("staffdeck.sopPanel.publish", "发布并生效")}
-                  </Button>
+                  {!workbench && (
+                    <Button
+                      size="small"
+                      className="sd-btn-primary"
+                      onClick={() => void publish(sop.id)}
+                    >
+                      {t("staffdeck.sopPanel.publish", "发布并生效")}
+                    </Button>
+                  )}
                   {mounted ? (
                     <Popconfirm
                       title={t(
@@ -498,7 +536,7 @@ export function ExpertSopPanel({
             });
             setCreating(false);
             await load();
-            setEditingSop(created);
+            openCanvas(created);
           } catch (err) {
             message.error(String(err));
           }
@@ -606,7 +644,9 @@ export function ExpertSopPanel({
         />
       </Modal>
 
-      {/* 画布编辑抽屉：保存=存内容，发布并生效=升版本+自动绑定 */}
+      {/* 画布编辑抽屉（仅管理端 Drawer 模式）：保存=存内容，发布并生效=升版本+自动绑定。
+          工作台模式由 onOpenCanvas 导航到 /studio/:aid/sop/:sopId 下钻页，不再弹窗。 */}
+      {onOpenCanvas ? null : (
       <Drawer
         title={
           editingSop
@@ -660,6 +700,7 @@ export function ExpertSopPanel({
           />
         ) : null}
       </Drawer>
+      )}
 
       {/* 只读流程预览 */}
       <Drawer
@@ -715,7 +756,7 @@ export function ExpertSopPanel({
                 <Popconfirm
                   title={t(
                     "staffdeck.sopPanel.rollbackConfirm",
-                    "回滚将恢复该版本内容并发布为新版本，确认？",
+                    "回滚将恢复该版本内容到草稿，需员工发布后生效，确认？",
                   )}
                   onConfirm={() => void rollback(row.version)}
                 >

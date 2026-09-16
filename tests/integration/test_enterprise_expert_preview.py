@@ -190,6 +190,61 @@ async def test_preview_lifecycle_publish_joint_stop(
 
 
 @pytest.mark.asyncio
+async def test_preview_publish_promotes_owned_sop_draft(
+    enterprise_env,
+    sandboxed_working_dir,
+):
+    """统一发布闸门：归属员工的 SOP 草稿随员工发布 promote 并绑定，徽标纳入 SOP。"""
+    from qwenpaw.app.experts.models import (
+        SOP_ENVIRONMENT_DRAFT,
+        SOP_ENVIRONMENT_PRODUCTION,
+    )
+    from qwenpaw.app.experts.preview import preview_status
+    from qwenpaw.app.experts.publish import publish_expert
+    from qwenpaw.app.experts.sops import get_sop_store
+    from qwenpaw.app.experts.store import get_expert_store
+
+    store = get_expert_store()
+    expert = await store.create_expert(
+        name="SOP联动员工",
+        expert_id="prevtest_sopjoint",
+        agent_spec={"language": "zh"},
+    )
+    # 先发布一次建立线上快照（无 SOP）→ 无未发布变更
+    await publish_expert(expert.id, published_by="tester")
+    assert (await preview_status(expert.id))["has_unpublished_changes"] is False
+
+    sop_store = get_sop_store()
+    # 新建归属本员工的 SOP 草稿（尚未绑定）
+    draft = await sop_store.create_sop(
+        name="联动流程",
+        sop_id="prevtest_sopjoint_sop",
+        goal="随员工发布生效",
+        nodes=[{"id": "n1", "title": "步骤", "expected_outcome": "ok"}],
+        owner_id=expert.id,
+        environment=SOP_ENVIRONMENT_DRAFT,
+    )
+    # SOP 草稿差异 → 员工「未发布变更」徽标点亮
+    assert (await preview_status(expert.id))["has_unpublished_changes"] is True
+    # 线上 SOP 行尚未生成
+    assert await sop_store.get_sop(
+        draft.id,
+        environment=SOP_ENVIRONMENT_PRODUCTION,
+    ) is None
+
+    # 员工发布 → 归属 SOP 草稿 promote 到线上并绑定，发布后徽标熄灭
+    await publish_expert(expert.id, published_by="tester")
+    prod = await sop_store.get_sop(
+        draft.id,
+        environment=SOP_ENVIRONMENT_PRODUCTION,
+    )
+    assert prod is not None and prod.status == "published"
+    assert (
+        await preview_status(expert.id)
+    )["has_unpublished_changes"] is False
+
+
+@pytest.mark.asyncio
 async def test_preview_stop_idempotent_and_cleanup(
     enterprise_env,
     sandboxed_working_dir,

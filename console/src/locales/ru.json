@@ -1579,7 +1579,8 @@
       "get_skills": "Получить навыки",
       "browser_navigate": "Открыть страницу",
       "browser_click": "Клик по странице"
-    }
+    },
+    "userEmpty": "No users"
   },
   "environments": {
     "parent": "Настройки",
@@ -3127,6 +3128,25 @@
         "goToWhitelist": "Перейти к белому списку",
         "moreFindings": "Ещё {{count}} записей не показано (полный список: Настройки → Безопасность → Сканер навыков)."
       }
+    },
+    "accountAuth": {
+      "tab": "Account Auth",
+      "title": "Account authentication",
+      "description": "Off = local single-user mode (no login). On = every API requires a Bearer token; the loopback whitelist still bypasses auth.",
+      "envOverridden": "Controlled by QWENPAW_AUTH_ENABLED; the switch is read-only.",
+      "switchLabel": "Enable account authentication",
+      "statusOn": "On: login required",
+      "statusOff": "Off: local, no login",
+      "loadFailed": "Failed to load auth status",
+      "saveFailed": "Failed to save auth setting",
+      "enableSuccess": "Account authentication enabled",
+      "disableSuccess": "Account authentication disabled",
+      "reloginHint": "Sign in with an account after enabling",
+      "noUserTitle": "No account registered",
+      "noUserContent": "Register an admin account before enabling auth, otherwise remote users will be locked out. Go to the login page to complete the first registration?",
+      "goRegister": "Go register",
+      "enableConfirmTitle": "Enable account authentication?",
+      "enableConfirmContent": "After enabling, unauthenticated users cannot access the API. Make sure a usable account is already registered."
     }
   },
   "hub": {
@@ -3497,7 +3517,9 @@
     "runtimeRestartConfirmDescription": "Текущие задачи будут прерваны на время перезапуска.",
     "runtimeRestart": "Перезапустить среду",
     "runtimeRestartSuccess": "Среда перезапущена",
-    "runtimeRestartFailed": "Не удалось перезапустить среду"
+    "runtimeRestartFailed": "Не удалось перезапустить среду",
+    "displayName": "Display name",
+    "displayNamePlaceholder": "Enter a display name"
   },
   "voiceTranscription": {
     "title": "Транскрипция голоса",
@@ -4323,6 +4345,20 @@
       "emptyDesc": "Воркфлоу — третий тип цифрового сотрудника наряду с агентами и командами: детерминированные узлы для строгого комплаенса и фиксированных процессов.",
       "emptyHint": "Каркас категории готов: после подключения внешней платформы воркфлоу элементы появятся здесь автоматически, без правок страницы.",
       "emptyTitle": "Ожидает подключения платформы воркфлоу"
+    }
+  },
+  "admin": {
+    "users": {
+      "bindingsTitle": "Channel identity bindings",
+      "bindingsAdd": "New binding",
+      "bindingsEmpty": "No channel identities bound to accounts yet",
+      "bindingsChannel": "Channel",
+      "bindingsExternal": "External user id",
+      "bindingsAccount": "Account",
+      "bindingsChannelPlaceholder": "Select or type a channel",
+      "bindingCreated": "Binding created",
+      "bindingDeleted": "Binding removed",
+      "bindingDeleteConfirm": "Remove this binding?"
     }
   }
 }

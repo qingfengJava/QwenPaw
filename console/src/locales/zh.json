@@ -1885,7 +1885,8 @@
       "get_skills": "获取技能",
       "browser_navigate": "打开网页",
       "browser_click": "点击页面"
-    }
+    },
+    "userEmpty": "暂无用户"
   },
   "environments": {
     "parent": "设置",
@@ -3702,6 +3703,25 @@
         "goToWhitelist": "前往白名单",
         "moreFindings": "另有 {{count}} 条未列出（完整列表见 设置 → 安全 → 技能扫描）。"
       }
+    },
+    "accountAuth": {
+      "tab": "账号认证",
+      "title": "账号认证",
+      "description": "关闭时为本地单用户模式（免登录）；开启后所有接口需登录（Bearer token），本机白名单仍可免认证。",
+      "envOverridden": "已由环境变量 QWENPAW_AUTH_ENABLED 指定，页面开关不可修改。",
+      "switchLabel": "启用账号认证",
+      "statusOn": "已开启：访问需登录",
+      "statusOff": "已关闭：本地免登录",
+      "loadFailed": "加载认证状态失败",
+      "saveFailed": "保存认证设置失败",
+      "enableSuccess": "已开启账号认证",
+      "disableSuccess": "已关闭账号认证",
+      "reloginHint": "开启后请以账号重新登录",
+      "noUserTitle": "尚未注册账号",
+      "noUserContent": "开启认证前需先注册管理员账号，否则远程访问将无法进入。是否前往登录页完成首个账号注册？",
+      "goRegister": "前往注册",
+      "enableConfirmTitle": "确认开启账号认证？",
+      "enableConfirmContent": "开启后未登录用户将无法访问接口，请确保已注册可用账号。"
     }
   },
   "hub": {
@@ -4106,7 +4126,9 @@
     "runtimeStoppedTitle": "运行环境已停止",
     "runtimeStoppedDescription": "管理员已停止进程。需要继续使用时，你可以手动重新启动。",
     "runtimeDisabledTitle": "运行环境已被禁用",
-    "runtimeDisabledDescription": "管理员已禁止该运行环境启动，请联系管理员恢复使用。"
+    "runtimeDisabledDescription": "管理员已禁止该运行环境启动，请联系管理员恢复使用。",
+    "displayName": "昵称",
+    "displayNamePlaceholder": "请输入展示昵称"
   },
   "voiceTranscription": {
     "title": "语音转写",
@@ -4873,13 +4895,17 @@
       "colAt": "时间",
       "colAction": "操作",
       "rollback": "回滚",
-      "rollbackConfirm": "回滚将恢复该版本内容并发布为新版本，确认？",
-      "rolledBack": "已回滚并发布为新版本",
+      "rollbackConfirm": "回滚将恢复该版本内容到草稿，需员工发布后生效，确认？",
+      "rolledBack": "已恢复到草稿，点员工『发布』后生效",
+      "publishViaExpert": "流程修改后需点右上角『发布』对员工生效",
       "steps": "步骤",
       "slots": "槽位",
       "noGoal": "（未填总目标）",
       "draftHint": "草稿不生效，发布后注入任务规划",
       "empty": "尚无本员工的 SOP：新建流程沉淀经验，或从其他员工复制一份副本"
+    },
+    "canvas": {
+      "publishViaTopbar": "编辑后点右上角『发布』对员工生效"
     },
     "timeline": {
       "day": "日",
@@ -5073,7 +5099,17 @@
       "resetPassword": "重置密码",
       "resetPasswordConfirm": "确认重置该用户的密码？",
       "teams": "团队",
-      "username": "用户名"
+      "username": "用户名",
+      "bindingsTitle": "渠道身份绑定",
+      "bindingsAdd": "新建绑定",
+      "bindingsEmpty": "暂无渠道身份绑定到账号",
+      "bindingsChannel": "渠道",
+      "bindingsExternal": "外部用户标识",
+      "bindingsAccount": "账号",
+      "bindingsChannelPlaceholder": "选择或输入渠道",
+      "bindingCreated": "绑定已创建",
+      "bindingDeleted": "绑定已删除",
+      "bindingDeleteConfirm": "确定删除该绑定？"
     },
     "workforce": {
       "active": "进行中",

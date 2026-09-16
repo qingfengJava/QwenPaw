@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   Button,
+  Card,
   Form,
   Input,
   Modal,
@@ -20,29 +21,47 @@ import { useTranslation } from "react-i18next";
 import { PageHeader } from "@/components/PageHeader";
 import { useAppMessage } from "../../hooks/useAppMessage";
 import { adminUsersApi, adminRolesApi } from "../../api/modules/admin";
-import type { AdminUserView, RoleRecord } from "../../api/modules/admin";
+import type {
+  AdminUserView,
+  RoleRecord,
+  IdentityBindingView,
+} from "../../api/modules/admin";
 import styles from "./admin.module.less";
+
+// 常见渠道候选（仍可手输其他值）；与后端 channel_id 命名对齐。
+const CHANNEL_OPTIONS = [
+  { value: "wechat", label: "wechat" },
+  { value: "wecom", label: "wecom" },
+  { value: "dingtalk", label: "dingtalk" },
+  { value: "qq", label: "qq" },
+  { value: "feishu", label: "feishu" },
+];
 
 function UsersPage() {
   const { t } = useTranslation();
   const { message } = useAppMessage();
   const [users, setUsers] = useState<AdminUserView[]>([]);
   const [roles, setRoles] = useState<RoleRecord[]>([]);
+  const [bindings, setBindings] = useState<IdentityBindingView[]>([]);
   const [loading, setLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [bindOpen, setBindOpen] = useState(false);
   const [passwordTarget, setPasswordTarget] = useState<string | null>(null);
   const [createForm] = Form.useForm();
+  const [bindForm] = Form.useForm();
   const [passwordForm] = Form.useForm();
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [userList, roleList] = await Promise.all([
+      const [userList, roleList, bindingList] = await Promise.all([
         adminUsersApi.list(),
         adminRolesApi.list().catch(() => [] as RoleRecord[]),
+        adminUsersApi.listIdentityBindings().catch(() => [] as IdentityBindingView[]),
       ]);
       setUsers(userList);
       setRoles(roleList);
+      setBindings(bindingList);
     } catch (err) {
       console.error("Failed to load users:", err);
       message.error(t("admin.users.loadFailed", "Failed to load users"));
@@ -112,6 +131,32 @@ function UsersPage() {
       message.success(t("admin.users.passwordReset", "Password updated"));
       setPasswordTarget(null);
       passwordForm.resetFields();
+    } catch (err) {
+      message.error(String(err));
+    }
+  };
+
+  const handleCreateBinding = async () => {
+    const values = await bindForm.validateFields();
+    try {
+      await adminUsersApi.createIdentityBinding(values);
+      message.success(t("admin.users.bindingCreated", "Binding created"));
+      setBindOpen(false);
+      bindForm.resetFields();
+      load();
+    } catch (err) {
+      message.error(String(err));
+    }
+  };
+
+  const handleDeleteBinding = async (binding: IdentityBindingView) => {
+    try {
+      await adminUsersApi.deleteIdentityBinding(
+        binding.channel,
+        binding.external_user_id,
+      );
+      message.success(t("admin.users.bindingDeleted", "Binding removed"));
+      load();
     } catch (err) {
       message.error(String(err));
     }
@@ -284,6 +329,110 @@ function UsersPage() {
             rules={[{ required: true }]}
           >
             <Input.Password autoComplete="new-password" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Card
+        style={{ marginTop: 24 }}
+        title={t("admin.users.bindingsTitle", "Channel identity bindings")}
+        extra={
+          <Button size="small" onClick={() => setBindOpen(true)}>
+            {t("admin.users.bindingsAdd", "New binding")}
+          </Button>
+        }
+      >
+        <Table<IdentityBindingView>
+          rowKey={(row) => `${row.channel}:${row.external_user_id}`}
+          loading={loading}
+          dataSource={bindings}
+          pagination={false}
+          size="small"
+          locale={{
+            emptyText: t(
+              "admin.users.bindingsEmpty",
+              "No channel identities bound to accounts yet",
+            ),
+          }}
+          columns={[
+            {
+              title: t("admin.users.bindingsChannel", "Channel"),
+              dataIndex: "channel",
+              render: (channel: string) => <Tag>{channel}</Tag>,
+            },
+            {
+              title: t("admin.users.bindingsExternal", "External user id"),
+              dataIndex: "external_user_id",
+            },
+            {
+              title: t("admin.users.bindingsAccount", "Account"),
+              dataIndex: "username",
+            },
+            {
+              title: t("admin.users.actions", "Actions"),
+              key: "actions",
+              width: 120,
+              render: (_, binding) => (
+                <Popconfirm
+                  title={t(
+                    "admin.users.bindingDeleteConfirm",
+                    "Remove this binding?",
+                  )}
+                  onConfirm={() => handleDeleteBinding(binding)}
+                >
+                  <Button size="small" danger>
+                    {t("common.delete", "Delete")}
+                  </Button>
+                </Popconfirm>
+              ),
+            },
+          ]}
+        />
+      </Card>
+
+      <Modal
+        title={t("admin.users.bindingsAdd", "New binding")}
+        open={bindOpen}
+        onOk={handleCreateBinding}
+        onCancel={() => setBindOpen(false)}
+        destroyOnHidden
+      >
+        <Form form={bindForm} layout="vertical" preserve={false}>
+          <Form.Item
+            name="channel"
+            label={t("admin.users.bindingsChannel", "Channel")}
+            rules={[{ required: true }]}
+          >
+            <Select
+              showSearch
+              options={CHANNEL_OPTIONS}
+              placeholder={t(
+                "admin.users.bindingsChannelPlaceholder",
+                "Select or type a channel",
+              )}
+            />
+          </Form.Item>
+          <Form.Item
+            name="external_user_id"
+            label={t("admin.users.bindingsExternal", "External user id")}
+            rules={[{ required: true }]}
+          >
+            <Input placeholder="openid / userid" />
+          </Form.Item>
+          <Form.Item
+            name="username"
+            label={t("admin.users.bindingsAccount", "Account")}
+            rules={[{ required: true }]}
+          >
+            <Select
+              showSearch
+              options={users.map((u) => ({
+                value: u.username,
+                label: u.display_name
+                  ? `${u.display_name} (${u.username})`
+                  : u.username,
+              }))}
+            />
           </Form.Item>
         </Form>
       </Modal>

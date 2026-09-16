@@ -79,6 +79,7 @@ export const authApi = {
     currentPassword: string,
     newUsername?: string,
     newPassword?: string,
+    displayName?: string,
   ): Promise<LoginResponse> => {
     const token = localStorage.getItem("qwenpaw_auth_token") || "";
     const res = await fetch(getApiUrl("/auth/update-profile"), {
@@ -91,6 +92,9 @@ export const authApi = {
         current_password: currentPassword,
         new_username: newUsername || null,
         new_password: newPassword || null,
+        // 昵称为展示型资料：传值即更新；仅改昵称时后端返回空 token（不登出）。
+        display_name:
+          displayName === undefined ? null : displayName.trim() || "",
       }),
     });
     if (!res.ok) {

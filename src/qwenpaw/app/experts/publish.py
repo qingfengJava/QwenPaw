@@ -135,29 +135,36 @@ async def _promote_publish_documents(
 
 
 async def _promote_publish_sops(expert_id: str, published_by: str) -> None:
-    """发布闸门联动：把本员工绑定的 SOP 草稿行 promote 到线上。
+    """发布闸门联动：把归属本员工的 SOP 草稿 promote 到线上并绑定。
 
-    员工发布 = 档案 + SOP 一起升线上。遍历本员工绑定的 sop 资源，对
-    存在草稿行（environment=draft）的调 ``promote_sop``（draft→production
-    + 版本快照）；无草稿行的跳过（已是最新线上态）。best-effort：单条
-    失败仅告警，不阻断发布主链路。
+    员工发布 = 档案 + SOP 一起升线上（统一发布闸门）。遍历 owner_id=本
+    员工 的全部草稿 SOP 行，逐条 ``promote_sop``（内部幂等：无差异自动
+    跳过、不 bump 版本）；成功 promote 后 ``ensure_binding`` 把该 SOP 绑到
+    本员工，使“新建但尚未绑定”的草稿也随发布生效并自动绑定。best-effort：
+    单条失败仅告警，不阻断发布主链路。
     """
     try:
         from .capability import get_capability_store
         from .sops import SOP_ENVIRONMENT_DRAFT, get_sop_store
 
-        bindings = await get_capability_store().list_bindings(expert_id, "sop")
         sop_store = get_sop_store()
-        for binding in bindings:
-            draft = await sop_store.get_sop(
-                binding.resource_id,
-                environment=SOP_ENVIRONMENT_DRAFT,
-            )
-            if draft is None:
-                continue
-            await sop_store.promote_sop(
-                binding.resource_id,
+        capability_store = get_capability_store()
+        drafts = await sop_store.list_sops(
+            owner_id=expert_id,
+            environment=SOP_ENVIRONMENT_DRAFT,
+        )
+        for draft in drafts:
+            promoted = await sop_store.promote_sop(
+                draft.id,
                 published_by=published_by,
+            )
+            if promoted is None:
+                continue
+            await capability_store.ensure_binding(
+                expert_id,
+                "sop",
+                draft.id,
+                {"name": promoted.name},
             )
     except Exception:  # pylint: disable=broad-except
         logger.warning(

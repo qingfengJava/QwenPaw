@@ -243,6 +243,21 @@ async def preview_status(expert_id: str) -> dict:
         )
         has_changes = _stable_json(expected) != _stable_json(snapshot.spec)
 
+    # 统一发布闸门：SOP 草稿差异也计入「未发布变更」（档案无差异时才查）
+    if not has_changes:
+        try:
+            from .sops import get_sop_store
+
+            has_changes = await get_sop_store().has_unpublished_changes(
+                expert_id,
+            )
+        except Exception:  # pylint: disable=broad-except
+            logger.warning(
+                "expert %s sop unpublished-changes probe failed",
+                expert_id,
+                exc_info=True,
+            )
+
     return {
         "expert_id": expert_id,
         "agent_id": agent_id,

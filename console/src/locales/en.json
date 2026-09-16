@@ -2027,7 +2027,8 @@
       "get_skills": "Get Skills",
       "browser_navigate": "Open Page",
       "browser_click": "Click Page"
-    }
+    },
+    "userEmpty": "No users"
   },
   "environments": {
     "parent": "Settings",
@@ -3845,6 +3846,25 @@
         "goToWhitelist": "Go to Whitelist",
         "moreFindings": "{{count}} more issues not shown (see Security → Skill Scanner for the full list)."
       }
+    },
+    "accountAuth": {
+      "tab": "Account Auth",
+      "title": "Account authentication",
+      "description": "Off = local single-user mode (no login). On = every API requires a Bearer token; the loopback whitelist still bypasses auth.",
+      "envOverridden": "Controlled by QWENPAW_AUTH_ENABLED; the switch is read-only.",
+      "switchLabel": "Enable account authentication",
+      "statusOn": "On: login required",
+      "statusOff": "Off: local, no login",
+      "loadFailed": "Failed to load auth status",
+      "saveFailed": "Failed to save auth setting",
+      "enableSuccess": "Account authentication enabled",
+      "disableSuccess": "Account authentication disabled",
+      "reloginHint": "Sign in with an account after enabling",
+      "noUserTitle": "No account registered",
+      "noUserContent": "Register an admin account before enabling auth, otherwise remote users will be locked out. Go to the login page to complete the first registration?",
+      "goRegister": "Go register",
+      "enableConfirmTitle": "Enable account authentication?",
+      "enableConfirmContent": "After enabling, unauthenticated users cannot access the API. Make sure a usable account is already registered."
     }
   },
   "hub": {
@@ -4249,7 +4269,9 @@
     "runtimeStoppedTitle": "Your runtime is stopped",
     "runtimeStoppedDescription": "An administrator stopped the process. Restart it when you are ready to continue.",
     "runtimeDisabledTitle": "Your runtime is disabled",
-    "runtimeDisabledDescription": "An administrator has blocked this runtime from starting. Contact an administrator to restore access."
+    "runtimeDisabledDescription": "An administrator has blocked this runtime from starting. Contact an administrator to restore access.",
+    "displayName": "Display name",
+    "displayNamePlaceholder": "Enter a display name"
   },
   "approval": {
     "title": "Security Approval Required",
@@ -4855,13 +4877,17 @@
       "colAt": "Time",
       "colAction": "Actions",
       "rollback": "Rollback",
-      "rollbackConfirm": "Rollback restores this version's content as a NEW published version. Continue?",
-      "rolledBack": "Rolled back and published as a new version",
+      "rollbackConfirm": "Rollback restores this version's content to the draft and takes effect after you publish the employee. Continue?",
+      "rolledBack": "Restored to draft; publish the employee to take effect",
+      "publishViaExpert": "After editing the flow, click \"Publish\" at the top right to apply it to this employee",
       "steps": "steps",
       "slots": "slots",
       "noGoal": "(no goal set)",
       "draftHint": "Drafts take no effect; publish to inject into task planning",
       "empty": "No SOPs yet: create a flow to capture experience, or copy one from another employee"
+    },
+    "canvas": {
+      "publishViaTopbar": "Click \"Publish\" at the top right to apply edits to this employee"
     },
     "timeline": {
       "day": "Day",
@@ -4998,5 +5024,19 @@
       "notPublished": "This employee is not published yet, no workbench available"
     },
     "reorderPinnedConstraint": "Move rejected: it would break the default/pinned ordering rules"
+  },
+  "admin": {
+    "users": {
+      "bindingsTitle": "Channel identity bindings",
+      "bindingsAdd": "New binding",
+      "bindingsEmpty": "No channel identities bound to accounts yet",
+      "bindingsChannel": "Channel",
+      "bindingsExternal": "External user id",
+      "bindingsAccount": "Account",
+      "bindingsChannelPlaceholder": "Select or type a channel",
+      "bindingCreated": "Binding created",
+      "bindingDeleted": "Binding removed",
+      "bindingDeleteConfirm": "Remove this binding?"
+    }
   }
 }

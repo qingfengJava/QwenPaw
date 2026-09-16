@@ -415,6 +415,31 @@ class UserStore:
             self._save(data)
         return True
 
+    def set_profile(
+        self,
+        username: str,
+        *,
+        display_name: str | None = None,
+        avatar: str | None = None,
+    ) -> bool:
+        """Partial profile update（None 字段保持不变，两后端同契约）."""
+        with self._lock:
+            data = self._load()
+            if self._load_error:
+                return False
+            user = next(
+                (u for u in data.users if u.username == username),
+                None,
+            )
+            if user is None:
+                return False
+            if display_name is not None:
+                user.display_name = display_name.strip()
+            if avatar is not None:
+                user.avatar = avatar.strip()
+            self._save(data)
+        return True
+
     # ------------------------------------------------------------------
     # channel identity bindings
     # ------------------------------------------------------------------
@@ -476,18 +501,64 @@ class UserStore:
             self._save(data)
         return True
 
+    def list_identity_bindings(self) -> list[dict]:
+        """All bindings as display rows（admin 绑定管理页数据源）."""
+        data = self._load()
+        if self._load_error:
+            return []
+        rows: list[dict] = []
+        for key, username in data.identity_bindings.items():
+            channel, _, external = key.partition(":")
+            rows.append(
+                {
+                    "channel": channel,
+                    "external_user_id": external,
+                    "username": username,
+                },
+            )
+        return rows
 
-_default_store: Optional[UserStore] = None
+
+_default_store: Optional["UserStore"] = None
 
 
-def get_user_store() -> UserStore:
+def _create_default_store() -> "UserStore":
+    """Pick the account backend: PG when ready, file otherwise (M2)."""
+    # PG DSN 未配置时直接文件后端，不触碰 db 模块（零依赖路径）。
+    try:
+        from ..run_log_pg_store import pg_available
+
+        if not pg_available():
+            return UserStore()
+    except Exception:  # pylint: disable=broad-except
+        return UserStore()
+    try:
+        from .store_pg import PgUserStore
+
+        pg_store = PgUserStore()
+        # 表未建（迁移未跑）时回退文件，保证启动不被账号层阻塞。
+        if pg_store.ensure_ready():
+            logger.info("User store backend: postgresql")
+            return pg_store
+    except Exception:  # pylint: disable=broad-except
+        logger.warning(
+            "PG user store init failed; falling back to file backend",
+            exc_info=True,
+        )
+    return UserStore()
+
+
+def get_user_store() -> "UserStore":
     """Return the process-wide default user store (lazy singleton).
 
     Channel drivers resolve external sender identities through this
     shared instance; ``qwenpaw.app.auth`` delegates to it as well so
     identity bindings and account data always come from one cache.
+
+    M2: 当 QWENPAW_PG_DSN 已配置且账号表就绪时返回 PG 后端
+    （:mod:`store_pg`），否则回退 users.json 文件后端。
     """
     global _default_store  # noqa: PLW0603
     if _default_store is None:
-        _default_store = UserStore()
+        _default_store = _create_default_store()
     return _default_store
