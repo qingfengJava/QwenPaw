@@ -158,5 +158,14 @@ docs/reviews/
 .qoder/plans/
 .mimosa
 
+# 本机调试/验证产物（20260916 复盘：根目录调试脚本、后端日志与单测
+# 临时密钥目录曾随 2917ff25 误入库并已推送公开远程，此类文件永不入库）
+/_*.py
+/_*.txt
+/_*.err
+/_qp_unit_tmp.*/
+/.qoder/*
+!/.qoder/rules/
+
 # StaffDeck 参考项目（仅本地设计参考，不入库）
 /StaffDeck/
