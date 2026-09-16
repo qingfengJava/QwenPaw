@@ -3577,5 +3577,131 @@
     "docEditChat": "Edit via Chat",
     "docEditChatTitle": "Mulai edit {{file}} via chat",
     "docEditPrompt": "Bantu saya mengedit @ {{file}}. Sebelum mulai, konfirmasi dulu ke saya apa saja yang perlu diubah."
+  },
+  "employee": {
+    "action": {
+      "capabilities": "Konfigurasi kapabilitas",
+      "editBasic": "Edit info dasar",
+      "enterWorkbench": "Buka workbench",
+      "governance": "Departemen & visibilitas",
+      "moveDown": "Turun",
+      "moveUp": "Naik",
+      "organization": "Atur departemen",
+      "pin": "Sematkan",
+      "unpin": "Lepas sematan"
+    },
+    "agentSub": {
+      "all": "Semua",
+      "native": "Agen bawaan"
+    },
+    "batch": {
+      "clear": "Bersihkan pilihan",
+      "govern": "Atur departemen & visibilitas massal",
+      "selected": "{{count}} karyawan dipilih"
+    },
+    "create": "Karyawan baru",
+    "createOf": {
+      "agent": "Agen baru",
+      "expert": "Rekrut karyawan digital",
+      "team": "Bentuk tim ahli"
+    },
+    "empty": {
+      "desc": "Ubah tab atau filter, atau buat karyawan digital baru.",
+      "title": "Tidak ada karyawan digital yang cocok"
+    },
+    "filter": {
+      "department": "Departemen induk",
+      "groupByDepartment": "Kelompokkan per departemen",
+      "lifecycle": "Status publikasi",
+      "reset": "Reset filter",
+      "search": "Cari nama / jabatan / deskripsi",
+      "visibility": "Cakupan visibilitas"
+    },
+    "governance": {
+      "department": "Departemen induk",
+      "departmentHint": "Departemen menentukan siapa yang dapat memakai mode \"khusus departemen\"; karyawan platform tidak terikat departemen.",
+      "departmentPlaceholder": "Pilih departemen (kosongkan untuk karyawan platform)",
+      "failed": "Gagal menyimpan pengaturan",
+      "granted": "Departemen dengan izin tambahan",
+      "grantedHint": "Set terlihat = departemen induk ∪ departemen berizin, otomatis mencakup sub-departemen.",
+      "grantedPlaceholder": "Pilih departemen lain yang boleh memakai karyawan ini",
+      "impact": "Berlaku segera setelah disimpan: visibilitas daftar dan izin percakapan memakai proyeksi yang sama, tanpa \"terlihat tapi tak bisa dipakai\".",
+      "needDepartment": "Mode khusus departemen butuh minimal satu departemen",
+      "saved": "Pengaturan tersimpan",
+      "title": "Departemen & visibilitas",
+      "visibility": "Cakupan visibilitas",
+      "visibilityHint": {
+        "department": "\"Khusus departemen\": hanya anggota departemen induk dan berizin (termasuk sub-departemen) yang dapat melihat dan memakai.",
+        "org": "\"Dibagikan ke semua\": akun di semua departemen dapat melihat dan memakai di daftar serta pintu percakapan.",
+        "private": "\"Hanya pembuat\": hanya penanggung jawab yang dapat melihat dan memakai — untuk asisten pribadi."
+      }
+    },
+    "group": {
+      "unassigned": "Belum ada departemen"
+    },
+    "hint": {
+      "notPublished": "Karyawan belum dipublikasikan, belum ada workbench"
+    },
+    "kind": {
+      "agent": "Agen bawaan",
+      "expert": "Karyawan digital",
+      "team": "Tim ahli",
+      "workflow": "Alur kerja"
+    },
+    "lifecycle": {
+      "archived": "Diarsipkan",
+      "draft": "Draf",
+      "published": "Dipublikasikan"
+    },
+    "loadFailed": "Gagal memuat daftar karyawan digital",
+    "metric": {
+      "running": "Berjalan",
+      "teams": "Tim ahli",
+      "total": "Total karyawan",
+      "unassigned": "Menunggu departemen",
+      "unassignedHint": "Departemen belum ditentukan"
+    },
+    "reorderFailed": "Gagal menyimpan urutan",
+    "reorderPinnedConstraint": "Penukaran dibatalkan: melanggar aturan urutan (default/disematkan)",
+    "retry": "Muat ulang",
+    "tab": {
+      "agents": "Agen",
+      "all": "Semua karyawan",
+      "teams": "Tim ahli",
+      "workflow": "Alur kerja"
+    },
+    "table": {
+      "colActions": "Aksi",
+      "colDepartment": "Departemen",
+      "colKind": "Bentuk",
+      "colMembers": "Anggota",
+      "colModel": "Model",
+      "colName": "Karyawan",
+      "colShared": "Departemen berbagi",
+      "colStatus": "Status",
+      "colVisibility": "Visibilitas"
+    },
+    "team": {
+      "memberCount": "{{count}} anggota kolaborasi",
+      "sharedTo": "Dibagikan ke"
+    },
+    "teamMode": {
+      "pipeline": "Pipel berurutan",
+      "router": "Router cerdas"
+    },
+    "view": {
+      "grid": "Tampilan kartu",
+      "table": "Tabel tata kelola"
+    },
+    "visibility": {
+      "department": "Khusus departemen",
+      "org": "Semua orang",
+      "private": "Hanya pembuat"
+    },
+    "workflow": {
+      "emptyDesc": "Alur kerja adalah bentuk karyawan digital ketiga di samping agen dan tim ahli: orkestrasi node deterministik untuk rantai bisnis yang padat regulasi dan langkahnya tetap.",
+      "emptyHint": "Kerangka kategori sudah siap: setelah platform alur kerja eksternal terhubung, konten muncul otomatis di sini tanpa mengubah struktur halaman.",
+      "emptyTitle": "Menunggu integrasi platform alur kerja"
+    }
   }
 }

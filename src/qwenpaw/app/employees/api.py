@@ -25,6 +25,7 @@ from .models import (
     GovernanceBatchUpdateBody,
     GovernanceUpdateBody,
 )
+from .projection import GrantProjectionError
 from .registry import build_registry
 from .service import (
     EmployeeNotFoundError,
@@ -98,6 +99,9 @@ async def set_employee_governance(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except GovernanceValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except GrantProjectionError as exc:
+        # 治理行已落库但鉴权投影未生效：不能当作成功返回，也不能静默
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     rows = await build_registry(request)
     return _pick_row(rows, agent_id)
 
@@ -123,6 +127,9 @@ async def set_employee_governance_batch(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except GovernanceValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except GrantProjectionError as exc:
+        # 同上：鉴权投影失败必须显式暴露（503，提示重试）
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     rows = await build_registry(request)
     # 按写入顺序回显，未命中的行静默跳过（极端并发下员工可能已被删除）
     written_ids = {record.agent_id for record in written}

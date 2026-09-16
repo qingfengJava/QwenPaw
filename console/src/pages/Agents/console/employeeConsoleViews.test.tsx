@@ -288,7 +288,7 @@ describe("GovernanceModal", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it("keeps granted departments for a batch write", async () => {
+  it("resets mixed-value dimensions instead of copying the first target", async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined);
     renderWithProviders(
       <GovernanceModal
@@ -315,8 +315,53 @@ describe("GovernanceModal", () => {
     expect(screen.getByText("expert_sales")).toBeInTheDocument();
     expect(screen.getByText("team_support")).toBeInTheDocument();
 
+    // The two targets disagree on every dimension: the modal must NOT
+    // prefill the first target's values (they would silently overwrite
+    // the whole batch); unset dimensions fall back to safe defaults.
     fireEvent.click(screen.getByText("common.save"));
 
+    await waitFor(() =>
+      expect(onSubmit).toHaveBeenCalledWith({
+        department_id: "",
+        visibility: "org",
+        granted_departments: [],
+      }),
+    );
+  });
+
+  it("keeps shared values prefilled for a uniform batch write", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const shared = {
+      department_id: "d_sales",
+      department_name: "Sales",
+      visibility: "department" as const,
+      governed: true,
+      granted_departments: ["d_support"],
+      granted_department_names: ["Support"],
+    };
+    renderWithProviders(
+      <GovernanceModal
+        open
+        targets={[
+          employee("expert_sales", "expert", {
+            entity_id: "sales",
+            ...shared,
+          }),
+          employee("expert_sales2", "expert", {
+            entity_id: "sales2",
+            ...shared,
+          }),
+        ]}
+        departments={DEPARTMENTS}
+        onCancel={vi.fn()}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("common.save"));
+
+    // Uniform batch: shared values are kept so the operator sees the
+    // current state instead of a blank form.
     await waitFor(() =>
       expect(onSubmit).toHaveBeenCalledWith({
         department_id: "d_sales",

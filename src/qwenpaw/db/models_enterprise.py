@@ -151,7 +151,9 @@ class EmployeeGovernanceRow(TenantMixin, TimestampMixin, Base):
         server_default="agent",
     )
     entity_id: Mapped[str] = mapped_column(
-        Text,
+        # 与 alembic 0031 / db/feature SQL 对齐（VARCHAR(64)），
+        # 避免 create_all 引导出的结构与迁移产物漂移
+        String(64),
         nullable=False,
         default="",
         server_default="",
@@ -834,7 +836,10 @@ class TeamRunRow(TenantMixin, TimestampMixin, Base):
 
     id: Mapped[str] = mapped_column(String(64), nullable=False)
     team_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    project_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    project_id: Mapped[Optional[str]] = mapped_column(
+        String(64),
+        nullable=True,
+    )
     source_chat_id: Mapped[Optional[str]] = mapped_column(
         String(128),
         nullable=True,
@@ -846,7 +851,9 @@ class TeamRunRow(TenantMixin, TimestampMixin, Base):
         default="planning",
         server_default="planning",
     )
-    goal: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    goal: Mapped[str] = mapped_column(
+        Text, nullable=False, default="", server_default="",
+    )
     plan: Mapped[dict[str, Any]] = mapped_column(
         JSONB,
         nullable=False,
@@ -871,7 +878,9 @@ class TeamRunRow(TenantMixin, TimestampMixin, Base):
         default=1,
         server_default="1",
     )
-    summary: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    summary: Mapped[str] = mapped_column(
+        Text, nullable=False, default="", server_default="",
+    )
     result: Mapped[dict[str, Any]] = mapped_column(
         JSONB,
         nullable=False,
@@ -896,7 +905,9 @@ class TeamRunRow(TenantMixin, TimestampMixin, Base):
         default=0,
         server_default="0",
     )
-    error: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    error: Mapped[str] = mapped_column(
+        Text, nullable=False, default="", server_default="",
+    )
     escalation_reason: Mapped[str] = mapped_column(
         Text,
         nullable=False,
@@ -932,7 +943,10 @@ class TeamRunNodeRow(TenantMixin, TimestampMixin, Base):
         default="",
         server_default="",
     )
-    assignee_user_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    assignee_user_id: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True,
+    )
     node_type: Mapped[str] = mapped_column(
         Text,
         nullable=False,
@@ -963,14 +977,18 @@ class TeamRunNodeRow(TenantMixin, TimestampMixin, Base):
         default=dict,
         server_default="{}",
     )
-    verdict: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    verdict: Mapped[str] = mapped_column(
+        Text, nullable=False, default="", server_default="",
+    )
     repair_count: Mapped[int] = mapped_column(
         Integer,
         nullable=False,
         default=0,
         server_default="0",
     )
-    session_id: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    session_id: Mapped[str] = mapped_column(
+        Text, nullable=False, default="", server_default="",
+    )
     token_cost: Mapped[int] = mapped_column(
         BigInteger,
         nullable=False,

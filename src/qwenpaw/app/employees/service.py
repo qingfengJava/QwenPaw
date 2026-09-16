@@ -118,9 +118,14 @@ class EmployeeGovernanceService:
 
         # 先整体校验再落库：任一员工非法即全单拒绝，避免半套治理态
         written = await get_employee_governance_store().batch_upsert(payload)
+        # 部门快照一次取回，全循环复用（禁止逐条回查，N+1）
+        from ..orgs.service import get_org_service
+
+        departments = await get_org_service().list_departments()
         for record in written:
-            # 投影失败必须显式暴露：鉴权面与治理面不一致比写入失败更危险
-            await project(record)
+            # 投影失败必须显式暴露（GrantProjectionError → 503）：
+            # 鉴权面与治理面不一致比写入失败更危险
+            await project(record, departments=departments)
         return written
 
     async def apply(

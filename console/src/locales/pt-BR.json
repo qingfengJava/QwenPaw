@@ -4238,5 +4238,131 @@
     "docEditChat": "Editar via chat",
     "docEditChatTitle": "Iniciar edição de {{file}} via chat",
     "docEditPrompt": "Ajude-me a editar @ {{file}}. Antes de começar, confirme comigo o que exatamente deve ser alterado."
+  },
+  "employee": {
+    "action": {
+      "capabilities": "Configurar capacidades",
+      "editBasic": "Editar informações básicas",
+      "enterWorkbench": "Abrir estação de trabalho",
+      "governance": "Departamento e visibilidade",
+      "moveDown": "Mover para baixo",
+      "moveUp": "Mover para cima",
+      "organization": "Atribuir departamento",
+      "pin": "Fixar no topo",
+      "unpin": "Desafixar"
+    },
+    "agentSub": {
+      "all": "Todos",
+      "native": "Agentes nativos"
+    },
+    "batch": {
+      "clear": "Limpar seleção",
+      "govern": "Definir departamento e visibilidade em lote",
+      "selected": "{{count}} funcionários selecionados"
+    },
+    "create": "Novo funcionário",
+    "createOf": {
+      "agent": "Novo agente",
+      "expert": "Contratar funcionário digital",
+      "team": "Montar equipe de especialistas"
+    },
+    "empty": {
+      "desc": "Ajuste a aba ou os filtros, ou crie um novo funcionário digital.",
+      "title": "Nenhum funcionário digital correspondente"
+    },
+    "filter": {
+      "department": "Departamento",
+      "groupByDepartment": "Agrupar por departamento",
+      "lifecycle": "Status de publicação",
+      "reset": "Limpar filtros",
+      "search": "Buscar nome / cargo / descrição",
+      "visibility": "Escopo de visibilidade"
+    },
+    "governance": {
+      "department": "Departamento",
+      "departmentHint": "O departamento define quem pode usar no modo \"somente departamento\"; funcionários de plataforma não pertencem a departamento.",
+      "departmentPlaceholder": "Selecione o departamento (vazio = funcionário de plataforma)",
+      "failed": "Falha ao salvar configurações",
+      "granted": "Departamentos autorizados adicionais",
+      "grantedHint": "Visível = departamento ∪ autorizados, incluindo subdepartamentos.",
+      "grantedPlaceholder": "Selecione outros departamentos que podem usar este funcionário",
+      "impact": "Vale imediatamente: visibilidade na lista e permissão no chat vêm da mesma projeção — sem \"ver mas não poder usar\".",
+      "needDepartment": "\"Somente departamento\" exige ao menos um departamento",
+      "saved": "Configurações salvas",
+      "title": "Departamento e visibilidade",
+      "visibility": "Escopo de visibilidade",
+      "visibilityHint": {
+        "department": "\"Somente departamento\": visível apenas para membros do departamento e dos autorizados (incluindo subdepartamentos).",
+        "org": "\"Compartilhado\": todas as contas veem e usam na lista e no chat.",
+        "private": "\"Somente criador\": visível apenas ao responsável — assistente pessoal."
+      }
+    },
+    "group": {
+      "unassigned": "Sem departamento"
+    },
+    "hint": {
+      "notPublished": "Funcionário ainda não publicado, sem estação de trabalho"
+    },
+    "kind": {
+      "agent": "Agente nativo",
+      "expert": "Funcionário digital",
+      "team": "Equipe de especialistas",
+      "workflow": "Fluxo de trabalho"
+    },
+    "lifecycle": {
+      "archived": "Arquivado",
+      "draft": "Rascunho",
+      "published": "Publicado"
+    },
+    "loadFailed": "Falha ao carregar lista de funcionários",
+    "metric": {
+      "running": "Em execução",
+      "teams": "Equipes",
+      "total": "Total de funcionários",
+      "unassigned": "Sem departamento",
+      "unassignedHint": "Departamento não definido"
+    },
+    "reorderFailed": "Falha ao salvar ordem",
+    "reorderPinnedConstraint": "Movimentação cancelada: violaria as regras de ordenação (padrão/fixados)",
+    "retry": "Recarregar",
+    "tab": {
+      "agents": "Agentes",
+      "all": "Todos os funcionários",
+      "teams": "Equipes",
+      "workflow": "Fluxo de trabalho"
+    },
+    "table": {
+      "colActions": "Ações",
+      "colDepartment": "Departamento",
+      "colKind": "Tipo",
+      "colMembers": "Membros",
+      "colModel": "Modelo",
+      "colName": "Funcionário",
+      "colShared": "Departamentos compartilhados",
+      "colStatus": "Status",
+      "colVisibility": "Visibilidade"
+    },
+    "team": {
+      "memberCount": "{{count}} membros em colaboração",
+      "sharedTo": "Compartilhado com"
+    },
+    "teamMode": {
+      "pipeline": "Pipeline sequencial",
+      "router": "Roteamento inteligente"
+    },
+    "view": {
+      "grid": "Visualização em cartões",
+      "table": "Tabela de governança"
+    },
+    "visibility": {
+      "department": "Somente departamento",
+      "org": "Compartilhado",
+      "private": "Somente criador"
+    },
+    "workflow": {
+      "emptyDesc": "O fluxo de trabalho é a terceira forma de funcionário digital, ao lado de agentes e equipes: orquestração por nós determinísticos, ideal para processos rígidos e fixos.",
+      "emptyHint": "O esqueleto da categoria está pronto: ao conectar uma plataforma externa, os itens aparecem aqui automaticamente, sem alterar a página.",
+      "emptyTitle": "Aguardando integração de fluxo de trabalho"
+    }
   }
 }

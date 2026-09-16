@@ -390,6 +390,15 @@ def _apply_viewer_scope(
         return rows
 
     rbac = get_rbac_store()
+    if rbac.load_error:
+        # 与运行期 agent_allowed 同语义 fail-closed：rbac.json 不可读时
+        # 空 grants 不得被当作「无限制」，宁缺勿泄（admin 已在上方放行，
+        # 修复路径与运行期一致：由 admin 介入修复文件）
+        logger.warning(
+            "registry: rbac file unreadable, failing closed for %s",
+            viewer,
+        )
+        return []
     # 权限快照一次取回，逐行内存判定（禁止每行读一次 rbac.json）
     grants: Dict[str, GrantRecord] = rbac.list_agent_grants()
     role_names = rbac.roles_for_user(viewer, flat_role)

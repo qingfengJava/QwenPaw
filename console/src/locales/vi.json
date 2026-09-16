@@ -2765,5 +2765,131 @@
     "docEditChat": "Chỉnh sửa qua chat",
     "docEditChatTitle": "Bắt đầu chỉnh sửa {{file}} qua chat",
     "docEditPrompt": "Giúp tôi chỉnh sửa @ {{file}}. Trước khi bắt đầu, hãy xác nhận với tôi những nội dung cần thay đổi cụ thể."
+  },
+  "employee": {
+    "action": {
+      "capabilities": "Cấu hình năng lực",
+      "editBasic": "Sửa thông tin cơ bản",
+      "enterWorkbench": "Vào bàn làm việc",
+      "governance": "Phòng ban & hiển thị",
+      "moveDown": "Xuống",
+      "moveUp": "Lên",
+      "organization": "Gán phòng ban",
+      "pin": "Ghim",
+      "unpin": "Bỏ ghim"
+    },
+    "agentSub": {
+      "all": "Tất cả",
+      "native": "Agent gốc"
+    },
+    "batch": {
+      "clear": "Bỏ chọn",
+      "govern": "Đặt phòng ban & hiển thị hàng loạt",
+      "selected": "Đã chọn {{count}} nhân viên"
+    },
+    "create": "Tạo nhân viên",
+    "createOf": {
+      "agent": "Tạo agent",
+      "expert": "Tuyển nhân viên số",
+      "team": "Lập đội chuyên gia"
+    },
+    "empty": {
+      "desc": "Hãy đổi tab phân loại hoặc bộ lọc, hoặc tạo một nhân viên số mới.",
+      "title": "Không có nhân viên số phù hợp"
+    },
+    "filter": {
+      "department": "Phòng ban trực thuộc",
+      "groupByDepartment": "Nhóm theo phòng ban",
+      "lifecycle": "Trạng thái phát hành",
+      "reset": "Đặt lại bộ lọc",
+      "search": "Tìm theo tên / chức danh / mô tả",
+      "visibility": "Phạm vi hiển thị"
+    },
+    "governance": {
+      "department": "Phòng ban trực thuộc",
+      "departmentHint": "Phòng ban quyết định ai được dùng mặc định ở chế độ \"chỉ phòng ban\"; nhân viên nền tảng không thuộc phòng ban nào.",
+      "departmentPlaceholder": "Chọn phòng ban (bỏ trống = nhân viên nền tảng)",
+      "failed": "Lưu cài đặt quản trị thất bại",
+      "granted": "Phòng ban được cấp quyền thêm",
+      "grantedHint": "Tập hợp hiển thị = phòng ban trực thuộc ∪ phòng ban được cấp quyền, tự động bao gồm phòng ban con.",
+      "grantedPlaceholder": "Chọn phòng ban khác cũng được dùng nhân viên này",
+      "impact": "Hiệu lực ngay khi lưu: hiển thị trong danh sách và quyền trong hội thoại dùng chung một phép chiếu, không có \"thấy mà không dùng được\".",
+      "needDepartment": "\"Chỉ phòng ban\" cần ít nhất một phòng ban trực thuộc hoặc được cấp quyền",
+      "saved": "Đã lưu cài đặt quản trị",
+      "title": "Phòng ban & hiển thị",
+      "visibility": "Phạm vi hiển thị",
+      "visibilityHint": {
+        "department": "\"Chỉ phòng ban\": chỉ thành viên của phòng ban trực thuộc và các phòng ban được cấp quyền (gồm phòng ban con) thấy và dùng được.",
+        "org": "\"Chung\": mọi tài khoản ở mọi phòng ban đều thấy và dùng được trong danh sách và cổng hội thoại.",
+        "private": "\"Chỉ người tạo\": chỉ người phụ trách thấy và dùng được — dành cho trợ lý cá nhân."
+      }
+    },
+    "group": {
+      "unassigned": "Chưa thuộc phòng ban"
+    },
+    "hint": {
+      "notPublished": "Nhân viên chưa được phát hành, chưa có bàn làm việc"
+    },
+    "kind": {
+      "agent": "Agent gốc",
+      "expert": "Nhân viên số",
+      "team": "Đội chuyên gia",
+      "workflow": "Luồng công việc"
+    },
+    "lifecycle": {
+      "archived": "Đã lưu trữ",
+      "draft": "Bản nháp",
+      "published": "Đã phát hành"
+    },
+    "loadFailed": "Tải danh sách nhân viên số thất bại",
+    "metric": {
+      "running": "Đang chạy",
+      "teams": "Đội chuyên gia",
+      "total": "Tổng nhân viên",
+      "unassigned": "Chờ gán phòng ban",
+      "unassignedHint": "Chưa gán phòng ban"
+    },
+    "reorderFailed": "Lưu thứ tự thất bại",
+    "reorderPinnedConstraint": "Đã hủy đổi chỗ: vi phạm quy tắc thứ tự (mặc định/ghim)",
+    "retry": "Tải lại",
+    "tab": {
+      "agents": "Agent",
+      "all": "Tất cả nhân viên",
+      "teams": "Đội chuyên gia",
+      "workflow": "Luồng công việc"
+    },
+    "table": {
+      "colActions": "Thao tác",
+      "colDepartment": "Phòng ban",
+      "colKind": "Loại hình",
+      "colMembers": "Thành viên",
+      "colModel": "Mô hình",
+      "colName": "Nhân viên",
+      "colShared": "Phòng ban chia sẻ",
+      "colStatus": "Trạng thái",
+      "colVisibility": "Phạm vi hiển thị"
+    },
+    "team": {
+      "memberCount": "{{count}} thành viên cộng tác",
+      "sharedTo": "Chia sẻ cho"
+    },
+    "teamMode": {
+      "pipeline": "Chuỗi tuần tự",
+      "router": "Điều phối thông minh"
+    },
+    "view": {
+      "grid": "Dạng thẻ",
+      "table": "Bảng quản trị"
+    },
+    "visibility": {
+      "department": "Chỉ phòng ban",
+      "org": "Chung",
+      "private": "Chỉ người tạo"
+    },
+    "workflow": {
+      "emptyDesc": "Luồng công việc là hình thái nhân viên số thứ ba bên cạnh agent và đội chuyên gia: biên soạn quy trình bằng các bước xác định, phù hợp chuỗi nghiệp vụ tuân thủ chặt chẽ và cố định.",
+      "emptyHint": "Khung phân loại đã sẵn sàng: sau khi kết nối nền tảng luồng công việc bên ngoài, nội dung sẽ tự xuất hiện tại đây, không cần sửa cấu trúc trang.",
+      "emptyTitle": "Đang chờ kết nối nền tảng luồng công việc"
+    }
   }
 }

@@ -37,6 +37,14 @@ from .store import get_employee_governance_store
 logger = logging.getLogger(__name__)
 
 
+class GrantProjectionError(RuntimeError):
+    """RBAC 鉴权投影失败（治理行已落库但鉴权面未同步生效）。
+
+    这不是普通写入失败：鉴权面与治理面不一致比抛错更危险，
+    必须显式暴露给调用方（接口层转 503），绝不能静默吞掉。
+    """
+
+
 def department_path_index(
     departments: Sequence[DepartmentRecord],
 ) -> Dict[str, str]:
@@ -124,25 +132,42 @@ def write_grant(
     record: GovernanceRecord,
     grant: Optional[GrantRecord],
 ) -> None:
-    """落库投影结果：grant 为空即解除限制，否则整体替换。"""
+    """落库投影结果：grant 为空即解除限制，否则整体替换。
+
+    RBAC 文件不可读时必须显式失败：若静默返回，治理行已生效而
+    grant 未同步，鉴权面与治理面会静默漂移（越权可见性）。
+    """
     rbac = get_rbac_store()
+    if rbac.load_error:
+        raise GrantProjectionError(
+            f"RBAC 文件不可读，治理投影被拒绝: {record.agent_id}",
+        )
     if grant is None:
+        # 删除不存在的 grant 属幂等成功（与 store 语义对齐，无需告警）
         rbac.delete_agent_grant(record.agent_id)
         return
-    rbac.set_agent_grant(record.agent_id, grant)
+    if not rbac.set_agent_grant(record.agent_id, grant):
+        raise GrantProjectionError(
+            f"RBAC grant 写入失败: {record.agent_id}",
+        )
 
 
-async def mirror_expert_columns(record: GovernanceRecord) -> None:
+async def mirror_expert_columns(
+    record: GovernanceRecord,
+    departments: Optional[Sequence[DepartmentRecord]] = None,
+) -> None:
     """镜像到 ``experts`` 两列（derived mirror，兼容既有市场读路径）。
 
     非 expert 形态（原生 agent / team）无 experts 行可镜像，直接返回；
     ``department`` 列是历史自由文本，镜像为部门名称保持展示可用。
+    ``departments`` 由批量调用方传入（一次取回全循环复用），缺省时自查。
     """
     if record.entity_kind != EMPLOYEE_KIND_EXPERT or not record.entity_id:
         return
-    from ..orgs.service import get_org_service
+    if departments is None:
+        from ..orgs.service import get_org_service
 
-    departments = await get_org_service().list_departments()
+        departments = await get_org_service().list_departments()
     name_by_id = department_name_index(departments)
     # 镜像语义：可见性原样落列，部门列写归属部门名（未归属写空串）
     await get_expert_store().update_expert(
@@ -152,16 +177,25 @@ async def mirror_expert_columns(record: GovernanceRecord) -> None:
     )
 
 
-async def project(record: GovernanceRecord) -> None:
-    """一条治理记录的全量投影（RBAC grant + experts 镜像列）。"""
-    from ..orgs.service import get_org_service
+async def project(
+    record: GovernanceRecord,
+    departments: Optional[Sequence[DepartmentRecord]] = None,
+) -> None:
+    """一条治理记录的全量投影（RBAC grant + experts 镜像列）。
 
-    departments = await get_org_service().list_departments()
+    ``departments`` 由批量调用方传入（一次取回全循环复用，禁止逐条
+    回查）；缺省时单条路径自查一次。RBAC 投影失败会抛出
+    :class:`GrantProjectionError`（见 :func:`write_grant`）。
+    """
+    if departments is None:
+        from ..orgs.service import get_org_service
+
+        departments = await get_org_service().list_departments()
     # 先落鉴权投影：这是运行期唯一消费面，失败必须显式抛出
     write_grant(record, grant_for_record(record, departments))
     # experts 镜像列失败不阻断治理写入（权威已在 employee_governance 落库）
     try:
-        await mirror_expert_columns(record)
+        await mirror_expert_columns(record, departments)
     except Exception:  # pylint: disable=broad-except
         logger.warning(
             "governance mirror failed for %s",
@@ -195,7 +229,7 @@ async def refresh_for_new_department(new_department: DepartmentRecord) -> int:
         }
         # 只重投影授权了祖先（不含自身，自身已在创建前投影过）的行
         if selected_paths & set(ancestor_paths[:-1]):
-            await project(record)
+            await project(record, departments=departments)
             refreshed += 1
     return refreshed
 
@@ -223,9 +257,8 @@ async def refresh_for_removed_department(removed_path: str) -> int:
         return 0
     from ..orgs.service import get_org_service
 
-    path_by_id = department_path_index(
-        await get_org_service().list_departments(),
-    )
+    departments = await get_org_service().list_departments()
+    path_by_id = department_path_index(departments)
     refreshed = 0
     for record in records:
         selected_paths = {
@@ -233,7 +266,7 @@ async def refresh_for_removed_department(removed_path: str) -> int:
             for item in selected_department_ids(record)
         }
         if selected_paths & ancestor_paths:
-            await project(record)
+            await project(record, departments=departments)
             refreshed += 1
     return refreshed
 
@@ -245,6 +278,10 @@ async def clear_department_reference(department_id: str) -> int:
     """
     store = get_employee_governance_store()
     records = await store.list_all()
+    from ..orgs.service import get_org_service
+
+    # 部门快照一次取回，全循环复用（禁止逐条回查，N+1）
+    departments = await get_org_service().list_departments()
     cleared = 0
     for record in records:
         # 引用未命中该部门则跳过（绝大多数行零写）
@@ -282,7 +319,7 @@ async def clear_department_reference(department_id: str) -> int:
             owner_id=record.owner_id,
             updated_by="department_cleanup",
         )
-        await project(updated)
+        await project(updated, departments=departments)
         cleared += 1
     return cleared
 
@@ -294,6 +331,7 @@ def _ancestor_paths(path: str) -> List[str]:
 
 
 __all__ = [
+    "GrantProjectionError",
     "clear_department_reference",
     "department_name_index",
     "department_path_index",

@@ -24,10 +24,12 @@ class _FakeRbac:
     # 4-argument signature when borrowed onto a fake class).
     grant_allows = staticmethod(RbacStore.grant_allows)
 
-    def __init__(self, grants=None, roles=(), teams=()):
+    def __init__(self, grants=None, roles=(), teams=(), *, load_error=False):
         self.grants = dict(grants or {})
         self.roles = list(roles)
         self.teams = list(teams)
+        # Mirrors RbacStore.load_error: True simulates an unreadable file.
+        self.load_error = load_error
         self.calls: list[str] = []
 
     def list_agent_grants(self):
@@ -203,3 +205,31 @@ def test_request_without_state_falls_back_to_local(monkeypatch):
     assert registry_mod._viewer_of(object()) == "local"
     visible = registry_mod._apply_viewer_scope(object(), _rows())
     assert [row.agent_id for row in visible] == ["default"]
+
+
+# ---------------------------------------------------------------------------
+# unreadable rbac file: fail closed (same semantics as agent_allowed)
+# ---------------------------------------------------------------------------
+
+
+def test_unreadable_rbac_fails_closed_for_regular_viewer(monkeypatch):
+    # Empty grants on a broken file would otherwise mean "unrestricted"
+    # and leak every private/department employee to non-admins.
+    rbac = _FakeRbac(_grants(), teams=["dept:sales"], load_error=True)
+    _patch_viewer(monkeypatch, flat_role="user", rbac=rbac)
+
+    visible = registry_mod._apply_viewer_scope(_request("alice"), _rows())
+
+    assert visible == []
+    # Fail fast before reading any snapshot from the broken store.
+    assert rbac.calls == []
+
+
+def test_unreadable_rbac_still_lets_admin_see_everything(monkeypatch):
+    rbac = _FakeRbac(load_error=True)
+    _patch_viewer(monkeypatch, flat_role="admin", rbac=rbac)
+
+    visible = registry_mod._apply_viewer_scope(_request("root"), _rows())
+
+    # Admin is the repair path, exactly like runtime agent_allowed.
+    assert len(visible) == len(_rows())

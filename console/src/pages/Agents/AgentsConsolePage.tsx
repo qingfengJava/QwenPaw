@@ -58,6 +58,7 @@ import { GovernanceTable } from "./console/GovernanceTable";
 import { GovernanceModal } from "./console/GovernanceModal";
 import { WorkflowEmptyState } from "./console/WorkflowEmptyState";
 import { useAgentFormModal } from "./console/useAgentFormModal";
+import { computeReorder } from "./console/reorder";
 import styles from "./console/console.module.less";
 
 /** 生命周期筛选项（只有专家/团有生命周期，原生智能体不参与）。 */
@@ -76,6 +77,7 @@ export default function AgentsConsolePage() {
   const isAdmin = useAuthStore(selectIsAdmin);
   const { deleteAgent, toggleAgent, pinAgent, loadAgents } = useAgents();
   const {
+    rows,
     filtered,
     groupedByDepartment,
     departments,
@@ -199,20 +201,21 @@ export default function AgentsConsolePage() {
   /**
    * 上移 / 下移：保留旧表格拖拽的排序能力（两键完成换位）。
    *
-   * 只有已物化为运行时 agent 的行参与 config 排序（草稿员工无 profile，
-   * 不能出现在 reorder 的全量 id 清单里，否则后端校验直接拒绝）。
+   * 后端要求提交与 configured profiles 全量相等的 id 清单，因此换位
+   * 以全量列表为基准（筛选视图只用来定位移动目标的邻居），草稿员工
+   * 无 profile 不参与；换位若破坏 default/置顶分组约束则本地拦截。
    */
   const handleMove = async (employee: DigitalEmployee, offset: -1 | 1) => {
-    const ordered = filtered.filter((row) => Boolean(row.startup_status));
-    const index = ordered.findIndex((row) => row.agent_id === employee.agent_id);
-    const target = index + offset;
-    if (index < 0 || target < 0 || target >= ordered.length) {
+    const result = computeReorder(rows, filtered, employee, offset);
+    if (!result.ok) {
       return;
     }
-    const next = ordered.map((row) => row.agent_id);
-    [next[index], next[target]] = [next[target], next[index]];
+    if (result.violatesGrouping) {
+      message.warning(t("employee.reorderPinnedConstraint"));
+      return;
+    }
     try {
-      await agentsApi.reorderAgents(next);
+      await agentsApi.reorderAgents(result.ids);
       await Promise.all([reload(), loadAgents()]);
     } catch (err: unknown) {
       message.error(

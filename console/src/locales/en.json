@@ -4996,6 +4996,7 @@
     "reorderFailed": "Failed to save order",
     "hint": {
       "notPublished": "This employee is not published yet, no workbench available"
-    }
+    },
+    "reorderPinnedConstraint": "Move rejected: it would break the default/pinned ordering rules"
   }
 }

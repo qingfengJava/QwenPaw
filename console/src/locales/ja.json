@@ -4307,6 +4307,7 @@
     "reorderFailed": "並び順の保存に失敗しました",
     "hint": {
       "notPublished": "未公開のためワークベンチはありません"
-    }
+    },
+    "reorderPinnedConstraint": "入れ替えを取り消しました：デフォルト/ピン留めの並び順規則に反します"
   }
 }

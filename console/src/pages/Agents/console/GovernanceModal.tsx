@@ -63,15 +63,27 @@ export function GovernanceModal({
 
   const batch = targets.length > 1;
 
-  // 打开时回填首个目标的治理态；批量场景只预填公共值，避免"看起来已统一"的错觉
+  // 预填规则：单条回填该员工的治理态；批量仅预填「全目标一致」的维度，
+  // 不一致的维度留空/回落默认，避免把首条值静默覆盖到所有选中者
   useEffect(() => {
     if (!open) {
       return;
     }
     const first = targets[0];
-    setDepartmentId(first?.department_id ?? undefined);
-    setVisibility(first?.visibility ?? "org");
-    setGranted(first?.granted_departments ?? []);
+    const uniform = <T,>(values: T[]): boolean =>
+      targets.length === 1 || values.every((value) => value === values[0]);
+    const departmentIds = targets.map((row) => row.department_id ?? "");
+    const visibilities = targets.map((row) => row.visibility);
+    const grantedLists = targets.map((row) =>
+      JSON.stringify(row.granted_departments ?? []),
+    );
+    setDepartmentId(
+      uniform(departmentIds) ? (first?.department_id ?? undefined) : undefined,
+    );
+    setVisibility(uniform(visibilities) ? (first?.visibility ?? "org") : "org");
+    setGranted(
+      uniform(grantedLists) ? (first?.granted_departments ?? []) : [],
+    );
     setSaving(false);
   }, [open, targets]);
 

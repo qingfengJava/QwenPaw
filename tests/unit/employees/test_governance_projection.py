@@ -9,6 +9,8 @@ owner) plus the experts mirror columns and the department lifecycle hooks.
 """
 from __future__ import annotations
 
+import pytest
+
 from qwenpaw.app.employees import projection as projection_mod
 from qwenpaw.app.employees.models import (
     EMPLOYEE_KIND_AGENT,
@@ -20,6 +22,7 @@ from qwenpaw.app.employees.models import (
     GovernanceRecord,
 )
 from qwenpaw.app.employees.projection import (
+    GrantProjectionError,
     clear_department_reference,
     expand_department_subtree,
     grant_for_record,
@@ -30,6 +33,7 @@ from qwenpaw.app.employees.projection import (
     write_grant,
 )
 from qwenpaw.app.orgs.models import DepartmentRecord
+from qwenpaw.app.rbac.models import GrantRecord
 
 
 def _department(department_id: str, *, name: str = "", path: str = ""):
@@ -63,15 +67,22 @@ DEPARTMENTS = [
 
 
 class _FakeRbac:
-    def __init__(self):
+    def __init__(self, *, load_error=False, set_ok=True):
+        # load_error=True simulates an unreadable rbac.json (fail closed);
+        # set_ok=False simulates the store rejecting the write.
+        self.load_error = load_error
+        self._set_ok = set_ok
         self.set_calls: list[tuple[str, object]] = []
         self.deleted: list[str] = []
 
     def set_agent_grant(self, agent_id, grant):
         self.set_calls.append((agent_id, grant))
+        return self._set_ok
 
     def delete_agent_grant(self, agent_id):
         self.deleted.append(agent_id)
+        # Mirrors the store: absent grant deletion is an idempotent success.
+        return True
 
 
 class _FakeExpertStore:
@@ -210,6 +221,59 @@ def test_write_grant_sets_translated_grant(monkeypatch):
     assert len(rbac.set_calls) == 1
     assert rbac.set_calls[0][0] == "expert_sales"
     assert rbac.set_calls[0][1].users == ["alice"]
+
+
+def test_write_grant_raises_when_rbac_file_unreadable(monkeypatch):
+    # Governance row lands but the grant would not: this must be loud,
+    # never a silent authorization/governance drift.
+    rbac = _FakeRbac(load_error=True)
+    _patch(monkeypatch, rbac=rbac)
+    grant = GrantRecord(users=["alice"])
+    with pytest.raises(GrantProjectionError, match="expert_sales"):
+        write_grant(_record(visibility=VISIBILITY_PRIVATE), grant)
+    assert rbac.set_calls == []
+    assert rbac.deleted == []
+
+
+def test_write_grant_raises_when_store_rejects_write(monkeypatch):
+    rbac = _FakeRbac(set_ok=False)
+    _patch(monkeypatch, rbac=rbac)
+    record = _record(visibility=VISIBILITY_PRIVATE)
+    with pytest.raises(GrantProjectionError, match="expert_sales"):
+        write_grant(record, grant_for_record(record, DEPARTMENTS))
+
+
+async def test_project_reuses_caller_department_snapshot(monkeypatch):
+    # N+1 guard: a caller-provided snapshot must bypass the org service
+    # entirely (batch projection reuses one fetch for the whole loop).
+    rbac, experts = _FakeRbac(), _FakeExpertStore()
+    org_calls: list[int] = []
+
+    class _CountingOrg:
+        async def list_departments(self):
+            org_calls.append(1)
+            return DEPARTMENTS
+
+    monkeypatch.setattr(projection_mod, "get_rbac_store", lambda: rbac)
+    monkeypatch.setattr(
+        projection_mod,
+        "get_expert_store",
+        lambda: experts,
+    )
+    monkeypatch.setattr(
+        "qwenpaw.app.orgs.service.get_org_service",
+        lambda: _CountingOrg(),
+    )
+
+    await project(
+        _record(visibility=VISIBILITY_DEPARTMENT, department_id="d_sales"),
+        departments=DEPARTMENTS,
+    )
+
+    assert org_calls == []
+    assert experts.updates == [
+        {"id": "sales", "visibility": "department", "department": "Sales"},
+    ]
 
 
 # ---------------------------------------------------------------------------

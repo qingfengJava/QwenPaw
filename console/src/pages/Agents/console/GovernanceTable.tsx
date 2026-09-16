@@ -225,7 +225,7 @@ export function GovernanceTable({
             menu={{
               items: [
                 onEdit
-                  ? { key: "edit", label: t("employee.action.capabilities") }
+                  ? { key: "edit", label: t("employee.action.editBasic") }
                   : null,
                 onCopy ? { key: "copy", label: t("common.copy") } : null,
                 onToggle
@@ -236,7 +236,9 @@ export function GovernanceTable({
                         : t("common.enable"),
                     }
                   : null,
-                onDelete
+                // 删除只对原生智能体开放：专家/团的下架属生命周期操作，
+                // 在能力配置页完成（与卡片视图同一不变量）
+                onDelete && employee.entity_kind === "agent"
                   ? {
                       key: "delete",
                       label: t("common.delete"),

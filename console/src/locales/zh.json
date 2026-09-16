@@ -5229,6 +5229,7 @@
     "reorderFailed": "排序保存失败",
     "hint": {
       "notPublished": "该员工尚未发布，暂无工作台"
-    }
+    },
+    "reorderPinnedConstraint": "换位会打乱默认/置顶排序规则，已取消"
   }
 }

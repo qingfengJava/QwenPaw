@@ -363,6 +363,17 @@ class RbacStore:
             user_team_names,
         )
 
+    @property
+    def load_error(self) -> bool:
+        """Whether ``rbac.json`` exists but is unreadable right now.
+
+        列表类消费方（如员工注册表）用它对齐运行期
+        :meth:`agent_allowed` 的 fail-closed 语义：文件不可读时
+        空 grants 不得被当作「无限制」放行。
+        """
+        self._load()
+        return self._load_error
+
     def agent_allowed(
         self,
         username: str,
