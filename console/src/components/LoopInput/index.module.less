@@ -27,6 +27,13 @@
     color 160ms ease;
 }
 
+/* 紧凑形态的短名：限宽省略号，避免长自定义模式名撞宽窄容器 */
+.triggerShortName {
+  max-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .modeTrigger:hover,
 .modeTrigger[aria-expanded="true"] {
   border-color: color-mix(in srgb, var(--ant-color-primary) 42%, transparent);

@@ -22,6 +22,7 @@ import {
   useLoopStore,
 } from "../../stores/loopStore";
 import { useIsMobile } from "../../hooks/useIsMobile";
+import { useWorkbenchSandboxAid } from "../../utils/workbenchSandbox";
 import { OsDrawer } from "../../os/OsOverlay";
 import { InlineMarkdown } from "../Markdown/InlineMarkdown";
 import {
@@ -41,15 +42,22 @@ function ModeIcon({ mode, size = 14 }: { mode: LoopModeInfo; size?: number }) {
 interface LoopModeSelectorProps {
   className?: string;
   compact?: boolean;
+  /** 紧凑形态下在图标旁显示模式名（如“默认”），
+   * 用于窄容器桌面场景；触屏紧凑形态仍仅图标。 */
+  shortLabel?: boolean;
 }
 
 export function LoopModeSelector({
   className,
   compact = false,
+  shortLabel = false,
 }: LoopModeSelectorProps = {}) {
   const { t, i18n } = useTranslation();
   const lang = i18n.language || "en";
   const navigate = useNavigate();
+  // 工作台 MemoryRouter 沙箱内 Chat 会把路径改写成 /chat/*，
+  // 无法靠 location 判断，改由沙箱上下文下发员工 id。
+  const sandboxAid = useWorkbenchSandboxAid();
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false);
   const availableModes = useLoopStore((state) => state.availableModes);
@@ -92,6 +100,9 @@ export function LoopModeSelector({
           {sessionState === "running" && <ModeIcon mode={activeMode} />}
           {sessionState === "awaiting_user" && (
             <MessageCircleQuestion size={14} />
+          )}
+          {compact && shortLabel && (
+            <span className={styles.triggerShortName}>{modeName}</span>
           )}
           {!compact && (
             <>
@@ -154,7 +165,14 @@ export function LoopModeSelector({
       className={styles.settingsButton}
       onClick={() => {
         setOpen(false);
-        navigate("/agent-config?tab=agentLoop");
+        // 沙箱内没有 /agent-config 路由：直跳会被沙箱 CatchAllNavigate
+        // 弹回档案页（按钮看似失效）；沙箱内改跳运维组 config 子页
+        // 并保留 tab 参数，沙箱外仍走 /agent-config 的 agent 作用域重定向。
+        navigate(
+          sandboxAid
+            ? `/studio/${sandboxAid}/ops/config?tab=agentLoop`
+            : "/agent-config?tab=agentLoop",
+        );
       }}
       type="button"
     >
@@ -205,6 +223,8 @@ export function LoopModeSelector({
     </div>
   );
 
+  const selectedModeName = resolveLoopModeName(selectedMode, t, lang);
+
   const triggerButton = (
     <button
       aria-expanded={open}
@@ -220,13 +240,23 @@ export function LoopModeSelector({
       ) : (
         <ModeIcon mode={selectedMode} />
       )}
+      {compact && shortLabel && (
+        <span className={styles.triggerShortName}>{selectedModeName}</span>
+      )}
       {!compact && (
         <>
-          <span>{resolveLoopModeName(selectedMode, t, lang)}</span>
+          <span>{selectedModeName}</span>
           <ChevronDown size={13} />
         </>
       )}
     </button>
+  );
+
+  // 紧凑形态隐藏了标签与箭头，用 Tooltip 补回当前模式名的可见性
+  const desktopTrigger = compact ? (
+    <Tooltip title={selectedModeName}>{triggerButton}</Tooltip>
+  ) : (
+    triggerButton
   );
 
   if (isMobile) {
@@ -267,7 +297,7 @@ export function LoopModeSelector({
       placement="topLeft"
       trigger="click"
     >
-      {triggerButton}
+      {desktopTrigger}
     </Popover>
   );
 }

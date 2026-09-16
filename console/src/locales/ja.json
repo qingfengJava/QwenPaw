@@ -2639,6 +2639,12 @@
       "off": "オフモード",
       "offDesc": "ツールとファイルの承認を無効にします"
     },
+    "toolExecutionLevelShort": {
+      "strict": "厳格",
+      "smart": "スマート",
+      "auto": "自動",
+      "off": "オフ"
+    },
     "saveLevelSuccess": "ツール承認モードを保存しました",
     "saveLevelFailed": "ツール承認モードの保存に失敗しました",
     "adbpgMemoryTitle": "ADBPG Long-term Memory",

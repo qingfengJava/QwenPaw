@@ -2810,6 +2810,12 @@
       "off": "Modo Desativado",
       "offDesc": "As aprovações de ferramentas e arquivos são desativadas"
     },
+    "toolExecutionLevelShort": {
+      "strict": "Estrito",
+      "smart": "Inteligente",
+      "auto": "Auto",
+      "off": "Off"
+    },
     "saveLevelSuccess": "Modo de aprovação de ferramentas salvo",
     "saveLevelFailed": "Falha ao salvar o modo de aprovação de ferramentas",
     "maxContextLength": "Max Context Length",

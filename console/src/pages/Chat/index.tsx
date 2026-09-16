@@ -685,6 +685,15 @@ const DEFAULT_USER_ID = "default";
 const DEFAULT_CHANNEL = "console";
 const WIDE_MODE_STORAGE_KEY = "qwenpaw_chat_wide_mode";
 
+/** 聊天容器窄宽阈值（px）：容器宽度低于该值时 sender 切紧凑形态
+ * （循环模式/审批级别控件仅图标、隐藏字数统计），避免 SDK prefix
+ * （overflow:auto）在窄容器下被右侧动作区挤压出水平滚动条。
+ * 完整形态内容约需 445px 容器宽（实测溢出临界点），取 460 留余量；
+ * 工作台默认面板 480px 仍保持带标签的完整形态。
+ * 工作台内嵌面板宽度受拖拽/折叠控制，视口媒体查询感知不到，
+ * 故用 ResizeObserver 按容器实际宽度判定。 */
+const SENDER_COMPACT_CONTAINER_PX = 460;
+
 // Stable fallback so an absent queue entry doesn't produce a fresh array
 // reference on every render (which would invalidate the options memo).
 const EMPTY_QUEUE: QueueItem[] = [];
@@ -2950,8 +2959,28 @@ export default function ChatPage({
     [multimodalCaps, t, usesQwenPawBackend],
   );
 
-  const compactSender = filesDrawerState.kind === "workspace";
+  // 触屏/文件工作区场景的 44px 触控紧凑样式（保持原行为）。
+  const [senderContainerNarrow, setSenderContainerNarrow] = useState(false);
+  const compactTouchSender =
+    isMobile || filesDrawerState.kind === "workspace";
+  // 容器窄宽同样触发紧凑形态（控件仅图标），但不套用触控尺寸样式。
+  const compactSender =
+    filesDrawerState.kind === "workspace" || senderContainerNarrow;
   const chatMessagesAreaRef = useRef<HTMLDivElement>(null);
+
+  // 监听聊天消息区容器宽度：工作台内嵌面板拖拽/折叠时同步切换 sender 紧凑形态。
+  useEffect(() => {
+    const area = chatMessagesAreaRef.current;
+    if (!area || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? 0;
+      setSenderContainerNarrow(
+        width > 0 && width <= SENDER_COMPACT_CONTAINER_PX,
+      );
+    });
+    observer.observe(area);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     const root = chatMessagesAreaRef.current;
@@ -3407,7 +3436,8 @@ export default function ChatPage({
             {usesQwenPawBackend && (
               <LoopModeSelector
                 className={isMobile ? styles.mobileComposerControl : undefined}
-                compact={isMobile}
+                compact={isMobile || compactSender}
+                shortLabel={senderContainerNarrow}
               />
             )}
             {pluginSenderPrefix}
@@ -3432,8 +3462,9 @@ export default function ChatPage({
                 sessionId={queueSessionId}
                 runningConfigApprovalLevel={runningConfigApprovalLevel}
                 compact={isMobile || compactSender}
+                shortLabel={senderContainerNarrow}
                 className={
-                  isMobile || compactSender
+                  compactTouchSender
                     ? styles.mobileComposerControl
                     : undefined
                 }
@@ -3447,7 +3478,7 @@ export default function ChatPage({
                 sessionId={queueSessionId}
                 presets={approvalPresets}
                 className={isMobile ? styles.mobileComposerControl : undefined}
-                compact={isMobile}
+                compact={isMobile || compactSender}
                 onChange={(settings) => {
                   backendControlsRef.current = settings;
                 }}
@@ -3790,7 +3821,9 @@ export default function ChatPage({
 
   return (
     <div
-      className={`${styles.chatPageRoot} ${filesDrawerClass}`}
+      className={`${styles.chatPageRoot} ${filesDrawerClass} ${
+        compactSender ? styles.senderCompact : ""
+      }`}
       onClickCapture={handleInternalFileLink}
     >
       <AnimatePresence initial={false} mode="popLayout">

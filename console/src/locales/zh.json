@@ -3105,6 +3105,12 @@
       "off": "关闭模式",
       "offDesc": "关闭工具和文件审批"
     },
+    "toolExecutionLevelShort": {
+      "strict": "严格",
+      "smart": "智能",
+      "auto": "自动",
+      "off": "关闭"
+    },
     "saveLevelSuccess": "工具审批模式已保存",
     "saveLevelFailed": "保存工具审批模式失败",
     "offloadPolicy": {

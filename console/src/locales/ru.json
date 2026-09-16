@@ -2654,6 +2654,12 @@
       "off": "Выключено",
       "offDesc": "Одобрение инструментов и файлов отключено"
     },
+    "toolExecutionLevelShort": {
+      "strict": "Строго",
+      "smart": "Смарт",
+      "auto": "Авто",
+      "off": "Выкл"
+    },
     "saveLevelSuccess": "Режим одобрения инструментов сохранён",
     "saveLevelFailed": "Не удалось сохранить режим одобрения инструментов",
     "adbpgMemoryTitle": "ADBPG Long-term Memory",

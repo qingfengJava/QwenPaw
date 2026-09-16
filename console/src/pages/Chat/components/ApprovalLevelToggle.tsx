@@ -48,6 +48,9 @@ interface ApprovalLevelToggleProps {
   /** null = no session override, backend uses running-config */
   onChange?: (sessionOverride: ToolExecutionLevel | null) => void;
   compact?: boolean;
+  /** 紧凑形态下在图标旁显示简短级别名（如“自动”），
+   * 用于窄容器桌面场景；触屏紧凑形态仍仅图标。 */
+  shortLabel?: boolean;
   className?: string;
 }
 
@@ -56,6 +59,7 @@ const ApprovalLevelToggle: React.FC<ApprovalLevelToggleProps> = ({
   runningConfigApprovalLevel,
   onChange,
   compact = false,
+  shortLabel = false,
   className,
 }) => {
   const { t } = useTranslation();
@@ -102,6 +106,11 @@ const ApprovalLevelToggle: React.FC<ApprovalLevelToggleProps> = ({
 
   const effectiveLevel = sessionLevel ?? runningConfigApprovalLevel;
   const meta = LEVEL_META[effectiveLevel];
+  // 紧凑形态的简短级别名（i18n 短文案块，缺省回退级别原值）
+  const levelShort = t(
+    `agentConfig.toolExecutionLevelShort.${effectiveLevel.toLowerCase()}`,
+    effectiveLevel,
+  );
 
   useEffect(() => {
     onChangeRef.current?.(sessionLevel);
@@ -167,14 +176,16 @@ const ApprovalLevelToggle: React.FC<ApprovalLevelToggleProps> = ({
         alignItems: "center",
         gap: 4,
         lineHeight: "22px",
-        width: compact ? 30 : undefined,
+        // 带短名时宽度自适应，仅图标时固定 30px 方块
+        width: compact && !shortLabel ? 30 : undefined,
         height: compact ? 30 : undefined,
-        padding: compact ? 0 : undefined,
+        padding: compact ? (shortLabel ? "0 7px" : 0) : undefined,
         marginInlineEnd: 0,
         justifyContent: "center",
       }}
     >
       {meta.icon}
+      {compact && shortLabel && <span style={{ fontSize: 12 }}>{levelShort}</span>}
       {!compact && (
         <>
           {t(

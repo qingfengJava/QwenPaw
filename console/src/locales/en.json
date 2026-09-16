@@ -3247,6 +3247,12 @@
       "off": "Off Mode",
       "offDesc": "Tool and file approvals are disabled"
     },
+    "toolExecutionLevelShort": {
+      "strict": "Strict",
+      "smart": "Smart",
+      "auto": "Auto",
+      "off": "Off"
+    },
     "saveLevelSuccess": "Tool approval mode saved",
     "saveLevelFailed": "Failed to save tool approval mode",
     "offloadPolicy": {

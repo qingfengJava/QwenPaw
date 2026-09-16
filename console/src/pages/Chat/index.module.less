@@ -43,6 +43,31 @@
       align-items: center;
       column-gap: 8px;
     }
+
+    /* SDK 的 prefix 容器默认 overflow:auto：窄容器下被右侧动作区
+     * 挤压溢出时会露出水平滚动条（Firefox 还带箭头按钮，更刺眼）。
+     * 这里藏掉滚动条，并让动作图标换行兜底，任何控件都不会被
+     * 裁进滚动区（紧凑形态由 Chat/index.tsx 按容器宽度切换）。 */
+    [class$="-sender-prefix"] {
+      scrollbar-width: none;
+
+      &::-webkit-scrollbar {
+        display: none;
+      }
+    }
+
+    [class$="-sender-prefix"] .qwenpaw-flex {
+      flex-wrap: wrap;
+      row-gap: 4px;
+    }
+  }
+}
+
+/* 紧凑 sender（容器窄宽 / 文件工作区展开）：隐藏字数统计，
+ * 给左侧动作区让出宽度，避免挤压溢出。 */
+.senderCompact :global {
+  [class$="-sender-actions-list-length"] {
+    display: none;
   }
 }
 

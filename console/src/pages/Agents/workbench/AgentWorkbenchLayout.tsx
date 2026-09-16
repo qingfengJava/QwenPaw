@@ -50,6 +50,7 @@ import {
   addRouterBasename,
   getAppRelativeLocation,
 } from "@/utils/navigationMode";
+import { WorkbenchSandboxContext } from "@/utils/workbenchSandbox";
 import { useAgentStore } from "@/stores/agentStore";
 import { useAppMessage } from "../../../hooks/useAppMessage";
 import {
@@ -420,6 +421,7 @@ function AgentWorkbenchShell({ chatRoute = false }: { chatRoute?: boolean }) {
   ) : null;
 
   return (
+    <WorkbenchSandboxContext.Provider value={aid}>
     <div className={styles.workbench}>
       {/* ── 顶栏 ── */}
       <header className={styles.topBar}>
@@ -568,6 +570,7 @@ function AgentWorkbenchShell({ chatRoute = false }: { chatRoute?: boolean }) {
         </section>
       </div>
     </div>
+    </WorkbenchSandboxContext.Provider>
   );
 }
 

@@ -3450,6 +3450,12 @@
       "off": "Mode Mati",
       "offDesc": "Persetujuan alat dan file dinonaktifkan"
     },
+    "toolExecutionLevelShort": {
+      "strict": "Ketat",
+      "smart": "Cerdas",
+      "auto": "Auto",
+      "off": "Mati"
+    },
     "saveLevelSuccess": "Mode persetujuan alat tersimpan",
     "saveLevelFailed": "Gagal menyimpan mode persetujuan alat",
     "maxContextLength": "Panjang Konteks Maksimum",
