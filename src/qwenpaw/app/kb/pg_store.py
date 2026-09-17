@@ -22,8 +22,9 @@ PG 平面能在同进程内自动恢复。
 
 - :meth:`KbPgStore.upsert_document` —— 只写**内容族**列，以 ``content_hash``
   为唯一判据；内容未变时 SQL 层 ``IS DISTINCT FROM`` 护栏拦截整条 UPDATE，
-  既不刷新 ``updated_at`` 也不追加版本快照，因此重复摄入零副作用；内容变化
-  时自动把 ``ingest_status`` 打回 ``pending``，杜绝「正文已改、切片仍是旧的
+  既不刷新 ``updated_at`` 也不追加版本快照，因此重复摄入零副作用；INSERT 与
+  UPDATE 两臂对称地把 ``ingest_status`` 落 ``pending``、``error`` 落空串，
+  保证“刚写入的内容总是未摄入”，杜绝「正文已改（或文档新建）、切片仍是空的
   却被标成 ready」的静默脏读。
 - :meth:`KbPgStore.update_document_meta` —— 只写**元数据族**列（重命名、
   移动、回收站恢复），不触碰正文与版本链。两者互不越权，改名不会被内容

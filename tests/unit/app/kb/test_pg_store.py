@@ -48,9 +48,13 @@ def _projected_columns(statement: str) -> List[str]:
 
 
 def _project(row: dict, statement: str) -> dict:
-    """按语句投影裁剪一行返回值。"""
-    columns = _projected_columns(statement)
-    return {col: row[col] for col in columns if col in row}
+    """按语句投影裁剪一行返回值。
+
+    故意用严格索引：若 SQL 查了行夹具里不存在的列（等价于真库的
+    ``UndefinedColumn``），此处直接 KeyError 而不是静默丢弃，否则会
+    退化成「读模型拿默认值撞对了夹具默认值」的假绿。
+    """
+    return {col: row[col] for col in _projected_columns(statement)}
 
 
 class _FakeResult:
@@ -610,21 +614,24 @@ async def test_get_space_reads_back_every_column() -> None:
 
 
 async def test_projection_typo_is_caught_by_read_back() -> None:
-    """列名写错必须能被 fake 抓住：投影里没有的列不会出现在行里。
+    """列名写错必须能被 fake 抓住：投影里的未知列直接报错。
 
     等价于手工把 ``_SPACE_COLUMNS`` 里的 ``embedding_model`` 改坏；
     这里验证机制本身，不去改产品代码。
     """
-    statement = (
+    typo = (
         "SELECT id, name, description, scope, owner_id, team_id, grants, "
         "embeddin_model, engine, created_at, updated_at "
         "FROM kb_spaces WHERE tenant_id = :tid AND id = :space_id"
     )
+    correct = typo.replace("embeddin_model", "embedding_model")
 
-    projected = _project(_space_db_row(), statement)
+    with pytest.raises(KeyError):
+        _project(_space_db_row(), typo)
 
-    assert "embedding_model" not in projected
-    assert "engine" in projected
+    projected = _project(_space_db_row(), correct)
+    assert projected["embedding_model"] == "text-embedding-v4"
+    assert set(projected) == set(_projected_columns(correct))
 
 
 async def test_list_spaces_maps_every_row() -> None:
