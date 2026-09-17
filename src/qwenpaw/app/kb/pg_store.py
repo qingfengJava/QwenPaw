@@ -12,12 +12,22 @@
   接收 fire-and-forget 影子写，失败仅告警；
 - ``pg``：本平面为权威读写路径。
 
-迁移（alembic 0034）尚未执行时 :meth:`KbPgStore.ensure_ready` 返回 ``False``，
-``KbService`` 门面据此回退文件平面，绝不因表缺失抛异常。
+表缺失语义：迁移（alembic 0034）尚未执行时 :meth:`KbPgStore.ensure_ready`
+返回 ``False``，**所有读写方法在入口处自行短路**，绝不把 ``UndefinedTable``
+抛给调用方；``KbService`` 门面据此回退文件平面。探测正结果永久缓存，负结果
+按 :data:`NOT_READY_RETRY_SECONDS` 冷却重试，保证「应用先起、迁移后跑」时
+PG 平面能在同进程内自动恢复。
 
-幂等契约：文档写入以 ``content_hash`` 为唯一判据，SQL 层
-``IS DISTINCT FROM`` 护栏拦截无变化重放——内容未变时既不刷新
-``updated_at``，也不追加版本快照，因此重复摄入零副作用。
+两条写入入口职责严格分离（幂等契约的地基）：
+
+- :meth:`KbPgStore.upsert_document` —— 只写**内容族**列，以 ``content_hash``
+  为唯一判据；内容未变时 SQL 层 ``IS DISTINCT FROM`` 护栏拦截整条 UPDATE，
+  既不刷新 ``updated_at`` 也不追加版本快照，因此重复摄入零副作用；内容变化
+  时自动把 ``ingest_status`` 打回 ``pending``，杜绝「正文已改、切片仍是旧的
+  却被标成 ready」的静默脏读。
+- :meth:`KbPgStore.update_document_meta` —— 只写**元数据族**列（重命名、
+  移动、回收站恢复），不触碰正文与版本链。两者互不越权，改名不会被内容
+  护栏静默吞掉，正文写入也不会意外复活已删除文档。
 
 @author qingfeng
 """
@@ -28,11 +38,13 @@ import hashlib
 import json
 import logging
 import threading
+import time
 from datetime import datetime, timezone
 from typing import Any, List, Optional
 
 from ...db import write_gateway
 from .models import (
+    INGEST_PENDING,
     KbDocument,
     KbSpace,
 )
@@ -45,7 +57,11 @@ DEFAULT_TENANT_ID = "default"
 #: 每个文档保留的版本快照数（惰性清理，同 agent_docs 保留窗口策略）
 VERSION_RETENTION = 20
 
-#: 表就绪探测涉及的六张表（缺一不可走 PG 权威读）
+#: 表未就绪判定的冷却窗口：错过窗口后允许重新探测，避免迁移补跑后
+#: 进程仍一路在文件平面上写到重启
+NOT_READY_RETRY_SECONDS = 60.0
+
+#: 表就绪探测涉及的六张表（缺一不可走 PG 平面）
 _KB_TABLES = (
     "kb_spaces",
     "kb_documents",
@@ -55,21 +71,51 @@ _KB_TABLES = (
     "agent_kb_bindings",
 )
 
+# 列清单常量化且前置，读写两侧共用同一份字面量，杜绝手写漂移
+_SPACE_COLUMNS = (
+    "SELECT id, name, description, scope, owner_id, team_id, grants, "
+    "embedding_model, engine, created_at, updated_at"
+)
+
+_DOCUMENT_COLUMNS = (
+    "SELECT id, space_id, path, title, content_md, content_hash, "
+    "source, source_meta, ingest_status, error, is_delete, updated_by, "
+    "created_at, updated_at"
+)
+
+#: 列表与路径定位场景不取 ``content_md``（长文本），其余字段同详情
+_DOCUMENT_LIST_COLUMNS = (
+    "SELECT id, space_id, path, title, content_hash, "
+    "source, source_meta, ingest_status, error, is_delete, updated_by, "
+    "created_at, updated_at"
+)
+
+#: 元数据写入白名单：列名 → SET 片段（仅键名可枚举，值一律走绑定参数）
+_META_ASSIGNMENTS = {
+    "space_id": "space_id = :space_id",
+    "path": "path = :path",
+    "title": "title = :title",
+    "source": "source = :source",
+    "source_meta": "source_meta = CAST(:source_meta AS JSONB)",
+    "is_delete": "is_delete = :is_delete",
+    "updated_by": "updated_by = :updated_by",
+}
+
 _store: Optional["KbPgStore"] = None
 _store_lock = threading.Lock()
 
 
 def content_hash(content: str) -> str:
-    """SHA-256 hex digest，作为幂等写入与版本判定的唯一依据。"""
+    """SHA-256 hex digest，幂等写入与版本判定的唯一依据。"""
     return hashlib.sha256((content or "").encode("utf-8")).hexdigest()
 
 
 def kb_pg_plane_available() -> bool:
-    """True when the KB plane should touch PG (dual/pg backend + DSN set).
+    """True when the KB plane may touch PG (dual/pg backend + DSN set).
 
-    仅做静态三态判定（判定逻辑本身沉在写网关，本层不复制）；表是否真的
-    建好需 ``await store.ensure_ready()``——探测是异步操作，不能塞进
-    同步判定里阻塞事件循环。
+    仅做静态三态判定（判定逻辑本身沉在写网关，本层不复制、不自行判 DSN）；
+    表是否真的建好需 :meth:`KbPgStore.ensure_ready`——探测必须 await，
+    不能塞进同步判定里阻塞事件循环。
     """
     return write_gateway.pg_write_available()
 
@@ -96,13 +142,25 @@ def _row_value(row: Any, key: str) -> Any:
     """Read one column from a mapping row, tolerating absent keys."""
     try:
         return row[key]
-    except (KeyError, IndexError, TypeError):  # pragma: no cover - 行契约稳定
+    except (KeyError, IndexError, TypeError):
         return None
 
 
-def _as_datetime(raw: Any) -> Optional[datetime]:
-    """Coerce a timestamptz column into a datetime (``None`` when absent)."""
-    return raw if isinstance(raw, datetime) else None
+def _stamp_kwargs(row: Any, key: str) -> dict:
+    """Build constructor kwargs for one NOT NULL timestamptz column.
+
+    ``created_at`` / ``updated_at`` 在 0034 两侧都是 NOT NULL，读模型因此
+    保持非 Optional；列意外缺失（投影没查这一列）时告警并让 pydantic 的
+    ``default_factory`` 兜底，而不是把缺失伪装成合法的 ``None``。
+    """
+    value = _row_value(row, key)
+    if not isinstance(value, datetime):
+        logger.warning(
+            "kb pg row column %s missing or not a datetime, using now",
+            key,
+        )
+        return {}
+    return {key: value}
 
 
 def space_from_row(row: Any) -> KbSpace:
@@ -117,15 +175,15 @@ def space_from_row(row: Any) -> KbSpace:
         grants=_json_loads(_row_value(row, "grants"), {}),
         embedding_model=str(_row_value(row, "embedding_model") or ""),
         engine=str(_row_value(row, "engine") or "auto"),
-        created_at=_as_datetime(_row_value(row, "created_at")),
-        updated_at=_as_datetime(_row_value(row, "updated_at")),
+        **_stamp_kwargs(row, "created_at"),
+        **_stamp_kwargs(row, "updated_at"),
     )
 
 
 def document_from_row(row: Any, *, with_content: bool = True) -> KbDocument:
     """Build a :class:`KbDocument` from one ``kb_documents`` mapping row.
 
-    ``with_content=False`` 用于列表场景（正文未查询，字段保持默认空串）。
+    ``with_content=False`` 用于列表/路径定位场景（正文未查询）。
     """
     return KbDocument(
         id=str(_row_value(row, "id") or ""),
@@ -142,8 +200,8 @@ def document_from_row(row: Any, *, with_content: bool = True) -> KbDocument:
         error=str(_row_value(row, "error") or ""),
         is_delete=bool(_row_value(row, "is_delete")),
         updated_by=str(_row_value(row, "updated_by") or ""),
-        created_at=_as_datetime(_row_value(row, "created_at")),
-        updated_at=_as_datetime(_row_value(row, "updated_at")),
+        **_stamp_kwargs(row, "created_at"),
+        **_stamp_kwargs(row, "updated_at"),
     )
 
 
@@ -151,7 +209,10 @@ class KbPgStore:
     """Async accessor for the KB PG tables (alembic 0034).
 
     Engine 懒取：三态判定为 json 时永不触碰 ``create_pg_engine()``，保证
-    无 PG 的个人部署连数据库连接池都不会建立。
+    无 PG 的个人部署连连接池都不会建立。
+
+    数据不变式（``path`` 非空）与后端无关，因此在三态短路**之前**校验：
+    json 后端同样拒绝空 path，避免只在 PG 平面暴露的脏数据。
     """
 
     def __init__(
@@ -162,6 +223,7 @@ class KbPgStore:
         self._engine = engine
         self._tenant_id = tenant_id
         self._tables_ready: Optional[bool] = None
+        self._tables_checked_at: float = 0.0
 
     # ------------------------------------------------------------------
     # engine / readiness
@@ -187,18 +249,32 @@ class KbPgStore:
         return bool(row) and all(value is not None for value in row)
 
     async def ensure_ready(self) -> bool:
-        """True when PG is reachable and the KB tables exist (cached).
+        """True when PG is reachable and every KB table exists.
 
-        探测结果进程级缓存：表一旦建好不会在运行期消失，无需重复往返。
+        正结果永久缓存（表不会在运行期消失）；负结果只缓存
+        :data:`NOT_READY_RETRY_SECONDS`，迁移补跑后同进程自动恢复；
+        探测异常不写缓存（网络抖动不应把平面永久降级）。
         """
         if not kb_pg_plane_available():
             return False
-        if self._tables_ready is None:
-            try:
-                self._tables_ready = await self._probe_tables_async()
-            except Exception:  # pylint: disable=broad-except
-                logger.warning("kb pg tables not ready", exc_info=True)
-                return False
+        if self._tables_ready is True:
+            return True
+        cooled = (
+            time.monotonic() - self._tables_checked_at
+        ) < NOT_READY_RETRY_SECONDS
+        if self._tables_ready is False and cooled:
+            return False
+        self._tables_checked_at = time.monotonic()
+        try:
+            self._tables_ready = await self._probe_tables_async()
+        except Exception:  # pylint: disable=broad-except
+            logger.warning("kb pg tables probe failed", exc_info=True)
+            return False
+        if not self._tables_ready:
+            logger.warning(
+                "kb pg tables missing, falling back to file plane; "
+                "re-check after `alembic upgrade head`",
+            )
         return self._tables_ready
 
     # ------------------------------------------------------------------
@@ -206,17 +282,17 @@ class KbPgStore:
     # ------------------------------------------------------------------
 
     async def upsert_space(self, space: KbSpace) -> bool:
-        """Insert or refresh one knowledge space; True when a row was written.
+        """Insert or refresh one knowledge space; True when it was written.
 
         空间元数据无内容哈希概念，重复写入只保证 ``updated_at`` 前进。
         """
-        if not kb_pg_plane_available():
+        if not await self.ensure_ready():
             return False
         from sqlalchemy import text
 
         now = datetime.now(timezone.utc)
         async with self._get_engine().begin() as conn:
-            await conn.execute(
+            result = await conn.execute(
                 text(
                     "INSERT INTO kb_spaces (tenant_id, id, name, "
                     "description, scope, owner_id, team_id, grants, "
@@ -249,19 +325,20 @@ class KbPgStore:
                     "now": now,
                 },
             )
-        return True
+            return bool(result.rowcount)
 
     async def get_space(self, space_id: str) -> Optional[KbSpace]:
-        """Load one space by id, or ``None`` on the json backend."""
-        if not kb_pg_plane_available():
+        """Load one space by id, or ``None`` when absent/unavailable."""
+        if not await self.ensure_ready():
             return None
         from sqlalchemy import text
 
         async with self._get_engine().connect() as conn:
             result = await conn.execute(
                 text(
-                    _SPACE_COLUMNS + " FROM kb_spaces "
-                    "WHERE tenant_id = :tid AND id = :space_id"
+                    _SPACE_COLUMNS
+                    + " FROM kb_spaces "
+                    + "WHERE tenant_id = :tid AND id = :space_id",
                 ),
                 {"tid": self._tenant_id, "space_id": space_id},
             )
@@ -269,8 +346,8 @@ class KbPgStore:
         return space_from_row(row) if row is not None else None
 
     async def list_spaces(self) -> List[KbSpace]:
-        """All spaces ordered by creation time (scope ACL 由门面上层收敛)."""
-        if not kb_pg_plane_available():
+        """All spaces by creation time（scope ACL 由门面上层收敛）。"""
+        if not await self.ensure_ready():
             return []
         from sqlalchemy import text
 
@@ -279,7 +356,7 @@ class KbPgStore:
                 text(
                     _SPACE_COLUMNS
                     + " FROM kb_spaces WHERE tenant_id = :tid "
-                    + "ORDER BY created_at ASC"
+                    + "ORDER BY created_at ASC",
                 ),
                 {"tid": self._tenant_id},
             )
@@ -287,16 +364,41 @@ class KbPgStore:
         return [space_from_row(row) for row in rows]
 
     async def delete_space(self, space_id: str) -> bool:
-        """Hard-delete one space row; True when it existed.
+        """Delete an **empty** space; refuse while it still owns live docs.
 
-        空间删除是管理动作，文档与切片由调用方（Task 6/11）先行清理，
-        本层不做级联，避免隐式批量删除。
+        0034 无外键，空间行删掉不会级联。若在此处放过还有活文档的空间，
+        其下的文档、版本快照、切片（含 HNSW/GIN 索引体积）、链接边与
+        agent 绑定会全部变成可达孤儿，其中孤儿切片还存在被 Task 5 召回的
+        现实路径。因此把「调用方须先清理」从注释升级为代码守卫。
+
+        守卫只看活文档：已进回收站（``is_delete``）的文档会随空间一起失去
+        可达路径（S0 按已授权空间集合收敛，空间不存在即不会被检索命中），
+        残留行由 Task 11 的清理端点物理回收；若连回收站也当守卫，空间将
+        在「用户已清空回收站但未物理删除」的常见流程里彻底删不掉。
         """
-        if not kb_pg_plane_available():
+        if not await self.ensure_ready():
             return False
         from sqlalchemy import text
 
         async with self._get_engine().begin() as conn:
+            occupied = (
+                await conn.execute(
+                    text(
+                        "SELECT 1 FROM kb_documents "
+                        "WHERE tenant_id = :tid AND space_id = :space_id "
+                        "AND is_delete = FALSE "
+                        "LIMIT 1",
+                    ),
+                    {"tid": self._tenant_id, "space_id": space_id},
+                )
+            ).first()
+            if occupied is not None:
+                # 仍有未删除文档：删除会直接造出可达孤儿，一律拒绝
+                logger.info(
+                    "kb space %s still owns documents, refuse delete",
+                    space_id,
+                )
+                return False
             result = await conn.execute(
                 text(
                     "DELETE FROM kb_spaces "
@@ -304,10 +406,10 @@ class KbPgStore:
                 ),
                 {"tid": self._tenant_id, "space_id": space_id},
             )
-        return bool(result.rowcount)
+            return bool(result.rowcount)
 
     # ------------------------------------------------------------------
-    # document ops（hash 护栏：内容未变零副作用）
+    # document ops（内容写：hash 护栏 + 版本链，与元数据写严格分途）
     # ------------------------------------------------------------------
 
     async def upsert_document(self, document: KbDocument) -> bool:
@@ -315,24 +417,37 @@ class KbPgStore:
 
         Returns ``True`` when a row was inserted or the content actually
         changed, ``False`` when an identical hash already existed（幂等重放
-        不抖动 ``updated_at``、不追加版本、不打扰下游索引重建）。
+        零副作用）。
+
+        ``content_hash`` 一律由存储层按 ``content_md`` 重算，不信任入参：
+        该值既是幂等判据又是落库列，一旦被上游算错就会造成永久性丢写。
+
+        内容变化时 ``ingest_status`` 被打回 ``pending`` 并清空 ``error``，
+        由 Task 6 的摄入管线接管后续 ``processing``/``ready``；本方法不改
+        ``is_delete``（复活走 :meth:`update_document_meta`）。
 
         Raises:
-            ValueError: ``path`` 为空。``uq_kb_documents_path`` 是部分唯一
-                索引，空串会让同库第二篇无路径文档直接撞唯一键。
+            ValueError: ``path`` 为空——``uq_kb_documents_path`` 是部分唯一
+                索引，空串会让同库第二篇无路径文档直接撞键。
         """
         if not document.path.strip():
             raise ValueError(
                 "kb document path must not be empty (it backs the "
                 "per-space unique index)",
             )
-        if not kb_pg_plane_available():
+        if not await self.ensure_ready():
             return False
         from sqlalchemy import text
 
         now = datetime.now(timezone.utc)
         markdown = document.content_md or ""
-        digest = document.content_hash or content_hash(markdown)
+        digest = content_hash(markdown)
+        if document.content_hash and document.content_hash != digest:
+            logger.warning(
+                "kb pg caller-supplied content_hash mismatches body, "
+                "recomputed from content_md: doc_id=%s",
+                document.id,
+            )
         async with self._get_engine().begin() as conn:
             result = await conn.execute(
                 text(
@@ -352,9 +467,8 @@ class KbPgStore:
                     "content_hash = EXCLUDED.content_hash, "
                     "source = EXCLUDED.source, "
                     "source_meta = EXCLUDED.source_meta, "
-                    "ingest_status = EXCLUDED.ingest_status, "
-                    "error = EXCLUDED.error, "
-                    "is_delete = EXCLUDED.is_delete, "
+                    "ingest_status = :reset_status, "
+                    "error = '', "
                     "updated_by = EXCLUDED.updated_by, "
                     "updated_at = EXCLUDED.updated_at "
                     "WHERE kb_documents.content_hash IS DISTINCT FROM "
@@ -375,6 +489,7 @@ class KbPgStore:
                     "error": document.error,
                     "is_delete": document.is_delete,
                     "updated_by": document.updated_by,
+                    "reset_status": INGEST_PENDING,
                     "now": now,
                 },
             )
@@ -390,6 +505,79 @@ class KbPgStore:
             )
         return True
 
+    async def update_document_meta(
+        self,
+        doc_id: str,
+        **fields: Any,
+    ) -> bool:
+        """Write metadata only（重命名 / 移动 / 回收站恢复），不触碰正文。
+
+        允许键见 :data:`_META_ASSIGNMENTS`；正文与版本链由
+        :meth:`upsert_document` 独占，因此本方法不受内容哈希护栏影响，
+        改名一定生效。
+
+        Raises:
+            ValueError: 键不在白名单，或把 ``path`` 改成空串。
+        """
+        unknown = [key for key in fields if key not in _META_ASSIGNMENTS]
+        if unknown:
+            raise ValueError(
+                f"unsupported kb document meta field(s): {unknown}",
+            )
+        if not fields:
+            return False
+        if "path" in fields and not str(fields["path"] or "").strip():
+            raise ValueError(
+                "kb document path must not be empty (it backs the "
+                "per-space unique index)",
+            )
+        if not await self.ensure_ready():
+            return False
+        from sqlalchemy import text
+
+        assignments = [
+            fragment
+            for key, fragment in _META_ASSIGNMENTS.items()
+            if key in fields
+        ]
+        params: dict[str, Any] = {"tid": self._tenant_id, "doc_id": doc_id}
+        for key, value in fields.items():
+            params[key] = _json_dumps(value) if key == "source_meta" else value
+        async with self._get_engine().begin() as conn:
+            result = await conn.execute(
+                text(
+                    "UPDATE kb_documents SET "
+                    + ", ".join(assignments)
+                    + ", updated_at = now() "
+                    + "WHERE tenant_id = :tid AND id = :doc_id",
+                ),
+                params,
+            )
+            # 目标路径已被同库其他文档占用时由 uq_kb_documents_path 抛
+            # IntegrityError，交由门面翻译成「路径已存在」的用户可读错误
+            return bool(result.rowcount)
+
+    async def _lock_document(self, conn: Any, doc_id: str) -> None:
+        """Take the row lock so same-document version numbers stay serial.
+
+        Raises:
+            ValueError: 文档不存在（版本快照必须挂在真实主体上，0034 无外键
+                拦不住孤儿快照）。
+        """
+        from sqlalchemy import text
+
+        locked = await conn.execute(
+            text(
+                "SELECT 1 FROM kb_documents "
+                "WHERE tenant_id = :tid AND id = :doc_id FOR UPDATE",
+            ),
+            {"tid": self._tenant_id, "doc_id": doc_id},
+        )
+        if locked.fetchone() is None:
+            raise ValueError(
+                f"kb document {doc_id} not found; cannot snapshot a version",
+            )
+
     async def _snapshot_version(
         self,
         conn: Any,
@@ -401,18 +589,22 @@ class KbPgStore:
     ) -> int:
         """Append one immutable revision inside the caller's transaction.
 
-        写入当前版本号 = 历史最大版本 + 1，随后按保留窗口清理最旧的快照，
-        使「版本抖动」与「存储膨胀」同时可控。
+        先锁文档行把同一文档的并发写入串行化，再取 ``MAX(version)+1``，
+        否则两个事务会拿到同号，而 ``ON CONFLICT DO NOTHING`` 会把后到者
+        的真实快照直接吞掉（版本链断裂且无人知晓）。此处用普通 INSERT：
+        真撞号就抛 ``IntegrityError`` 让事务回滚，宁可失败也不静默丢历史。
         """
         from sqlalchemy import text
 
+        await self._lock_document(conn, document_id)
         next_version = int(
             (
                 await conn.execute(
                     text(
                         "SELECT COALESCE(MAX(version), 0) + 1 AS "
                         "next_version FROM kb_document_versions "
-                        "WHERE tenant_id = :tid AND document_id = :doc_id",
+                        "WHERE tenant_id = :tid "
+                        "AND document_id = :doc_id",
                     ),
                     {"tid": self._tenant_id, "doc_id": document_id},
                 )
@@ -425,8 +617,7 @@ class KbPgStore:
                 "INSERT INTO kb_document_versions (tenant_id, document_id, "
                 "version, content_md, content_hash, created_by) "
                 "VALUES (:tid, :doc_id, :version, "
-                "CAST(:content_md AS TEXT), :chash, :created_by) "
-                "ON CONFLICT (tenant_id, document_id, version) DO NOTHING",
+                "CAST(:content_md AS TEXT), :chash, :created_by)",
             ),
             {
                 "tid": self._tenant_id,
@@ -462,13 +653,11 @@ class KbPgStore:
     ) -> int:
         """Append one revision outside a document write; returns its version.
 
-        供 Task 6 的「摄入失败后仅补版本」等场景显式调用；日常内容变更
-        应走 :meth:`upsert_document`，由 hash 护栏自动决定是否抖动版本。
+        供 Task 6「正文未变但需留痕」等场景显式调用；日常内容变更应走
+        :meth:`upsert_document`，由 hash 护栏自动决定是否抖动版本。
         """
-        if not kb_pg_plane_available():
+        if not await self.ensure_ready():
             return 0
-        from sqlalchemy import text
-
         async with self._get_engine().begin() as conn:
             return await self._snapshot_version(
                 conn,
@@ -480,7 +669,7 @@ class KbPgStore:
 
     async def get_document(self, doc_id: str) -> Optional[KbDocument]:
         """Load one document (full content) by id."""
-        if not kb_pg_plane_available():
+        if not await self.ensure_ready():
             return None
         from sqlalchemy import text
 
@@ -489,12 +678,58 @@ class KbPgStore:
                 text(
                     _DOCUMENT_COLUMNS
                     + " FROM kb_documents "
-                    + "WHERE tenant_id = :tid AND id = :doc_id"
+                    + "WHERE tenant_id = :tid AND id = :doc_id",
                 ),
                 {"tid": self._tenant_id, "doc_id": doc_id},
             )
             row = result.mappings().first()
         return document_from_row(row) if row is not None else None
+
+    async def get_document_by_path(
+        self,
+        space_id: str,
+        path: str,
+        *,
+        include_deleted: bool = False,
+    ) -> Optional[KbDocument]:
+        """Locate one document by its per-space path (no 正文).
+
+        ``path`` 才是业务唯一键（``uq_kb_documents_path``），wikilink 解析
+        与「先查后写」都必须按它定位，因此这里提供原子入口，避免调用方
+        自己 list 后过滤留下竞态窗口。
+        """
+        if not path.strip():
+            raise ValueError(
+                "kb document path must not be empty (it backs the "
+                "per-space unique index)",
+            )
+        if not await self.ensure_ready():
+            return None
+        from sqlalchemy import text
+
+        where = "WHERE tenant_id = :tid AND space_id = :space_id"
+        if not include_deleted:
+            where += " AND is_delete = FALSE"
+        async with self._get_engine().connect() as conn:
+            result = await conn.execute(
+                text(
+                    _DOCUMENT_LIST_COLUMNS
+                    + " FROM kb_documents "
+                    + where
+                    + " AND path = :path",
+                ),
+                {
+                    "tid": self._tenant_id,
+                    "space_id": space_id,
+                    "path": path,
+                },
+            )
+            row = result.mappings().first()
+        return (
+            document_from_row(row, with_content=False)
+            if row is not None
+            else None
+        )
 
     async def list_documents(
         self,
@@ -502,12 +737,12 @@ class KbPgStore:
         *,
         include_deleted: bool = False,
     ) -> List[KbDocument]:
-        """List a space's documents without正文（目录树/列表场景）。
+        """List a space's documents without 正文（目录树/列表场景）。
 
         默认过滤逻辑删除行：``uq_kb_documents_path`` 只对未删除文档生效，
         回收站内容混入会让目录树出现重复路径。
         """
-        if not kb_pg_plane_available():
+        if not await self.ensure_ready():
             return []
         from sqlalchemy import text
 
@@ -520,7 +755,7 @@ class KbPgStore:
                     _DOCUMENT_LIST_COLUMNS
                     + " FROM kb_documents "
                     + where
-                    + " ORDER BY path ASC"
+                    + " ORDER BY path ASC",
                 ),
                 {"tid": self._tenant_id, "space_id": space_id},
             )
@@ -529,7 +764,7 @@ class KbPgStore:
 
     async def delete_document(self, doc_id: str) -> bool:
         """Soft-delete one document（逻辑删除，保证可追溯与可恢复）。"""
-        if not kb_pg_plane_available():
+        if not await self.ensure_ready():
             return False
         from sqlalchemy import text
 
@@ -543,7 +778,7 @@ class KbPgStore:
                 ),
                 {"tid": self._tenant_id, "doc_id": doc_id},
             )
-        return bool(result.rowcount)
+            return bool(result.rowcount)
 
     async def update_ingest_status(
         self,
@@ -553,7 +788,7 @@ class KbPgStore:
         error: str = "",
     ) -> bool:
         """Advance one document's ingest state machine (Task 6 异步摄入)."""
-        if not kb_pg_plane_available():
+        if not await self.ensure_ready():
             return False
         from sqlalchemy import text
 
@@ -571,7 +806,7 @@ class KbPgStore:
                     "error": error,
                 },
             )
-        return bool(result.rowcount)
+            return bool(result.rowcount)
 
     # ------------------------------------------------------------------
     # fire-and-forget shadow writes（同步调用方不阻塞）
@@ -592,28 +827,13 @@ class KbPgStore:
         )
 
 
-# 列清单常量化，避免读写两侧手写不一致
-_SPACE_COLUMNS = (
-    "SELECT id, name, description, scope, owner_id, team_id, grants, "
-    "embedding_model, engine, created_at, updated_at"
-)
-
-_DOCUMENT_COLUMNS = (
-    "SELECT id, space_id, path, title, content_md, content_hash, "
-    "source, source_meta, ingest_status, error, is_delete, updated_by, "
-    "created_at, updated_at"
-)
-
-#: 列表场景不取 ``content_md``（长文本），其余字段与详情一致
-_DOCUMENT_LIST_COLUMNS = (
-    "SELECT id, space_id, path, title, content_hash, "
-    "source, source_meta, ingest_status, error, is_delete, updated_by, "
-    "created_at, updated_at"
-)
-
-
 def get_kb_pg_store(engine: Any = None) -> Optional[KbPgStore]:
-    """Return the shared store; ``None`` when PG is not configured at all."""
+    """Return the shared store; ``None`` when PG is not configured at all.
+
+    表未建时本工厂仍返回实例——所有方法自带 :meth:`KbPgStore.ensure_ready`
+    短路，因此不会抛异常；需要「拿一个确定可用的实例」请用
+    :func:`get_ready_kb_pg_store`。
+    """
     global _store  # pylint: disable=global-statement
     if _store is not None:
         return _store
@@ -636,7 +856,7 @@ async def get_ready_kb_pg_store() -> Optional[KbPgStore]:
 
 
 def reset_store_for_tests() -> None:
-    """Drop the cached singleton (tests切换环境变量后必须调用)."""
+    """Drop the cached singleton（测试切换环境变量后必须调用）."""
     global _store  # pylint: disable=global-statement
     with _store_lock:
         _store = None

@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import List
 
@@ -63,6 +64,10 @@ _EXPECTED_INDEXES = (
     "ix_agent_kb_bindings_space",
 )
 
+#: 真库往返用例的固定 ID（用例首尾都清理，不往隔离库留残留）
+_IT_SPACE = "kb_it_t2"
+_IT_DOC = "doc_it_t2"
+
 #: 0034 应交付的枚举 CHECK 约束
 _EXPECTED_CHECKS = (
     "ck_kb_spaces_scope",
@@ -101,6 +106,27 @@ def _isolation_dsn() -> str:
         "postgresql+asyncpg://",
         "postgresql://",
         1,
+    )
+
+
+def _isolation_asyncpg_engine():
+    """用 SQLAlchemy async 引擎指向隔离库，供 ``KbPgStore`` 真库往返。
+
+    用 ``NullPool``：集成用例在 ``asyncio.run`` 的不同临时循环间复用引擎，
+    保留连接会把上一个已关闭循环的连接带进下一个循环而报错。
+    """
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from sqlalchemy.pool import NullPool
+
+    dsn = os.environ.get("QWENPAW_PG_DSN", "")
+    if not dsn:
+        pytest.skip("QWENPAW_PG_DSN not set (PG-gated knowledge base tests)")
+    url = make_url(dsn).set(database=_INTEGRATION_DB)
+    if "+asyncpg" not in url.drivername:
+        url = url.set(drivername="postgresql+asyncpg")
+    return create_async_engine(
+        url.render_as_string(hide_password=False),
+        poolclass=NullPool,
     )
 
 
@@ -220,3 +246,166 @@ def test_migration_ddl_is_idempotent(app_server) -> None:
             await conn.close()
 
     asyncio.run(_twice())
+
+
+async def _scalar(engine, statement: str, **params) -> object:
+    """执行一条单值查询（本文件只用于版本链长度计数）。"""
+    from sqlalchemy import text
+
+    async with engine.connect() as conn:
+        return (await conn.execute(text(statement), params)).scalar()
+
+
+async def _cleanup_store_rows(engine) -> None:
+    """物理清除本用例的数据行（隔离库可反复跑的前提）。"""
+    from sqlalchemy import text
+
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "DELETE FROM kb_document_versions "
+                "WHERE document_id = :doc_id",
+            ),
+            {"doc_id": _IT_DOC},
+        )
+        await conn.execute(
+            text("DELETE FROM kb_documents WHERE id = :doc_id"),
+            {"doc_id": _IT_DOC},
+        )
+        await conn.execute(
+            text("DELETE FROM kb_spaces WHERE id = :space_id"),
+            {"space_id": _IT_SPACE},
+        )
+
+
+def test_kb_pg_store_roundtrip(app_server) -> None:
+    """真库往返：存储平面的 SQL 语义必须在真实 PG 上成立。
+
+    单测的 FakeEngine 只能约束语句文本，以下三件事只有真库能证：
+    ``ON CONFLICT ... WHERE ... RETURNING`` 在内容未变时确实空集；
+    JSONB 列能写能读回；内容变更会自动把 ``ingest_status`` 打回 pending。
+    """
+
+    async def _version_count(engine) -> int:
+        """当前文档的版本快照条数。"""
+        return int(
+            await _scalar(
+                engine,
+                "SELECT count(*) AS c FROM kb_document_versions "
+                "WHERE document_id = :doc_id",
+                doc_id=_IT_DOC,
+            )
+            or 0,
+        )
+
+    async def _run() -> None:
+        from qwenpaw.app.kb import pg_store
+        from qwenpaw.app.kb.models import KbDocument, KbSpace
+        from qwenpaw.db import write_gateway
+
+        # 同一 pytest 进程内可能有单测遗留的后端缓存，此处按真实环境重算
+        write_gateway.reset_backend_cache()
+        assert (
+            pg_store.kb_pg_plane_available()
+        ), "pg backend must be available when DSN is set"
+
+        engine = _isolation_asyncpg_engine()
+        store = pg_store.KbPgStore(engine=engine)
+        try:
+            await _cleanup_store_rows(engine)
+            assert await store.ensure_ready() is True
+
+            # 空间：JSONB grants 与时间列读回全链路
+            space = KbSpace(
+                id=_IT_SPACE,
+                name="集成测试库",
+                description="集成相关内容时检索我",
+                scope="team",
+                team_id="t1",
+                grants={"users": ["u1"]},
+                engine="pgvector",
+            )
+            assert await store.upsert_space(space) is True
+            assert await store.upsert_space(space) is True
+            loaded = await store.get_space(_IT_SPACE)
+            assert loaded is not None
+            assert loaded.scope == "team"
+            assert loaded.engine == "pgvector"
+            assert loaded.grants == {"users": ["u1"]}
+            assert isinstance(loaded.created_at, datetime)
+
+            # 文档：首写 True → 同内容重放 False → 版本链只多一条
+            doc = KbDocument(
+                id=_IT_DOC,
+                space_id=_IT_SPACE,
+                path="/a.md",
+                title="a",
+                content_md="# 指南 第一段",
+                source="manual",
+                updated_by="u1",
+                source_meta={"file_name": "a.md"},
+            )
+            assert await store.upsert_document(doc) is True
+            assert await store.upsert_document(doc) is False
+            assert await _version_count(engine) == 1
+            detail = await store.get_document(_IT_DOC)
+            assert detail is not None
+            assert detail.source_meta == {"file_name": "a.md"}
+            assert detail.content_hash == pg_store.content_hash(
+                doc.content_md,
+            )
+            stamp_after_replay = detail.updated_at
+
+            # 改内容：版本+1、时间戳前进、状态自动打回 pending
+            changed = doc.model_copy(
+                update={"content_md": "# 指南 改写后的正文"},
+            )
+            assert await store.upsert_document(changed) is True
+            after_change = await store.get_document(_IT_DOC)
+            assert after_change is not None
+            assert after_change.content_md.endswith("改写后的正文")
+            assert after_change.ingest_status == "pending"
+            assert after_change.updated_at > stamp_after_replay
+            assert await _version_count(engine) == 2
+
+            # 元数据写：改名不碰正文也不抖动版本链
+            assert (
+                await store.update_document_meta(
+                    _IT_DOC,
+                    path="/b.md",
+                    title="b",
+                )
+                is True
+            )
+            renamed = await store.get_document(_IT_DOC)
+            assert renamed is not None
+            assert renamed.path == "/b.md"
+            assert renamed.content_md.endswith("改写后的正文")
+            assert await _version_count(engine) == 2
+            by_path = await store.get_document_by_path(_IT_SPACE, "/b.md")
+            assert by_path is not None and by_path.id == _IT_DOC
+
+            # 摄入状态机：手动推进到 ready 后可读回
+            assert (await store.update_ingest_status(_IT_DOC, "ready")) is True
+            ready = await store.get_document(_IT_DOC)
+            assert ready is not None and ready.ingest_status == "ready"
+
+            # 空间非空时拒删；文档软删后才能删空间
+            assert await store.delete_space(_IT_SPACE) is False
+            assert await store.delete_document(_IT_DOC) is True
+            assert await store.list_documents(_IT_SPACE) == []
+            assert (
+                len(
+                    await store.list_documents(
+                        _IT_SPACE,
+                        include_deleted=True,
+                    )
+                )
+                == 1
+            )
+            assert await store.delete_space(_IT_SPACE) is True
+        finally:
+            await _cleanup_store_rows(engine)
+            await engine.dispose()
+
+    asyncio.run(_run())

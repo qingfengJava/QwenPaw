@@ -20,7 +20,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 SCOPE_PERSONAL = "personal"
 SCOPE_TEAM = "team"
@@ -56,6 +56,24 @@ VALID_INGEST_STATUSES = frozenset(
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _require_enum_value(
+    field: str,
+    allowed: frozenset,
+    value: str,
+) -> str:
+    """Assert one enum-ish column stays inside its DB CHECK value set.
+
+    0034 给 ``scope`` / ``engine`` / ``source`` / ``ingest_status`` 都建了
+    CHECK 约束，但撞到约束意味着一次往返后才拿到 ``IntegrityError``；模型层
+    先校一道，让调用方拿到可读的 ValidationError。
+    """
+    if value not in allowed:
+        raise ValueError(
+            f"{field} 取值非法：{value!r}，仅允许 {sorted(allowed)}",
+        )
+    return value
 
 
 class KnowledgeBase(BaseModel):
@@ -127,8 +145,20 @@ class KbSpace(BaseModel):
     grants: Dict[str, Any] = Field(default_factory=dict)
     embedding_model: str = ""
     engine: str = ENGINE_AUTO
-    created_at: Optional[datetime] = Field(default_factory=_utcnow)
-    updated_at: Optional[datetime] = Field(default_factory=_utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+    @field_validator("scope")
+    @classmethod
+    def _validate_scope(cls, value: str) -> str:
+        # 把 0034 的 ck_kb_spaces_scope 前移到模型层，不让非法值穿到 DB 才炸
+        return _require_enum_value("scope", VALID_SCOPES, value)
+
+    @field_validator("engine")
+    @classmethod
+    def _validate_engine(cls, value: str) -> str:
+        # 同上：ck_kb_spaces_engine 的模型侧镜像
+        return _require_enum_value("engine", VALID_ENGINES, value)
 
 
 class KbDocument(BaseModel):
@@ -136,7 +166,7 @@ class KbDocument(BaseModel):
 
     id: str
     space_id: str
-    # 库内唯一路径；写入前必须非空（撞 uq_kb_documents_path 部分唯一索引）
+    # 库内唯一路径；写入前必须非空（否则撞 uq_kb_documents_path 部分唯一索引）
     path: str = ""
     title: str = ""
     content_md: str = ""
@@ -147,16 +177,21 @@ class KbDocument(BaseModel):
     error: str = ""
     is_delete: bool = False
     updated_by: str = ""
-    created_at: Optional[datetime] = Field(default_factory=_utcnow)
-    updated_at: Optional[datetime] = Field(default_factory=_utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
 
+    @field_validator("source")
+    @classmethod
+    def _validate_source(cls, value: str) -> str:
+        # 镜像 ck_kb_documents_source
+        return _require_enum_value("source", VALID_SOURCES, value)
 
-class KbDocumentVersion(BaseModel):
-    """One immutable revision（``kb_document_versions`` 行）。"""
-
-    document_id: str
-    version: int
-    content_md: str = ""
-    content_hash: str = ""
-    created_by: str = ""
-    created_at: Optional[datetime] = Field(default_factory=_utcnow)
+    @field_validator("ingest_status")
+    @classmethod
+    def _validate_ingest_status(cls, value: str) -> str:
+        # 镜像 ck_kb_documents_ingest_status
+        return _require_enum_value(
+            "ingest_status",
+            VALID_INGEST_STATUSES,
+            value,
+        )
