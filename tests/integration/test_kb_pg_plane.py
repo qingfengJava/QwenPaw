@@ -351,6 +351,9 @@ def test_kb_pg_store_roundtrip(app_server) -> None:
             detail = await store.get_document(_IT_DOC)
             assert detail is not None
             assert detail.source_meta == {"file_name": "a.md"}
+            # 新行也必须待摄入：否则 ready + 零切片的文档永不出现在重建扫描里
+            assert detail.ingest_status == "pending"
+            assert detail.error == ""
             assert detail.content_hash == pg_store.content_hash(
                 doc.content_md,
             )
@@ -393,6 +396,8 @@ def test_kb_pg_store_roundtrip(app_server) -> None:
             # 空间非空时拒删；文档软删后才能删空间
             assert await store.delete_space(_IT_SPACE) is False
             assert await store.delete_document(_IT_DOC) is True
+            # 二次删除因 is_delete = FALSE 谓词而 rowcount=0，必须返回 False
+            assert await store.delete_document(_IT_DOC) is False
             assert await store.list_documents(_IT_SPACE) == []
             assert (
                 len(
@@ -407,5 +412,9 @@ def test_kb_pg_store_roundtrip(app_server) -> None:
         finally:
             await _cleanup_store_rows(engine)
             await engine.dispose()
+            # 本用例主动重算过后端缓存，退出前再清一次以免留给后续用例
+            from qwenpaw.db import write_gateway as _wg
+
+            _wg.reset_backend_cache()
 
     asyncio.run(_run())

@@ -26,10 +26,31 @@ pytestmark = pytest.mark.unit
 #: 探测通过时的六表返回值（与 pg_store._KB_TABLES 同序）
 _ALL_TABLES = pg_store._KB_TABLES
 
+#: 行夹具使用的固定时间戳（提成常量避开 black 对多参调用的拆行）
+_STAMP_1 = datetime(2026, 9, 17, 1, 0, 0, tzinfo=timezone.utc)
+_STAMP_2 = datetime(2026, 9, 17, 2, 0, 0, tzinfo=timezone.utc)
+
 
 # ---------------------------------------------------------------------------
 # Fake engine（捕获 SQL + 按语句特征回放行）
 # ---------------------------------------------------------------------------
+
+
+def _projected_columns(statement: str) -> List[str]:
+    """取回 ``SELECT a, b FROM ...`` 的投影列名清单。
+
+    fake 只回放**真被查询**的列，因此写错或漏写列名会直接变成读模型缺字段，
+    而不是像以前那样被预制的完整 row 字典掩盖。
+    """
+    head = statement.split(" FROM ", 1)[0].strip()
+    head = head.removeprefix("SELECT")
+    return [col.strip() for col in head.split(",") if col.strip()]
+
+
+def _project(row: dict, statement: str) -> dict:
+    """按语句投影裁剪一行返回值。"""
+    columns = _projected_columns(statement)
+    return {col: row[col] for col in columns if col in row}
 
 
 class _FakeResult:
@@ -120,20 +141,30 @@ class _FakeConn:
                 row={"next_version": self._next_version},
             )
         if "FROM kb_spaces" in statement:
+            if self._space_row is None:
+                return _FakeResult(rowcount=1, rows=[])
             if "id = :space_id" in statement:
-                return _FakeResult(rowcount=1, row=self._space_row)
+                return _FakeResult(
+                    rowcount=1,
+                    row=_project(self._space_row, statement),
+                )
             return _FakeResult(
                 rowcount=1,
-                rows=[] if self._space_row is None else [self._space_row],
+                rows=[_project(self._space_row, statement)],
             )
         if "FROM kb_documents" in statement:
-            if "path = :path" in statement:
-                return _FakeResult(rowcount=1, row=self._doc_row)
-            if "id = :doc_id" in statement:
-                return _FakeResult(rowcount=1, row=self._doc_row)
+            if "path = :path" in statement or "id = :doc_id" in statement:
+                if self._doc_row is None:
+                    return _FakeResult(rowcount=1, row=None)
+                return _FakeResult(
+                    rowcount=1,
+                    row=_project(self._doc_row, statement),
+                )
             return _FakeResult(
                 rowcount=1,
-                rows=self._doc_rows or [],
+                rows=[
+                    _project(row, statement) for row in (self._doc_rows or [])
+                ],
             )
         return _FakeResult(0 if self._unchanged else 1)
 
@@ -211,12 +242,12 @@ def _space_db_row(**overrides: Any) -> dict:
         "description": "孕产相关问题时检索我",
         "scope": "enterprise",
         "owner_id": "u1",
-        "team_id": "",
+        "team_id": "t1",
         "grants": '{"roles": ["kb_admin"]}',
         "embedding_model": "text-embedding-v4",
         "engine": "pgvector",
-        "created_at": datetime(2026, 9, 17, 1, 0, 0, tzinfo=timezone.utc),
-        "updated_at": datetime(2026, 9, 17, 2, 0, 0, tzinfo=timezone.utc),
+        "created_at": _STAMP_1,
+        "updated_at": _STAMP_2,
     }
     row.update(overrides)
     return row
@@ -237,8 +268,8 @@ def _doc_db_row(**overrides: Any) -> dict:
         "error": "",
         "is_delete": False,
         "updated_by": "u1",
-        "created_at": datetime(2026, 9, 17, 1, 0, 0, tzinfo=timezone.utc),
-        "updated_at": datetime(2026, 9, 17, 2, 0, 0, tzinfo=timezone.utc),
+        "created_at": _STAMP_1,
+        "updated_at": _STAMP_2,
     }
     row.update(overrides)
     return row
@@ -370,15 +401,31 @@ async def test_upsert_document_recomputes_hash_ignoring_caller() -> None:
 
 
 async def test_upsert_document_resets_ingest_status() -> None:
-    """内容变化即打回 pending 并清空 error，避免旧切片被当成已就绪。"""
+    """新行与变更行一律落 pending 并清空 error（两臂不对称就会漏新文档）。"""
     store = pg_store.KbPgStore(engine=_FakeEngine())
 
     assert await store.upsert_document(_doc()) is True
 
     sql, params = store._engine.conn.statements[1]
-    assert "ingest_status = :reset_status" in sql
     assert params["reset_status"] == "pending"
+    # INSERT 臂：状态与 error 不再取调用方传值
+    assert "CAST(:source_meta AS JSONB), :reset_status, ''," in sql
+    assert ":ingest_status" not in sql
+    assert "ingest_status" not in params
+    # UPDATE 臂：内容变化即打回 pending
+    assert "ingest_status = :reset_status" in sql
     assert "error = ''" in sql
+
+
+async def test_upsert_document_ignores_caller_error_field() -> None:
+    """内容写入不得代写 error；失败原因只能由状态入口记录。"""
+    store = pg_store.KbPgStore(engine=_FakeEngine())
+
+    assert await store.upsert_document(_doc(error="boom")) is True
+
+    sql, params = store._engine.conn.statements[1]
+    assert "error" not in params
+    assert ":error" not in sql
 
 
 async def test_upsert_document_does_not_resurrect_deleted() -> None:
@@ -543,7 +590,7 @@ async def test_update_document_meta_no_fields_is_noop() -> None:
 
 
 async def test_get_space_reads_back_every_column() -> None:
-    """空间读回：JSONB 以 str 到达也要解成 dict，时间列保持 datetime。"""
+    """空间读回：投影里每一列都必须落地，错列名在此即红。"""
     store = pg_store.KbPgStore(engine=_FakeEngine(space_row=_space_db_row()))
 
     space = await store.get_space("kb_a")
@@ -551,19 +598,33 @@ async def test_get_space_reads_back_every_column() -> None:
     assert space is not None
     assert space.id == "kb_a"
     assert space.name == "孕产知识库"
+    assert space.description == "孕产相关问题时检索我"
     assert space.scope == "enterprise"
+    assert space.owner_id == "u1"
+    assert space.team_id == "t1"
     assert space.engine == "pgvector"
     assert space.embedding_model == "text-embedding-v4"
     assert space.grants == {"roles": ["kb_admin"]}
-    assert space.created_at == datetime(
-        2026,
-        9,
-        17,
-        1,
-        0,
-        0,
-        tzinfo=timezone.utc,
+    assert space.created_at == _STAMP_1
+    assert space.updated_at == _STAMP_2
+
+
+async def test_projection_typo_is_caught_by_read_back() -> None:
+    """列名写错必须能被 fake 抓住：投影里没有的列不会出现在行里。
+
+    等价于手工把 ``_SPACE_COLUMNS`` 里的 ``embedding_model`` 改坏；
+    这里验证机制本身，不去改产品代码。
+    """
+    statement = (
+        "SELECT id, name, description, scope, owner_id, team_id, grants, "
+        "embeddin_model, engine, created_at, updated_at "
+        "FROM kb_spaces WHERE tenant_id = :tid AND id = :space_id"
     )
+
+    projected = _project(_space_db_row(), statement)
+
+    assert "embedding_model" not in projected
+    assert "engine" in projected
 
 
 async def test_list_spaces_maps_every_row() -> None:
@@ -577,19 +638,35 @@ async def test_list_spaces_maps_every_row() -> None:
 
 
 async def test_get_document_reads_back_content_and_meta() -> None:
-    """文档详情读回：正文、source_meta JSONB、状态机字段全部落地。"""
+    """文档详情读回：投影每一列都要落地，不留静默默认值。"""
     store = pg_store.KbPgStore(engine=_FakeEngine(doc_row=_doc_db_row()))
 
     doc = await store.get_document("d1")
 
     assert doc is not None
+    assert doc.id == "d1"
+    assert doc.space_id == "kb_a"
     assert doc.path == "/guideline.md"
+    assert doc.title == "guideline"
     assert doc.content_md == "# hello"
     assert doc.content_hash == pg_store.content_hash("# hello")
     assert doc.source == "upload"
     assert doc.source_meta == {"file_name": "a.md"}
     assert doc.ingest_status == "processing"
+    assert doc.error == ""
     assert doc.is_delete is False
+    assert doc.updated_by == "u1"
+    assert doc.created_at == _STAMP_1
+    assert doc.updated_at == _STAMP_2
+
+
+async def test_missing_timestamp_column_fails_loudly() -> None:
+    """投影漏掉时间列是编程错误，不得用 now() 伪造一个看起来合法的值。"""
+    row = _doc_db_row()
+    row.pop("created_at")
+
+    with pytest.raises(KeyError):
+        pg_store.document_from_row(row)
 
 
 async def test_list_documents_projects_no_content() -> None:
@@ -659,6 +736,7 @@ async def test_delete_document_is_soft_delete() -> None:
     sql = store._engine.conn.statements[1][0]
     assert "UPDATE kb_documents" in sql
     assert "SET is_delete = TRUE" in sql
+    # 「二次删除返回 False」依赖真实 rowcount，由真库集成用例跨任务守住
 
 
 async def test_delete_space_refuses_when_not_empty() -> None:
@@ -734,7 +812,7 @@ async def test_ready_positive_result_is_cached_forever() -> None:
 
     assert await store.ensure_ready() is True
     assert await store.ensure_ready() is True
-    assert len([s for s, _ in engine.conn.statements]) == 1
+    assert len(engine.conn.statements) == 1
 
 
 async def test_ensure_ready_does_not_cache_probe_exception() -> None:

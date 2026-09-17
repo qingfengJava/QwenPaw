@@ -149,17 +149,17 @@ def _row_value(row: Any, key: str) -> Any:
 def _stamp_kwargs(row: Any, key: str) -> dict:
     """Build constructor kwargs for one NOT NULL timestamptz column.
 
-    ``created_at`` / ``updated_at`` 在 0034 两侧都是 NOT NULL，读模型因此
-    保持非 Optional；列意外缺失（投影没查这一列）时告警并让 pydantic 的
-    ``default_factory`` 兜底，而不是把缺失伪装成合法的 ``None``。
+    ``created_at`` / ``updated_at`` 在 0034 两侧都是 NOT NULL，且本模块的
+    列清单常量显式包含它们。缺列或类型意外只会是投影写错这种**编程错误**，
+    因此在此处早失败：拿 ``now()`` 伪造一个看起来合法的时间戳，会让 Task 8
+    的目录树排序与后续排查都建立在假数据上。
     """
     value = _row_value(row, key)
     if not isinstance(value, datetime):
-        logger.warning(
-            "kb pg row column %s missing or not a datetime, using now",
-            key,
+        raise KeyError(
+            f"kb pg row is missing datetime column {key!r}; "
+            "check the SELECT column list against alembic 0034",
         )
-        return {}
     return {key: value}
 
 
@@ -422,9 +422,11 @@ class KbPgStore:
         ``content_hash`` 一律由存储层按 ``content_md`` 重算，不信任入参：
         该值既是幂等判据又是落库列，一旦被上游算错就会造成永久性丢写。
 
-        内容变化时 ``ingest_status`` 被打回 ``pending`` 并清空 ``error``，
-        由 Task 6 的摄入管线接管后续 ``processing``/``ready``；本方法不改
-        ``is_delete``（复活走 :meth:`update_document_meta`）。
+        摄入状态在**两条路径上对称**：新行与变更行一律落 ``pending`` 并清空
+        ``error``（“刚写入的内容总是未摄入”是不变式，否则新文档会以
+        ready 状态带着零切片入库，dual 下重建扫描永远看不见它）；
+        ``processing``/``ready``/``failed`` 只能由 :meth:`update_ingest_status`
+        推进。本方法也不改 ``is_delete``（复活走 :meth:`update_document_meta`）。
 
         Raises:
             ValueError: ``path`` 为空——``uq_kb_documents_path`` 是部分唯一
@@ -457,7 +459,7 @@ class KbPgStore:
                     "updated_by, created_at, updated_at) "
                     "VALUES (:tid, :doc_id, :space_id, :path, :title, "
                     "CAST(:content_md AS TEXT), :chash, :source, "
-                    "CAST(:source_meta AS JSONB), :ingest_status, :error, "
+                    "CAST(:source_meta AS JSONB), :reset_status, '', "
                     ":is_delete, :updated_by, :now, :now) "
                     "ON CONFLICT (tenant_id, id) DO UPDATE SET "
                     "space_id = EXCLUDED.space_id, "
@@ -485,8 +487,6 @@ class KbPgStore:
                     "chash": digest,
                     "source": document.source,
                     "source_meta": _json_dumps(document.source_meta),
-                    "ingest_status": document.ingest_status,
-                    "error": document.error,
                     "is_delete": document.is_delete,
                     "updated_by": document.updated_by,
                     "reset_status": INGEST_PENDING,
