@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 将 `app/kb` 从 JSONL 轻量演示级升级为生产级知识中心：PG 五表权威平面 + 结构化切片 + pgvector/tsvector 混合检索 + Agent 绑定授权 + 目录注入自主检索 + 管理/员工前端三块页面。
+**Goal:** 将 `app/kb` 从 JSONL 轻量演示级升级为生产级知识中心：PG 五表权威平面 + 结构化切片 + **双检索引擎（pgvector 默认 / Milvus 按库可选）+ 全装检索管线（混检 RRF/结构图扩展/rerank）** + Agent 绑定授权 + 目录注入自主检索 + 全格式摄入 + 管理/员工前端三块页面。一期一次做完，无后置返工项。
 
-**Architecture:** 四层架构（详见 spec `docs/superpowers/specs/2026-09-17-knowledge-base-architecture-design.md`）：知识组织层以 Markdown 文档为权威源；索引层用可插拔 RetrievalEngine（L0 文件 / L1 pgvector 主力 / L2 Milvus 三期）；检索管线 S0 ACL 收敛 → S1 混合检索 RRF → S2 结构扩展；Agent 接入层复用 skills 的「目录注入 + 按需拉取」契约。
+**Architecture:** 四层架构（详见 spec `docs/superpowers/specs/2026-09-17-knowledge-base-architecture-design.md`）：知识组织层以 Markdown 文档为权威源；索引层可插拔 RetrievalEngine 三实现全装（L0 文件回退 / L1 pgvector 默认 / L2 Milvus 按库启用）；检索管线 S0 ACL 收敛 → S1 混检 RRF → S2 结构扩展（section/graph）→ S3 rerank；Agent 接入层复用 skills 的「目录注入 + 按需拉取」契约。
 
-**Tech Stack:** Python 3.11+ / FastAPI / SQLAlchemy async + asyncpg / Alembic / pgvector / DashScope embedding（复用 ReMe 工厂）/ React 18 + antd + Vite（console）。
+**Tech Stack:** Python 3.11+ / FastAPI / SQLAlchemy async + asyncpg / Alembic / pgvector / Milvus standalone(pymilvus) / DashScope embedding+rerank（复用 ReMe 凭证）/ React 18 + antd + Vite（console）。
 
 ## Global Constraints
 
@@ -19,6 +19,8 @@
 - Python 注释规范：类/方法 docstring（`@author qingfeng`），方法体单行注释说明业务，禁止行尾注释；依赖注入构造器风格；提前返回减嵌套。
 - 前端：表格列居中；枚举展示描述文本；关联 ID 用下拉；文案进 `knowledge.*` i18n 键并保持七语言基线（存量缺失不算回归，新增键必须七语言补齐）。
 - 每个 Task 结束跑该任务测试 + 提交一次 commit（Conventional Commits）。
+- **提交纪律（强制）**：本工作区存在用户在途未提交改动（console/ 下多个 M 文件），全计划内**禁止 `git commit -am` / `git add -A` / `git add .`**；所有 Commit 步骤必须先 `git add <本任务 Files 清单>`（只加本任务新建/修改的文件），再 `git commit -m`。计划正文中出现的 `git commit -am` 一律按此规则替换执行。
+- 任何 Alembic 升级/alembic 命令与测试均在当前分支工作区直接进行，禁止任何切分支/建 worktree 操作（用户约定）。
 
 ## File Structure（一期新建/修改总览）
 
@@ -115,10 +117,12 @@ _STATEMENTS = (
         team_id VARCHAR(64) NOT NULL DEFAULT '',
         grants JSONB NOT NULL DEFAULT '{}'::jsonb,
         embedding_model TEXT NOT NULL DEFAULT '',
+        engine TEXT NOT NULL DEFAULT 'auto',
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         CONSTRAINT pk_kb_spaces PRIMARY KEY (tenant_id, id),
-        CONSTRAINT ck_kb_spaces_scope CHECK (scope IN ('personal','team','enterprise'))
+        CONSTRAINT ck_kb_spaces_scope CHECK (scope IN ('personal','team','enterprise')),
+        CONSTRAINT ck_kb_spaces_engine CHECK (engine IN ('auto','pgvector','milvus'))
     )
     """,
     """
@@ -444,15 +448,15 @@ def test_tokenize_mixed_exported() -> None:
 
 ---
 
-### Task 4: embedding 复用管线
+### Task 4: embedding / rerank 复用管线
 
 **Files:**
-- Create: `src/qwenpaw/app/kb/embedding.py`
-- Test: `tests/unit/app/kb/test_kb_embedding.py`
+- Create: `src/qwenpaw/app/kb/embedding.py`、`src/qwenpaw/app/kb/rerank.py`
+- Test: `tests/unit/app/kb/test_kb_embedding.py`、`tests/unit/app/kb/test_kb_rerank.py`
 
 **Interfaces:**
 - Consumes: `agents.memory.embedding_model.create_embedding_model` + 全局 `embedding_model_config`；`kb_spaces.embedding_model`（空=全局默认）
-- Produces: `async def embed_texts(texts: list[str], model: str = "") -> list[list[float]] | None`（未配置凭证返回 None，调用方降级 BM25-only）；`async def embed_query(query: str, model: str = "") -> list[float] | None`；维度常量 `EMBEDDING_DIM = 1024`
+- Produces: `async def embed_texts(texts: list[str], model: str = "") -> list[list[float]] | None`（未配置凭证返回 None，调用方降级 BM25-only）；`async def embed_query(query: str, model: str = "") -> list[float] | None`；维度常量 `EMBEDDING_DIM = 1024`；`async def rerank_hits(query: str, hits: list[KbSearchHit], top_n: int = 5) -> list[KbSearchHit]`（DashScope gte-rerank，凭证与 embedding 同源；未配置/失败时原序返回 fail-soft）
 
 - [ ] **Step 1: 写失败测试**
 
@@ -487,32 +491,36 @@ async def test_embed_batch_passthrough(monkeypatch) -> None:
 ```
 
 - [ ] **Step 2: 跑测试确认失败** → FAILED
-- [ ] **Step 3: 实现**：`_resolve_config()` 读 `reme_light_memory_config.embedding_model_config`；`_call_model()` 走 `create_embedding_model`；异常仅 WARN 并返回 None（fail-soft，BM25 永远可用）
-- [ ] **Step 4: 跑测试通过**；Step 5: `git commit -am "feat(kb): embedding pipeline reusing reme credential factory"`
+- [ ] **Step 3: 实现**：`_resolve_config()` 读 `reme_light_memory_config.embedding_model_config`；`_call_model()` 走 `create_embedding_model`；异常仅 WARN 并返回 None（fail-soft，BM25 永远可用）；`rerank.py` 用 httpx 直调 DashScope rerank API（models 层若无现成通道），同样 fail-soft；Step 4 新增 `test_rerank_unconfigured_returns_original_order` 断言未配置时原序返回
+- [ ] **Step 4: 跑测试通过**；Step 5: `git add src/qwenpaw/app/kb/embedding.py src/qwenpaw/app/kb/rerank.py tests/unit/app/kb/test_kb_embedding.py tests/unit/app/kb/test_kb_rerank.py && git commit -m "feat(kb): embedding and rerank pipelines reusing reme credentials"`
 
 ---
 
-### Task 5: RetrievalEngine 抽象 + FileEngine(L0) + PgVectorEngine(L1)
+### Task 5: RetrievalEngine 抽象 + FileEngine(L0) + PgVectorEngine(L1) + MilvusEngine(L2)
 
 **Files:**
-- Create: `src/qwenpaw/app/kb/engine.py`、`file_engine.py`、`pg_engine.py`
-- Modify: `src/qwenpaw/app/kb/service.py`（`search()`/`ingest_text()` 内部改走引擎）
-- Test: `tests/unit/app/kb/test_engine_factory.py`、`tests/integration/test_kb_pg_plane.py`（追加 L1 检索用例）
+- Create: `src/qwenpaw/app/kb/engine.py`、`file_engine.py`、`pg_engine.py`、`milvus_engine.py`
+- Modify: `src/qwenpaw/app/kb/service.py`（`search()`/`ingest_text()` 内部改走引擎；跨引擎候选库分组查询 + RRF 二次融合）
+- Modify: `docker-compose.yml`（新增 `milvus` profile：etcd + minio + milvus-standalone 三服务，与现有 postgres 服务同级）
+- Modify: `pyproject.toml`（新增可选依赖 extra `milvus = ["pymilvus>=2.4"]`，不默认安装；代码侧 `import pymilvus` 失败时该库自动回退默认引擎并告警）
+- Test: `tests/unit/app/kb/test_engine_factory.py`、`tests/integration/test_kb_pg_plane.py`（追加 L1 用例）、`tests/integration/test_kb_milvus_engine.py`（L2，环境变量 `QWENPAW_TEST_MILVUS_URI` 门控）
 
 **Interfaces:**
-- Consumes: Task 3 `ChunkSpec`/`embed_input`；Task 4 `embed_texts`；`0034` 表
-- Produces: `KbSearchHit` dataclass：`space_id, document_id, chunk_id, seq, heading_path, text, score, parent_seq`；引擎协议 `KbRetrievalEngine`（`index_document / delete_document / search(space_ids, query, query_embedding, top_k) -> list[KbSearchHit]`）；`get_kb_engine() -> KbRetrievalEngine` 工厂（json→FileEngine，pg/dual 且 `kb_chunks` 表存在→PgVectorEngine，否则回退 FileEngine）
+- Consumes: Task 3 `ChunkSpec`/`embed_input`；Task 4 `embed_texts`/`EMBEDDING_DIM`；`0034` 表（含 `kb_spaces.engine`）
+- Produces: `KbSearchHit` dataclass：`space_id, document_id, chunk_id, seq, heading_path, text, score, parent_seq`；引擎协议 `KbRetrievalEngine`（`index_document / delete_document / search(space_ids, query, query_embedding, top_k) -> list[KbSearchHit]`）；`get_kb_engine() -> KbRetrievalEngine` 默认引擎工厂（json→FileEngine，pg/dual 且 `kb_chunks` 表存在→PgVectorEngine，否则回退 FileEngine）；`resolve_engine_for(space: KbSpace) -> KbRetrievalEngine`（engine 字段：auto/pgvector→默认引擎，milvus→MilvusEngine，pymilvus 缺失时告警回退默认）；`hybrid_search_multi(spaces, query, qv, top_k)`（按引擎分组→并行检索→RRF 二次融合，k=60 与单层一致）
 
-- [ ] **Step 1: 写失败测试（工厂路由）**
+- [ ] **Step 0: 拉起 Milvus standalone 环境（仅开发机一次性）**：向 `docker-compose.yml` 添加 `milvus` profile 三服务（镜像：`quay.io/coreos/etcd:v3.5.14`、`minio/minio:latest`、`milvusdb/milvus:v2.4.x` standalone，配置照 Milvus 官方 standalone compose 模板，端口 19530 绑 127.0.0.1）；`docker compose --profile milvus up -d milvus-standalone`；健康检查 `curl http://127.0.0.1:19530/healthz` 返回 `"OK"` 后继续
+- [ ] **Step 1: 写失败测试（工厂路由 + 分组）**
 
 ```python
 # -*- coding: utf-8 -*-
-"""M6-5: 引擎工厂路由与回退。"""
+"""M6-5: 引擎工厂路由、按库分组与回退。"""
 from __future__ import annotations
 
 import pytest
 
 from qwenpaw.app.kb import engine as eng
+from qwenpaw.app.kb.models import KbSpace
 
 pytestmark = pytest.mark.unit
 
@@ -533,10 +541,27 @@ def test_factory_pg_backend_with_table(monkeypatch) -> None:
     monkeypatch.setattr(eng.write_gateway, "resolve_storage_backend", lambda: "pg")
     monkeypatch.setattr(eng, "_kb_chunks_table_exists", lambda: True)
     assert isinstance(eng.get_kb_engine(), eng.PgVectorEngine)
+
+
+def test_resolve_engine_by_space_field(monkeypatch) -> None:
+    """auto/pgvector 落默认引擎；milvus 且驱动可用落 MilvusEngine。"""
+    monkeypatch.setattr(eng, "get_kb_engine", lambda: eng.PgVectorEngine.__new__(eng.PgVectorEngine))
+    monkeypatch.setattr(eng, "_pymilvus_available", lambda: True)
+    space = KbSpace(id="s1", name="n", engine="milvus")
+    assert isinstance(eng.resolve_engine_for(space), eng.MilvusEngine)
+    assert type(eng.resolve_engine_for(KbSpace(id="s2", name="n"))).__name__ == "PgVectorEngine"
+
+
+def test_milvus_engine_missing_driver_falls_back(monkeypatch) -> None:
+    """库配了 milvus 但驱动未装：告警回退默认引擎，检索不中断。"""
+    monkeypatch.setattr(eng, "_pymilvus_available", lambda: False)
+    fallback = eng.PgVectorEngine.__new__(eng.PgVectorEngine)
+    monkeypatch.setattr(eng, "get_kb_engine", lambda: fallback)
+    assert eng.resolve_engine_for(KbSpace(id="s1", name="n", engine="milvus")) is fallback
 ```
 
 - [ ] **Step 2: 跑测试确认失败** → ImportError
-- [ ] **Step 3: 实现 engine.py + file_engine.py** — 模块组织：`engine.py` 定义 `KbRetrievalEngine` 协议、`KbSearchHit`、工厂 `get_kb_engine()`，并在顶部 `from .file_engine import FileKbEngine` / `from .pg_engine import PgVectorEngine` 重导出（Step 1 测试从 `engine` 导入类名即源于此）；**file_engine/pg_engine 禁止反向 import engine.py（循环依赖）**，实现体仅 duck-type 协议。`FileKbEngine` 直接包装现状 `service.search()` 的 `_load_chunks + search_chunks`（逻辑原样搬移，不改语义）；`index_document` 写 JSONL 现状格式
+- [ ] **Step 3: 实现 engine.py + file_engine.py** — 模块组织：`engine.py` 定义 `KbRetrievalEngine` 协议、`KbSearchHit`、`get_kb_engine()`/`resolve_engine_for()`/`hybrid_search_multi()`，并在顶部 `from .file_engine import FileKbEngine` / `from .pg_engine import PgVectorEngine` / `from .milvus_engine import MilvusEngine` 重导出；**三个实现文件禁止反向 import engine.py（循环依赖）**，实现体仅 duck-type 协议。`FileKbEngine` 直接包装现状 `service.search()` 的 `_load_chunks + search_chunks`（逻辑原样搬移，不改语义）；`index_document` 写 JSONL 现状格式；`_pymilvus_available()` 用 `importlib.util.find_spec("pymilvus")` 判定
 - [ ] **Step 4: 实现 pg_engine.py（混合检索单 SQL）**
 
 ```python
@@ -569,9 +594,11 @@ LIMIT :top_k
 ```
 
 （无 query_embedding 时仅 kw CTE；tsquery 词串由应用层 `tokenize_mixed` 后以 `' & '` 连接生成，保证与索引侧同分词。）
-- [ ] **Step 5: PgVectorEngine 集成测试追加**（隔离库：index 3 条含专有名词的 chunk → query 命中且向量缺失时 BM25 仍命中）——`pytest tests/integration/test_kb_pg_plane.py -v -o asyncio_default_fixture_loop_scope=session -o asyncio_default_test_loop_scope=session`
-- [ ] **Step 6: 全量单测通过**：`pytest tests/unit/app/kb -v`
-- [ ] **Step 7: Commit** — `git commit -am "feat(kb): pluggable retrieval engine with pgvector hybrid RRF search"`
+- [ ] **Step 5: 实现 milvus_engine.py（L2，pymilvus 可选依赖）** — collection `kb_chunks_v1`：`chunk_id INT64 PK, space_id VARCHAR(分区键 enable_dynamic_field 下用 partition_key), document_id INT64, seq INT64, heading_path VARCHAR(512), content_text VARCHAR(65535), dense FLOAT_VECTOR(dim=1024), sparse SPARSE_FLOAT_VECTOR` + BM25 function（content_text→sparse）；`search()` 用 `AnnSearchRequest`（dense，COSINE）+ `AnnSearchRequest`（sparse，BM25）+ `WeightedRanker(0.7, 0.3)`，filter 表达式 ``space_id in ["a","b"]``（S0 收敛结果直传）；`index_document` upsert；URI 取环境变量 `QWENPAW_MILVUS_URI`（默认 `http://127.0.0.1:19530`）
+- [ ] **Step 5b: 集成测试**（`tests/integration/test_kb_milvus_engine.py`：URI 未设 skip；建 collection→index 3 条含专有名词→query 命中→delete_document 后查不到）
+- [ ] **Step 6: PgVectorEngine 集成测试追加**（隔离库：index 3 条含专有名词的 chunk → query 命中且向量缺失时 BM25 仍命中）——`pytest tests/integration/test_kb_pg_plane.py -v -o asyncio_default_fixture_loop_scope=session -o asyncio_default_test_loop_scope=session`
+- [ ] **Step 7: 全量单测通过**：`pytest tests/unit/app/kb -v`
+- [ ] **Step 8: Commit** — `git add` 本任务文件后 `git commit -m "feat(kb): pluggable retrieval engines (file/pgvector/milvus) with per-space routing"`
 
 ---
 
@@ -615,7 +642,26 @@ def test_parse_html_to_markdown() -> None:
 
 def test_parse_upload_rejects_unknown() -> None:
     with pytest.raises(ingest.UnsupportedFormat):
-        ingest.parse_upload("book.pdf", b"%PDF-1.4")
+        ingest.parse_upload("setup.exe", b"MZ\x90\x00")
+
+
+def test_parse_pdf_and_docx_routed(monkeypatch) -> None:
+    """pdf/docx 进入解析器矩阵（mock 解析器断言分发正确，不依赖真实文件）。"""
+    calls: list[str] = []
+
+    def _fake_pdf(data: bytes) -> str:
+        calls.append("pdf")
+        return "# pdf"
+
+    def _fake_docx(data: bytes) -> str:
+        calls.append("docx")
+        return "# docx"
+
+    monkeypatch.setattr(ingest, "_pdf_to_md", _fake_pdf)
+    monkeypatch.setattr(ingest, "_docx_to_md", _fake_docx)
+    ingest.parse_upload("a.pdf", b"%PDF-1.4 fake")
+    ingest.parse_upload("b.docx", b"PK\x03\x04 fake")
+    assert calls == ["pdf", "docx"]
 
 
 @pytest.mark.asyncio
@@ -636,7 +682,7 @@ async def test_ingest_hash_dedup_short_circuit(monkeypatch) -> None:
 ```
 
 - [ ] **Step 2: 跑测试确认失败** → 4 failed/ImportError
-- [ ] **Step 3: 实现 ingest.py + links.py**：`parse_upload` 一期白名单 `{.md, .markdown, .txt, .html, .htm}`；html 用 `readability-lxml`+`markdownify`（或仓内已有 bs4+lxml 降级：h1-h6→#、p→段落、table→GFM 表）；摄入主流程按 spec §5.3：hash 短路 → document(upsert)+version → chunker → **embedding 接线：调 `kb.embedding.embed_texts([embed_input(c) for c in specs])`，None 则 chunk.embedding 全空走 BM25-only** → engine.index_document → links 重建本 doc 出边；异常路径状态机落 failed + error 字段
+- [ ] **Step 3: 实现 ingest.py + links.py**：`parse_upload` 一期白名单 `{.md, .markdown, .txt, .html, .htm, .pdf, .docx}`；html 用 `readability-lxml`+`markdownify`（或仓内已有 bs4+lxml 降级：h1-h6→#、p→段落、table→GFM 表）；**pdf 走 `_pdf_to_md()`（pymupdf4llm）、docx 走 `_docx_to_md()`（python-docx），两者新增 `[project.dependencies]`，产物均为规范 MD**；摄入主流程按 spec §5.3：hash 短路 → document(upsert)+version → chunker → **embedding 接线：调 `kb.embedding.embed_texts([embed_input(c) for c in specs])`，None 则 chunk.embedding 全空走 BM25-only** → engine.index_document → links 重建本 doc 出边；异常路径状态机落 failed + error 字段
 - [ ] **Step 4: 跑测试通过**：`pytest tests/unit/app/kb -v`
 - [ ] **Step 5: Commit** — `git commit -am "feat(kb): async ingestion with versioning and wikilinks"`
 
@@ -767,10 +813,10 @@ def test_render_empty_returns_blank() -> None:
 
 **Interfaces:**
 - Consumes: Task 5 引擎、Task 7 绑定（Agent 身份→space_ids，S0 收敛）、`kb_documents` 全文（S2 回补）
-- Produces: `kb_search(query, kb_id="", max_results=5, expand="none")`；S0：绑定集合 ∩ 指定库；S2 `expand=section` 合并同 heading_path 兄弟块；输出格式 `===== [库名] 文档标题 #heading [score=x] =====`（沿用现状溯源行）
+- Produces: `kb_search(query, kb_id="", max_results=5, expand="none")`；S0：绑定集合 ∩ 指定库；S2 `expand=section` 合并同 heading_path 兄弟块；**S2 `expand=graph` 一期实装：命中块所在文档的 kb_links 出/入链各 top3 节点（标题+库名+context_snippet 摘要）附结果尾部，引导 Agent kb_read**；**S3 rerank 一期实装：候选 20 → `rerank_hits(query, hits, top_n=max_results)`，凭证缺失自动跳过返回 RRF 序**；输出格式 `===== [库名] 文档标题 #heading [score=x] =====`（沿用现状溯源行）
 
 - [ ] **Step 1: 写失败测试**（三断言：越权库查不到 / expand=section 输出含父块全文 / 未指定库时多库融合按分排序）
-- [ ] **Step 2: 跑失败** → **Step 3: 实现**（Agent 身份解析复用 `_current_identity()` + `request_context` 的 agent_id；expand=graph 一期返回占位提示文本，二期实装）
+- [ ] **Step 2: 跑失败** → **Step 3: 实现**（Agent 身份解析复用 `_current_identity()` + `request_context` 的 agent_id；expand=graph 从 kb_links 查出入链拼摘要；rerank 在融合后、截断前调用）
 - [ ] **Step 4: 通过** → **Step 5: Commit** — `git commit -am "feat(kb): kb_search with binding-acl convergence and section expansion"`
 
 ---
@@ -891,7 +937,9 @@ def test_kb_document_lifecycle(app_server) -> None:
 - [ ] **Step 1: 指标计算单测**（构造 hits 断言 recall/mrr 正确）
 - [ ] **Step 2: 实现 run_eval**（摄入 corpus 到隔离库→逐 query 检索→比对 expected_doc→汇总表）
 - [ ] **Step 3: 全链路跑通**（隔离库 + session loop 覆盖）；未达标则回填切片/权重调优（调优记录写进本文件末尾）
-- [ ] **Step 4: Commit** — `git commit -am "test(kb): golden-query recall evaluation harness"`
+- [ ] **Step 3b: 双引擎对比**（同一 golden 集分别跑 pgvector 与 milvus 引擎各一遍，输出两列 Recall@5/MRR 对照表；差异超 5% 时记录到本文件供选型校准）
+- [ ] **Step 3c: rerank 开关对比**：同集开/关 S3 各跑一遍，Recall@5 必须不降（rerank 劣化时默认配置改 off）
+- [ ] **Step 4: Commit** — `git commit -am "test(kb): golden-query recall evaluation harness (dual-engine + rerank ablation)"`
 
 ---
 
@@ -914,12 +962,12 @@ def test_kb_document_lifecycle(app_server) -> None:
 T1 → T2 → {T3, T4} → T5 → T6 → {T7, T8} → {T9, T10} → T11 → {T12, T13} → T14 → T15
 ```
 
-T3/T4、T7/T8、T9/T10、T12/T13 可并行；前端（T12/13）可在 T11 后与 T14 并行。
+T3/T4、T7/T8、T9/T10、T12/T13 可并行；前端（T12/13）可在 T11 后与 T14 并行。T5 的 Milvus 部分（Step 0/5/5b）不阻塞 pgvector 主链：若 Milvus 环境未就绪，可先完成 Step 1-4/6-8 再补 Step 5/5b（工厂回退逻辑保证中间态可运行）。
 
 ## 验收标准（对照 spec §12）
 
-- 迁移幂等：0034 执行两遍零报错
-- 检索质量：golden query Recall@5 ≥ 0.9、MRR ≥ 0.7
+- 迁移幂等：0034 执行两遍零报错（含 engine 路由列）
+- 检索质量：golden query Recall@5 ≥ 0.9、MRR ≥ 0.7；**双引擎（pgvector/milvus）各自达标**；rerank 开启后 Recall@5 不降
 - 权限：越权用例全绿（S0 先于 S1；未绑定 Agent 查不到；无权用户列不出库）
-- 回退：backend=json 时行为与一期前逐字节一致（旧单测全绿）
+- 回退：backend=json 时行为与一期前逐字节一致（旧单测全绿）；pymilvus/DashScope 凭证缺失时自动回退且零异常
 - 前端：build 零类型错误，i18n 新增键七语言齐全

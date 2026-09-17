@@ -40,11 +40,11 @@
 │ kb_search(query, kb_id?, expand?) 工具 · kb_read(doc_id) 工具      │
 ├─ ③ 检索管线层 ────────────────────────────────────────────────┤
 │ S0 ACL 收敛 → S1 库内混合检索(BM25+向量+RRF) → S2 结构扩展          │
-│ （父子章节回补 / wikilink 邻接）→ S3 rerank（二期）                │
+│ （父子章节回补 / wikilink 邻接）→ S3 rerank 精排                  │
 ├─ ② 索引层（可插拔 RetrievalEngine）────────────────────────────┤
 │ L0 文件引擎（现状 JSONL 收编，无 PG 回退）                         │
-│ L1 pgvector + tsvector（一期主力，PG 扩展即得）                    │
-│ L2 Milvus adapter（仅预留接口，三期按规模开关启用）                 │
+│ L1 pgvector + tsvector（默认引擎，auto 路由落点）                  │
+│ L2 Milvus adapter（一期实现，按库 engine=milvus 显式启用）         │
 ├─ ① 知识组织层（权威源）────────────────────────────────────────┤
 │ KB（库）→ 目录路径 → Document（MD 正文 + frontmatter 元数据）        │
 │ + 版本快照 + Wikilink + 授权模型（scope + grants + agent 绑定）     │
@@ -77,6 +77,7 @@ kb_spaces:
   (tenant_id, id) PK; name; description; scope CHECK(personal|team|enterprise);
   owner_id; team_id; grants JSONB {roles,users,teams};
   embedding_model TEXT NOT NULL DEFAULT ''   -- 空=全局默认;
+  engine TEXT NOT NULL DEFAULT 'auto'        -- 索引引擎路由: auto|pgvector|milvus;
   created_at; updated_at
 
 kb_documents:
@@ -155,7 +156,7 @@ agent_kb_bindings:
 
 ### 5.3 摄入管线（文件上传）
 
-- 一期支持 `md / txt / html`（html 抽取正文转 MD）；二期扩 `pdf`(pymupdf4llm) / `docx`(python-docx)；
+- 摄入格式一期全量支持：`md / txt / html`（html 抽取正文转 MD）+ `pdf`(pymupdf4llm) / `docx`(python-docx)；
 - 上传原始文件落工作区 `kb_data/uploads/<space_id>/<doc_id>.<ext>`；
   **解析产物（规范 MD）写入 `kb_documents.content_md`——解析器只是搬运工，权威源仍是 MD，人工可修正，修正即重切重嵌**；
 - 大文件异步化：`ingest_status` 状态机 pending → processing → ready/failed + `error` 字段，
@@ -176,8 +177,9 @@ kb_search(query, kb_id?, top_k=5, expand=none|section|graph)
   │     L0: 现状 Python BM25+cosine 原样保留
   ├─ S2 结构扩展：
   │     expand=section → 命中 chunk 回补同 heading_path 完整小节（父子合并）
-  │     expand=graph   → 附带该文档出/入链节点摘要，引导 Agent kb_read 关联文档
-  └─ S3 rerank（二期）：候选 20 → cross-encoder/LLM 精排 → top 5
+  │     expand=graph   → 附带该文档出/入链节点摘要，引导 Agent kb_read 关联文档（一期实装）
+  └─ S3 rerank（一期）：候选 20 → DashScope gte-rerank 精排 → top 5
+     （凭证与 embedding 同源；未配置模型时自动跳过 rerank 返回 RRF 序）
 ```
 
 **RetrievalEngine 抽象**（`app/kb/engine.py`）：
@@ -194,8 +196,10 @@ class KbRetrievalEngine(Protocol):
                      top_k: int) -> list[KbSearchHit]: ...
 ```
 
-L2 Milvus adapter 三期实现，触发条件**写死**：单库 > 50 万 chunk 或检索 P95 > 300ms。
-切换时 `kb_spaces` 增加 `engine` 路由字段（pgvector / milvus，默认 auto）。
+L2 Milvus adapter **一期实现**：collection schema=`chunk_id + space_id partition key + 稠密向量 + 稀疏向量（Milvus 内置 BM25 function）`，
+ACL 预过滤走 `space_id in [...]` 标量表达式，混合检索用内置 WeightedRanker；默认 `engine='auto'` 仍落 pgvector，
+业务方在库设置页显式切 `milvus`（适用判据：单库 > 50 万 chunk 或检索 P95 > 300ms）。
+`kb_spaces.engine` 路由字段（auto/pgvector/milvus）一期随建表落地，双引擎共用同一套上层语义。
 
 ## 7. Agent 接入层（自主判断检索的落地）
 
@@ -275,23 +279,22 @@ UI 遵循项目规范：表格列居中、枚举展示描述文本、关联 ID �
 
 ## 11. 分期实施
 
-**一期（知识中心闭环，本设计交付范围）**：
+**一期（知识中心全量闭环，本设计交付范围，无后置返工项）**：
 
-1. alembic 0034 五表 + `CREATE EXTENSION IF NOT EXISTS vector`；
+1. alembic 0034 六表（含 `kb_spaces.engine` 路由字段）+ `CREATE EXTENSION IF NOT EXISTS vector`；
 2. `app/kb` PG 平面 + 三态工厂（FileEngine 收编现状逻辑）；
 3. 结构化切片器（MD AST + heading_path + 拼接 embedding）；
-4. `PgVectorEngine`（tsvector + pgvector 单 SQL RRF）；
+4. **双检索引擎一期全实现**：`PgVectorEngine`（tsvector + pgvector 单 SQL RRF）+ `MilvusEngine`（pymilvus hybrid + WeightedRanker，按库 engine 字段路由）；
 5. `agent_kb_bindings` 全链路（API + 校验 + builder 接线）；
 6. `<knowledge-bases>` 目录注入 + `kb_search`/`kb_read` 演进；
-7. Admin 知识页重构（树+编辑器+上传+检索测试台）；
-8. 员工知识库页 + 员工详情知识 Tab；
-9. md/txt/html 上传 + 异步摄入状态机；
-10. 存量 registry/JSONL 迁移脚本（校验行数一致后 30 天保留旧文件）。
+7. **检索管线全装**：S0 ACL 收敛 + S1 混检 + S2 section/graph 双模式结构扩展 + S3 gte-rerank 精排（凭证缺失自动降级）；
+8. Admin 知识页重构（树+编辑器+上传+chunk 预览+检索测试台）；
+9. 员工知识库页 + 员工详情知识 Tab；
+10. 摄入格式全量：md/txt/html + **pdf/docx** 异步状态机；
+11. 存量 registry/JSONL 迁移脚本（校验行数一致后 30 天保留旧文件）；
+12. 部署：docker-compose 增 `milvus` profile（etcd+minio+milvus standalone），PG 镜像基线换 `pgvector/pgvector:pg16`。
 
-**二期（质量增强）**：PDF/DOCX 解析、S3 rerank、wikilink 自动抽取 + expand=graph 图扩展、
-表格/FAQ 结构化条目、Auto-Dream 式「对话沉淀为知识草稿」闭环（复用 ReMe 管道思路）。
-
-**三期（规模触发，按需）**：Milvus adapter（仅在第 6 节触发条件出现后启动）。
+**后续增强（真·可选，不阻塞一期验收）**：表格/FAQ 结构化条目类型、Auto-Dream 式「对话沉淀为知识草稿」闭环（复用 ReMe 管道思路）、embedding 多维度模型共存。
 
 ## 12. 测试与验收
 
@@ -299,13 +302,13 @@ UI 遵循项目规范：表格列居中、枚举展示描述文本、关联 ID �
 | --- | --- |
 | 单测 | 切片器（标题路径/父子回补/表格不拆/overlap）、RRF 融合、bigram 分词、绑定 ACL 矩阵、三态工厂回退、摄入状态机 |
 | 集成 | PG 门控用例：隔离库 `qwenpaw_integration_test` DSN + session loop scope（沿用 workforce 套件跑法）；0034 迁移幂等（跑两遍不报错） |
-| 检索质量 | 每业务域 golden query 集（20~30 条真实问题 + 标注应命中文档），指标 **Recall@5 ≥ 0.9 / MRR ≥ 0.7**，回归脚本入库 `tests/eval/kb/`，CI 可跑 |
+| 检索质量 | 每业务域 golden query 集（20~30 条真实问题 + 标注应命中文档），指标 **Recall@5 ≥ 0.9 / MRR ≥ 0.7**，**pgvector 与 Milvus 双引擎各自达标 + rerank 开关消融对比**；回归脚本入库 `tests/eval/kb/`，CI 可跑 |
 | 权限 | 越权用例：未绑定 Agent 检索不到目标库、无权限用户列不出该库、S0 收敛先于 S1 的强制断言 |
 | E2E | 接口链路：建库→传文档→绑定→对话触发检索→结果溯源展示；浏览器页面走查由用户人工验收（团队分工惯例） |
 
 ## 13. 部署变更与风险对策
 
-**部署变更**：PG 实例需 `pgvector` 扩展（`CREATE EXTENSION vector`）；docker-compose/部署文档同步标注。
+**部署变更**：PG 实例需 `pgvector` 扩展（`CREATE EXTENSION vector`）；docker-compose 新增 `milvus` profile（etcd + minio + milvus-standalone，默认不启动）；PG 镜像基线由 `postgres:16` 换为 `pgvector/pgvector:pg16`（本机开发库需同步：pg_dump 逻辑迁移至 pgvector 实例，**禁止 alpine 与 glibc 镜像混用同一数据目录**）。
 
 | # | 风险 | 对策 |
 | --- | --- | --- |
@@ -322,4 +325,4 @@ UI 遵循项目规范：表格列居中、枚举展示描述文本、关联 ID �
 - 多模态/图片 OCR 入知识、音视频转录入知识；
 - 外部 wiki 系统（语雀/Confluence）实时双向同步；
 - embedding 模型微调；
-- Milvus 一期实现（仅抽象层预留，三期按触发条件启动）。
+- 一期同时双写两引擎（每库单引擎路由，Milvus 为可选项非叠加项）。
