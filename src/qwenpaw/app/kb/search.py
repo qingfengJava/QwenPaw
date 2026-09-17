@@ -7,6 +7,7 @@ fused with Reciprocal Rank Fusion (the same shape ReMe uses:
 small (hundreds of chunks per kb), and the pg vector path can later
 replace the scoring internals without changing callers.
 """
+
 from __future__ import annotations
 
 import math
@@ -26,19 +27,30 @@ _KEYWORD_WEIGHT = 0.3
 _TOKEN_RE = re.compile(r"[\w]+", re.UNICODE)
 
 
-def _tokenize(text: str) -> List[str]:
+def tokenize_mixed(text: str) -> List[str]:
     """Lower-cased word tokens; CJK runs are split into bigrams so
-    Chinese content is searchable without a segmenter."""
+    Chinese content is searchable without a segmenter.
+
+    M6-3 提升为共享导出：切片端（Task 3）与检索端必须用同一套词表，否则
+    写入 ``tsv`` 的 token 与查询 token 对不上，中文关键词会整库搜不到。
+    """
     tokens: list[str] = []
     for match in _TOKEN_RE.finditer(text.lower()):
         token = match.group(0)
         if any("一" <= ch <= "鿿" for ch in token):
-            tokens.extend(token[i : i + 2] for i in range(len(token) - 1))
+            # CJK 无词边界，退化为相邻双字 bigram（输出与旧实现逐字等价）
+            tokens.extend(
+                token[i] + token[i + 1] for i in range(len(token) - 1)
+            )
             if len(token) == 1:
                 tokens.append(token)
         else:
             tokens.append(token)
     return tokens
+
+
+#: 仓内旧调用点与存量用例仍用私有名，保留为别名免一次全仓改动
+_tokenize = tokenize_mixed
 
 
 def _bm25_scores(
@@ -112,11 +124,7 @@ def search_chunks(
     vec_rank: dict[int, int] = {}
     if query_embedding is not None:
         vec_scores = [
-            (
-                _cosine(query_embedding, c.embedding)
-                if c.embedding
-                else 0.0
-            )
+            (_cosine(query_embedding, c.embedding) if c.embedding else 0.0)
             for c in items
         ]
         vec_ranked = sorted(
