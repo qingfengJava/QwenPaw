@@ -324,6 +324,21 @@ def test_oversized_prefix_drops_overlap_but_keeps_budget_and_content() -> None:
     assert _new_content(chunks, 40) == src
 
 
+def test_short_body_still_chains_overlap_from_emitted_chunk() -> None:
+    """上一块只留下一小段新内容时，重叠仍从整块尾部取字且不丢内容。
+
+    overlap_chars > 单块新内容长度是边界角落：前缀只能从「已 emit 的整块」
+    （含其自身前缀）尾部取，若误从本块新内容取就会留下空隙与重复。
+    """
+    src = _marker_text(60)
+    md = f"# T\n## A\n{src}\n"
+
+    chunks = split_markdown(md, target_tokens=10, overlap_chars=30)
+
+    assert len(chunks) >= 3
+    assert _new_content(chunks, 30) == src
+
+
 def test_overlap_separator_prevents_fused_tokens() -> None:
     """前缀与正文之间必须有分隔，否则跨块首尾词会黏成一个新 token。"""
     source = "alpha bravo charlie delta echo foxtrot golf " * 30
