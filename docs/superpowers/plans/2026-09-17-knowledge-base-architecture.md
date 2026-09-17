@@ -456,7 +456,7 @@ def test_tokenize_mixed_exported() -> None:
 
 **Interfaces:**
 - Consumes: `agents.memory.embedding_model.create_embedding_model` + 全局 `embedding_model_config`；`kb_spaces.embedding_model`（空=全局默认）
-- Produces: `async def embed_texts(texts: list[str], model: str = "") -> list[list[float]] | None`（未配置凭证返回 None，调用方降级 BM25-only）；`async def embed_query(query: str, model: str = "") -> list[float] | None`；维度常量 `EMBEDDING_DIM = 1024`；`async def rerank_hits(query: str, hits: list[KbSearchHit], top_n: int = 5) -> list[KbSearchHit]`（DashScope gte-rerank，凭证与 embedding 同源；未配置/失败时原序返回 fail-soft）
+- Produces: `async def embed_texts(texts, model="", agent_id="") -> list[list[float]] | None`（未配置凭证返回 None，调用方降级 BM25-only；空入参返回 `[]`）；`async def embed_query(query, model="", agent_id="") -> list[float] | None`；`def resolve_memory_config(agent_id="") -> 记忆配置对象 | None`（向量与精排共用同一个凭证归属解析）；维度常量 `EMBEDDING_DIM = 1024`；`async def rerank_hits(query, hits, top_n=5, agent_id="") -> list`（复用 `agents.memory.reme_reranker.call_reranker_api`，适配 OpenAI 兼容 `/rerank(s)` 即 qwen3-rerank；`hits` 仅要求结构化 `.text`，不反向 import Task 5 的 `KbSearchHit`；凭证缺失/失败时原序返回 fail-soft，但仍截 `top_n`）
 
 - [ ] **Step 1: 写失败测试**
 
@@ -491,7 +491,7 @@ async def test_embed_batch_passthrough(monkeypatch) -> None:
 ```
 
 - [ ] **Step 2: 跑测试确认失败** → FAILED
-- [ ] **Step 3: 实现**：`_resolve_config()` 读 `reme_light_memory_config.embedding_model_config`；`_call_model()` 走 `create_embedding_model`；异常仅 WARN 并返回 None（fail-soft，BM25 永远可用）；`rerank.py` 用 httpx 直调 DashScope rerank API（models 层若无现成通道），同样 fail-soft；Step 4 新增 `test_rerank_unconfigured_returns_original_order` 断言未配置时原序返回
+- [ ] **Step 3: 实现**：`_resolve_config()` 从 `active_agent`（或显式 `agent_id`）的 `reme_light_memory_config.embedding_model_config` 读配置，启用判定复用 `reme_config.is_embedding_enabled`（不复制规则）；`_call_model()` 走 `create_embedding_model` 并做 1024 维 + 有限数守卫；异常仅 WARN 并返回 None（fail-soft，BM25 永远可用）；`rerank.py` **不新写 HTTP 客户端**，直接复用 `reme_reranker.call_reranker_api`（仓库唯一 rerank 通道，与 qwen3-rerank 兼容端点同形），仅补「端点后缀已写则不重复追加」与「凭证缺省继承 embedding」两点；Step 4 新增 `test_rerank_unconfigured_returns_original_order` 断言未配置时原序返回
 - [ ] **Step 4: 跑测试通过**；Step 5: `git add src/qwenpaw/app/kb/embedding.py src/qwenpaw/app/kb/rerank.py tests/unit/app/kb/test_kb_embedding.py tests/unit/app/kb/test_kb_rerank.py && git commit -m "feat(kb): embedding and rerank pipelines reusing reme credentials"`
 
 ---

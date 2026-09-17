@@ -178,7 +178,7 @@ kb_search(query, kb_id?, top_k=5, expand=none|section|graph)
   ├─ S2 结构扩展：
   │     expand=section → 命中 chunk 回补同 heading_path 完整小节（父子合并）
   │     expand=graph   → 附带该文档出/入链节点摘要，引导 Agent kb_read 关联文档（一期实装）
-  └─ S3 rerank（一期）：候选 20 → DashScope gte-rerank 精排 → top 5
+  └─ S3 rerank（一期）：候选 20 → qwen3-rerank 精排（OpenAI 兼容 /reranks）→ top 5
      （凭证与 embedding 同源；未配置模型时自动跳过 rerank 返回 RRF 序）
 ```
 
@@ -287,7 +287,7 @@ UI 遵循项目规范：表格列居中、枚举展示描述文本、关联 ID �
 4. **双检索引擎一期全实现**：`PgVectorEngine`（tsvector + pgvector 单 SQL RRF）+ `MilvusEngine`（pymilvus hybrid + WeightedRanker，按库 engine 字段路由）；
 5. `agent_kb_bindings` 全链路（API + 校验 + builder 接线）；
 6. `<knowledge-bases>` 目录注入 + `kb_search`/`kb_read` 演进；
-7. **检索管线全装**：S0 ACL 收敛 + S1 混检 + S2 section/graph 双模式结构扩展 + S3 gte-rerank 精排（凭证缺失自动降级）；
+7. **检索管线全装**：S0 ACL 收敛 + S1 混检 + S2 section/graph 双模式结构扩展 + S3 qwen3-rerank 精排（凭证缺失自动降级；gte-rerank 已于 2026-05-30 下线，官方替代为 qwen3-rerank）；
 8. Admin 知识页重构（树+编辑器+上传+chunk 预览+检索测试台）；
 9. 员工知识库页 + 员工详情知识 Tab；
 10. 摄入格式全量：md/txt/html + **pdf/docx** 异步状态机；
