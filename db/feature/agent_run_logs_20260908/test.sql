@@ -1700,6 +1700,7 @@ COMMENT ON COLUMN kb_documents.created_at IS '创建时间（DB 自动维护，U
 COMMENT ON COLUMN kb_documents.updated_at IS '更新时间（DB 自动维护，UTC）';
 
 COMMENT ON TABLE kb_document_versions IS '文档版本快照（编辑回溯：内容变更时追加一行）';
+COMMENT ON COLUMN kb_document_versions.tenant_id IS '租户 ID（多租户预留，现阶段固定 default）';
 COMMENT ON COLUMN kb_document_versions.document_id IS '文档 id（关联 kb_documents）';
 COMMENT ON COLUMN kb_document_versions.version IS '版本号（同文档单调递增）';
 COMMENT ON COLUMN kb_document_versions.content_md IS '该版本 Markdown 全文快照';
@@ -1710,6 +1711,7 @@ COMMENT ON COLUMN kb_document_versions.created_at IS '快照时间（DB 自动�
 COMMENT ON TABLE kb_chunks IS
     '切片派生索引表（可全量重建：pgvector 稠密向量 + tsvector 全文 + 结构锚点）';
 COMMENT ON COLUMN kb_chunks.id IS '切片 ID（doc_id_seq 稳定生成）';
+COMMENT ON COLUMN kb_chunks.tenant_id IS '租户 ID（多租户预留，现阶段固定 default）';
 COMMENT ON COLUMN kb_chunks.space_id IS '所属知识库 id（S0 ACL 收敛过滤列）';
 COMMENT ON COLUMN kb_chunks.document_id IS '所属文档 id（关联 kb_documents）';
 COMMENT ON COLUMN kb_chunks.seq IS '切片在文档内的序号（单调递增）';
@@ -1728,6 +1730,8 @@ COMMENT ON COLUMN kb_chunks.created_at IS '索引写入时间（DB 自动维护�
 
 COMMENT ON TABLE kb_links IS
     'wikilink 边表（文档正文 [[路径]] 解析落表；S2 expand=graph 图扩展数据源）';
+COMMENT ON COLUMN kb_links.tenant_id IS '租户 ID（多租户预留，现阶段固定 default）';
+COMMENT ON COLUMN kb_links.id IS '链接边 ID（业务侧生成，与 tenant_id 组成联合主键）';
 COMMENT ON COLUMN kb_links.space_id IS '所属知识库 id';
 COMMENT ON COLUMN kb_links.src_document_id IS '链接源文档 id';
 COMMENT ON COLUMN kb_links.dst_path IS '链接目标路径（[[路径]] 原文）';
@@ -1737,6 +1741,7 @@ COMMENT ON COLUMN kb_links.created_at IS '解析落表时间（DB 自动维护�
 
 COMMENT ON TABLE agent_kb_bindings IS
     '数字员工↔知识库授权绑定表（绑定即授权，决策点 1：Agent 检索可见性=其绑定库集合）';
+COMMENT ON COLUMN agent_kb_bindings.tenant_id IS '租户 ID（多租户预留，现阶段固定 default）';
 COMMENT ON COLUMN agent_kb_bindings.agent_id IS '数字员工 id';
 COMMENT ON COLUMN agent_kb_bindings.space_id IS
     '知识库 id（写入前经 can_manage_space 管理权校验）';
