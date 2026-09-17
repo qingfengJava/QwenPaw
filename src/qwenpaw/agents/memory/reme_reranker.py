@@ -37,6 +37,19 @@ async def load_reranker_config(agent_id: str) -> RerankerConfig | None:
     return None
 
 
+def rerank_endpoint(base_url: str) -> str:
+    """拼出 rerank 请求地址。
+
+    只填到 ``.../v1`` 的服务（SiliconFlow 等）仍自动补 ``/rerank``；但结尾
+    已是 ``/rerank`` 或 ``/reranks`` 的 base_url 必须原样使用——DashScope 的
+    qwen3-rerank 兼容端点后缀是**复数** ``/reranks``，再追加一次就会打错地址。
+    """
+    normalized = base_url.rstrip("/")
+    if normalized.endswith(("/rerank", "/reranks")):
+        return normalized
+    return f"{normalized}/rerank"
+
+
 async def call_reranker_api(
     query: str,
     documents: list[str],
@@ -49,7 +62,7 @@ async def call_reranker_api(
     if not query or not documents:
         return None
 
-    url = f"{config.base_url.rstrip('/')}/rerank"
+    url = rerank_endpoint(config.base_url)
     payload = {
         "model": config.model_name,
         "query": query,

@@ -668,7 +668,7 @@ def _apply_embedding_config(
     components["file_store"]["default"][
         "embedding_rebuild_required"
     ] = embedding_rebuild_required
-    if not _is_embedding_enabled(embedding_config):
+    if not is_embedding_enabled(embedding_config):
         # Keep the explicit empty value: LocalFileStore otherwise defaults to
         # looking up embedding_store:default even when the component is absent.
         components["file_store"]["default"]["embedding_store"] = ""
@@ -707,8 +707,12 @@ def build_embedding_component_config(
     return component
 
 
-def _is_embedding_enabled(embedding_config: EmbeddingModelConfig) -> bool:
-    """Return whether the configured backend has enough fields to run."""
+def is_embedding_enabled(embedding_config: EmbeddingModelConfig) -> bool:
+    """Return whether the configured backend has enough fields to run.
+
+    公开函数：知识库摄入/检索（``app/kb/embedding.py``）复用同一启用判定，
+    避免两处复刻「哪些 backend 需要 api_key」这条规则。
+    """
     if not embedding_config.model_name.strip():
         return False
 

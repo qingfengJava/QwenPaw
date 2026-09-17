@@ -15,7 +15,7 @@ export function isEmbeddingEnabled(config?: Partial<EmbeddingModelConfig>) {
   if (!config?.model_name?.trim()) {
     return false;
   }
-  // Mirror reme_config.py::_is_embedding_enabled so the form previews the
+  // Mirror reme_config.py::is_embedding_enabled so the form previews the
   // same capability state that the backend will apply after saving.
   if (OPENAI_COMPAT_EMBEDDING_BACKENDS.has(config.backend || "")) {
     return !!config.api_key?.trim();

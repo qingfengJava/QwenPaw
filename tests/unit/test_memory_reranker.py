@@ -13,6 +13,8 @@ Tests cover:
   - answer: preserved when order unchanged, rebuilt when changed or truncated
   - link expansions: preserved in reconstructed answer after rerank+cap,
     truncation-only, and fallback+truncation scenarios
+  - endpoint resolution: "/rerank" suffix appended for API roots, kept as-is
+    when the operator already wrote "/rerank(s)" (DashScope qwen3-rerank)
 """
 
 import types
@@ -22,6 +24,7 @@ import httpx
 import pytest
 
 import qwenpaw.agents.memory.reme_light_memory_manager as mgr
+from qwenpaw.agents.memory.reme_reranker import rerank_endpoint
 
 ReMeLightMemoryManager = mgr.ReMeLightMemoryManager
 NO_MEMORY_RESULTS = mgr.NO_MEMORY_RESULTS
@@ -589,3 +592,29 @@ async def test_auto_memory_search_uses_reranker(manager):
     assert (
         len(resp.metadata["results"]) == 2
     ), f"expected 2 results, got {len(resp.metadata['results'])}"
+
+
+# ---------------------------------------------------------------------------
+# Endpoint resolution: the shared client must keep operator-written suffixes
+# ---------------------------------------------------------------------------
+
+
+def test_rerank_endpoint_appends_suffix_for_api_root():
+    """Existing configs (``.../v1``) keep working: /rerank is appended."""
+    assert (
+        rerank_endpoint("https://api.siliconflow.cn/v1")
+        == "https://api.siliconflow.cn/v1/rerank"
+    )
+
+
+def test_rerank_endpoint_keeps_plural_reranks_suffix():
+    """DashScope qwen3-rerank serves the **plural** /reranks path."""
+    base = "https://dashscope.aliyuncs.com/compatible-api/v1/reranks"
+    assert rerank_endpoint(base) == base
+    assert rerank_endpoint(f"{base}/") == base
+
+
+def test_rerank_endpoint_keeps_singular_rerank_suffix():
+    """An explicitly written /rerank must not be doubled."""
+    base = "https://gateway.internal/rerank"
+    assert rerank_endpoint(base) == base

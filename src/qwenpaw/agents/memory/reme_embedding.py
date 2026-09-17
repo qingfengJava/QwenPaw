@@ -22,7 +22,7 @@ from .embedding_model import (
     embedding_vector_space_fingerprint,
     test_embedding_model,
 )
-from .reme_config import _is_embedding_enabled
+from .reme_config import is_embedding_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +130,7 @@ class ReMeEmbedding:
                 target = memory_config.embedding_model_config.model_copy(
                     deep=True,
                 )
-                if not _is_embedding_enabled(target):
+                if not is_embedding_enabled(target):
                     if scope == "embedding":
                         raise EmbeddingReindexUnavailableError(
                             "Embedding index rebuild requires an enabled "
@@ -220,7 +220,7 @@ class ReMeEmbedding:
         def persist(config: AgentProfileConfig) -> None:
             memory = config.running.reme_light_memory_config
             target = memory.embedding_model_config
-            if not _is_embedding_enabled(target):
+            if not is_embedding_enabled(target):
                 raise EmbeddingReindexUnavailableError(
                     "Embedding configuration was disabled before "
                     "reindex started",

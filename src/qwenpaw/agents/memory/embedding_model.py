@@ -19,7 +19,7 @@ from agentscope.embedding import EmbeddingModelBase
 
 from qwenpaw.config.config import EmbeddingModelConfig
 
-from .reme_config import _embedding_credential, _is_embedding_enabled
+from .reme_config import _embedding_credential, is_embedding_enabled
 
 _CREDENTIAL_TYPES = {
     "openai": OpenAICredential,
@@ -54,7 +54,7 @@ def create_embedding_model(
     max_retries: int = 3,
 ) -> EmbeddingModelBase[Any]:
     """Create the AgentScope embedding object represented by ``config``."""
-    if not _is_embedding_enabled(config):
+    if not is_embedding_enabled(config):
         raise ValueError(
             "Embedding model name and provider credentials are required",
         )
