@@ -10,13 +10,22 @@ spec §4.3 的三条不变式在这里落地：
 2. **表格与代码块原子**：二者整体成一个切片，永不按行拆散，也不与邻近
    段落打包（混排会让关键词命中段落却召回整块表格文本）。宁可单块超出
    token 预算，也不产生半张表。
-3. **父子回补**：同一小节被拆成多块时，首块是该节的父切片，后续块的
-   ``parent_seq`` 指向首块；命中子块时检索端可据此拉回整节上下文
-   （Task 5 的 ``expand=section`` 依赖此字段）。
+3. **父子回补**：同一小节被拆成多块时，首块是该节的父切片，**本节所有非首块**
+   的 ``parent_seq`` 都指向首块（不是指向上一块）；命中任一子块时检索端可据
+   此拉回整节上下文（Task 5 的 ``expand=section`` 依赖此字段）。
+4. **内容零丢失**：重叠前缀吃掉预算时被截断的残段会结转入下一块，任何分支
+   都不得少字符——切片器宁可多切一块，也不能静默吞掉文档内容。
 
 刻意不引入 Markdown 解析库：本模块只需要「标题层级 / 围栏 / 表格行」三种
 结构信号，行级扫描即可覆盖，而给 fork 仓库新增运行时依赖会长期放大与上游
 合并的冲突面。围栏内的 ``#`` 与 ``|`` 不会被误当作标题或表格。
+
+已知结构限制（刻意不做，改动前请先对齐）：
+
+- 只识别 ATX 标题（``#`` 前缀），不支持 Setext 下划线式标题（``===`` / ``---``）：
+  ``---`` 与 frontmatter 分隔线、水平线语义冲突，误判代价高于收益。
+- 表格识别以「行首（可带引用标记 ``>`` 与缩进）为 ``|``」为准，不校验分隔行；
+  因此正文中孤立以 ``|`` 开头的段落行会被当作表格整体成块（保守，不丢内容）。
 
 三态与持久化不属于本模块：切片器是纯函数，写库由 Task 6 的摄入服务负责。
 
@@ -39,17 +48,21 @@ DEFAULT_OVERLAP_CHARS = 100
 #: 标题栈连接符（读模型与前端面包屑共用同一形式）
 HEADING_SEPARATOR = " > "
 
+#: 重叠前缀与正文之间的分隔符（换行不计 token，但可阻断跨块融合 token）
+OVERLAP_SEPARATOR = "\n"
+
 _ATX_HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(.*?)[ \t]*#*[ \t]*$")
 _FENCE_RE = re.compile(r"^[ \t]*(`{3,}|~{3,})")
-_TABLE_ROW_RE = re.compile(r"^[ \t]*\|")
+# 行首允许缩进与引用标记（``> | a | b |`` 中的表格仍是一张表），否则引用块
+# 里的表格会被降级成普通段落，被按 token 预算逐行拆散。
+_TABLE_ROW_RE = re.compile(r"^[ \t]*(?:>[ \t]*)*\|")
+# 日文假名与中文同处 CJK 区块，检索需求一致，故共用同一 token 权重
 _CJK_RANGES = (
-    (0x3040, 0x30FF),  # 日文假名（与中文同处 CJK 区块，检索需求一致）
+    (0x3040, 0x30FF),
     (0x3400, 0x4DBF),
     (0x4E00, 0x9FFF),
     (0xF900, 0xFAFF),
 )
-
-_BLOCK_FENCE_END = "fence_end"
 
 
 @dataclass(frozen=True)
@@ -212,11 +225,12 @@ def _sections_of(body: str) -> List[Tuple[str, List[_Block]]]:
 def _pack_section(
     blocks: List[_Block],
     target_tokens: int,
-    overlap_chars: int,
 ) -> List[Tuple[str, bool]]:
     """把一节打包成 ``(text, atomic)`` 序列，长段按 token 预算硬切。
 
-    返回元素顺序即阅读顺序；``atomic`` 供上层决定是否加重叠前缀。
+    只负责「结构成块 + 预算硬切」，重叠前缀交给 :func:`_apply_overlap`，
+    以免两个地方都可以截文本。返回元素顺序即阅读顺序；本函数保证
+    拼接后逐字符等于节内原文（按 ``\\n\\n`` 连接）。
     """
     packed: List[Tuple[str, bool]] = []
     buffer: List[str] = []
@@ -248,21 +262,47 @@ def _pack_section(
             buffer[:] = [joined[cut:]]
             buffer_tokens = estimate_tokens(buffer[0]) if buffer else 0
     flush()
-    # flush 出的整块若仍超预算（多为段落相加），按预算再切一次
-    expanded: List[Tuple[str, bool]] = []
-    for text, atomic in packed:
-        if atomic or estimate_tokens(text) <= target_tokens:
-            expanded.append((text, atomic))
+    return packed
+
+
+def _apply_overlap(
+    packed: List[Tuple[str, bool]],
+    target_tokens: int,
+    overlap_chars: int,
+) -> List[str]:
+    """为同节连续的 prose 块补上「上一块尾部」重叠前缀，保证零丢失。
+
+    前缀与正文之间注入 :data:`OVERLAP_SEPARATOR`：换行不耗 token，却阻断
+    上一块末词与本块首词被拼成 ``wordawordb`` 这种分词器打不出的融合 token。
+    前缀吃掉预算时先舍前缀、保住单块不超预算；正文装不下的残段**结转入队**
+    而非丢弃。本函数是全模块唯一会截文本的地方，因此每个分支都必须
+    先把残段放回队列再截短。
+    """
+    chunks: List[str] = []
+    queue = list(packed)
+    tail = ""
+    while queue:
+        text, atomic = queue.pop(0)
+        if atomic:
+            # 原子块不参与重叠：下一块若仍是 prose，也不能从表格/代码尾部长出来
+            chunks.append(text)
+            tail = ""
             continue
-        rest = text
-        while rest:
-            cut = _cut_by_tokens(rest, target_tokens)
+        prefix = tail[-overlap_chars:] if overlap_chars > 0 else ""
+        body = text
+        if prefix:
+            room = target_tokens - estimate_tokens(prefix)
+            cut = _cut_by_tokens(body, room)
             if cut <= 0:
-                expanded.append((rest, atomic))
-                break
-            expanded.append((rest[:cut], atomic))
-            rest = rest[cut:]
-    return expanded
+                # 前缀已吃满预算：宁可不要重叠，也不能让单块超预算
+                prefix, cut = "", _cut_by_tokens(body, target_tokens)
+            if cut < len(body):
+                queue.insert(0, (body[cut:], False))
+                body = body[:cut]
+        chunk_text = f"{prefix}{OVERLAP_SEPARATOR}{body}" if prefix else body
+        chunks.append(chunk_text)
+        tail = chunk_text
+    return chunks
 
 
 def split_markdown(
@@ -275,40 +315,25 @@ def split_markdown(
 
     Args:
         md_text: Markdown 原文（可含 YAML frontmatter，会被剥离）。
-        target_tokens: 单块 token 预算，原子块可超出。
+        target_tokens: 单块 token 预算，原子块可超出；必须 >= 1。
         overlap_chars: 同节 prose 续块携带的上一块尾部字符数，0 关闭。
 
     Returns:
         按阅读顺序编号（``seq`` 自 0 连续）的 :class:`ChunkSpec` 列表。
+
+    Raises:
+        ValueError: ``target_tokens`` 小于 1（零预算会令任何文本都切不出内容）。
     """
+    if target_tokens < 1:
+        raise ValueError("target_tokens 必须大于等于 1")
     if not md_text or not md_text.strip():
         return []
     _, body = split_frontmatter(md_text)
     specs: List[ChunkSpec] = []
     for path, blocks in _sections_of(body):
-        packed = _pack_section(blocks, target_tokens, overlap_chars)
+        packed = _pack_section(blocks, target_tokens)
         first_seq: Optional[int] = None
-        previous_text = ""
-        previous_atomic = False
-        for text, atomic in packed:
-            chunk_text = text
-            if (
-                not atomic
-                and overlap_chars > 0
-                and previous_text
-                and not previous_atomic
-            ):
-                prefix = previous_text[-overlap_chars:]
-                room = target_tokens - estimate_tokens(prefix)
-                if room > 0:
-                    chunk_text = prefix + text[: _cut_by_tokens(text, room)]
-                else:
-                    # 前缀已吃满预算：宁可不要重叠，也不能让单块超预算
-                    chunk_text = text[: _cut_by_tokens(text, target_tokens)]
-            if not chunk_text.strip():
-                previous_text = text
-                previous_atomic = atomic
-                continue
+        for chunk_text in _apply_overlap(packed, target_tokens, overlap_chars):
             seq = len(specs)
             if first_seq is None:
                 first_seq = seq
@@ -321,8 +346,6 @@ def split_markdown(
                     token_count=estimate_tokens(chunk_text),
                 ),
             )
-            previous_text = text
-            previous_atomic = atomic
     return specs
 
 
@@ -338,6 +361,7 @@ __all__ = [
     "DEFAULT_OVERLAP_CHARS",
     "DEFAULT_TARGET_TOKENS",
     "HEADING_SEPARATOR",
+    "OVERLAP_SEPARATOR",
     "embed_input",
     "estimate_tokens",
     "split_frontmatter",

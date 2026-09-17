@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=protected-access
 """Tests for the M4-5 knowledge base service and retrieval."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -12,7 +13,7 @@ from qwenpaw.app.kb.models import (
     SCOPE_PERSONAL,
     SCOPE_TEAM,
 )
-from qwenpaw.app.kb.search import _tokenize, search_chunks
+from qwenpaw.app.kb.search import search_chunks, tokenize_mixed
 from qwenpaw.app.kb.service import KbService, chunk_text
 
 
@@ -56,7 +57,7 @@ def test_chunk_text_empty() -> None:
 
 
 def test_tokenize_handles_cjk_bigrams() -> None:
-    tokens = _tokenize("数据库 PostgreSQL 选型")
+    tokens = tokenize_mixed("数据库 PostgreSQL 选型")
     assert "postg resql".split()[0] not in tokens  # sanity
     assert "postg" not in tokens
     assert "postgresql" in tokens
@@ -211,7 +212,10 @@ async def test_kb_search_tool_acl(
     monkeypatch.setattr(
         tool_module,
         "_current_identity",
-        lambda: ("alice", {"flat_role": "employee", "user_roles": [], "user_teams": []}),
+        lambda: (
+            "alice",
+            {"flat_role": "employee", "user_roles": [], "user_teams": []},
+        ),
     )
     tool = make_kb_search_tool(service)
     result = await tool("deployment notes")

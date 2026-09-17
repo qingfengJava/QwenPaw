@@ -14,11 +14,13 @@ from typing import List
 import pytest
 
 from qwenpaw.app.kb.chunker import (
+    OVERLAP_SEPARATOR,
     ChunkSpec,
     embed_input,
     estimate_tokens,
     split_markdown,
 )
+from qwenpaw.app.kb.search import tokenize_mixed
 
 pytestmark = pytest.mark.unit
 
@@ -163,6 +165,23 @@ def test_code_block_heading_does_not_create_section() -> None:
     assert {c.heading_path for c in chunks} == {"T"}
 
 
+def test_table_inside_blockquote_stays_atomic() -> None:
+    """引用块内的表格同样整体成块，不得被降级为段落逐行拆散。"""
+    md = (
+        "# T\n\n## 注意\n\n"
+        "> | 分期 | TSH 目标 |\n"
+        "> | --- | --- |\n"
+        "> | 早期 | <2.5 |\n"
+        "> | 中期 | <3.0 |\n"
+    )
+
+    chunks = split_markdown(md, target_tokens=10)
+    tables = [c for c in chunks if "|" in c.text]
+
+    assert len(tables) == 1
+    assert "早期" in tables[0].text and "中期" in tables[0].text
+
+
 # ---------------------------------------------------------------------------
 # 长度控制与父子回补
 # ---------------------------------------------------------------------------
@@ -210,20 +229,52 @@ def test_prose_chunks_respect_target_tokens() -> None:
     assert all(c.token_count <= 200 for c in chunks)
 
 
-def _marker_text(count: int) -> str:
-    """生成每 5 字符不重复的标记文本（便于验证硬切与重叠前缀）。"""
-    return "".join(f"[{i:03d}]" for i in range(count))
+def _marker_text(count: int, *, offset: int = 0) -> str:
+    """生成逐个不重复的标记文本（5 字符一格，便于逐字符验证硬切与零丢失）。"""
+    return "".join(f"[{i:03d}]" for i in range(offset, offset + count))
+
+
+def _squash(text: str) -> str:
+    """去掉全部空白：段落间空行属排版而非内容，不参与零丢失比对。"""
+    return "".join(text.split())
+
+
+def _new_content(chunks: List[ChunkSpec], overlap_chars: int) -> str:
+    """剥掉续块携带的重叠前缀（含注入换行），拼回各块真正的新增内容。
+
+    这是「内容零丢失 + 块间无空隙」不变式的验证手段：结果必须逐字符
+    等于源正文，任何一处截断少字符都会在这里暴露。
+    """
+    pieces: List[str] = []
+    previous = ""
+    for chunk in chunks:
+        text = chunk.text
+        prefix = previous[-overlap_chars:] if previous else ""
+        cut = len(prefix) + len(OVERLAP_SEPARATOR)
+        if prefix and text.startswith(prefix + OVERLAP_SEPARATOR):
+            text = text[cut:]
+        pieces.append(text)
+        previous = chunk.text
+    return "".join(pieces)
 
 
 def test_continuation_carries_overlap_context() -> None:
-    """跨块续读携带上一块尾部文字，避免句子在边界被切断。"""
-    md = f"# T\n## A\n{_marker_text(200)}\n"
+    """跨块续读携带上一块尾部文字，且新增内容紧接上块末尾无空隙。"""
+    src = _marker_text(200)
+    md = f"# T\n## A\n{src}\n"
 
     chunks = split_markdown(md, target_tokens=100, overlap_chars=8)
 
     assert len(chunks) >= 2
-    assert chunks[1].text.startswith(chunks[0].text[-8:])
+    prefix = chunks[0].text[-8:]
+    assert chunks[1].text.startswith(prefix + OVERLAP_SEPARATOR)
     assert chunks[1].parent_seq == chunks[0].seq
+    # 去掉重叠前缀后的新内容，必须正好接在上块末尾之后（源文本无空隙）
+    boundary = len(prefix) + len(OVERLAP_SEPARATOR)
+    new_content = chunks[1].text[boundary:]
+    consumed = len(chunks[0].text)
+    assert src.startswith(chunks[0].text)
+    assert src[consumed:].startswith(new_content)
 
 
 def test_overlap_disabled_by_zero() -> None:
@@ -235,6 +286,57 @@ def test_overlap_disabled_by_zero() -> None:
     assert len(chunks) >= 2
     assert not chunks[1].text.startswith(chunks[0].text[-8:])
     assert chunks[1].text.startswith("[080]")
+
+
+def test_overlap_prefix_is_lossless_within_budget() -> None:
+    """P0 不变式：加重叠前缀后被截断的残段必须结转入下一块，不得丢弃。"""
+    src = _marker_text(200)
+    md = f"# T\n## A\n{src}\n"
+
+    chunks = split_markdown(md, target_tokens=100, overlap_chars=8)
+
+    assert len(chunks) >= 3
+    assert _new_content(chunks, 8) == src
+
+
+def test_overlap_prefixing_is_lossless_across_paragraphs() -> None:
+    """多段落混排同样零丢失：每个标记必须恰好出现一次于新内容拼接结果。"""
+    paras = [
+        _marker_text(60, offset=0),
+        _marker_text(60, offset=60),
+        _marker_text(60, offset=120),
+    ]
+    md = "# T\n## A\n" + "\n\n".join(paras) + "\n"
+
+    chunks = split_markdown(md, target_tokens=100, overlap_chars=12)
+
+    assert _squash(_new_content(chunks, 12)) == _squash("".join(paras))
+
+
+def test_oversized_prefix_drops_overlap_but_keeps_budget_and_content() -> None:
+    """前缀吃满预算时舍前缀：单块仍不超预算，且内容一字不丢。"""
+    src = _marker_text(120)
+    md = f"# T\n## A\n{src}\n"
+
+    chunks = split_markdown(md, target_tokens=6, overlap_chars=40)
+
+    assert all(c.token_count <= 6 for c in chunks)
+    assert _new_content(chunks, 40) == src
+
+
+def test_overlap_separator_prevents_fused_tokens() -> None:
+    """前缀与正文之间必须有分隔，否则跨块首尾词会黏成一个新 token。"""
+    source = "alpha bravo charlie delta echo foxtrot golf " * 30
+    md = f"# T\n## A\n{source}\n"
+
+    chunks = split_markdown(md, target_tokens=40, overlap_chars=6)
+
+    prefix, separator, body = chunks[1].text.partition(OVERLAP_SEPARATOR)
+    assert separator, "重叠前缀与正文之间缺分隔符"
+    assert chunks[0].text.endswith(prefix)
+    assert tokenize_mixed(chunks[1].text) == (
+        tokenize_mixed(prefix) + tokenize_mixed(body)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -310,6 +412,14 @@ def test_empty_document_yields_no_chunks() -> None:
     assert split_markdown("   \n\n  \n") == []
 
 
+def test_non_positive_target_tokens_is_rejected() -> None:
+    """零/负预算无法切出任何内容，必须报错而非静默产出空列表。"""
+    with pytest.raises(ValueError):
+        split_markdown("# T\n\n正文\n", target_tokens=0)
+    with pytest.raises(ValueError):
+        split_markdown("# T\n\n正文\n", target_tokens=-5)
+
+
 # ---------------------------------------------------------------------------
 # 共享分词器（切片端与检索端必须同一套词表）
 # ---------------------------------------------------------------------------
@@ -317,8 +427,6 @@ def test_empty_document_yields_no_chunks() -> None:
 
 def test_tokenize_mixed_exported() -> None:
     """共享分词器兼容 CJK bigram 与英文词。"""
-    from qwenpaw.app.kb.search import tokenize_mixed
-
     toks = tokenize_mixed("甲减 levothyroxine")
 
     assert "levothyroxine" in toks
@@ -327,7 +435,5 @@ def test_tokenize_mixed_exported() -> None:
 
 def test_chunk_text_is_tokenizable_by_shared_tokenizer() -> None:
     """切片正文必须能被共享分词器打出非空 token（否则该块永不可关键词命中）。"""
-    from qwenpaw.app.kb.search import tokenize_mixed
-
     for chunk in split_markdown(_MD):
         assert tokenize_mixed(embed_input(chunk)), f"empty tokens: {chunk.seq}"

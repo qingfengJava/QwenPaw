@@ -49,10 +49,6 @@ def tokenize_mixed(text: str) -> List[str]:
     return tokens
 
 
-#: 仓内旧调用点与存量用例仍用私有名，保留为别名免一次全仓改动
-_tokenize = tokenize_mixed
-
-
 def _bm25_scores(
     query_tokens: List[str],
     docs: List[List[str]],
@@ -110,8 +106,8 @@ def search_chunks(
     if not items or not query.strip():
         return []
 
-    query_tokens = _tokenize(query)
-    doc_tokens = [_tokenize(c.text) for c in items]
+    query_tokens = tokenize_mixed(query)
+    doc_tokens = [tokenize_mixed(c.text) for c in items]
     keyword_scores = _bm25_scores(query_tokens, doc_tokens)
     # Rank indices by keyword score descending.
     kw_ranked = sorted(
