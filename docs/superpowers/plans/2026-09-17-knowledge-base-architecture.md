@@ -499,17 +499,17 @@ async def test_embed_batch_passthrough(monkeypatch) -> None:
 ### Task 5: RetrievalEngine 抽象 + FileEngine(L0) + PgVectorEngine(L1) + MilvusEngine(L2)
 
 **Files:**
-- Create: `src/qwenpaw/app/kb/engine.py`、`file_engine.py`、`pg_engine.py`、`milvus_engine.py`
-- Modify: `src/qwenpaw/app/kb/service.py`（`search()`/`ingest_text()` 内部改走引擎；跨引擎候选库分组查询 + RRF 二次融合）
+- Create: `src/qwenpaw/app/kb/engine.py`、`hits.py`、`file_engine.py`、`pg_engine.py`、`milvus_engine.py`（`hits.py` 承载 `KbSearchHit`：engine.py 顶部需反向 import 三实现重导出，命中类独立成文件破环，engine.py 重导出保持 `eng.KbSearchHit` 契约面）
+- Modify: `src/qwenpaw/app/kb/service.py`（`search()` 内部改走引擎；门面转换保持旧返回 `list[tuple[KbChunk, float]]` 不爆改；跨引擎候选库分组查询 + RRF 二次融合在 engine.py 的 `hybrid_search_multi`，service 本任务的接入留给 T10 检索管线）
 - Modify: `docker-compose.yml`（新增 `milvus` profile：etcd + minio + milvus-standalone 三服务，与现有 postgres 服务同级）
-- Modify: `pyproject.toml`（新增可选依赖 extra `milvus = ["pymilvus>=2.4"]`，不默认安装；代码侧 `import pymilvus` 失败时该库自动回退默认引擎并告警）
+- Modify: `pyproject.toml`（新增可选依赖 extra `milvus = ["pymilvus>=2.5,<2.6"]`，不默认安装；代码侧 `import pymilvus` 失败时该库自动回退默认引擎并告警）
 - Test: `tests/unit/app/kb/test_engine_factory.py`、`tests/integration/test_kb_pg_plane.py`（追加 L1 用例）、`tests/integration/test_kb_milvus_engine.py`（L2，环境变量 `QWENPAW_TEST_MILVUS_URI` 门控）
 
 **Interfaces:**
 - Consumes: Task 3 `ChunkSpec`/`embed_input`；Task 4 `embed_texts`/`EMBEDDING_DIM`；`0034` 表（含 `kb_spaces.engine`）
-- Produces: `KbSearchHit` dataclass：`space_id, document_id, chunk_id, seq, heading_path, text, score, parent_seq`；引擎协议 `KbRetrievalEngine`（`index_document / delete_document / search(space_ids, query, query_embedding, top_k) -> list[KbSearchHit]`）；`get_kb_engine() -> KbRetrievalEngine` 默认引擎工厂（json→FileEngine，pg/dual 且 `kb_chunks` 表存在→PgVectorEngine，否则回退 FileEngine）；`resolve_engine_for(space: KbSpace) -> KbRetrievalEngine`（engine 字段：auto/pgvector→默认引擎，milvus→MilvusEngine，pymilvus 缺失时告警回退默认）；`hybrid_search_multi(spaces, query, qv, top_k)`（按引擎分组→并行检索→RRF 二次融合，k=60 与单层一致）
+- Produces: `KbSearchHit` dataclass：`space_id, document_id, chunk_id, seq, heading_path, text, score, parent_seq`；引擎协议 `KbRetrievalEngine`（`index_document / delete_document / search(space_ids, query, query_embedding, top_k) -> list[KbSearchHit]`）；`get_kb_engine() -> KbRetrievalEngine` 默认引擎工厂（json→FileEngine，pg/dual 且 `kb_chunks` 表存在→PgVectorEngine，否则回退 FileEngine）；`resolve_engine_for(space: KbSpace) -> KbRetrievalEngine`（engine 字段：auto/pgvector→默认引擎，milvus→MilvusEngine，pymilvus 缺失时告警回退默认）；`hybrid_search_multi(spaces, query, qv, top_k)`（按引擎分组→并行检索→RRF 二次融合，k=60 与单层一致；分组按 `id(engine)`，融合为排名级 `1/(RRF_K+rank)`——跨引擎 score 不可比，不直接加 score；平序 tie-break 按 chunk_id）；`MilvusEngine` 另有 `async flush()`：写入批次收口的确定性可见点（Bounded 一致性下不加 flush 约秒级收敛；调用者可按批次决定是否 flush）。`KbSearchHit` 落 `hits.py`，engine.py 重导出
 
-- [ ] **Step 0: 拉起 Milvus standalone 环境（仅开发机一次性）**：向 `docker-compose.yml` 添加 `milvus` profile 三服务（镜像：`quay.io/coreos/etcd:v3.5.14`、`minio/minio:latest`、`milvusdb/milvus:v2.4.x` standalone，配置照 Milvus 官方 standalone compose 模板，端口 19530 绑 127.0.0.1）；`docker compose --profile milvus up -d milvus-standalone`；健康检查 `curl http://127.0.0.1:19530/healthz` 返回 `"OK"` 后继续
+- [ ] **Step 0: 拉起 Milvus standalone 环境（仅开发机一次性）**：向 `docker-compose.yml` 添加 `milvus` profile 三服务（镜像按开发机实机版本：`quay.io/coreos/etcd:v3.5.18`、`minio/minio:RELEASE.2024-05-28T17-19-04Z`、`milvusdb/milvus:v2.5.14` standalone，配置照 Milvus 官方 standalone compose 模板，端口 19530 绑 127.0.0.1）；服务名/容器名一律 `qwenpaw-milvus-*` 前缀（避开开发机既有同名容器）；`docker compose --profile milvus up -d`；健康检查 `curl http://127.0.0.1:9091/healthz` 返回 `OK` 后继续（**v2.5.x 的 healthz 在 9091 管理端口；19530/healthz 返回 404 是 v2.4 旧行为——已实测修正**）
 - [ ] **Step 1: 写失败测试（工厂路由 + 分组）**
 
 ```python
@@ -593,12 +593,12 @@ LIMIT :top_k
 """
 ```
 
-（无 query_embedding 时仅 kw CTE；tsquery 词串由应用层 `tokenize_mixed` 后以 `' & '` 连接生成，保证与索引侧同分词。）
-- [ ] **Step 5: 实现 milvus_engine.py（L2，pymilvus 可选依赖）** — collection `kb_chunks_v1`：`chunk_id INT64 PK, space_id VARCHAR(分区键 enable_dynamic_field 下用 partition_key), document_id INT64, seq INT64, heading_path VARCHAR(512), content_text VARCHAR(65535), dense FLOAT_VECTOR(dim=1024), sparse SPARSE_FLOAT_VECTOR` + BM25 function（content_text→sparse）；`search()` 用 `AnnSearchRequest`（dense，COSINE）+ `AnnSearchRequest`（sparse，BM25）+ `WeightedRanker(0.7, 0.3)`，filter 表达式 ``space_id in ["a","b"]``（S0 收敛结果直传）；`index_document` upsert；URI 取环境变量 `QWENPAW_MILVUS_URI`（默认 `http://127.0.0.1:19530`）
+（无 query_embedding 时仅 kw CTE；tsquery 词串由应用层 `tokenize_mixed` 后以 `' & '` 连接生成，保证与索引侧同分词。**实现与草图差异**：vec/kw 两个 CTE 内层子查询先 `ORDER BY ... LIMIT 50`、外层再 `row_number()` 取排名——让 HNSW/GIN 的 LIMIT 下推生效，避免窗口函数对全表排序；向量以字符串字面量 `CAST(:qv AS vector)` 绑定，不引入 pgvector Python 包；`parent_chunk_id` 反解 `parent_seq`（`{document_id}_{seq}` rsplit）；tenant 一期固定 `'default'`。）
+- [ ] **Step 5: 实现 milvus_engine.py（L2，pymilvus 可选依赖）** — collection `kb_chunks_v1`：`chunk_id VARCHAR(64) PK（与 PG 面 {document_id}_{seq} 同形态可互读，不用 INT64）, space_id VARCHAR(64) 分区键, document_id VARCHAR(64), seq INT64, heading_path VARCHAR(512), content_text VARCHAR(65535, enable_analyzer=True + analyzer_params={"type": "chinese"}), parent_seq INT64（-1 哨兵）, dense FLOAT_VECTOR(dim=1024), sparse SPARSE_FLOAT_VECTOR` + BM25 function（content_text→sparse）；`search()` 用 `client.hybrid_search(reqs=[AnnSearchRequest(dense, COSINE), AnnSearchRequest(sparse, BM25)], ranker=WeightedRanker(0.7, 0.3))`（**单路时 ranker 权重数必须与请求数对齐**：`WeightedRanker(1.0)`），filter 表达式 ``space_id in ["a","b"]``（S0 收敛结果直传）；`index_document` upsert（缺向量以零向量占位，BM25 路仍可召回）；URI 取环境变量 `QWENPAW_MILVUS_URI`（默认 `http://127.0.0.1:19530`）。**真机实测三件**：默认 standard analyzer 不切分中文（中文查询恒空，必须 chinese/jieba）；pymilvus 2.5 的 `Hit` 非 dict（`hit.get("id")` 恒 None，主键读 `hit.id` 属性）；schema 变更需手动 `drop_collection` 重建（不支持原地改 analyzer）
 - [ ] **Step 5b: 集成测试**（`tests/integration/test_kb_milvus_engine.py`：URI 未设 skip；建 collection→index 3 条含专有名词→query 命中→delete_document 后查不到）
-- [ ] **Step 6: PgVectorEngine 集成测试追加**（隔离库：index 3 条含专有名词的 chunk → query 命中且向量缺失时 BM25 仍命中）——`pytest tests/integration/test_kb_pg_plane.py -v -o asyncio_default_fixture_loop_scope=session -o asyncio_default_test_loop_scope=session`
+- [ ] **Step 6: PgVectorEngine 集成测试追加**（隔离库：index 3 条含专有名词的 chunk → query 命中且向量缺失时 BM25 仍命中）——`pytest tests/integration/test_kb_pg_plane.py -v`（`QWENPAW_PG_DSN` 指向隔离库；asyncio loop 用默认 function 口径即可）
 - [ ] **Step 7: 全量单测通过**：`pytest tests/unit/app/kb -v`
-- [ ] **Step 8: Commit** — `git add` 本任务文件后 `git commit -m "feat(kb): pluggable retrieval engines (file/pgvector/milvus) with per-space routing"`
+- [ ] **Step 8: Commit** — `git add` 本任务文件后 `git commit -m "feat(kb): 检索引擎抽象与三实现（file/pgvector/milvus）按库路由"`（实际提交 1c9d497e，16 文件点名）
 
 ---
 
