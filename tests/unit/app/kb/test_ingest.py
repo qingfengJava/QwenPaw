@@ -312,3 +312,52 @@ async def test_ingest_archive_upload(monkeypatch, tmp_path) -> None:
     archived = list(tmp_path.rglob("*.md"))
     assert any(item.name.startswith(result.doc_id) for item in archived)
     assert archived[0].read_bytes() == b"raw-bytes"
+
+
+@pytest.mark.asyncio
+async def test_ingest_store_errors_converge_failed(monkeypatch) -> None:
+    """工厂异常与短路探测异常均收敛为 failed（不向上抛，审查 F3）。"""
+
+    async def _boom_factory():
+        raise RuntimeError("factory boom")
+
+    monkeypatch.setattr(ingest, "get_ready_kb_pg_store", _boom_factory)
+    result = await ingest.ingest_space_document(
+        **_args(), engine=_FakeEngine()
+    )
+    assert result.status == INGEST_FAILED
+    assert result.doc_id == ""
+
+    class _BoomProbe(_FakeStore):
+        async def get_document_by_path(
+            self,
+            space_id,
+            path,
+            *,
+            include_deleted=False,
+        ):
+            raise RuntimeError("probe boom")
+
+    result2 = await ingest.ingest_space_document(
+        **_args(),
+        store=_BoomProbe(),
+        engine=_FakeEngine(),
+    )
+    assert result2.status == INGEST_FAILED
+
+
+@pytest.mark.asyncio
+async def test_ingest_resolves_engine_when_not_injected(monkeypatch) -> None:
+    """engine 未注入：按 space 路由解析（space 缺失传 None，R14 分支）。"""
+    monkeypatch.setattr(ingest, "embed_texts", _no_embed)
+    captured: list = []
+
+    def _fake_resolve(space):
+        captured.append(space)
+        return _FakeEngine()
+
+    monkeypatch.setattr(ingest, "resolve_engine_for", _fake_resolve)
+    result = await ingest.ingest_space_document(**_args(), store=_FakeStore())
+    assert result.status == INGEST_READY
+    # _FakeStore.get_space 返回 None：路由解析收到 None（R14 不阻断）
+    assert captured == [None]

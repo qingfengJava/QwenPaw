@@ -36,6 +36,24 @@ def test_extract_wikilinks_skips_fenced_code() -> None:
     assert [path for path, _ in found] == ["真链", "尾链"]
 
 
+def test_extract_wikilinks_mixed_fence_markers() -> None:
+    """异族标记行不解围：``` 区内的 ~~~ 行仍是围栏内容。
+
+    审查探针固化（F1）：之前 toggle 语义在 `~~~` 行误判闭合，
+    既泄漏假边又吞吐后续真边。
+    """
+    md = "正文 [[真链]]\n```\n[[假链]]\n~~~\n[[还是假链]]\n```\n尾段 [[尾链]]"
+    found = links.extract_wikilinks(md)
+    assert [path for path, _ in found] == ["真链", "尾链"]
+
+
+def test_extract_wikilinks_unclosed_fence_swallows_rest() -> None:
+    """未闭合围栏吞到文档尾：其后 wikilink 均不产出（宁少不假）。"""
+    md = "前段 [[一]]\n```\n[[内]]\n后段 [[二]]"
+    found = links.extract_wikilinks(md)
+    assert [path for path, _ in found] == ["一"]
+
+
 def test_extract_wikilinks_ignores_empty_and_unclosed() -> None:
     """空路径 [[]] 与未闭合 [[x 不产出边。"""
     md = "空 [[]] 与未闭合 [[x\n正常 [[ok]]"

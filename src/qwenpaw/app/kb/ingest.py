@@ -18,7 +18,8 @@
 
 fail-soft 边界：上传原文归档（R7）与 space 路由元数据缺失（R14）都不
 阻断摄入；写入面异常按「可重触发」处理（落 failed，等待下一次摄入或
-T8/T10 的重建任务）。PG 平面整体不可用（store 取不到）时同样落 failed。
+T8/T10 的重建任务）。PG 平面不可用（工厂取不到 / 短路探测异常）同样
+收敛为 failed 返回，不向上抛。
 
 @author qingfeng
 """
@@ -321,7 +322,11 @@ async def ingest_space_document(
     if not markdown.strip():
         raise ValueError("content_md 为空：没有可摄入的正文")
     if store is None:
-        store = await get_ready_kb_pg_store()
+        try:
+            store = await get_ready_kb_pg_store()
+        except Exception:  # pylint: disable=broad-except
+            logger.warning("[kb] pg store factory failed", exc_info=True)
+            store = None
     if store is None:
         logger.warning(
             "[kb] ingest skipped: PG plane unavailable; path=%s",
@@ -337,7 +342,15 @@ async def ingest_space_document(
     )
     final_title = str(frontmatter.get("title") or title or "").strip()
 
-    existing = await store.get_document_by_path(space_id, path)
+    try:
+        existing = await store.get_document_by_path(space_id, path)
+    except Exception:  # pylint: disable=broad-except
+        logger.warning(
+            "[kb] short-circuit probe failed: path=%s",
+            path,
+            exc_info=True,
+        )
+        return IngestResult(doc_id="", chunk_count=0, status=INGEST_FAILED)
     if (
         existing is not None
         and existing.content_hash == content_hash(markdown)

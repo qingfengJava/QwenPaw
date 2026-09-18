@@ -35,8 +35,16 @@ _MAIN_MD = (
     "---\n"
     "# 甲减 > 用药\n\n"
     "见 [[ref]] 与 [[悬挂/目标]]。\n\n"
+    "另见 [[第二目标]]。\n\n"
     "左甲状腺素的妊娠早期剂量调整需要监测 TSH。\n"
 )
+
+
+class _BoomEngine:
+    """首摄用：写入面必炸（验证 failed 真库路径与同内容可重触发）。"""
+
+    async def index_document(self, *_args, **_kwargs):
+        raise RuntimeError("probe boom")
 
 
 def _isolation_asyncpg_engine():
@@ -176,11 +184,17 @@ def test_kb_ingest_roundtrip(app_server, monkeypatch) -> None:
             assert detail.source_meta["tags"] == ["用药"]
             assert await _version_count(engine, main.doc_id) == 1
 
-            # links 出边：[[ref]] 归一化命中 / 悬挂目标落空串
+            # links 出边：[[ref]] 归一化命中 / 悬挂落空串 / 读回保序（F2）
             edges = await store.list_document_links(main.doc_id)
+            assert [dst for dst, _, _ in edges] == [
+                "ref",
+                "悬挂/目标",
+                "第二目标",
+            ]
             resolved = {dst: dst_id for dst, dst_id, _ in edges}
             assert resolved["ref"] == ref.doc_id
             assert resolved["悬挂/目标"] == ""
+            assert resolved["第二目标"] == ""
 
             # BM25 检索可见（中文分词两端同源）
             hits = await l1.search([_SPACE], "左甲状腺素", None, 5)
@@ -221,6 +235,38 @@ def test_kb_ingest_roundtrip(app_server, monkeypatch) -> None:
             assert changed.status == "ready"
             assert changed.chunk_count > 0
             assert await _version_count(engine, main.doc_id) == 2
+
+            # failed → 同内容重摄可重建（真库路径，审查探针固化）
+            retry_md = "# 重试\n\n失败重触发验证内容。\n"
+            failed = await ingest.ingest_space_document(
+                space_id=_SPACE,
+                title="重试",
+                path="retry.md",
+                content_md=retry_md,
+                source="upload",
+                store=store,
+                engine=_BoomEngine(),
+            )
+            assert failed.status == "failed"
+            assert failed.doc_id.startswith("doc_")
+            failed_detail = await store.get_document(failed.doc_id)
+            assert failed_detail is not None
+            assert failed_detail.ingest_status == "failed"
+            assert "RuntimeError" in failed_detail.error
+            assert await _version_count(engine, failed.doc_id) == 1
+            rebuilt = await ingest.ingest_space_document(
+                space_id=_SPACE,
+                title="重试",
+                path="retry.md",
+                content_md=retry_md,
+                source="upload",
+                store=store,
+                engine=l1,
+            )
+            assert rebuilt.status == "ready"
+            assert rebuilt.doc_id == failed.doc_id
+            assert rebuilt.chunk_count > 0
+            assert await _version_count(engine, failed.doc_id) == 1
         finally:
             await _cleanup(engine)
             await engine.dispose()

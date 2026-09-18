@@ -827,6 +827,11 @@ class KbPgStore:
         见 Task 6）：本方法只负责「删本源旧边 + 插新边」的原子替换。
         空列表等价于「清除本源全部出边」——正文删掉 wikilink 的收敛路径。
 
+        ``link_id`` 前缀携带插入序号（零填充 6 位）：「保序」由此端到端
+        成立（读回 ``ORDER BY id`` 即插入序，见 :meth:`list_document_links`）。
+        平面未就绪时返回 0（全平面三态短路口径）：0 不区分「无出边」与
+        「平面不可用」，完成态路径不依赖本返回值。
+
         Returns:
             写入的边条数。
         """
@@ -844,7 +849,9 @@ class KbPgStore:
                 ),
                 {"tid": self._tenant_id, "src": src_document_id},
             )
-            for dst_path, dst_document_id, context in rows:
+            for seq, (dst_path, dst_document_id, context) in enumerate(
+                rows,
+            ):
                 await conn.execute(
                     text(
                         "INSERT INTO kb_links (tenant_id, id, space_id, "
@@ -855,7 +862,7 @@ class KbPgStore:
                     ),
                     {
                         "tid": self._tenant_id,
-                        "link_id": f"lnk_{uuid.uuid4().hex[:12]}",
+                        "link_id": f"lnk_{seq:06d}_{uuid.uuid4().hex[:8]}",
                         "space_id": space_id,
                         "src": src_document_id,
                         "dst_path": dst_path,
@@ -869,7 +876,12 @@ class KbPgStore:
         self,
         src_document_id: str,
     ) -> List[Tuple[str, str, str]]:
-        """List one document's outgoing edges as ``(dst, dst_id, context)``."""
+        """List one document's outgoing edges in insertion order.
+
+        返回 ``(dst_path, dst_document_id, context_snippet)`` 列表，顺序 =
+        首次出现序（文档内保序契约的读端；依赖 ``link_id`` 的零填充序号
+        前缀，见 :meth:`replace_document_links`）。
+        """
         if not await self.ensure_ready():
             return []
         from sqlalchemy import text
