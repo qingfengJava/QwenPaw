@@ -15,6 +15,22 @@ from qwenpaw.app.kb.models import (
 )
 from qwenpaw.app.kb.search import search_chunks, tokenize_mixed
 from qwenpaw.app.kb.service import KbService, chunk_text
+from qwenpaw.db import write_gateway
+
+
+@pytest.fixture(autouse=True)
+def _json_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    """钉住 json 后端。
+
+    本文件测的是文件面（BM25/ACL/chunks.jsonl）行为；T8 门面三态统一后
+    KbService 按 resolve_storage_backend() 分流，故必须显式固定 json，
+    否则环境变量泄漏（如 QWENPAW_STORAGE_BACKEND=pg）会让用例误走 pg 路径。
+    """
+    monkeypatch.setattr(
+        write_gateway,
+        "resolve_storage_backend",
+        lambda: "json",
+    )
 
 
 @pytest.fixture

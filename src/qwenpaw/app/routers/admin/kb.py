@@ -85,9 +85,9 @@ async def delete_kb(kb_id: str) -> None:
     """Delete a knowledge base with all its chunks."""
     if not get_kb_service().delete_kb(kb_id):
         raise HTTPException(status_code=404, detail="kb not found")
-    # 删库同步回收 json 态绑定行（0034 无外键，孤绑定会在绑定列表造出
-    # 脏读）；pg 态由 KbPgStore.delete_space 同事务回收，其路由接线在
-    # T8 门面统一 delete_kb 时落地
+    # 删库同步回收 json 态绑定行（0034 无外键，孤绑定会在绑定列表造出脏读）；
+    # pg/dual 态 delete_space_bindings 自身 no-op——绑定由门面 delete_kb 路由到
+    # KbPgStore.delete_space 时同事务回收（T8 门面统一已落地该 pg 路由）
     await delete_space_bindings(kb_id)
 
 
