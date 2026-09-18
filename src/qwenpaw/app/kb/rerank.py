@@ -131,7 +131,13 @@ async def rerank_hits(
         [item.text for item in items],
         config,
     )
-    if not order or not _valid_order(order, len(items)):
+    # 顶层容器形状同样不受控：非序列（int/dict）会在 len() / 切片处抛错，
+    # 与元素类型守卫同一纪律——先查形状，再查元素。
+    if (
+        not order
+        or not isinstance(order, (list, tuple))
+        or not _valid_order(order, len(items))
+    ):
         logger.warning(
             "[kb] rerank returned unusable order; keeping RRF order",
         )

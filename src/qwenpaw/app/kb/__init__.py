@@ -6,6 +6,7 @@ authenticated users) libraries; retrieval is BM25 with optional vector
 fusion (RRF).  Long-term memory stays per-user and separate — knowledge
 bases hold shared enterprise/team corpora, never private memory.
 """
+
 from .models import (
     SCOPE_ENTERPRISE,
     SCOPE_PERSONAL,

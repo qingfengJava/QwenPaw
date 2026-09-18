@@ -15,6 +15,7 @@ ACL resolution order for one user on one kb:
 4. ``enterprise`` scope: every authenticated user;
 5. explicit grants (roles/users/teams) extend any scope.
 """
+
 from __future__ import annotations
 
 import json
@@ -26,6 +27,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from ...constant import SECRET_DIR
+from .file_engine import DEFAULT_KB_DATA_DIR, FileKbEngine
 from .models import (
     SCOPE_ENTERPRISE,
     SCOPE_PERSONAL,
@@ -36,12 +38,12 @@ from .models import (
     KbRegistry,
     KnowledgeBase,
 )
-from .search import search_chunks
 
 logger = logging.getLogger(__name__)
 
 REGISTRY_FILE = SECRET_DIR / "kb_registry.json"
-DATA_DIR = SECRET_DIR / "kb_data"
+#: 文件面存储根目录（读写已收编进 L0 引擎；此别名兼容旧引用）
+DATA_DIR = DEFAULT_KB_DATA_DIR
 
 # Chunking: split on blank lines, pack paragraphs into ~800-char chunks
 # with a small overlap so sentences crossing boundaries stay intact.
@@ -77,7 +79,8 @@ def chunk_text(text: str) -> List[str]:
     for chunk in chunks:
         while len(chunk) > _CHUNK_SIZE * 4:
             result.append(chunk[: _CHUNK_SIZE * 4])
-            chunk = chunk[_CHUNK_SIZE * 4 - _CHUNK_OVERLAP :]
+            tail_start = _CHUNK_SIZE * 4 - _CHUNK_OVERLAP
+            chunk = chunk[tail_start:]
         result.append(chunk)
     return [c for c in result if c.strip()]
 
@@ -96,8 +99,8 @@ class KbService:
         self._cache_valid = False
         self._cache_key: Optional[int] = None
         self._cache_data: Optional[KbRegistry] = None
-        # Per-kb chunk cache: kb_id -> (mtime_ns, chunks).
-        self._chunk_cache: dict[str, tuple[Optional[int], List[KbChunk]]] = {}
+        # chunk 读写收编进 L0 文件引擎（含其 mtime 缓存）；本类为薄委托
+        self._file_engine = FileKbEngine(data_dir=self._data_dir)
 
     # ------------------------------------------------------------------
     # persistence
@@ -148,43 +151,16 @@ class KbService:
         self._cache_valid = True
 
     def _chunks_path(self, kb_id: str) -> Path:
-        return self._data_dir / kb_id / "chunks.jsonl"
+        """该库的 chunks.jsonl 路径（委托 L0 引擎，逻辑单一来源）。"""
+        return self._file_engine.chunks_path(kb_id)
 
     def _load_chunks(self, kb_id: str) -> List[KbChunk]:
-        path = self._chunks_path(kb_id)
-        try:
-            mtime = path.stat().st_mtime_ns
-        except OSError:
-            mtime = None
-        cached = self._chunk_cache.get(kb_id)
-        if cached is not None and cached[0] == mtime:
-            return cached[1]
-        chunks: list[KbChunk] = []
-        if mtime is not None:
-            try:
-                with open(path, "r", encoding="utf-8") as fh:
-                    for line in fh:
-                        line = line.strip()
-                        if line:
-                            chunks.append(KbChunk.model_validate_json(line))
-            except (OSError, ValueError) as exc:
-                logger.error("Failed to read kb chunks %s: %s", path, exc)
-        self._chunk_cache[kb_id] = (mtime, chunks)
-        return chunks
+        """读某库全部切片（委托 L0 引擎；mtime 缓存语义不变）。"""
+        return self._file_engine.load_chunks(kb_id)
 
     def _save_chunks(self, kb_id: str, chunks: List[KbChunk]) -> None:
-        path = self._chunks_path(kb_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as fh:
-            for chunk in chunks:
-                fh.write(
-                    chunk.model_dump_json() + "\n",
-                )
-        try:
-            mtime: Optional[int] = path.stat().st_mtime_ns
-        except OSError:
-            mtime = None
-        self._chunk_cache[kb_id] = (mtime, chunks)
+        """整库重写切片文件（委托 L0 引擎）。"""
+        self._file_engine.save_chunks(kb_id, chunks)
 
     # ------------------------------------------------------------------
     # knowledge base CRUD
@@ -260,13 +236,7 @@ class KbService:
             ]:
                 del data.documents[doc_id]
             self._save(data)
-        chunks_path = self._chunks_path(kb_id)
-        try:
-            chunks_path.unlink(missing_ok=True)
-            chunks_path.parent.rmdir()
-        except OSError:
-            pass
-        self._chunk_cache.pop(kb_id, None)
+        self._file_engine.drop_space(kb_id)
         return True
 
     # ------------------------------------------------------------------
@@ -385,8 +355,7 @@ class KbService:
                 return False
             del data.documents[doc_id]
             chunks = [
-                c for c in self._load_chunks(doc.kb_id)
-                if c.doc_id != doc_id
+                c for c in self._load_chunks(doc.kb_id) if c.doc_id != doc_id
             ]
             self._save_chunks(doc.kb_id, chunks)
             self._save(data)
@@ -411,11 +380,14 @@ class KbService:
         top_k: int = 5,
         query_embedding: Optional[List[float]] = None,
     ) -> List[tuple[KbChunk, float]]:
-        """Rank chunks of one kb. ACL is the caller's responsibility
-        (see :meth:`accessible_kbs`)."""
-        chunks = self._load_chunks(kb_id)
-        return search_chunks(
-            chunks,
+        """Rank chunks of one kb via the L0 engine (legacy sync face).
+
+        内部委托 :meth:`FileKbEngine.search_sync`——文件检索逻辑只有一处；
+        同步签名保留给既有调用方（异步引擎路线随 T8/T10 的门面统一接入）。
+        ACL is the caller's responsibility (see :meth:`accessible_kbs`).
+        """
+        return self._file_engine.search_sync(
+            [kb_id],
             query,
             query_embedding=query_embedding,
             top_k=top_k,

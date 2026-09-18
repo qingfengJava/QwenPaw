@@ -9,6 +9,12 @@ volumes:
     name: qwenpaw-backups
   qwenpaw-pgdata:
     name: qwenpaw-pgdata
+  qwenpaw-milvus-etcd-data:
+    name: qwenpaw-milvus-etcd-data
+  qwenpaw-milvus-minio-data:
+    name: qwenpaw-milvus-minio-data
+  qwenpaw-milvus-data:
+    name: qwenpaw-milvus-data
 
 services:
   qwenpaw:
@@ -50,3 +56,72 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # Optional Milvus standalone stack for the L2 retrieval engine
+  # (kb_spaces.engine='milvus', install the app with qwenpaw[milvus]).
+  # Start:  docker compose --profile milvus up -d
+  # Then point the app at it with QWENPAW_MILVUS_URI
+  # (default http://127.0.0.1:19530; v2.5.x healthz lives on :9091).
+  # Container names carry the qwenpaw-milvus- prefix so a pre-existing
+  # local dev stack with plain names never collides.
+  qwenpaw-milvus-etcd:
+    image: quay.io/coreos/etcd:v3.5.18
+    profiles: ["milvus"]
+    container_name: qwenpaw-milvus-etcd
+    restart: always
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_SNAPSHOT_COUNT=50000
+    volumes:
+      - qwenpaw-milvus-etcd-data:/etcd
+    command: etcd -advertise-client-urls=http://qwenpaw-milvus-etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  qwenpaw-milvus-minio:
+    image: minio/minio:RELEASE.2024-05-28T17-19-04Z
+    profiles: ["milvus"]
+    container_name: qwenpaw-milvus-minio
+    restart: always
+    environment:
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+    volumes:
+      - qwenpaw-milvus-minio-data:/minio_data
+    command: minio server /minio_data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  qwenpaw-milvus-standalone:
+    image: milvusdb/milvus:v2.5.14
+    profiles: ["milvus"]
+    container_name: qwenpaw-milvus-standalone
+    restart: always
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      - ETCD_ENDPOINTS=qwenpaw-milvus-etcd:2379
+      - MINIO_ADDRESS=qwenpaw-milvus-minio:9000
+    volumes:
+      - qwenpaw-milvus-data:/var/lib/milvus
+    ports:
+      - "127.0.0.1:19530:19530"
+      - "127.0.0.1:9091:9091"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      start_period: 90s
+      timeout: 20s
+      retries: 3
+    depends_on:
+      - qwenpaw-milvus-etcd
+      - qwenpaw-milvus-minio

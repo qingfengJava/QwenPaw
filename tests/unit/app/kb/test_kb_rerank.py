@@ -49,9 +49,13 @@ def _refs(result: Sequence[Any]) -> List[str]:
 
 
 class _ApiRecorder:
-    """替身 rerank 客户端：记录入参并按预置序返回。"""
+    """替身 rerank 客户端：记录入参并按预置序返回。
 
-    def __init__(self, order: Optional[List[int]]) -> None:
+    ``order`` 放宽为 ``Any``：本替身也用于模拟「响应形状不受控」的
+    非法形态（非序列容器 / 混合元素类型）。
+    """
+
+    def __init__(self, order: Any) -> None:
         self.order = order
         self.queries: List[str] = []
         self.documents: List[List[str]] = []
@@ -62,7 +66,7 @@ class _ApiRecorder:
         query: str,
         documents: Sequence[str],
         _config: RerankerConfig,
-    ) -> Optional[List[int]]:
+    ) -> Any:
         self.calls += 1
         self.queries.append(query)
         self.documents.append(list(documents))
@@ -229,6 +233,30 @@ async def test_rerank_untyped_or_unhashable_indices_keep_order(
         [0.0, 1.0, 2.0],
     ):
         recorder = _ApiRecorder(list(bad))
+        monkeypatch.setattr(kb_rr, "call_reranker_api", recorder)
+
+        result = await kb_rr.rerank_hits("问题", items)
+
+        assert _refs(result) == ["h0", "h1", "h2"], bad
+
+
+@pytest.mark.asyncio
+async def test_rerank_non_sequence_order_keeps_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """顶层容器形状不受控：``order`` 非序列（int/dict）必须原序返回。
+
+    非序列在 ``len()`` / 切片处抛错，同样会击穿「精排永不抛错」；
+    该守卫与元素类型守卫共同覆盖「响应形状」的两档防护。
+    """
+    items = _hits(3)
+    monkeypatch.setattr(
+        kb_rr,
+        "_resolve_rerank_config",
+        lambda **_kw: _reranker(),
+    )
+    for bad in (5, {0: 1, 1: 2, 2: 3}):
+        recorder = _ApiRecorder(bad)
         monkeypatch.setattr(kb_rr, "call_reranker_api", recorder)
 
         result = await kb_rr.rerank_hits("问题", items)

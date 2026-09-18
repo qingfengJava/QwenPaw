@@ -20,9 +20,12 @@ from .models import KbChunk
 # BM25 hyperparameters (standard defaults).
 _K1 = 1.5
 _B = 0.75
-_RRF_K = 60.0
-_VECTOR_WEIGHT = 0.7
-_KEYWORD_WEIGHT = 0.3
+#: RRF 融合常数（M6-5 转正为共享导出：引擎层跨引擎二次融合与 PgVector 的
+#: SQL 内融合均引用本值，任何地方不得再写一个 60 字面量）
+RRF_K = 60.0
+#: 单层融合权重（同上转正：PgVector 引擎的 SQL 与内存融合共用同一权重）
+VECTOR_WEIGHT = 0.7
+KEYWORD_WEIGHT = 0.3
 
 _TOKEN_RE = re.compile(r"[\w]+", re.UNICODE)
 
@@ -134,10 +137,10 @@ def search_chunks(
     for idx in range(len(items)):
         score = 0.0
         if vec_rank:
-            score += _VECTOR_WEIGHT / (_RRF_K + vec_rank[idx])
+            score += VECTOR_WEIGHT / (RRF_K + vec_rank[idx])
             # Only keyword *hits* contribute on the fused path.
             if keyword_scores[idx] > 0:
-                score += _KEYWORD_WEIGHT / (_RRF_K + kw_rank[idx])
+                score += KEYWORD_WEIGHT / (RRF_K + kw_rank[idx])
         else:
             if keyword_scores[idx] <= 0:
                 continue  # pure-BM25 path: non-hits are excluded
@@ -146,3 +149,12 @@ def search_chunks(
 
     fused.sort(key=lambda pair: pair[1], reverse=True)
     return [(items[idx], score) for idx, score in fused[: max(1, top_k)]]
+
+
+__all__ = [
+    "KEYWORD_WEIGHT",
+    "RRF_K",
+    "VECTOR_WEIGHT",
+    "search_chunks",
+    "tokenize_mixed",
+]

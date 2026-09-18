@@ -418,3 +418,103 @@ def test_kb_pg_store_roundtrip(app_server) -> None:
             _wg.reset_backend_cache()
 
     asyncio.run(_run())
+
+
+#: L1 引擎真库用例的固定空间/文档 ID（用例首尾清理）
+_IT_L1_SPACE = "kb_it_l1"
+_IT_L1_DOC = "doc_it_l1"
+
+
+async def _cleanup_l1_rows(engine) -> None:
+    """清除 L1 用例写入的 kb_chunks 行（隔离库可反复跑的前提）。"""
+    from sqlalchemy import text
+
+    async with engine.begin() as conn:
+        await conn.execute(
+            text("DELETE FROM kb_chunks WHERE space_id = :space_id"),
+            {"space_id": _IT_L1_SPACE},
+        )
+
+
+def test_kb_pg_engine_roundtrip(app_server) -> None:
+    """L1 pgvector 引擎真库往返：BM25 命中 / parent_seq 反解 / 向量路径 / 删除。
+
+    单测只能约束 SQL 文本；以下语义只有真库能证：中文 bigram 分词写入
+    ``tsv`` 后 ``to_tsquery`` 命中（两端同源）；``parent_chunk_id`` 反解
+    ``parent_seq``（子块指向节首块）；1024 维向量经 ``CAST(:qv AS vector)``
+    绑定参与排序；``delete_document`` 按行清除。
+    """
+
+    async def _run() -> None:
+        from qwenpaw.app.kb.chunker import ChunkSpec
+        from qwenpaw.app.kb.pg_engine import PgVectorEngine
+
+        engine = _isolation_asyncpg_engine()
+        l1 = PgVectorEngine(engine=engine)
+        try:
+            await _cleanup_l1_rows(engine)
+            specs = [
+                ChunkSpec(
+                    seq=0,
+                    heading_path="甲减 > 用药",
+                    text="左甲状腺素的妊娠早期剂量调整需要监测 TSH。",
+                    parent_seq=None,
+                    token_count=20,
+                ),
+                ChunkSpec(
+                    seq=1,
+                    heading_path="甲减 > 监测",
+                    text="TSH 目标在妊娠早期低于 2.5 mIU/L。",
+                    parent_seq=0,
+                    token_count=15,
+                ),
+                ChunkSpec(
+                    seq=2,
+                    heading_path="孕期 > 营养",
+                    text="孕期补钙与维生素 D 的常规建议。",
+                    parent_seq=None,
+                    token_count=12,
+                ),
+            ]
+            assert (
+                await l1.index_document(_IT_L1_SPACE, _IT_L1_DOC, specs) == 3
+            )
+
+            # BM25-only：中文专有名词命中（bigram 分词两端同源）
+            hits = await l1.search([_IT_L1_SPACE], "左甲状腺素", None, 5)
+            assert hits, "Chinese proper noun must hit via tsvector"
+            assert hits[0].document_id == _IT_L1_DOC
+            assert "左甲状腺素" in hits[0].text
+
+            # parent_chunk_id 反解 parent_seq（子块指向节首块）
+            tsh_hits = await l1.search([_IT_L1_SPACE], "TSH", None, 5)
+            assert tsh_hits
+            child = next(h for h in tsh_hits if h.seq == 1)
+            assert child.parent_seq == 0
+
+            # 向量路径：重建索引带 1024 维向量（seq1 缺向量→仅 BM25 可见）
+            dense_a = [0.0] * 1024
+            dense_a[0] = 1.0
+            dense_b = [0.0] * 1024
+            dense_b[1] = 1.0
+            assert (
+                await l1.index_document(
+                    _IT_L1_SPACE,
+                    _IT_L1_DOC,
+                    specs,
+                    [dense_a, None, dense_b],
+                )
+                == 3
+            )
+            vec_hits = await l1.search([_IT_L1_SPACE], "探针", dense_a, 5)
+            assert vec_hits, "dense probe must return vector-path hits"
+            assert vec_hits[0].chunk_id.endswith("_0")
+
+            # 删除后不可见
+            assert await l1.delete_document(_IT_L1_SPACE, _IT_L1_DOC) == 3
+            assert await l1.search([_IT_L1_SPACE], "左甲状腺素", None, 5) == []
+        finally:
+            await _cleanup_l1_rows(engine)
+            await engine.dispose()
+
+    asyncio.run(_run())

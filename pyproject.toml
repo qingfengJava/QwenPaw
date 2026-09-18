@@ -154,6 +154,12 @@ pg = [
     "asyncpg>=0.29",
     "alembic>=1.13",
 ]
+# Retrieval engine L2 (optional): kb_spaces.engine='milvus' 时使用。
+# 驱动缺失时引擎工厂自动回退默认引擎并告警，默认安装不需要本 extra；
+# 钉 2.5 线：服务端 BM25 Function（稀疏向量）依赖 2.5 的 API。
+milvus = [
+    "pymilvus>=2.5,<2.6",
+]
 local = [
     "huggingface_hub>=0.20.0",
 ]

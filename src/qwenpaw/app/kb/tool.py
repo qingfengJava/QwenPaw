@@ -6,6 +6,7 @@ only the bases that identity may read, and returns the fused top hits.
 It is registered by :class:`AgentBuilder` only when at least one
 knowledge base exists, so deployments without KBs see no prompt change.
 """
+
 from __future__ import annotations
 
 import logging
