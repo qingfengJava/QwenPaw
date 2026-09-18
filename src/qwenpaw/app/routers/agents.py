@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Literal
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi import Path as PathParam
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from qwenpaw.exceptions import (
@@ -56,9 +57,14 @@ from ...agents.utils import (
 from ...agents.skill_system import SkillPoolService, get_workspace_skills_dir
 from ...harnesses.registry import ProviderCatalogItem, get_provider
 from ...providers.agent_model_store import resolve_agent_active_model
-from ..agent_docs.store import DOC_TYPE_BY_FILENAME, get_agent_docs_store
+from ..agent_docs.store import (
+    DOC_TYPE_BY_FILENAME,
+    get_agent_docs_store,
+)
 from ..agent_startup import AgentStartupStatus
+from ..kb import bindings as kb_bindings
 from ..multi_agent_manager import MultiAgentManager
+from .kb import _access_kwargs
 from ...constant import WORKING_DIR
 from ...utils.io_utils import run_sync_io, write_json_atomic
 from ...utils.logging import sanitize_log_value
@@ -66,6 +72,21 @@ from ...utils.logging import sanitize_log_value
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/agents", tags=["agents"])
+
+
+class KbBindingBody(BaseModel):
+    """Body for binding a knowledge space to one agent（T7）。"""
+
+    space_id: str
+    remark: str = ""
+
+
+async def _require_agent(agent_id: str) -> None:
+    """404 when the agent workspace does not exist（路由层前置哨兵）。"""
+    try:
+        await run_sync_io(load_agent_config, agent_id)
+    except (ValueError, AppBaseException) as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
 
 
 class AgentSummary(BaseModel):
@@ -665,6 +686,120 @@ async def get_agent(agentId: str = PathParam(...)) -> AgentProfileConfig:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+@router.get("/{agentId}/kb-bindings")
+async def list_agent_kb_bindings(
+    request: Request,
+    agentId: str = PathParam(...),
+) -> list[dict]:
+    """List the knowledge spaces bound to one agent（名称/scope 已组装）。"""
+    username = getattr(request.state, "user", None) or ""
+    if not username:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    await _require_agent(agentId)
+    return await kb_bindings.list_bindings(agentId)
+
+
+@router.put("/{agentId}/kb-bindings")
+async def bind_agent_kb_endpoint(
+    request: Request,
+    body: KbBindingBody,
+    agentId: str = PathParam(...),
+) -> Any:
+    """Bind a space behind the manage gate（首次 201 / 重复幂等 200）。
+
+    两条路径统一返回「绑定行完整字段 + created 布尔」，前端不按状态码
+    分叉判别形状；存在性只经一次 list_bindings 判定，杜绝双读 TOCTOU。
+    """
+    username = getattr(request.state, "user", None) or ""
+    if not username:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    await _require_agent(agentId)
+    # 管理权预检在路由层做 HTTP 语义映射；bind 层内部还会再校一道
+    allowed = await kb_bindings.can_manage_space(
+        body.space_id,
+        username,
+        **_access_kwargs(username),
+    )
+    if allowed is None:
+        raise HTTPException(status_code=404, detail="kb not found")
+    if not allowed:
+        raise HTTPException(
+            status_code=403,
+            detail="no manage right on this kb",
+        )
+    # 一次读取判定既有行（含名称/scope/授权人），命中即幂等重放 200；
+    # 存在性只经这一处 list_bindings 判定，不再有 list_bound_space_ids 与
+    # list_bindings 双读之间的 TOCTOU 窗口（P3-C 根因）
+    rows = await kb_bindings.list_bindings(agentId)
+    existing = next(
+        (r for r in rows if r["space_id"] == body.space_id),
+        None,
+    )
+    if existing is not None:
+        # 统一响应形状：绑定行完整字段 + created 布尔，前端无需按状态
+        # 码分叉判别形状（P3-D）
+        return JSONResponse(
+            status_code=200,
+            content={**existing, "created": False},
+        )
+    # 首次绑定：写入（bind 内部幂等 + 二次管理权防御）
+    ok = await kb_bindings.bind_agent_kb(
+        agent_id=agentId,
+        space_id=body.space_id,
+        granted_by=username,
+        remark=body.remark,
+        **_access_kwargs(username),
+    )
+    if ok is not True:
+        # 预检已过，此处 False/None 主体是存储平面不可用；fail-soft 映射
+        # 503（基础设施故障不伪装成 403，权限已在上方预检）
+        raise HTTPException(
+            status_code=503,
+            detail="kb binding storage unavailable",
+        )
+    # 写后读回真实行（取 created_at/space_name/scope）；若并发窗口内已被
+    # 解绑则读回为空——诚实返 409 让客户端重放，绝不 fallthrough 谎报
+    # bound=True（P3-C）
+    rows_after = await kb_bindings.list_bindings(agentId)
+    row = next(
+        (r for r in rows_after if r["space_id"] == body.space_id),
+        None,
+    )
+    if row is None:
+        raise HTTPException(
+            status_code=409,
+            detail="binding was concurrently removed; retry",
+        )
+    return JSONResponse(status_code=201, content={**row, "created": True})
+
+
+@router.delete("/{agentId}/kb-bindings/{spaceId}", status_code=204)
+async def unbind_agent_kb_endpoint(
+    request: Request,
+    agentId: str = PathParam(...),
+    spaceId: str = PathParam(...),
+) -> None:
+    """Unbind one space（库不存在 404 / 越权 403 / 行不存在 404）。"""
+    username = getattr(request.state, "user", None) or ""
+    if not username:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    await _require_agent(agentId)
+    allowed = await kb_bindings.can_manage_space(
+        spaceId,
+        username,
+        **_access_kwargs(username),
+    )
+    if allowed is None:
+        raise HTTPException(status_code=404, detail="kb not found")
+    if not allowed:
+        raise HTTPException(
+            status_code=403,
+            detail="no manage right on this kb",
+        )
+    if not await kb_bindings.unbind_agent_kb(agentId, spaceId):
+        raise HTTPException(status_code=404, detail="binding not found")
+
+
 @router.patch(
     "/{agentId}/backend-settings",
     response_model=AgentProfileConfig,
@@ -828,6 +963,7 @@ async def _rollback_qwenpawmail_update(
                 sanitize_log_value(agent_id),
             )
     return config_restored, driver_restored
+
 
 @router.post(
     "",
@@ -2066,6 +2202,7 @@ def _ensure_contacts_file(workspace_dir: Path, language: str) -> None:
 def _ensure_mail_triage_file(workspace_dir: Path, language: str) -> None:
     """Copy the MAIL_TRIAGE.md seed tree into the workspace if missing."""
     _ensure_workspace_md_file(workspace_dir, language, "MAIL_TRIAGE.md")
+
 
 def _install_initial_skills(
     workspace_dir: Path,

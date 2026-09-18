@@ -47,7 +47,9 @@ from typing import Any, List, Optional, Sequence, Tuple
 from ...db import write_gateway
 from .models import (
     INGEST_PENDING,
+    KbBinding,
     KbDocument,
+    KbDocumentVersion,
     KbSpace,
 )
 
@@ -90,6 +92,15 @@ _DOCUMENT_LIST_COLUMNS = (
     "SELECT id, space_id, path, title, content_hash, "
     "source, source_meta, ingest_status, error, is_delete, updated_by, "
     "created_at, updated_at"
+)
+
+#: 绑定行投影（T7：agent_kb_bindings 全列，读写共用同一份字面量）
+_BINDING_COLUMNS = "SELECT agent_id, space_id, granted_by, remark, created_at"
+
+#: 版本快照投影（T2 派生入口 list_document_versions 的读端）
+_VERSION_COLUMNS = (
+    "SELECT document_id, version, content_md, content_hash, "
+    "created_by, created_at"
 )
 
 #: 元数据写入白名单：列名 → SET 片段（仅键名可枚举，值一律走绑定参数）
@@ -204,6 +215,37 @@ def document_from_row(row: Any, *, with_content: bool = True) -> KbDocument:
         updated_by=str(_row_value(row, "updated_by") or ""),
         **_stamp_kwargs(row, "created_at"),
         **_stamp_kwargs(row, "updated_at"),
+    )
+
+
+def binding_from_row(row: Any) -> KbBinding:
+    """Build a :class:`KbBinding` from one ``agent_kb_bindings`` row."""
+    return KbBinding(
+        agent_id=str(_row_value(row, "agent_id") or ""),
+        space_id=str(_row_value(row, "space_id") or ""),
+        granted_by=str(_row_value(row, "granted_by") or ""),
+        remark=str(_row_value(row, "remark") or ""),
+        **_stamp_kwargs(row, "created_at"),
+    )
+
+
+def version_from_row(row: Any) -> KbDocumentVersion:
+    """Build a :class:`KbDocumentVersion` from one versions row."""
+    raw_version = _row_value(row, "version")
+    if not isinstance(raw_version, int):
+        # 版本号是主键的一部分，缺列/类型意外只能是投影写错这类编程错误，
+        # 在此处早失败而不是静默落 0 伪装成合法快照
+        raise KeyError(
+            "kb pg row is missing int column 'version'; check the "
+            "SELECT column list against alembic 0034",
+        )
+    return KbDocumentVersion(
+        document_id=str(_row_value(row, "document_id") or ""),
+        version=raw_version,
+        content_md=str(_row_value(row, "content_md") or ""),
+        content_hash=str(_row_value(row, "content_hash") or ""),
+        created_by=str(_row_value(row, "created_by") or ""),
+        **_stamp_kwargs(row, "created_at"),
     )
 
 
@@ -408,6 +450,16 @@ class KbPgStore:
                 ),
                 {"tid": self._tenant_id, "space_id": space_id},
             )
+            if result.rowcount:
+                # 同事务回收该库的全部绑定行：0034 无外键，不回收会在
+                # 绑定列表造出指向已删空间的脏读（T2 派生登记项）
+                await conn.execute(
+                    text(
+                        "DELETE FROM agent_kb_bindings "
+                        "WHERE tenant_id = :tid AND space_id = :space_id",
+                    ),
+                    {"tid": self._tenant_id, "space_id": space_id},
+                )
             return bool(result.rowcount)
 
     # ------------------------------------------------------------------
@@ -905,6 +957,116 @@ class KbPgStore:
             )
             for row in rows
         ]
+
+    # ------------------------------------------------------------------
+    # binding ops（T7：授权关系是交互式强一致数据，不走影子写）
+    # ------------------------------------------------------------------
+
+    async def insert_binding(
+        self,
+        agent_id: str,
+        space_id: str,
+        *,
+        granted_by: str = "",
+        remark: str = "",
+    ) -> bool:
+        """Bind one agent to a space; ``True`` when the relation holds.
+
+        ``ON CONFLICT DO NOTHING``：重复绑定幂等成立（返回 ``True``），
+        不产生重复行也不刷新既有行的授权人与备注；平面不可用返回
+        ``False``。调用方须先经 ``can_manage_space`` 管理权校验。
+        """
+        if not agent_id.strip() or not space_id.strip():
+            raise ValueError("kb binding requires non-empty agent/space id")
+        if not await self.ensure_ready():
+            return False
+        from sqlalchemy import text
+
+        async with self._get_engine().begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO agent_kb_bindings "
+                    "(tenant_id, agent_id, space_id, granted_by, remark, "
+                    " created_at) VALUES (:tid, :agent_id, :space_id, "
+                    ":granted_by, :remark, :now) "
+                    "ON CONFLICT (tenant_id, agent_id, space_id) DO NOTHING",
+                ),
+                {
+                    "tid": self._tenant_id,
+                    "agent_id": agent_id,
+                    "space_id": space_id,
+                    "granted_by": granted_by,
+                    "remark": remark,
+                    "now": datetime.now(timezone.utc),
+                },
+            )
+            return True
+
+    async def delete_binding(self, agent_id: str, space_id: str) -> bool:
+        """Remove one binding; ``True`` only when a row was deleted."""
+        if not await self.ensure_ready():
+            return False
+        from sqlalchemy import text
+
+        async with self._get_engine().begin() as conn:
+            result = await conn.execute(
+                text(
+                    "DELETE FROM agent_kb_bindings "
+                    "WHERE tenant_id = :tid AND agent_id = :agent_id "
+                    "AND space_id = :space_id",
+                ),
+                {
+                    "tid": self._tenant_id,
+                    "agent_id": agent_id,
+                    "space_id": space_id,
+                },
+            )
+            return bool(result.rowcount)
+
+    async def list_agent_bindings(self, agent_id: str) -> List[KbBinding]:
+        """All spaces bound to one agent（确定性读序：绑定时间升序）。"""
+        if not await self.ensure_ready():
+            return []
+        from sqlalchemy import text
+
+        async with self._get_engine().connect() as conn:
+            result = await conn.execute(
+                text(
+                    _BINDING_COLUMNS
+                    + " FROM agent_kb_bindings "
+                    + "WHERE tenant_id = :tid AND agent_id = :agent_id "
+                    + "ORDER BY created_at ASC, space_id ASC",
+                ),
+                {"tid": self._tenant_id, "agent_id": agent_id},
+            )
+            rows = result.mappings().all()
+        return [binding_from_row(row) for row in rows]
+
+    # ------------------------------------------------------------------
+    # version read model（T2 派生入口：版本链读端）
+    # ------------------------------------------------------------------
+
+    async def list_document_versions(
+        self,
+        document_id: str,
+    ) -> List[KbDocumentVersion]:
+        """One document's snapshots, newest first（version DESC）。"""
+        if not await self.ensure_ready():
+            return []
+        from sqlalchemy import text
+
+        async with self._get_engine().connect() as conn:
+            result = await conn.execute(
+                text(
+                    _VERSION_COLUMNS
+                    + " FROM kb_document_versions "
+                    + "WHERE tenant_id = :tid AND document_id = :doc_id "
+                    + "ORDER BY version DESC",
+                ),
+                {"tid": self._tenant_id, "doc_id": document_id},
+            )
+            rows = result.mappings().all()
+        return [version_from_row(row) for row in rows]
 
     # ------------------------------------------------------------------
     # fire-and-forget shadow writes（同步调用方不阻塞）

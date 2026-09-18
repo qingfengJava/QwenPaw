@@ -102,6 +102,9 @@ class _FakeConn:
         occupied: bool = False,
         lock_present: bool = True,
         probe_error: bool = False,
+        binding_rows: Optional[List[dict]] = None,
+        binding_exists: bool = False,
+        version_rows: Optional[List[dict]] = None,
     ) -> None:
         self.statements: List[Tuple[str, dict]] = []
         self._unchanged = unchanged
@@ -113,6 +116,9 @@ class _FakeConn:
         self._occupied = occupied
         self._lock_present = lock_present
         self._probe_error = probe_error
+        self._binding_rows = binding_rows or []
+        self._binding_exists = binding_exists
+        self._version_rows = version_rows or []
 
     async def execute(
         self,
@@ -155,6 +161,22 @@ class _FakeConn:
             return _FakeResult(
                 rowcount=1,
                 rows=[_project(self._space_row, statement)],
+            )
+        if "FROM kb_document_versions" in statement:
+            return _FakeResult(
+                rowcount=1,
+                rows=[_project(row, statement) for row in self._version_rows],
+            )
+        if "FROM agent_kb_bindings" in statement:
+            if "DELETE FROM agent_kb_bindings" in statement:
+                return _FakeResult(rowcount=len(self._binding_rows))
+            if "INSERT INTO agent_kb_bindings" in statement:
+                return _FakeResult(
+                    rowcount=0 if self._binding_exists else 1,
+                )
+            return _FakeResult(
+                rowcount=1,
+                rows=[_project(row, statement) for row in self._binding_rows],
             )
         if "FROM kb_documents" in statement:
             if "path = :path" in statement or "id = :doc_id" in statement:
@@ -947,3 +969,154 @@ async def test_get_kb_pg_store_returns_none_on_json_backend(
     )
 
     assert pg_store.get_kb_pg_store(engine=_FakeEngine()) is None
+
+
+# ---------------------------------------------------------------------------
+# T7：绑定访问器 / 删库回收 / 版本链读端
+# ---------------------------------------------------------------------------
+
+
+def _binding_db_row(**overrides: Any) -> dict:
+    """``agent_kb_bindings`` 的一行原样返回值。"""
+    row = {
+        "agent_id": "analyst",
+        "space_id": "kb_a",
+        "granted_by": "alice",
+        "remark": "孕产授权说明",
+        "created_at": _STAMP_1,
+    }
+    row.update(overrides)
+    return row
+
+
+def _version_db_row(**overrides: Any) -> dict:
+    """``kb_document_versions`` 的一行原样返回值。"""
+    row = {
+        "document_id": "d1",
+        "version": 2,
+        "content_md": "# v2",
+        "content_hash": pg_store.content_hash("# v2"),
+        "created_by": "u1",
+        "created_at": _STAMP_2,
+    }
+    row.update(overrides)
+    return row
+
+
+async def test_binding_accessor_roundtrip() -> None:
+    """绑定插入/读回/删除的列投影与幂等语义（真库覆盖由集成门控）。"""
+    store = pg_store.KbPgStore(
+        engine=_FakeEngine(binding_rows=[_binding_db_row()]),
+    )
+
+    # 新插入：True；已存在（冲突零写）：仍 True（绑定关系成立）
+    assert (
+        await store.insert_binding(
+            "analyst",
+            "kb_a",
+            granted_by="alice",
+            remark="孕产授权说明",
+        )
+        is True
+    )
+    store._engine.conn._binding_exists = True
+    assert (
+        await store.insert_binding(
+            "analyst",
+            "kb_a",
+            granted_by="alice",
+            remark="",
+        )
+        is True
+    )
+
+    rows = await store.list_agent_bindings("analyst")
+    assert [r.space_id for r in rows] == ["kb_a"]
+    assert rows[0].granted_by == "alice"
+    assert rows[0].remark == "孕产授权说明"
+
+    assert await store.delete_binding("analyst", "kb_a") is True
+    store._engine.conn._binding_rows = []
+    assert await store.delete_binding("analyst", "kb_a") is False
+
+    # 列清单护栏：SQL 投影写错会在上面读回断言处炸，这里再锁写参形状
+    insert_sql = next(
+        sql
+        for sql, _ in store._engine.conn.statements
+        if "INSERT INTO agent_kb_bindings" in sql
+    )
+    for column in ("granted_by", "remark", "agent_id", "space_id"):
+        assert f":{column}" in insert_sql
+
+
+async def test_bindings_zero_action_on_json_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """json 后端：绑定三方法零动作零异常，不触碰 engine。"""
+    monkeypatch.setattr(
+        pg_store.write_gateway,
+        "pg_write_available",
+        lambda: False,
+    )
+    engine = _FakeEngine()
+    store = pg_store.KbPgStore(engine=engine)
+
+    assert await store.insert_binding("a", "kb", granted_by="u") is False
+    assert await store.list_agent_bindings("a") == []
+    assert await store.delete_binding("a", "kb") is False
+    assert engine.conn.statements == []
+
+
+async def test_delete_space_also_removes_bindings() -> None:
+    """删库须同事务回收绑定行（T2 派生：孤儿绑定脏读登记项）。"""
+    store = pg_store.KbPgStore(
+        engine=_FakeEngine(binding_rows=[_binding_db_row()]),
+    )
+
+    assert await store.delete_space("kb_a") is True
+
+    deletes = [
+        sql
+        for sql, _ in store._engine.conn.statements
+        if sql.startswith("DELETE FROM agent_kb_bindings")
+    ]
+    assert deletes, "delete_space must reap agent_kb_bindings rows"
+
+
+async def test_list_document_versions_roundtrip() -> None:
+    """版本链读端：保序 version DESC + 列投影护栏（T2 派生入口）。"""
+    store = pg_store.KbPgStore(
+        engine=_FakeEngine(
+            version_rows=[
+                _version_db_row(version=2),
+                _version_db_row(version=1),
+            ],
+        ),
+    )
+
+    rows = await store.list_document_versions("d1")
+
+    assert [r.version for r in rows] == [2, 1]
+    assert rows[0].content_md == "# v2"
+    assert rows[0].created_by == "u1"
+
+    versions_sql = next(
+        sql
+        for sql, _ in store._engine.conn.statements
+        if "FROM kb_document_versions" in sql
+    )
+    assert "ORDER BY version DESC" in versions_sql
+
+
+async def test_list_document_versions_empty_on_json_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """json 后端：版本读端返回空列表零异常。"""
+    monkeypatch.setattr(
+        pg_store.write_gateway,
+        "pg_write_available",
+        lambda: False,
+    )
+    store = pg_store.KbPgStore(engine=_FakeEngine())
+
+    assert await store.list_document_versions("d1") == []

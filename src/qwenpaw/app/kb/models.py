@@ -195,3 +195,28 @@ class KbDocument(BaseModel):
             VALID_INGEST_STATUSES,
             value,
         )
+
+
+class KbBinding(BaseModel):
+    """One agent↔space authorization binding（``agent_kb_bindings`` 行）。
+
+    绑定即授权（spec 决策点 1）：非空行表示该数字员工可在检索时收敛
+    到该库（S0 ACL 交集来源）；写入前须经 ``can_manage_space`` 管理权校验。
+    """
+
+    agent_id: str
+    space_id: str
+    granted_by: str = ""
+    remark: str = ""
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
+class KbDocumentVersion(BaseModel):
+    """One document version snapshot（``kb_document_versions`` 行）。"""
+
+    document_id: str
+    version: int
+    content_md: str = ""
+    content_hash: str = ""
+    created_by: str = ""
+    created_at: datetime = Field(default_factory=_utcnow)
