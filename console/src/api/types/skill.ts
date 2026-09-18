@@ -23,6 +23,8 @@ export interface SkillDetail extends SkillSpec {
   content: string;
   config?: Record<string, unknown>;
   installed_from?: string;
+  // 个人技能（S2）详情携带完整文件树（编辑/启停时无损保留）
+  files?: Record<string, string>;
 }
 
 export interface PoolSkillSpec {

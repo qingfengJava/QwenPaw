@@ -1136,6 +1136,18 @@
     "configPlaceholder": "{\"KEY\": \"value\"}",
     "configInvalidJson": "Invalid JSON format",
     "configSaved": "Config saved",
+    "scopeShared": "Shared",
+    "scopeMine": "Mine",
+    "personalHint": "Personal skills are visible and effective only for you; publish anytime as a shared skill",
+    "newPersonalSkill": "New personal skill",
+    "personalEmptyTitle": "No personal skills yet",
+    "personalEmptyText": "Personal skills are visible and effective only for you. Publish anytime to make them shared skills for the whole team.",
+    "personalEmptyCreate": "Create personal skill",
+    "promoteToShared": "Publish to shared",
+    "promoteConfirmTitle": "Publish as a shared skill?",
+    "promoteConfirmContent": "After publishing, every user with access to this employee will be able to use \"{{name}}\".",
+    "promoteSuccess": "Published as a shared skill",
+    "promoteFailed": "Publish failed",
     "emptyStateBadge": "New workspaces start empty",
     "emptyStateTitle": "This agent does not have any skills yet",
     "emptyStateText": "This is expected. New workspaces do not come with skills automatically. Download skills from the local pool or create one here to equip this agent.",
@@ -1490,6 +1502,8 @@
     "scheduleFilterAll": "All Schedule Types",
     "scheduleTypeRecurring": "Recurring",
     "scheduleTypeOnce": "Scheduled",
+    "scopeShared": "Shared",
+    "scopeMine": "Mine",
     "scheduleCron": "Schedule (Cron)",
     "scheduleCronLabel": "Schedule (Cron)",
     "onceRunAt": "Run At",
@@ -2206,14 +2220,19 @@
     "sessionsByChannelTooltip": "Distribution of sessions by messaging channel; sessions without a channel are grouped under Console",
     "messagesByChannelTooltip": "Distribution of total messages by messaging channel",
     "currentAgentLlmCalls": "Recorded Turns",
-    "currentAgentTokenTrendTooltip": "Prompt, completion, and cache-hit token trends from the current agent's per-turn session metadata; cache-hit tokens are a subset of prompt tokens",
-    "currentAgentPromptTokensTooltip": "Prompt tokens from the current agent's sessions in the selected period (requires per-turn usage metadata; older sessions may show 0)",
+    "currentAgentTokenTrendTooltip": "Daily prompt, completion, and cache-hit token trends for the current agent; prompt/completion are aggregated from usage metering under the selected scope (Personal/Employee), falling back to per-turn session metadata without a metering database; cache-hit tokens are session-derived and a subset of prompt tokens",
+    "currentAgentPromptTokensTooltip": "Total prompt tokens for the current agent in the selected period; aggregated from usage metering under the selected scope (Personal/Employee), falling back to per-turn session metadata without a metering database",
     "currentAgentCacheHitRateTooltip": "Token-weighted cache hit rate for observed cache calls by the current agent in the selected period (cache-hit tokens / cache-eligible input tokens; — when unavailable)",
-    "currentAgentCompletionTokensTooltip": "Completion tokens from the current agent's sessions in the selected period (requires per-turn usage metadata; older sessions may show 0)",
-    "currentAgentLlmCallsTooltip": "Number of assistant turns with recorded usage metadata for the current agent (not raw API call count; older sessions may show 0)",
+    "currentAgentCompletionTokensTooltip": "Total completion tokens for the current agent in the selected period; same source and scope as prompt tokens",
+    "currentAgentLlmCallsTooltip": "Number of LLM calls for the current agent in the selected period; aggregated from usage metering under the selected scope, falling back to session turn counts without a metering database",
     "loadFailed": "Failed to load statistics",
     "noData": "No statistics data in the selected period",
-    "retry": "Retry"
+    "retry": "Retry",
+    "scope": {
+      "mine": "Personal",
+      "agent": "Employee",
+      "toggleHint": "Switch statistics scope: Personal = only usage you initiated; Employee = usage from all users of this agent"
+    }
   },
   "models": {
     "discoveryOriginApi": "API detected",
@@ -4794,6 +4813,16 @@
     "docHistoryHint": "Snapshots of base identity docs per publish/rollback; rollback takes effect immediately",
     "docHistoryUnavailable": "Document version chain requires PostgreSQL-backed storage",
     "docHistoryEmpty": "No snapshots for this document yet (generated on publish)",
+    "personalDraftsTitle": "Pending personal drafts",
+    "personalDraftsHint": "Drafts saved by employee users; applying writes them into the shared profile instantly",
+    "personalDraftsEmpty": "No pending personal drafts",
+    "personalDraftsUnavailable": "Personal drafts require PostgreSQL-backed storage",
+    "personalDraftApply": "Apply",
+    "personalDraftApplyConfirm": "Apply {{owner}}'s draft of {{file}}?",
+    "personalDraftApplyHint": "Writes into the shared profile and takes effect immediately (production row + revision)",
+    "personalDraftApplySuccess": "Applied {{file}}: {{owner}}'s draft is now shared and live",
+    "colSubmitter": "Submitter",
+    "colDocument": "Document",
     "docRollbackConfirm": "Roll back {{file}} to v{{version}}?",
     "docRollbackHint": "Applies to production immediately: DB row + workspace file updated",
     "docRollbackSuccess": "Rolled back {{file}} to v{{version}}; live now"
@@ -4821,6 +4850,8 @@
     "baseConfig": "Base Configuration",
     "baseConfigLoading": "Loading configuration…",
     "baseConfigEmpty": "No configuration files (PROFILE.md / AGENTS.md etc.) in the workspace yet.",
+    "myDraftUnapplied": "My draft is not applied yet (pending admin approval into the shared config)",
+    "myDraftDotTitle": "This file has an unapplied personal draft",
     "rolePosition": "Role & Positioning",
     "rolePositionPlaceholder": "No description yet. Edit the employee profile to add one.",
     "quickPrompts": "Quick Prompts",
@@ -4917,6 +4948,10 @@
       "department": "Department only",
       "private": "Owner only"
     },
+    "manageVisibility": {
+      "private": "Owner only",
+      "department": "Department"
+    },
     "lifecycle": {
       "draft": "Draft",
       "published": "Published",
@@ -4993,7 +5028,20 @@
       "needDepartment": "Department scope needs at least one department",
       "impact": "Takes effect immediately: list visibility and runtime access share one projection, so nothing is visible-but-unusable.",
       "saved": "Governance saved",
-      "failed": "Failed to save governance"
+      "failed": "Failed to save governance",
+      "manageSection": "Configurable scope (backend manage grant)",
+      "manageVisibility": "Configurable scope",
+      "manageVisibilityHint": {
+        "private": "Only the owner, team_lead and admins can reconfigure this employee (strictest by default).",
+        "department": "Members of the owning plus manage-granted departments (subtrees included) can reconfigure this employee."
+      },
+      "manageGranted": "Manage-granted departments",
+      "manageGrantedPlaceholder": "Pick departments allowed to configure this employee",
+      "manageGrantedHint": "Configurable set = owning ∪ manage-granted departments, including their subtrees.",
+      "manageUsers": "Manage-granted users",
+      "manageUsersPlaceholder": "Grant specific users across departments by username",
+      "manageUsersHint": "Cross-department fallback: granted users can configure this employee regardless of scope.",
+      "manageDenied": "No configuration permission for this employee"
     },
     "batch": {
       "selected": "{{count}} employees selected",

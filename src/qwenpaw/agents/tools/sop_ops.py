@@ -20,7 +20,10 @@ from agentscope.message import TextBlock, ToolResultState
 from agentscope.tool import ToolChunk
 
 from ...app.agent_context import get_current_agent_id
-from ...app.experts.models import SOP_ENVIRONMENT_DRAFT
+from ...app.experts.models import (
+    SOP_ENVIRONMENT_DRAFT,
+    SOP_ENVIRONMENT_PRODUCTION,
+)
 from ...app.experts.sops import get_sop_store
 from ...runtime.tool_registry import tool_descriptor
 
@@ -150,6 +153,7 @@ async def sop_update_draft(
     ``{id,title,instruction,expected_outcome,tools[]}``，连线
     ``{from,to,condition}``，槽位 ``{key,label,required,ask_prompt}``。
     每次写入后向画布广播全量快照，实现"AI 边画、右侧画布边变"。
+    归属守卫：草稿仅其归属员工（owner）可改，跨员工须先 duplicate 副本。
 
     Args:
         sop_id (`str`):
@@ -171,8 +175,28 @@ async def sop_update_draft(
     clean_id = (sop_id or "").strip()
     if not clean_id:
         return _err("Error: sop_id is required.")
+    store = get_sop_store()
     try:
-        record = await get_sop_store().update_sop(
+        # 归属守卫：先读草稿行（个人 draft 仅 owner 员工可改）
+        draft = await store.get_sop(
+            clean_id,
+            environment=SOP_ENVIRONMENT_DRAFT,
+        )
+    except Exception as exc:  # pylint: disable=broad-except
+        return _err(f"Error: failed to load SOP draft: {exc}")
+    if draft is None:
+        return _err(
+            f"Error: draft SOP '{clean_id}' not found "
+            "(create it first via sop_create_draft).",
+        )
+    owner = _current_expert_id()
+    if owner and draft.owner_id and draft.owner_id != owner:
+        return _err(
+            "Error: SOP is private to another expert; "
+            "duplicate it to reuse.",
+        )
+    try:
+        record = await store.update_sop(
             clean_id,
             environment=SOP_ENVIRONMENT_DRAFT,
             name=name,
@@ -222,6 +246,7 @@ async def sop_publish_draft(
     环境化发布闸门：把草稿行内容 promote 为线上新版本（写不可变快照），
     并绑定归属员工使其注入 workforce 规划参考。写操作默认需人工确认
     （``default_policy="ask"``），避免 AI 未经确认直接改线上。
+    归属守卫：仅草稿的归属员工（owner）可发布，跨员工一律拒绝。
 
     Args:
         sop_id (`str`):
@@ -235,10 +260,33 @@ async def sop_publish_draft(
     clean_id = (sop_id or "").strip()
     if not clean_id:
         return _err("Error: sop_id is required.")
+    store = get_sop_store()
     try:
-        record = await get_sop_store().promote_sop(
+        # 归属守卫：先读草稿行（存量无草稿时退回线上行），
+        # 个人 draft 仅 owner 员工可发布
+        existing = await store.get_sop(
             clean_id,
-            published_by=_current_expert_id() or "ai-agent",
+            environment=SOP_ENVIRONMENT_DRAFT,
+        )
+        if existing is None:
+            existing = await store.get_sop(
+                clean_id,
+                environment=SOP_ENVIRONMENT_PRODUCTION,
+            )
+    except Exception as exc:  # pylint: disable=broad-except
+        return _err(f"Error: failed to load SOP: {exc}")
+    if existing is None:
+        return _err(f"Error: SOP '{clean_id}' not found or archived.")
+    owner = _current_expert_id()
+    if owner and existing.owner_id and existing.owner_id != owner:
+        return _err(
+            "Error: SOP is private to another expert; "
+            "duplicate it to reuse.",
+        )
+    try:
+        record = await store.promote_sop(
+            clean_id,
+            published_by=owner or "ai-agent",
             change_note=change_note or "",
         )
     except Exception as exc:  # pylint: disable=broad-except

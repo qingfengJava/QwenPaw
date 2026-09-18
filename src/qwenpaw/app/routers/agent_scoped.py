@@ -74,6 +74,7 @@ def create_agent_scoped_router() -> APIRouter:
     from .skills import router as skills_router
     from .tools import router as tools_router
     from .config import router as config_router
+    from .config import agent_router as config_agent_router
     from .mcp import router as mcp_router
     from .mcp_oauth import router as mcp_oauth_router
     from .workspace import router as workspace_router
@@ -98,6 +99,9 @@ def create_agent_scoped_router() -> APIRouter:
     router.include_router(agent_status_router)
     router.include_router(chats_router)
     router.include_router(config_router)
+    # 员工域配置面必须排在 config_router 之后（/acp/node-runtime 先于
+    # /acp/{agent_name} 匹配），与顶层 routers/__init__.py 顺序一致。
+    router.include_router(config_agent_router)
     router.include_router(cron_router)
     router.include_router(mcp_oauth_router)
     router.include_router(mcp_router)

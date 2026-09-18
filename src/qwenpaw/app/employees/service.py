@@ -16,13 +16,19 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from .models import (
+    MANAGE_VISIBILITY_DEPARTMENT,
+    MANAGE_VISIBILITY_PRIVATE,
     VISIBILITY_DEPARTMENT,
     VISIBILITY_ORG,
     GovernanceBatchUpdateBody,
     GovernanceRecord,
     GovernanceUpdateBody,
 )
-from .projection import project, selected_department_ids
+from .projection import (
+    project,
+    selected_department_ids,
+    selected_manage_department_ids,
+)
 from .registry import load_sources, target_of
 from .store import get_employee_governance_store
 
@@ -63,6 +69,34 @@ def _merged_granted(
     return ordered
 
 
+def _merged_manage_granted(
+    body_granted: Optional[List[str]],
+    current: Optional[GovernanceRecord],
+    field: str,
+) -> List[str]:
+    """管理授权部门/用户合并：语义同使用维授权部门（None=不改）。"""
+    if body_granted is None:
+        return list(getattr(current, field)) if current else []
+    ordered: List[str] = []
+    for item in body_granted:
+        cleaned = (item or "").strip()
+        if cleaned and cleaned not in ordered:
+            ordered.append(cleaned)
+    return ordered
+
+
+def _merged_manage_visibility(
+    body_manage_visibility: Optional[str],
+    current: Optional[GovernanceRecord],
+) -> str:
+    """可配置范围合并：``None`` 保持原值，出厂默认 private（最严）。"""
+    if body_manage_visibility is not None:
+        return body_manage_visibility
+    if current is not None:
+        return current.manage_visibility
+    return MANAGE_VISIBILITY_PRIVATE
+
+
 class EmployeeGovernanceService:
     """Governance writes, tenant-scoped."""
 
@@ -91,6 +125,20 @@ class EmployeeGovernanceService:
             visibility = body.visibility or (
                 current.visibility if current else VISIBILITY_ORG
             )
+            # 后台配置域授权维：与使用维独立合并，出厂默认 private
+            manage_visibility = _merged_manage_visibility(
+                body.manage_visibility, current
+            )
+            manage_granted_departments = _merged_manage_granted(
+                body.manage_granted_departments,
+                current,
+                "manage_granted_departments",
+            )
+            manage_granted_users = _merged_manage_granted(
+                body.manage_granted_users,
+                current,
+                "manage_granted_users",
+            )
             record = GovernanceRecord(
                 agent_id=agent_id,
                 entity_kind=target["entity_kind"],
@@ -98,6 +146,9 @@ class EmployeeGovernanceService:
                 department_id=department_id,
                 visibility=visibility,
                 granted_departments=granted,
+                manage_visibility=manage_visibility,
+                manage_granted_departments=manage_granted_departments,
+                manage_granted_users=manage_granted_users,
                 owner_id=target.get("owner_id")
                 or (current.owner_id if current else None),
                 updated_by=actor,
@@ -111,6 +162,11 @@ class EmployeeGovernanceService:
                     "department_id": record.department_id,
                     "visibility": record.visibility,
                     "granted_departments": record.granted_departments,
+                    "manage_visibility": record.manage_visibility,
+                    "manage_granted_departments": (
+                        record.manage_granted_departments
+                    ),
+                    "manage_granted_users": record.manage_granted_users,
                     "owner_id": record.owner_id,
                     "updated_by": record.updated_by,
                 },
@@ -152,6 +208,9 @@ class EmployeeGovernanceService:
                 department_id=body.department_id,
                 visibility=body.visibility,
                 granted_departments=body.granted_departments,
+                manage_visibility=body.manage_visibility,
+                manage_granted_departments=body.manage_granted_departments,
+                manage_granted_users=body.manage_granted_users,
             ),
             actor,
             request,
@@ -165,7 +224,11 @@ class EmployeeGovernanceService:
         """业务规则校验：部门引用必须存在，部门专属必须有生效部门。"""
         referenced = [
             item
-            for item in [record.department_id, *record.granted_departments]
+            for item in [
+                record.department_id,
+                *record.granted_departments,
+                *record.manage_granted_departments,
+            ]
             if item
         ]
         unknown = [
@@ -181,6 +244,13 @@ class EmployeeGovernanceService:
         ):
             raise GovernanceValidationError(
                 "部门专属必须至少指定一个归属部门或授权部门",
+            )
+        if (
+            record.manage_visibility == MANAGE_VISIBILITY_DEPARTMENT
+            and not selected_manage_department_ids(record)
+        ):
+            raise GovernanceValidationError(
+                "部门可配必须至少指定一个归属部门或管理授权部门",
             )
 
 

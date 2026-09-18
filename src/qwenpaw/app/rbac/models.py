@@ -123,6 +123,11 @@ class RbacFile(BaseModel):
     onto extra role names (additive over the flat-role mapping).
     ``agent_grants`` (key: agent_id) and ``model_grants`` (key:
     ``provider:model``) gate access to digital employees and models.
+    ``agent_manage_grants`` (key: agent_id) is the backend configuration
+    plane: it gates *who may reconfigure* one employee (S1 shared-config
+    writes), projected from ``employee_governance.manage_*`` columns.
+    Absent manage grant = NOT unrestricted (unlike use grants): the
+    fallback semantics live in ``rbac.deps.require_agent_manage``.
     """
 
     version: int = 1
@@ -131,3 +136,4 @@ class RbacFile(BaseModel):
     teams: Dict[str, TeamRecord] = Field(default_factory=dict)
     agent_grants: Dict[str, GrantRecord] = Field(default_factory=dict)
     model_grants: Dict[str, GrantRecord] = Field(default_factory=dict)
+    agent_manage_grants: Dict[str, GrantRecord] = Field(default_factory=dict)

@@ -24,17 +24,37 @@ class _FakeRbac:
     # 4-argument signature when borrowed onto a fake class).
     grant_allows = staticmethod(RbacStore.grant_allows)
 
-    def __init__(self, grants=None, roles=(), teams=(), *, load_error=False):
+    def __init__(
+        self,
+        grants=None,
+        roles=(),
+        teams=(),
+        *,
+        load_error=False,
+        manage_grants=None,
+        can_manage_all=False,
+    ):
         self.grants = dict(grants or {})
+        self.manage_grants = dict(manage_grants or {})
         self.roles = list(roles)
         self.teams = list(teams)
         # Mirrors RbacStore.load_error: True simulates an unreadable file.
         self.load_error = load_error
+        # team_lead 类角色：持有 agent:manage → 全员工可配
+        self.can_manage_all = can_manage_all
         self.calls: list[str] = []
 
     def list_agent_grants(self):
         self.calls.append("list_agent_grants")
         return dict(self.grants)
+
+    def list_agent_manage_grants(self):
+        self.calls.append("list_agent_manage_grants")
+        return dict(self.manage_grants)
+
+    def user_has_permission(self, username, required, flat_role=""):
+        self.calls.append("user_has_permission")
+        return self.can_manage_all
 
     def roles_for_user(self, username, flat_role=""):
         self.calls.append("roles_for_user")
@@ -126,6 +146,8 @@ def test_admin_keeps_unmaterialized_row_unusable(monkeypatch):
     draft = next(row for row in visible if row.agent_id == "expert_draft")
     # Admin clears the ACL, but a draft has no workbench to open.
     assert draft.usable is False
+    # 管理平面：admin 可配置全部员工
+    assert all(row.manageable for row in visible)
 
 
 def test_single_user_deployment_without_auth_is_privileged(monkeypatch):
@@ -162,8 +184,10 @@ def test_member_only_sees_org_plus_own_departments(monkeypatch):
     # Snapshot fetched exactly once for the whole list.
     assert rbac.calls == [
         "list_agent_grants",
+        "list_agent_manage_grants",
         "roles_for_user",
         "teams_for_user",
+        "user_has_permission",
     ]
 
 
@@ -195,6 +219,61 @@ def test_owner_sees_private_employee(monkeypatch):
     visible = registry_mod._apply_viewer_scope(_request("bob"), _rows())
 
     assert [row.agent_id for row in visible] == ["default", "expert_bob"]
+
+
+# ---------------------------------------------------------------------------
+# manageable（后台配置域判定：角色全通 → manage grant → 无行兜底创建者）
+# ---------------------------------------------------------------------------
+
+
+def test_manageable_follows_manage_grant_rows(monkeypatch):
+    rbac = _FakeRbac(
+        _grants(),
+        teams=["dept:sales"],
+        manage_grants={
+            "expert_sales": GrantRecord(teams=["dept:sales"]),
+            "expert_draft": GrantRecord(teams=["dept:sales"]),
+            "expert_finance": GrantRecord(users=["alice"]),
+        },
+    )
+    _patch_viewer(monkeypatch, flat_role="user", rbac=rbac)
+
+    visible = registry_mod._apply_viewer_scope(_request("alice"), _rows())
+
+    by_id = {row.agent_id: row for row in visible}
+    # 部门 team 命中 → 可配；显式用户命中 → 可配
+    assert by_id["expert_sales"].manageable is True
+    assert by_id["expert_draft"].manageable is True
+    # 无 manage grant 行且非创建者 → 不可配（无行 ≠ 不限制）
+    assert by_id["default"].manageable is False
+
+
+def test_manageable_falls_back_to_owner_without_grant_row(monkeypatch):
+    rows = _rows()
+    # 可见但无 manage grant 行：创建者兜底可配
+    rows[1].owner_id = "alice"
+    rbac = _FakeRbac(_grants(), teams=["dept:sales"])
+    _patch_viewer(monkeypatch, flat_role="user", rbac=rbac)
+
+    visible = registry_mod._apply_viewer_scope(_request("alice"), rows)
+
+    by_id = {row.agent_id: row for row in visible}
+    assert by_id["expert_sales"].manageable is True
+    assert by_id["default"].manageable is False
+
+
+def test_team_lead_role_marks_every_row_manageable(monkeypatch):
+    rbac = _FakeRbac(
+        _grants(),
+        teams=["dept:sales"],
+        can_manage_all=True,
+    )
+    _patch_viewer(monkeypatch, flat_role="user", rbac=rbac)
+
+    visible = registry_mod._apply_viewer_scope(_request("alice"), _rows())
+
+    # 持有 agent:manage（team_lead）：可见行全部可配（与闸门同源）
+    assert all(row.manageable for row in visible)
 
 
 def test_request_without_state_falls_back_to_local(monkeypatch):

@@ -27,6 +27,8 @@ from ..rbac.models import GrantRecord
 from ..rbac.store import get_rbac_store
 from .models import (
     EMPLOYEE_KIND_EXPERT,
+    MANAGE_VISIBILITY_DEPARTMENT,
+    MANAGE_VISIBILITY_PRIVATE,
     VISIBILITY_DEPARTMENT,
     VISIBILITY_ORG,
     VISIBILITY_PRIVATE,
@@ -67,6 +69,19 @@ def selected_department_ids(
     candidates: Iterable[Optional[str]] = [
         record.department_id,
         *record.granted_departments,
+    ]
+    for department_id in candidates:
+        if department_id and department_id not in ordered:
+            ordered.append(department_id)
+    return ordered
+
+
+def selected_manage_department_ids(record: GovernanceRecord) -> List[str]:
+    """管理维生效部门集合 = 归属部门 ∪ 管理授权部门（去重保序）。"""
+    ordered: List[str] = []
+    candidates: Iterable[Optional[str]] = [
+        record.department_id,
+        *record.manage_granted_departments,
     ]
     for department_id in candidates:
         if department_id and department_id not in ordered:
@@ -152,6 +167,61 @@ def write_grant(
         )
 
 
+def manage_grant_for_record(
+    record: GovernanceRecord,
+    departments: Sequence[DepartmentRecord],
+) -> GrantRecord:
+    """把治理记录的管理授权维翻译成 RBAC manage grant（恒非空）。
+
+    与使用维的关键差异：manage 平面没有「无行 = 不限制」语义，任何
+    治理行都投影出一行 manage grant（private = 仅创建者+授权用户）；
+    无治理行的员工由 ``require_agent_manage`` 兜底 private。
+    """
+    # 授权用户：显式名单 ∪ 创建者（创建者恒可配自己的员工）
+    users: List[str] = []
+    for username in [record.owner_id, *record.manage_granted_users]:
+        if username and username not in users:
+            users.append(username)
+    # 仅创建者：无部门 team，只放行 users 名单
+    if record.manage_visibility != MANAGE_VISIBILITY_DEPARTMENT:
+        return GrantRecord(
+            users=users,
+            description=(
+                f"数字员工治理投影 · 仅创建者可配（{record.agent_id}）"
+            ),
+        )
+    # 部门可配：归属 ∪ 管理授权展开子树 → 部门镜像 team 集合
+    path_by_id = department_path_index(departments)
+    selected = selected_manage_department_ids(record)
+    subtree = expand_department_subtree(selected, path_by_id)
+    teams = [f"{DEPT_TEAM_PREFIX}{path_by_id[item]}" for item in subtree]
+    names = "、".join(
+        department_name_index(departments).get(item, item)
+        for item in selected
+    )
+    return GrantRecord(
+        teams=teams,
+        users=users,
+        description=f"数字员工治理投影 · 部门可配（{names}）",
+    )
+
+
+def write_manage_grant(
+    record: GovernanceRecord,
+    grant: GrantRecord,
+) -> None:
+    """落库管理授权投影；失败语义同 :func:`write_grant`（显式抛错）。"""
+    rbac = get_rbac_store()
+    if rbac.load_error:
+        raise GrantProjectionError(
+            f"RBAC 文件不可读，管理授权投影被拒绝: {record.agent_id}",
+        )
+    if not rbac.set_agent_manage_grant(record.agent_id, grant):
+        raise GrantProjectionError(
+            f"RBAC manage grant 写入失败: {record.agent_id}",
+        )
+
+
 async def mirror_expert_columns(
     record: GovernanceRecord,
     departments: Optional[Sequence[DepartmentRecord]] = None,
@@ -193,6 +263,8 @@ async def project(
         departments = await get_org_service().list_departments()
     # 先落鉴权投影：这是运行期唯一消费面，失败必须显式抛出
     write_grant(record, grant_for_record(record, departments))
+    # 后台配置域投影：manage grant 与 use grant 同源同生命周期
+    write_manage_grant(record, manage_grant_for_record(record, departments))
     # experts 镜像列失败不阻断治理写入（权威已在 employee_governance 落库）
     try:
         await mirror_expert_columns(record, departments)
@@ -214,6 +286,7 @@ async def refresh_for_new_department(new_department: DepartmentRecord) -> int:
         record
         for record in await get_employee_governance_store().list_all()
         if record.visibility == VISIBILITY_DEPARTMENT
+        or record.manage_visibility == MANAGE_VISIBILITY_DEPARTMENT
     ]
     if not records:
         return 0
@@ -252,6 +325,7 @@ async def refresh_for_removed_department(removed_path: str) -> int:
         record
         for record in await get_employee_governance_store().list_all()
         if record.visibility == VISIBILITY_DEPARTMENT
+        or record.manage_visibility == MANAGE_VISIBILITY_DEPARTMENT
     ]
     if not records:
         return 0
@@ -264,6 +338,10 @@ async def refresh_for_removed_department(removed_path: str) -> int:
         selected_paths = {
             path_by_id.get(item, "")
             for item in selected_department_ids(record)
+        }
+        selected_paths |= {
+            path_by_id.get(item, "")
+            for item in selected_manage_department_ids(record)
         }
         if selected_paths & ancestor_paths:
             await project(record, departments=departments)
@@ -288,11 +366,17 @@ async def clear_department_reference(department_id: str) -> int:
         if (
             record.department_id != department_id
             and department_id not in record.granted_departments
+            and department_id not in record.manage_granted_departments
         ):
             continue
         granted = [
             item
             for item in record.granted_departments
+            if item != department_id
+        ]
+        manage_granted = [
+            item
+            for item in record.manage_granted_departments
             if item != department_id
         ]
         # 归属部门正是被删部门时置空，否则保留
@@ -309,6 +393,15 @@ async def clear_department_reference(department_id: str) -> int:
             and not granted
         ):
             visibility = VISIBILITY_ORG
+        manage_visibility = record.manage_visibility
+        # 部门可配却再无生效部门 → 回落 private（管理维无 org 语义，
+        # 锁成最严比误放全员可配安全）
+        if (
+            manage_visibility == MANAGE_VISIBILITY_DEPARTMENT
+            and not department
+            and not manage_granted
+        ):
+            manage_visibility = MANAGE_VISIBILITY_PRIVATE
         updated = await store.upsert(
             agent_id=record.agent_id,
             entity_kind=record.entity_kind,
@@ -318,6 +411,9 @@ async def clear_department_reference(department_id: str) -> int:
             granted_departments=granted,
             owner_id=record.owner_id,
             updated_by="department_cleanup",
+            manage_visibility=manage_visibility,
+            manage_granted_departments=manage_granted,
+            manage_granted_users=record.manage_granted_users,
         )
         await project(updated, departments=departments)
         cleared += 1
@@ -337,10 +433,13 @@ __all__ = [
     "department_path_index",
     "expand_department_subtree",
     "grant_for_record",
+    "manage_grant_for_record",
     "mirror_expert_columns",
     "project",
     "refresh_for_new_department",
     "refresh_for_removed_department",
     "selected_department_ids",
+    "selected_manage_department_ids",
     "write_grant",
+    "write_manage_grant",
 ]

@@ -74,6 +74,8 @@ interface SkillDrawerProps {
   onClose: () => void;
   onSubmit: (values: SkillDetail) => void;
   onContentChange?: (content: string) => void;
+  /** 个人技能（S2）：隐藏 channels/tags/config（不适用）且名称只读 */
+  personal?: boolean;
 }
 
 export function SkillDrawer({
@@ -87,6 +89,7 @@ export function SkillDrawer({
   onClose,
   onSubmit,
   onContentChange,
+  personal = false,
 }: SkillDrawerProps) {
   const { t, i18n } = useTranslation();
   const [showMarkdown, setShowMarkdown] = useState(true);
@@ -272,6 +275,8 @@ export function SkillDrawer({
       title={
         editing
           ? `${t("skills.viewSkill")}${editingName ? `: ${editingName}` : ""}`
+          : personal
+          ? t("skills.newPersonalSkill")
           : t("skills.createSkill")
       }
       open={open}
@@ -295,7 +300,7 @@ export function SkillDrawer({
             </Form.Item>
           ) : (
             <Form.Item name="name" label="Name">
-              <Input />
+              <Input disabled={personal} />
             </Form.Item>
           )}
 
@@ -319,54 +324,60 @@ export function SkillDrawer({
             />
           </Form.Item>
 
-          <Form.Item name="channels" label={t("skills.channels")}>
-            <Select mode="multiple" options={CHANNEL_OPTIONS} />
-          </Form.Item>
+          {!personal && (
+            <Form.Item name="channels" label={t("skills.channels")}>
+              <Select mode="multiple" options={CHANNEL_OPTIONS} />
+            </Form.Item>
+          )}
 
-          <Form.Item
-            name="tags"
-            label={t("skillPool.tags")}
-            rules={[
-              {
-                validator: (_, value: string[] | undefined) => {
-                  const bad = (value || []).find(
-                    (v) => v.length > MAX_TAG_LENGTH,
-                  );
-                  if (bad)
-                    return Promise.reject(
-                      t("skillPool.tagTooLong", { max: MAX_TAG_LENGTH }),
+          {!personal && (
+            <Form.Item
+              name="tags"
+              label={t("skillPool.tags")}
+              rules={[
+                {
+                  validator: (_, value: string[] | undefined) => {
+                    const bad = (value || []).find(
+                      (v) => v.length > MAX_TAG_LENGTH,
                     );
-                  return Promise.resolve();
+                    if (bad)
+                      return Promise.reject(
+                        t("skillPool.tagTooLong", { max: MAX_TAG_LENGTH }),
+                      );
+                    return Promise.resolve();
+                  },
                 },
-              },
-            ]}
-          >
-            <Select
-              mode="tags"
-              options={availableTags.map((tag) => ({
-                label: tag,
-                value: tag,
-              }))}
-              placeholder={t("skillPool.tagsPlaceholder")}
-              maxCount={MAX_TAGS}
-            />
-          </Form.Item>
+              ]}
+            >
+              <Select
+                mode="tags"
+                options={availableTags.map((tag) => ({
+                  label: tag,
+                  value: tag,
+                }))}
+                placeholder={t("skillPool.tagsPlaceholder")}
+                maxCount={MAX_TAGS}
+              />
+            </Form.Item>
+          )}
 
-          <Form.Item
-            label={t("skills.config")}
-            validateStatus={configError ? "error" : undefined}
-            help={configError || undefined}
-          >
-            <Input.TextArea
-              rows={4}
-              value={configText}
-              onChange={(e) => {
-                setConfigText(e.target.value);
-                setConfigError("");
-              }}
-              placeholder={t("skills.configPlaceholder")}
-            />
-          </Form.Item>
+          {!personal && (
+            <Form.Item
+              label={t("skills.config")}
+              validateStatus={configError ? "error" : undefined}
+              help={configError || undefined}
+            >
+              <Input.TextArea
+                rows={4}
+                value={configText}
+                onChange={(e) => {
+                  setConfigText(e.target.value);
+                  setConfigError("");
+                }}
+                placeholder={t("skills.configPlaceholder")}
+              />
+            </Form.Item>
+          )}
 
           {editing && editingSkill && (
             <>

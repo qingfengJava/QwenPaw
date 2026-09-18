@@ -21,6 +21,12 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
+// 治理弹窗打开时会拉取管理授权用户候选（/admin/users）；测试中 mock
+// 为空列表，避免真实 fetch 与 act 警告（用户维度不影响本组断言）。
+vi.mock("@/api/modules/admin/users", () => ({
+  adminUsersApi: { list: vi.fn().mockResolvedValue([]) },
+}));
+
 function employee(
   agentId: string,
   kind: EmployeeKind,
@@ -58,6 +64,11 @@ function employee(
     backend_capabilities: {},
     owner_id: null,
     usable: true,
+    manageable: true,
+    manage_visibility: "private",
+    manage_granted_departments: [],
+    manage_granted_department_names: [],
+    manage_granted_users: [],
     ...overrides,
   };
 }
@@ -265,11 +276,14 @@ describe("GovernanceModal", () => {
         department_id: "",
         visibility: "org",
         granted_departments: [],
+        manage_visibility: "private",
+        manage_granted_departments: [],
+        manage_granted_users: [],
       }),
     );
   });
 
-  it("refuses department scope until a department is in play", () => {
+  it("refuses department scope until a department is in play", async () => {
     const onSubmit = vi.fn();
     renderWithProviders(
       <GovernanceModal
@@ -283,7 +297,12 @@ describe("GovernanceModal", () => {
 
     fireEvent.click(screen.getByText("employee.visibility.department"));
 
-    expect(screen.getByText("employee.governance.needDepartment")).toBeInTheDocument();
+    // waitFor 同时刷新弹窗打开时拉取管理授权用户的异步 setState（包在 act 内）
+    await waitFor(() =>
+      expect(
+        screen.getByText("employee.governance.needDepartment"),
+      ).toBeInTheDocument(),
+    );
     expect(screen.getByText("common.save").closest("button")).toBeDisabled();
     expect(onSubmit).not.toHaveBeenCalled();
   });
@@ -325,6 +344,9 @@ describe("GovernanceModal", () => {
         department_id: "",
         visibility: "org",
         granted_departments: [],
+        manage_visibility: "private",
+        manage_granted_departments: [],
+        manage_granted_users: [],
       }),
     );
   });
@@ -367,6 +389,9 @@ describe("GovernanceModal", () => {
         department_id: "d_sales",
         visibility: "department",
         granted_departments: ["d_support"],
+        manage_visibility: "private",
+        manage_granted_departments: [],
+        manage_granted_users: [],
       }),
     );
   });

@@ -22,6 +22,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     Index,
+    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -62,6 +63,14 @@ class CronJobRow(TenantMixin, Base):
         default=True,
         server_default="true",
     )
+    # 历史累计执行次数（append_history 同事务 +1 的冗余计数；history
+    # 仅留最近 50 条，精确计数不能靠 COUNT 反推——T13 收口决策 D3）
+    run_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
 
     __table_args__ = (
         UniqueConstraint(
@@ -101,6 +110,32 @@ class CronJobHistoryRow(TenantMixin, Base):
         nullable=False,
         default="scheduled",
         server_default="scheduled",
+    )
+    # 执行结果摘要（final_text 截断 500 字，worklog 时间线标题来源）
+    result_summary: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="",
+        server_default="",
+    )
+    # 关联 agent_runs 的运行 ID（执行详情跳转键；text 任务为空）
+    run_id: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default="",
+        server_default="",
+    )
+    # 本次执行落库的会话 ID（share_session=False 时为 cron:{job_id}）
+    session_id: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="",
+        server_default="",
+    )
+    # 调度槽位时间（trigger=scheduled 时等于 run_at，手动触发为空）
+    scheduled_for: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
     )
 
     __table_args__ = (

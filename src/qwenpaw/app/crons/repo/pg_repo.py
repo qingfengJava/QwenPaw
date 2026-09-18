@@ -138,9 +138,10 @@ class PgJobRepository(BaseJobRepository):
                 await conn.execute(
                     text(
                         "INSERT INTO cron_jobs (tenant_id, agent_id, "
-                        "job_id, spec, content_hash, enabled) "
+                        "job_id, spec, content_hash, enabled, "
+                        "owner_user_id, department_id, project_id) "
                         "VALUES (:tid, :aid, :jid, CAST(:spec AS JSONB), "
-                        ":chash, :enabled) "
+                        ":chash, :enabled, :owner, :dept, :proj) "
                         "ON CONFLICT (tenant_id, agent_id, job_id) "
                         "DO NOTHING"
                     ),
@@ -151,6 +152,9 @@ class PgJobRepository(BaseJobRepository):
                         "spec": payload,
                         "chash": _payload_hash(payload),
                         "enabled": bool(spec.enabled),
+                        "owner": spec.owner_user_id,
+                        "dept": spec.department_id,
+                        "proj": spec.project_id,
                     },
                 )
         logger.warning(
@@ -253,13 +257,17 @@ class PgJobRepository(BaseJobRepository):
                 await conn.execute(
                     text(
                         "INSERT INTO cron_jobs (tenant_id, agent_id, "
-                        "job_id, spec, content_hash, enabled) "
+                        "job_id, spec, content_hash, enabled, "
+                        "owner_user_id, department_id, project_id) "
                         "VALUES (:tid, :aid, :jid, CAST(:spec AS JSONB), "
-                        ":chash, :enabled) "
+                        ":chash, :enabled, :owner, :dept, :proj) "
                         "ON CONFLICT (tenant_id, agent_id, job_id) "
                         "DO UPDATE SET spec = EXCLUDED.spec, "
                         "content_hash = EXCLUDED.content_hash, "
                         "enabled = EXCLUDED.enabled, "
+                        "owner_user_id = EXCLUDED.owner_user_id, "
+                        "department_id = EXCLUDED.department_id, "
+                        "project_id = EXCLUDED.project_id, "
                         "updated_at = now()"
                     ),
                     {
@@ -269,6 +277,9 @@ class PgJobRepository(BaseJobRepository):
                         "spec": payload,
                         "chash": hashes[jid],
                         "enabled": bool(spec.enabled),
+                        "owner": spec.owner_user_id,
+                        "dept": spec.department_id,
+                        "proj": spec.project_id,
                     },
                 )
             await conn.execute(
@@ -295,13 +306,17 @@ class PgJobRepository(BaseJobRepository):
             await conn.execute(
                 text(
                     "INSERT INTO cron_jobs (tenant_id, agent_id, "
-                    "job_id, spec, content_hash, enabled) "
+                    "job_id, spec, content_hash, enabled, "
+                    "owner_user_id, department_id, project_id) "
                     "VALUES (:tid, :aid, :jid, CAST(:spec AS JSONB), "
-                    ":chash, :enabled) "
+                    ":chash, :enabled, :owner, :dept, :proj) "
                     "ON CONFLICT (tenant_id, agent_id, job_id) "
                     "DO UPDATE SET spec = EXCLUDED.spec, "
                     "content_hash = EXCLUDED.content_hash, "
                     "enabled = EXCLUDED.enabled, "
+                    "owner_user_id = EXCLUDED.owner_user_id, "
+                    "department_id = EXCLUDED.department_id, "
+                    "project_id = EXCLUDED.project_id, "
                     "updated_at = now() "
                     "WHERE cron_jobs.content_hash "
                     "IS DISTINCT FROM EXCLUDED.content_hash"
@@ -313,6 +328,9 @@ class PgJobRepository(BaseJobRepository):
                     "spec": payload,
                     "chash": _payload_hash(payload),
                     "enabled": bool(spec.enabled),
+                    "owner": spec.owner_user_id,
+                    "dept": spec.department_id,
+                    "proj": spec.project_id,
                 },
             )
         await self._project_from_db()
@@ -342,7 +360,9 @@ class PgJobRepository(BaseJobRepository):
         async with self._engine.connect() as conn:
             result = await conn.execute(
                 text(
-                    "SELECT run_at, status, error, trigger "
+                    "SELECT run_at, status, error, trigger, "
+                    "result_summary, run_id, session_id, "
+                    "scheduled_for "
                     "FROM cron_job_history "
                     "WHERE tenant_id = :tid AND agent_id = :aid "
                     "AND job_id = :jid "
@@ -351,12 +371,17 @@ class PgJobRepository(BaseJobRepository):
                 {"tid": self._tenant_id, "aid": self._agent_id, "jid": job_id},
             )
             rows = list(result.mappings())
+        # 空串列还原为 None，保持与 json 平面（model_dump）同形
         return [
             CronExecutionRecord(
                 run_at=row["run_at"],
                 status=row["status"],
                 error=row["error"],
                 trigger=row["trigger"],
+                run_id=row["run_id"] or None,
+                session_id=row["session_id"] or None,
+                result_summary=row["result_summary"] or None,
+                scheduled_for=row["scheduled_for"],
             )
             for row in rows
         ]
@@ -400,9 +425,11 @@ class PgJobRepository(BaseJobRepository):
                     text(
                         "INSERT INTO cron_job_history (tenant_id, "
                         "agent_id, job_id, seq, run_at, status, error, "
-                        "trigger) "
+                        "trigger, result_summary, run_id, session_id, "
+                        "scheduled_for) "
                         "VALUES (:tid, :aid, :jid, :seq, :run_at, "
-                        ":status, :error, :trigger)"
+                        ":status, :error, :trigger, :summary, :run_id, "
+                        ":session_id, :scheduled_for)"
                     ),
                     {
                         "tid": self._tenant_id,
@@ -413,6 +440,28 @@ class PgJobRepository(BaseJobRepository):
                         "status": record.status,
                         "error": record.error,
                         "trigger": record.trigger,
+                        "summary": record.result_summary or "",
+                        "run_id": record.run_id or "",
+                        "session_id": record.session_id or "",
+                        "scheduled_for": (
+                            _aware_utc(record.scheduled_for)
+                            if record.scheduled_for
+                            else None
+                        ),
+                    },
+                )
+                # run_count 冗余计数（同事务 +1，history 修剪窗外仍精确）
+                await conn.execute(
+                    text(
+                        "UPDATE cron_jobs SET "
+                        "run_count = run_count + 1 "
+                        "WHERE tenant_id = :tid AND agent_id = :aid "
+                        "AND job_id = :jid"
+                    ),
+                    {
+                        "tid": self._tenant_id,
+                        "aid": self._agent_id,
+                        "jid": job_id,
                     },
                 )
                 await conn.execute(

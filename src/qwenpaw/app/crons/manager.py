@@ -91,13 +91,15 @@ class CronManager(ManagerBase):
         self._started = False
         self._keepalive_task: Optional[asyncio.Task] = None
         #: 执行记录观察者（async (job, record, execution_result) -> None）。
-        #: 域投影（如数字员工定时任务 expert_task_runs）据此回流执行
-        #: 留痕——权威仍在本 manager，观察者只做投影，禁止反向写。
+        #: 通用域投影钩子——权威仍在本 manager，观察者只做投影，禁止
+        #: 反向写。（数字员工执行检查闭环经此挂载：T13d 收口后执行
+        #: 留痕已在 cron_job_history 权威面，观察者只做校验 + inbox 告警。）
         self.execution_observers: list = []
         #: 注册事件观察者（async (event, spec, job_id) -> None）。
-        #: event ∈ created/updated/deleted/paused/resumed；域投影（如
-        #: 数字员工统一台账 expert_scheduled_tasks）据此把对话/接口
-        #: 创建的任务自动入账——权威仍在本 manager，只投影不反向写。
+        #: event ∈ created/updated/deleted/paused/resumed；通用域投影
+        #: 钩子——权威仍在本 manager，只投影不反向写。（T13d 收口后
+        #: 数字员工不再挂此观察者：chat/api 创建的 job 直接落 cron_jobs
+        #: 权威面、由 CronLedgerReader 直读，无需二次投影。）
         self.registration_observers: list = []
 
     def add_execution_observer(self, observer) -> None:
@@ -613,11 +615,14 @@ class CronManager(ManagerBase):
         st.next_run_at = aps_job.next_run_time if aps_job else st.next_run_at
         self._states[job.id] = st
 
+        run_at = self._now_in_job_timezone(job)
         record = CronExecutionRecord(
-            run_at=self._now_in_job_timezone(job),
+            run_at=run_at,
             status="skipped",
             error=error_msg,
             trigger="scheduled",
+            # skipped 无执行结果摘要；定时触发槽位即执行时刻
+            scheduled_for=run_at,
         )
         records = await self._repo.append_history(
             job.id,
@@ -881,6 +886,15 @@ class CronManager(ManagerBase):
                     trigger=trigger,
                     run_id=execution_result.get("run_id"),
                     session_id=execution_result.get("session_id"),
+                    # 摘要与幂等锚口径与 expert 台账观察者一致：
+                    # final_text 截 500 字；scheduled 触发以执行时刻为槽位
+                    result_summary=(
+                        str(execution_result.get("final_text") or "")[:500]
+                        or None
+                    ),
+                    scheduled_for=(
+                        st.last_run_at if trigger == "scheduled" else None
+                    ),
                 )
                 records = await self._repo.append_history(
                     job.id,
@@ -946,8 +960,8 @@ class CronManager(ManagerBase):
                             logger.exception(
                                 "failed to append cron result inbox event",
                             )
-                # 通知域投影观察者（如 expert_task_runs 留痕）；
-                # 放在 finally 链尾：无论成败都回流，异常不外泄
+                # 通知执行观察者（数字员工执行检查闭环：校验 + inbox
+                # 告警）；放在 finally 链尾：无论成败都回流，异常不外泄
                 await self._notify_execution_observers(
                     job,
                     record,

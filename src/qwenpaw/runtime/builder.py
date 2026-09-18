@@ -125,6 +125,7 @@ class AgentBuilder:
         governor: Any = None,
         ctx: Any = None,
         workspace_dir: str | None = None,
+        personal_skill_dir: str | None = None,
     ) -> Any:
         """Build a populated ``Toolkit`` for one agent invocation.
 
@@ -178,6 +179,7 @@ class AgentBuilder:
             effective_skills,
             workspace_dir,
             tools,
+            personal_skill_dir,
         )
         return Toolkit(tools=tools, skills_or_loaders=skills)
 
@@ -229,6 +231,7 @@ class AgentBuilder:
     def _resolve_skill_loader_dirs(
         effective_skills: Iterable[str] | None,
         workspace_dir: str | None,
+        personal_skill_dir: str | None = None,
     ) -> list[str]:
         """Map effective skill names to their SKILL.md-bearing directories.
 
@@ -257,6 +260,12 @@ class AgentBuilder:
                     builtin_dir = resolve_builtin_skill_dir(name)
                     if builtin_dir:
                         skill_dir = Path(builtin_dir)
+            # 个人技能（S2）兜底：共享/池/内置均未命中时，查会话用户
+            # 个人目录（同名共享优先，个人不覆盖共享）。
+            if not (skill_dir / "SKILL.md").exists() and personal_skill_dir:
+                personal_candidate = Path(personal_skill_dir) / name
+                if (personal_candidate / "SKILL.md").exists():
+                    skill_dir = personal_candidate
             if (skill_dir / "SKILL.md").exists():
                 dirs.append(str(skill_dir))
             else:
@@ -273,6 +282,7 @@ class AgentBuilder:
         effective_skills: Iterable[str] | None,
         workspace_dir: str | None,
         tools: Iterable[Any],
+        personal_skill_dir: str | None = None,
     ) -> list[Any]:
         """Load runtime Skills, preferring workspace skills on conflicts."""
         from ..agents.skill_system.runtime_cache import load_runtime_skills
@@ -280,6 +290,7 @@ class AgentBuilder:
         workspace_skill_dirs = cls._resolve_skill_loader_dirs(
             effective_skills,
             workspace_dir,
+            personal_skill_dir,
         )
         workspace_skills = load_runtime_skills(workspace_skill_dirs)
         workspace_skill_names = {skill.name for skill in workspace_skills}
@@ -311,6 +322,7 @@ class AgentBuilder:
 
         from ..agents.react_agent import QwenPawAgent
         from ..agents.skill_system import (
+            bundle_store,
             ensure_skills_initialized,
             resolve_effective_skills_async,
         )
@@ -361,6 +373,47 @@ class AgentBuilder:
         if isinstance(subagent_skills, list):
             parent_set = set(effective_skills)
             effective_skills = [s for s in subagent_skills if s in parent_set]
+
+        # 个人技能（S2）：按会话用户物化并并入有效技能集。无认证 /
+        # 无 PG 个人平面 / 无个人技能 → 零动作，运行热路径保持不变。
+        personal_skill_dir: str | None = None
+        session_user = str(request_context.get("user_id") or "")
+        if session_user and bundle_store.bundle_pg_plane_available():
+            try:
+                bundles = await bundle_store.load_owner_bundles_pg(
+                    agent_id,
+                    session_user,
+                )
+                enabled_bundles = [
+                    b
+                    for b in bundles
+                    if b.get("enabled", True) and b.get("name")
+                ]
+                if enabled_bundles:
+                    personal_dir = await run_sync_io(
+                        bundle_store.materialize_owner_bundles,
+                        skills_workspace,
+                        session_user,
+                        enabled_bundles,
+                    )
+                    personal_skill_dir = str(personal_dir)
+                    personal_names = [
+                        bundle_store.sanitize_owner_dirname(str(b["name"]))
+                        for b in enabled_bundles
+                    ]
+                    known_skills = set(effective_skills)
+                    effective_skills = list(effective_skills) + [
+                        n
+                        for n in personal_names
+                        if n and n not in known_skills
+                    ]
+            except Exception:  # noqa: BLE001 - 个人平面绝不阻塞运行时
+                _logger.warning(
+                    "personal skill injection failed for user=%s",
+                    session_user,
+                    exc_info=True,
+                )
+                personal_skill_dir = None
 
         # Compute active modes.
         active_modes: set[str] = set()
@@ -505,6 +558,7 @@ class AgentBuilder:
             governor=governor,
             ctx=ctx,
             workspace_dir=workspace_dir,
+            personal_skill_dir=personal_skill_dir,
         )
 
         # System prompt.

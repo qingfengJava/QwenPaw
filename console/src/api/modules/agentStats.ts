@@ -4,6 +4,8 @@ import type { AgentStatsSummary } from "../types/agentStats";
 export interface GetAgentStatsParams {
   start_date: string;
   end_date: string;
+  /** 统计视角：mine=仅本人发起 / agent=全员工（employee 后端强制 mine）。 */
+  scope?: "mine" | "agent";
 }
 
 export interface LlmToolDaily {
@@ -17,6 +19,10 @@ function dateQuery(params: GetAgentStatsParams): string {
     start_date: params.start_date,
     end_date: params.end_date,
   });
+  // scope 可选：仅统计页显式切换个人/员工视角时携带
+  if (params.scope) {
+    search.set("scope", params.scope);
+  }
   return `?${search.toString()}`;
 }
 

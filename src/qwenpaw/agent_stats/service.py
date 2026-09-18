@@ -21,7 +21,7 @@ from ..app.chats.factory import (
     get_storage_backend,
 )
 from ..config.utils import load_config
-from ..token_usage import get_token_usage_manager
+from ..token_usage.pg_query import aggregate_agent_token_usage
 from ..token_usage.turn_usage import TURN_USAGE_META_KEY
 from .models import (
     AgentStatsSummary,
@@ -287,6 +287,8 @@ class AgentStatsService:
         *,
         include_token_overlay: bool = True,
         agent_id: str = "default",
+        scope: str = "agent",
+        viewer: str | None = None,
     ) -> AgentStatsSummary:
         """Return Agent Statistics for one workspace.
 
@@ -298,6 +300,11 @@ class AgentStatsService:
         chats and session states in shared tables keyed by it, while
         the json/dual backends isolate by file layout and only use it
         for the repository contract.
+
+        ``scope``/``viewer`` 控制 token 叠加口径（员工口径，不再是全站）：
+        ``scope="agent"`` 按 agent_id 聚合全员工用量；``scope="mine"`` 再按
+        ``viewer`` 收敛到本人发起的用量（仅 PG 可区分用户，无 PG 时回退
+        会话口径等价全量）。
         """
         chats_file = workspace_dir / "chats.json"
         sessions_dir = workspace_dir / "sessions"
@@ -495,20 +502,39 @@ class AgentStatsService:
         total_completion_tokens = 0
         total_llm_calls = 0
         if include_token_overlay:
-            token_summary = await get_token_usage_manager().get_summary(
-                start_date=start_date,
-                end_date=end_date,
+            # 员工口径 token 叠加：PG 可用时按 agent_id（scope=mine 再按
+            # user_id）查 token_usage_events 按日聚合；无 PG 回退会话现算的
+            # agent_* 字段（已是本员工口径）。彻底移除旧的全站文件缓冲口径。
+            scope_user = viewer if scope == "mine" else None
+            pg_usage = await aggregate_agent_token_usage(
+                agent_id,
+                start_date,
+                end_date,
+                user_id=scope_user,
             )
-            total_prompt_tokens = token_summary.total_prompt_tokens
-            total_completion_tokens = token_summary.total_completion_tokens
-            total_llm_calls = token_summary.total_calls
-            for date_str, ts in token_summary.by_date.items():
-                if date_str in daily_stats:
-                    daily_stats[date_str]["prompt_tokens"] = ts.prompt_tokens
-                    daily_stats[date_str][
-                        "completion_tokens"
-                    ] = ts.completion_tokens
-                    daily_stats[date_str]["llm_calls"] = ts.call_count
+            if pg_usage is not None:
+                total_prompt_tokens = pg_usage["total_prompt"]
+                total_completion_tokens = pg_usage["total_completion"]
+                total_llm_calls = pg_usage["total_calls"]
+                for date_str, ts in pg_usage["by_date"].items():
+                    if date_str in daily_stats:
+                        daily_stats[date_str]["prompt_tokens"] = ts["prompt"]
+                        daily_stats[date_str]["completion_tokens"] = ts[
+                            "completion"
+                        ]
+                        daily_stats[date_str]["llm_calls"] = ts["calls"]
+            else:
+                # 无 PG：回退会话现算的 agent_* 字段（按 agent 工作区隔离，
+                # 天然本员工口径；scope=mine 在无 PG 单用户部署等价全量）。
+                total_prompt_tokens = agent_prompt_tokens
+                total_completion_tokens = agent_completion_tokens
+                total_llm_calls = agent_llm_calls
+                for ds in daily_stats.values():
+                    ds["prompt_tokens"] = ds.get("agent_prompt_tokens", 0)
+                    ds["completion_tokens"] = ds.get(
+                        "agent_completion_tokens", 0
+                    )
+                    ds["llm_calls"] = ds.get("agent_llm_calls", 0)
 
         for date_str, session_set in active_sessions.items():
             if date_str in daily_stats:

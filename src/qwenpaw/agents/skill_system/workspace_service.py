@@ -105,9 +105,20 @@ class SkillService:
         ``channels`` so runtime resolution changes on the next read.
     """
 
-    def __init__(self, workspace_dir: Path):
+    def __init__(
+        self,
+        workspace_dir: Path,
+        overlay_dirs: list[Path] | None = None,
+    ):
         self.workspace_dir = Path(workspace_dir).expanduser()
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
+        # 个人技能 overlay 目录（S2 用户个人平面）：list_all_skills 并集扫描时
+        # 追加，不进共享 manifest、不参与共享 resolve_effective_skills。默认
+        # None → 零行为变化（共享技能平面与既有一致）。物化目录形如
+        # workspace/.personal_skills/{user}/，其下每个子目录为一个个人技能。
+        self.overlay_dirs: list[Path] = [
+            Path(d).expanduser() for d in (overlay_dirs or [])
+        ]
 
     def _read_manifest(self) -> dict[str, Any]:
         return read_skill_manifest(self.workspace_dir)
@@ -167,12 +178,30 @@ class SkillService:
         manifest = self._read_manifest()
         skill_root = get_workspace_skills_dir(self.workspace_dir)
         skills: list[SkillInfo] = []
+        seen: set[str] = set()
         for skill_name, entry in sorted(manifest.get("skills", {}).items()):
             skill_dir = skill_root / skill_name
             source = entry.get("source", "customized")
             skill = read_skill_from_dir(skill_dir, source)
             if skill is not None:
                 skills.append(skill)
+                seen.add(skill_name)
+        # overlay 并集：追加个人技能（source=personal）。同名以共享技能为准
+        # （共享优先，个人不覆盖）；overlay_dir 不存在/非目录时静默跳过。
+        for overlay_dir in self.overlay_dirs:
+            if not overlay_dir.is_dir():
+                continue
+            sub_dirs = sorted(
+                (p for p in overlay_dir.iterdir() if p.is_dir()),
+                key=lambda p: p.name,
+            )
+            for skill_dir in sub_dirs:
+                if skill_dir.name in seen:
+                    continue
+                skill = read_skill_from_dir(skill_dir, "personal")
+                if skill is not None:
+                    skills.append(skill)
+                    seen.add(skill_dir.name)
         return skills
 
     def list_available_skills(self) -> list[SkillInfo]:

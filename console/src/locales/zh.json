@@ -975,6 +975,18 @@
     "configPlaceholder": "{\"KEY\": \"value\"}",
     "configInvalidJson": "JSON 格式无效",
     "configSaved": "配置已保存",
+    "scopeShared": "共享",
+    "scopeMine": "我的",
+    "personalHint": "个人技能仅本人可见、仅对本人生效，可随时发布为员工共享技能",
+    "newPersonalSkill": "新建个人技能",
+    "personalEmptyTitle": "还没有个人技能",
+    "personalEmptyText": "个人技能仅本人可见、仅对本人生效。创建后可随时发布为员工共享技能，让团队共同使用。",
+    "personalEmptyCreate": "创建个人技能",
+    "promoteToShared": "发布到共享",
+    "promoteConfirmTitle": "发布为员工共享技能？",
+    "promoteConfirmContent": "发布后，所有有权使用该员工的用户都将可以使用技能「{{name}}」。",
+    "promoteSuccess": "已发布为共享技能",
+    "promoteFailed": "发布失败",
     "emptyStateBadge": "新工作区默认是空的",
     "emptyStateTitle": "这个智能体还没有可用技能",
     "emptyStateText": "这是正常状态。新建的工作区不会自动带上技能。你可以先从技能池下载已有技能，或者直接创建一个新技能，再把这个智能体装备起来。",
@@ -1329,6 +1341,8 @@
     "scheduleFilterAll": "全部调度类型",
     "scheduleTypeRecurring": "循环任务",
     "scheduleTypeOnce": "日程任务",
+    "scopeShared": "共享任务",
+    "scopeMine": "我的任务",
     "scheduleCron": "执行时间（Cron）",
     "scheduleCronLabel": "执行时间（Cron）",
     "onceRunAt": "执行时间",
@@ -1978,14 +1992,19 @@
     "sessionsByChannelTooltip": "按消息渠道分布的会话数量占比，未关联渠道的会话默认归为 Console",
     "messagesByChannelTooltip": "按消息渠道分布的消息总数占比",
     "currentAgentLlmCalls": "已记录轮次",
-    "currentAgentTokenTrendTooltip": "当前智能体会话中按轮次元数据累计的输入、输出与缓存命中 Token 趋势；缓存命中 Token 是输入 Token 的子集",
-    "currentAgentPromptTokensTooltip": "所选时间段内，当前智能体各会话累计的输入 Token（依赖轮次用量元数据，升级前会话可能为 0）",
+    "currentAgentTokenTrendTooltip": "当前智能体按日聚合的输入、输出与缓存命中 Token 趋势；输入/输出以用量计量按当前统计视角（个人/员工）聚合，无计量库时回退会话轮次元数据；缓存命中 Token 为会话派生，是输入 Token 的子集",
+    "currentAgentPromptTokensTooltip": "所选时间段内，当前智能体累计的输入 Token；以用量计量按当前统计视角（个人/员工）聚合，无计量库时回退会话轮次元数据",
     "currentAgentCacheHitRateTooltip": "所选时间段内，当前智能体已观测缓存调用的 Token 加权命中率（缓存命中 Token / 可缓存输入 Token；无可观测数据时显示 —）",
-    "currentAgentCompletionTokensTooltip": "所选时间段内，当前智能体各会话累计的输出 Token（依赖轮次用量元数据，升级前会话可能为 0）",
-    "currentAgentLlmCallsTooltip": "所选时间段内，当前智能体已记录用量元数据的助手轮次数（非原始 API 调用次数；升级前会话可能为 0）",
+    "currentAgentCompletionTokensTooltip": "所选时间段内，当前智能体累计的输出 Token；口径同输入 Token，按当前统计视角聚合",
+    "currentAgentLlmCallsTooltip": "所选时间段内，当前智能体的 LLM 调用次数；以用量计量按当前统计视角聚合，无计量库时回退会话轮次计数",
     "loadFailed": "加载统计数据失败",
     "noData": "所选时间段内暂无统计数据",
-    "retry": "重试"
+    "retry": "重试",
+    "scope": {
+      "mine": "个人",
+      "agent": "员工",
+      "toggleHint": "切换统计视角：个人=仅本人发起的用量，员工=该智能体全部用户的用量"
+    }
   },
   "modelSelector": {
     "selectModel": "选择模型",
@@ -4814,7 +4833,17 @@
     "docHistoryEmpty": "暂无该档案的版本快照（发布后自动生成）",
     "docRollbackConfirm": "回滚 {{file}} 到 v{{version}}？",
     "docRollbackHint": "直接生效线上：production 行 + 工作区文件同步更新",
-    "docRollbackSuccess": "已回滚 {{file}} 到 v{{version}}，线上已生效"
+    "docRollbackSuccess": "已回滚 {{file}} 到 v{{version}}，线上已生效",
+    "personalDraftsTitle": "待应用个人草稿",
+    "personalDraftsHint": "员工使用者保存的档案草稿；应用后写入共享并立即生效",
+    "personalDraftsEmpty": "暂无待应用的个人草稿",
+    "personalDraftsUnavailable": "个人草稿需启用 PostgreSQL 档案存储",
+    "personalDraftApply": "应用",
+    "personalDraftApplyConfirm": "应用 {{file}}（{{owner}} 的草稿）？",
+    "personalDraftApplyHint": "写入共享档案并立即生效（production 行 + 版本快照）",
+    "personalDraftApplySuccess": "已应用 {{file}}：{{owner}} 的草稿已写入共享并生效",
+    "colSubmitter": "提交人",
+    "colDocument": "文档"
   },
   "agentDetail": {
     "overview": "概览",
@@ -4839,6 +4868,8 @@
     "baseConfig": "基础配置",
     "baseConfigLoading": "配置加载中…",
     "baseConfigEmpty": "工作区暂无配置文件（PROFILE.md / AGENTS.md 等）",
+    "myDraftUnapplied": "我的草稿未应用（待管理员应用为共享配置）",
+    "myDraftDotTitle": "该文件有未应用的个人草稿",
     "rolePosition": "角色定位",
     "rolePositionPlaceholder": "暂无描述，编辑员工档案补充。",
     "quickPrompts": "快捷指令",
@@ -5160,6 +5191,10 @@
       "department": "部门专属",
       "private": "仅创建者"
     },
+    "manageVisibility": {
+      "private": "仅创建者",
+      "department": "部门可配"
+    },
     "lifecycle": {
       "draft": "草稿",
       "published": "已发布",
@@ -5236,7 +5271,20 @@
       "needDepartment": "部门专属至少需要一个归属部门或授权部门",
       "impact": "保存后立即生效：列表可见性与对话运行期权限由同一份治理投影决定，不会出现「看得到却用不了」。",
       "saved": "治理设置已保存",
-      "failed": "治理设置保存失败"
+      "failed": "治理设置保存失败",
+      "manageSection": "可配置范围（后台管理授权）",
+      "manageVisibility": "可配置范围",
+      "manageVisibilityHint": {
+        "private": "仅创建者、team_lead 与管理员可重新配置该员工（出厂最严）。",
+        "department": "归属部门与管理授权部门（含下属）成员可重新配置该员工。"
+      },
+      "manageGranted": "管理授权部门",
+      "manageGrantedPlaceholder": "选择可配置该员工的部门",
+      "manageGrantedHint": "可配置集合 = 归属部门 ∪ 管理授权部门，授权自动覆盖其下属部门。",
+      "manageUsers": "管理授权用户",
+      "manageUsersPlaceholder": "按用户名跨部门显式授权可配置该员工",
+      "manageUsersHint": "跨部门兜底：无论可配置范围如何，被授权用户都能配置该员工。",
+      "manageDenied": "无该员工配置权限"
     },
     "batch": {
       "selected": "已选择 {{count}} 位员工",

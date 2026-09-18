@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=redefined-outer-name,protected-access
-"""Unit tests for the cron task ledger unify projection (0029).
+"""Unit tests for expert scheduling after the T13d cron-ledger convergence.
 
-Covers: CronManager registration observers (chat-created tasks landing
-in the unified ledger), CronJobSpec → ledger field reverse-mapping,
-CronExecutionRecord run_id/session_id threading, and the post-run
-self-check that guards the run_id linkage.
+收口后（expert 两表 DROP）覆盖：CronJobSpec → 记录字段的反推工具、
+执行观察者只剩的**执行检查闭环**（_verify_execution_result + inbox
+告警）、装配点仅挂执行观察者、UI 链路 spec.meta 注解、以及 run-log
+hook 的 cron 来源解析。注册观察者/启动回填/legacy 台账写路径已随
+expert 两表退役移除（对应用例一并删除）。
 """
 
 from __future__ import annotations
@@ -17,14 +18,13 @@ import pytest
 from qwenpaw.app.crons.models import CronExecutionRecord
 from qwenpaw.app.crons.executor import _last_assistant_text
 from qwenpaw.app.experts import scheduling as scheduling_mod
+from qwenpaw.app.experts.models import ScheduledTaskRecord
 from qwenpaw.app.experts.scheduling import (
-    _attach_registration_observer,
-    _backfill_tasks_from_authority,
-    _make_registration_observer,
     _origin_from_spec,
     _schedule_json_from_spec,
     _task_prompt_from_spec,
     _verify_execution_result,
+    SchedulingService,
     attach_expert_scheduling,
     record_execution,
 )
@@ -38,51 +38,15 @@ from qwenpaw.runtime.hooks import HookContext
 
 
 class _FakeStore:
-    """Record-updating calls so projections can be asserted."""
+    """收口后 store 只读：record_execution 仅经 get_task 取任务归属。"""
 
     def __init__(self):
-        self.upserts: list[dict] = []
-        self.updates: list[dict] = []
         self.tasks: dict = {}
-        self.begun: list[dict] = []
-        self.finished: list[dict] = []
-
-    async def upsert_task_from_spec(self, **kwargs):
-        self.upserts.append(kwargs)
-        row = SimpleNamespace(
-            id=kwargs["job_id"],
-            expert_id=kwargs["expert_id"],
-            name=kwargs.get("name", ""),
-        )
-        self.tasks[kwargs["job_id"]] = row
-        return row
-
-    async def update_task(self, task_id, **fields):
-        self.updates.append({"task_id": task_id, **fields})
+        self.get_calls: list = []
 
     async def get_task(self, task_id):
+        self.get_calls.append(task_id)
         return self.tasks.get(task_id)
-
-    async def begin_run(self, task, scheduled_for, run_id="", session_id=""):
-        self.begun.append(
-            {
-                "task_id": task.id,
-                "scheduled_for": scheduled_for,
-                "run_id": run_id,
-                "session_id": session_id,
-            }
-        )
-        return SimpleNamespace(id="trn_1", task_id=task.id)
-
-    async def finish_run(self, run, status, result_summary="", error=""):
-        self.finished.append(
-            {
-                "run_id": run.id,
-                "status": status,
-                "result_summary": result_summary,
-                "error": error,
-            }
-        )
 
 
 @pytest.fixture
@@ -142,7 +106,7 @@ def _make_spec(
 
 
 # ---------------------------------------------------------------------------
-# spec → ledger reverse mapping
+# spec → record reverse mapping（CronLedgerReader 复用的纯函数）
 # ---------------------------------------------------------------------------
 
 
@@ -175,82 +139,6 @@ def test_origin_from_spec_compact_payload():
     assert origin["task_type"] == "agent"
     assert origin["channel"] == "console"
     assert origin["silent"] is True
-
-
-# ---------------------------------------------------------------------------
-# registration observer
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_observer_skips_expert_task_prefix(fake_store: _FakeStore):
-    """UI 链路 job（expert_task_ 前缀）由 service 层管理，观察者跳过。"""
-    observer = _make_registration_observer("expert-1")
-    await observer(
-        "created",
-        _make_spec(job_id="expert_task_stk_1"),
-        "expert_task_stk_1",
-    )
-    assert fake_store.upserts == []
-    assert fake_store.updates == []
-
-
-@pytest.mark.asyncio
-async def test_observer_created_projects_chat_task(fake_store: _FakeStore):
-    """对话创建任务：created 事件 → 台账 upsert（source=chat 缺省）。"""
-    observer = _make_registration_observer("expert-1")
-    spec = _make_spec()
-    await observer("created", spec, spec.id)
-
-    assert len(fake_store.upserts) == 1
-    row = fake_store.upserts[0]
-    assert row["expert_id"] == "expert-1"
-    assert row["job_id"] == spec.id
-    assert row["source"] == "chat"
-    assert row["status"] == "active"
-    assert row["owner_id"] is None  # cron 默认用户不落台账 owner
-    assert row["task_prompt"] == "搜索领域动态并简报"
-
-
-@pytest.mark.asyncio
-async def test_observer_source_from_meta_and_paused_status(
-    fake_store: _FakeStore,
-):
-    """meta.origin_source 优先（api 标记）；disabled → paused。"""
-    observer = _make_registration_observer("expert-1")
-    spec = _make_spec(meta={"origin_source": "api"}, enabled=False)
-    await observer("paused", spec, spec.id)
-
-    row = fake_store.upserts[0]
-    assert row["source"] == "api"
-    assert row["status"] == "paused"
-
-
-@pytest.mark.asyncio
-async def test_observer_deleted_archives_ledger_row(fake_store: _FakeStore):
-    observer = _make_registration_observer("expert-1")
-    await observer("deleted", None, "8d049291-cc99")
-
-    assert fake_store.upserts == []
-    assert fake_store.updates == [
-        {"task_id": "8d049291-cc99", "status": "archived"},
-    ]
-
-
-def test_attach_registration_observer_replaces_same_expert():
-    """重挂同 expert 的观察者时替换旧闭包（幂等，不叠加）。"""
-
-    class _Mgr:
-        registration_observers: list = []
-
-    mgr = _Mgr()
-    _attach_registration_observer(mgr, "expert-1")
-    first = mgr.registration_observers[0]
-    _attach_registration_observer(mgr, "expert-1")
-    assert len(mgr.registration_observers) == 1
-    assert mgr.registration_observers[0] is not first
-    _attach_registration_observer(mgr, "expert-2")
-    assert len(mgr.registration_observers) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -316,7 +204,7 @@ def test_last_assistant_text_extracts_reply():
 
 
 # ---------------------------------------------------------------------------
-# execution projection for chat-created (UUID) jobs + startup backfill
+# 执行观察者（收口后只做执行检查闭环：异常落 inbox 告警，不写台账）
 # ---------------------------------------------------------------------------
 
 
@@ -341,152 +229,118 @@ _OK_RESULT = {
 }
 
 
-@pytest.mark.asyncio
-async def test_execution_projects_chat_job_with_ledger_row(
-    fake_store: _FakeStore,
-):
-    """对话创建任务（UUID job）：台账已有行 → 直接落执行留痕。"""
-    spec = _make_spec()
-    await _make_registration_observer("expert-1")("created", spec, spec.id)
-    fake_store.upserts.clear()
+def _capture_inbox(monkeypatch: pytest.MonkeyPatch) -> list:
+    """Patch inbox append_event and return the capture list."""
+    captured: list = []
 
-    await record_execution(spec, _make_record(), dict(_OK_RESULT), "expert-1")
+    async def _fake_append(**kwargs):
+        captured.append(kwargs)
 
-    assert fake_store.upserts == []  # 行已存在，不再补投影
-    assert len(fake_store.begun) == 1
-    begun = fake_store.begun[0]
-    assert begun["run_id"] == "run-9"
-    assert begun["session_id"] == "cron:job-9"
-    assert begun["scheduled_for"] is None  # manual 触发无幂等锚
-    assert fake_store.finished[0]["status"] == "succeeded"
-    assert fake_store.finished[0]["result_summary"] == "简报内容"
-
-
-@pytest.mark.asyncio
-async def test_execution_backfills_missing_ledger_row(
-    fake_store: _FakeStore,
-):
-    """观察者挂载前创建的任务：执行时兑底补投影再留痕。"""
-    spec = _make_spec()  # 台账无行
-
-    await record_execution(spec, _make_record(), dict(_OK_RESULT), "expert-1")
-
-    assert len(fake_store.upserts) == 1
-    assert fake_store.upserts[0]["expert_id"] == "expert-1"
-    assert fake_store.upserts[0]["source"] == "chat"
-    assert len(fake_store.begun) == 1
-    assert len(fake_store.finished) == 1
-
-
-@pytest.mark.asyncio
-async def test_execution_skips_when_no_expert_binding(
-    fake_store: _FakeStore,
-):
-    """无台账行且无 expert 绑定：无法定位归属，跳过留痕。"""
-    spec = _make_spec()
-
-    await record_execution(spec, _make_record(), dict(_OK_RESULT), None)
-
-    assert fake_store.upserts == []
-    assert fake_store.begun == []
-    assert fake_store.finished == []
-
-
-@pytest.mark.asyncio
-async def test_execution_failed_record_maps_to_failed(
-    fake_store: _FakeStore,
-):
-    spec = _make_spec()
-    await _make_registration_observer("expert-1")("created", spec, spec.id)
-
-    await record_execution(
-        spec,
-        _make_record(status="error"),
-        {"task_type": "text"},
-        "expert-1",
+    monkeypatch.setattr(
+        "qwenpaw.app.inbox_store.append_event",
+        _fake_append,
     )
-
-    assert fake_store.finished[0]["status"] == "failed"
+    return captured
 
 
 @pytest.mark.asyncio
-async def test_execution_prefers_authority_run_id(
+async def test_record_execution_alerts_on_check_failure(
     fake_store: _FakeStore,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """agent 任务关联键取 agent_runs 权威 run id（详情页查询键）。"""
+    """检查不通过（agent 无 run_id）→ 落 inbox 告警，携带任务归属与状态。"""
+    captured = _capture_inbox(monkeypatch)
+    spec = _make_spec()  # UUID job（chat/api 链路）
+    fake_store.tasks[spec.id] = SimpleNamespace(
+        id=spec.id, expert_id="expert-1", name="演示-定时提醒",
+    )
+    result = {"task_type": "agent", "run_id": "", "session_id": "cron:j"}
+
+    await record_execution(spec, _make_record(), result, "expert-1")
+
+    assert len(captured) == 1
+    event = captured[0]
+    assert event["agent_id"] == "expert-1"
+    assert event["event_type"] == "cron_run_check_failed"
+    assert event["payload"]["task_id"] == spec.id
+    # record.status=success → 投影命名空间 succeeded
+    assert event["payload"]["status"] == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_record_execution_skips_when_task_missing(
+    fake_store: _FakeStore,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """cron 平面无任务行（已删/非本域）→ 跳过告警，不抛异常。"""
+    captured = _capture_inbox(monkeypatch)
+    spec = _make_spec()  # 未种任务行
+
+    await record_execution(spec, _make_record(), dict(_OK_RESULT), "expert-1")
+
+    assert captured == []
+
+
+@pytest.mark.asyncio
+async def test_record_execution_payload_prefers_authority_run_id(
+    fake_store: _FakeStore,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """agent 任务关联键取 agent_runs 权威 run id（详情页跳转查询键）。"""
     monkeypatch.setattr(
         "qwenpaw.app.run_log_pg_store.get_latest_run_id_for_cron_job",
         _make_authority_lookup("auth0hexrunid"),
     )
+    captured = _capture_inbox(monkeypatch)
     spec = _make_spec()
-    await _make_registration_observer("expert-1")("created", spec, spec.id)
+    fake_store.tasks[spec.id] = SimpleNamespace(
+        id=spec.id, expert_id="expert-1", name="n",
+    )
+    # 原始 run_id 为空 → 检查不通过触发告警；payload 用权威反查值
+    result = {"task_type": "agent", "run_id": "", "session_id": "cron:j"}
 
-    await record_execution(spec, _make_record(), dict(_OK_RESULT), "expert-1")
+    await record_execution(spec, _make_record(), result, "expert-1")
 
-    assert fake_store.begun[0]["run_id"] == "auth0hexrunid"
+    assert captured[0]["payload"]["run_id"] == "auth0hexrunid"
+    assert captured[0]["payload"]["agent_run_id"] == "auth0hexrunid"
 
 
 @pytest.mark.asyncio
-async def test_execution_falls_back_to_trace_run_id(
+async def test_record_execution_strips_ui_prefix_for_lookup(
     fake_store: _FakeStore,
+    monkeypatch: pytest.MonkeyPatch,
 ):
-    """权威反查为空（如 PG 平面不可用）→ 保持 trace run id 兑底。"""
-    spec = _make_spec()
-    await _make_registration_observer("expert-1")("created", spec, spec.id)
+    """UI 链路 job（expert_task_ 前缀）：去前缀后查 cron 平面任务行。"""
+    captured = _capture_inbox(monkeypatch)
+    spec = _make_spec(job_id="expert_task_stk_1")
+    fake_store.tasks["stk_1"] = SimpleNamespace(
+        id="stk_1", expert_id="expert-1", name="晨会简报",
+    )
+    result = {"task_type": "agent", "run_id": "", "session_id": "cron:j"}
 
-    await record_execution(spec, _make_record(), dict(_OK_RESULT), "expert-1")
+    await record_execution(spec, _make_record(), result, "expert-1")
 
-    assert fake_store.begun[0]["run_id"] == "run-9"
+    assert "stk_1" in fake_store.get_calls
+    assert captured[0]["payload"]["task_id"] == "stk_1"
 
 
 @pytest.mark.asyncio
-async def test_backfill_projects_only_missing_chat_jobs(
-    fake_store: _FakeStore,
-):
-    """启动回填：前缀跳过、已入账跳过（含 archived 防复活）、缺行补。"""
+async def test_attach_expert_scheduling_wires_execution_observer(fake_store):
+    """装配点接线：收口后仅挂执行观察者（注册观察者/回填已退役），幂等重挂。"""
 
     class _Mgr:
-        async def list_jobs(self):
-            return [
-                _make_spec(job_id="expert_task_stk_ui"),
-                _make_spec(job_id="job-archived"),
-                _make_spec(job_id="job-new"),
-            ]
-
-    fake_store.tasks["job-archived"] = SimpleNamespace(id="job-archived")
-
-    await _backfill_tasks_from_authority(_Mgr(), "expert-1")
-
-    projected = [u["job_id"] for u in fake_store.upserts]
-    assert projected == ["job-new"]
-    assert fake_store.upserts[0]["expert_id"] == "expert-1"
-
-
-@pytest.mark.asyncio
-async def test_attach_expert_scheduling_wires_observers(fake_store):
-    """装配点接线：注册+执行观察者同时挂上，并完成一次回填。"""
-
-    class _Mgr:
-        registration_observers: list = []
         execution_observers: list = []
-
-        async def list_jobs(self):
-            return []
 
     mgr = _Mgr()
     await attach_expert_scheduling(mgr, "expert-1")
 
-    assert len(mgr.registration_observers) == 1
     assert len(mgr.execution_observers) == 1
+    # 注册观察者已退役：装配点不再触碰 registration_observers
+    assert not hasattr(mgr, "registration_observers")
+
     # 幂等重挂：同 expert 替换不叠加
     await attach_expert_scheduling(mgr, "expert-1")
-    assert len(mgr.registration_observers) == 1
     assert len(mgr.execution_observers) == 1
-    # 执行观察者透传 expert 绑定
-    spec = _make_spec()
-    await mgr.execution_observers[0](spec, _make_record(), dict(_OK_RESULT))
-    assert len(fake_store.upserts) == 1  # 无行 → 兑底补投影
 
 
 # ---------------------------------------------------------------------------
@@ -529,3 +383,52 @@ def test_resolve_run_origin_reads_cron_context():
     )
     assert source == "cron"
     assert cron_job_id == "job-9"
+
+
+# ---------------------------------------------------------------------------
+# T13a 收口 Phase 1：UI 链路 spec.meta 承载台账专属字段
+# ---------------------------------------------------------------------------
+
+
+def _ui_task(**overrides) -> ScheduledTaskRecord:
+    """一条 UI 链路任务记录（cron 周期任务样本）。"""
+    payload = {
+        "id": "stk_1",
+        "expert_id": "e1",
+        "name": "晨会简报",
+        "description": "每天 9 点生成团队简报",
+        "task_prompt": "生成简报",
+        "schedule_type": "cron",
+        "schedule_json": {"cron": "0 9 * * *"},
+    }
+    payload.update(overrides)
+    return ScheduledTaskRecord(**payload)
+
+
+def test_build_spec_carries_expert_annotations():
+    """原始名/描述/来源落 spec.meta，不再依赖前缀剥离。"""
+    service = SchedulingService.__new__(SchedulingService)
+    service._cron = None
+
+    spec = service._build_spec(_ui_task())
+
+    assert spec.id == "expert_task_stk_1"
+    assert spec.meta["expert_task_id"] == "stk_1"
+    assert spec.meta["expert_task_name"] == "晨会简报"
+    assert spec.meta["expert_description"] == "每天 9 点生成团队简报"
+    assert spec.meta["origin_source"] == "ui"
+    # dispatch.meta 同步（CronLedgerReader 反推单一来源）
+    assert spec.dispatch.meta["expert_task_name"] == "晨会简报"
+    assert spec.dispatch.meta["origin_source"] == "ui"
+    # session_id 空串 → executor share_session=False 分支派生专属会话
+    assert spec.dispatch.target.session_id == ""
+
+
+def test_build_spec_defaults_missing_description_to_empty():
+    """描述缺省落空串，不丢键（读层反推无需区分缺失/空置）。"""
+    service = SchedulingService.__new__(SchedulingService)
+    service._cron = None
+
+    spec = service._build_spec(_ui_task(description=""))
+
+    assert spec.meta["expert_description"] == ""

@@ -6,6 +6,7 @@ import { useConflictRenameModal } from "./components";
 import { useProgressiveRender } from "../../../hooks/useProgressiveRender";
 import { useTranslation } from "react-i18next";
 import { useAgentStore } from "../../../stores/agentStore";
+import { useAuthStore } from "../../../stores/authStore";
 import { useAppMessage } from "../../../hooks/useAppMessage";
 import api from "../../../api";
 import { useUploadLimitStore } from "../../../stores/uploadLimitStore";
@@ -43,6 +44,15 @@ export function useSkillsPage() {
   const { message } = useAppMessage();
   const { selectedAgent } = useAgentStore();
 
+  // 当前登录用户（认证关闭时为空串）：驱动「共享/我的」资产分区；
+  // 单机（无认证）恒为共享，不显示分区切换。
+  const currentUsername = useAuthStore((s) => s.username);
+  const scopeEnabled = Boolean(currentUsername);
+  const [scopeFilter, setScopeFilter] = useState<"shared" | "mine">(
+    "shared",
+  );
+  const isPersonalScope = scopeEnabled && scopeFilter === "mine";
+
   const {
     skills,
     providerSkills,
@@ -59,6 +69,16 @@ export function useSkillsPage() {
     hardRefresh,
   } = useSkills();
 
+  // 分区过滤：后端 GET /skills 已按可见性返回（共享 + 当前用户的个人），
+  // 这里按 source 二次分区，供「共享 / 我的」两个视图使用。
+  const scopedSkills = useMemo(
+    () =>
+      isPersonalScope
+        ? skills.filter((s) => s.source === "personal")
+        : skills.filter((s) => s.source !== "personal"),
+    [skills, isPersonalScope],
+  );
+
   const {
     searchQuery,
     setSearchQuery,
@@ -66,7 +86,7 @@ export function useSkillsPage() {
     setSearchTags,
     allTags,
     filteredSkills,
-  } = useSkillFilter(skills);
+  } = useSkillFilter(scopedSkills);
 
   const { showConflictRenameModal, conflictRenameModal } =
     useConflictRenameModal();
@@ -152,6 +172,15 @@ export function useSkillsPage() {
   };
 
   const clearSelection = () => setSelectedSkills(new Set());
+
+  // 分区切换：批量操作仅面向共享技能，切到「我的」时退出批量模式
+  const handleScopeChange = (next: "shared" | "mine") => {
+    setScopeFilter(next);
+    if (batchModeEnabled) {
+      clearSelection();
+      setBatchModeEnabled(false);
+    }
+  };
 
   const selectAll = () =>
     setSelectedSkills(new Set(filteredSkills.map((s) => s.name)));
@@ -262,6 +291,17 @@ export function useSkillsPage() {
     form.resetFields();
     setDrawerOpen(true);
     try {
+      if (skill.source === "personal") {
+        const detail = await api.getPersonalSkill(skill.name, selectedAgent);
+        if (detailRequestIdRef.current !== requestId) return;
+        setEditingSkill({
+          ...detail,
+          channels: ["all"],
+          tags: [],
+          config: {},
+        });
+        return;
+      }
       const detail = await api.getSkill(skill.name, selectedAgent);
       if (detailRequestIdRef.current !== requestId) return;
       setEditingSkill(detail);
@@ -279,15 +319,96 @@ export function useSkillsPage() {
     }
   };
 
-  const handleToggleEnabled = async (skill: SkillSpec, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleToggleEnabled = async (
+    skill: SkillSpec,
+    e?: React.MouseEvent,
+  ) => {
+    e?.stopPropagation();
+    if (skill.source === "personal") {
+      await togglePersonalEnabled(skill);
+      return;
+    }
     await toggleEnabled(skill);
     await refreshSkills();
   };
 
+  // 个人技能启停：拉取完整文件树后按 owner 身份回存（不走共享 enable/disable 闸门）
+  const togglePersonalEnabled = async (skill: SkillSpec) => {
+    try {
+      const detail = await api.getPersonalSkill(skill.name, selectedAgent);
+      await api.savePersonalSkill({
+        name: skill.name,
+        files: detail.files || { "SKILL.md": detail.content },
+        enabled: !skill.enabled,
+        agentId: selectedAgent,
+      });
+      message.success(
+        skill.enabled
+          ? t("skills.disabledSuccessfully")
+          : t("skills.enabledSuccessfully"),
+      );
+      invalidateSkillCache({ agentId: selectedAgent });
+      await refreshSkills();
+    } catch (error) {
+      message.error(
+        error instanceof Error ? error.message : t("skills.operationFailed"),
+      );
+    }
+  };
+
   const handleDelete = async (skill: SkillSpec, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    await deleteSkill(skill);
+    if (skill.source !== "personal") {
+      await deleteSkill(skill);
+      return;
+    }
+    const confirmed = await new Promise<boolean>((resolve) => {
+      Modal.confirm({
+        title: t("common.confirm"),
+        content: t("skills.deleteConfirm"),
+        okText: t("common.delete"),
+        okType: "danger",
+        cancelText: t("common.cancel"),
+        onOk: () => resolve(true),
+        onCancel: () => resolve(false),
+      });
+    });
+    if (!confirmed) return;
+    try {
+      await api.deletePersonalSkill(skill.name, selectedAgent);
+      message.success(t("skills.deleteSuccess"));
+      invalidateSkillCache({ agentId: selectedAgent });
+      await refreshSkills();
+    } catch (error) {
+      message.error(
+        error instanceof Error ? error.message : t("skills.deleteFailed"),
+      );
+    }
+  };
+
+  // 发布为员工共享技能（S2→S1，需后端管理闸门）
+  const handlePromote = async (skill: SkillSpec) => {
+    const confirmed = await new Promise<boolean>((resolve) => {
+      Modal.confirm({
+        title: t("skills.promoteConfirmTitle"),
+        content: t("skills.promoteConfirmContent", { name: skill.name }),
+        okText: t("skills.promoteToShared"),
+        cancelText: t("common.cancel"),
+        onOk: () => resolve(true),
+        onCancel: () => resolve(false),
+      });
+    });
+    if (!confirmed) return;
+    try {
+      await api.promotePersonalSkill(skill.name, selectedAgent);
+      message.success(t("skills.promoteSuccess"));
+      invalidateSkillCache({ agentId: selectedAgent });
+      await refreshSkills();
+    } catch (error) {
+      message.error(
+        error instanceof Error ? error.message : t("skills.promoteFailed"),
+      );
+    }
   };
 
   const handleDrawerClose = () => {
@@ -301,6 +422,36 @@ export function useSkillsPage() {
   // ── Drawer submit ───────────────────────────────────────────────────────
 
   const handleSubmit = async (values: SkillDetail) => {
+    // 个人技能（S2）保存：在「我的」分区新建，或编辑 source=personal。
+    // owner 由后端强制为会话用户；files 全量回存，保留 references/scripts。
+    const editingPersonal = editingSkill?.source === "personal";
+    const creatingPersonal = !editingSkill && isPersonalScope;
+    if (editingPersonal || creatingPersonal) {
+      try {
+        const baseFiles = editingPersonal ? editingSkill?.files || {} : {};
+        await api.savePersonalSkill({
+          name: values.name,
+          files: { ...baseFiles, "SKILL.md": values.content },
+          enabled: editingPersonal
+            ? Boolean(editingSkill?.enabled ?? true)
+            : true,
+          agentId: selectedAgent,
+        });
+        message.success(
+          editingPersonal
+            ? t("common.save")
+            : t("skills.createdSuccessfully"),
+        );
+        setDrawerOpen(false);
+        invalidateSkillCache({ agentId: selectedAgent });
+        await refreshSkills();
+      } catch (error) {
+        message.error(
+          error instanceof Error ? error.message : t("skills.saveFailed"),
+        );
+      }
+      return;
+    }
     if (editingSkill) {
       const sourceName = editingSkill.name;
       const targetName = values.name;
@@ -710,10 +861,16 @@ export function useSkillsPage() {
     poolSkills,
     allTags,
     filteredSkills,
+    scopedSkills,
     conflictRenameModal,
     loading,
     uploading,
     importing,
+    scopeEnabled,
+    scopeFilter,
+    isPersonalScope,
+    handleScopeChange,
+    handlePromote,
     drawerOpen,
     drawerLoading,
     editingSkillName,

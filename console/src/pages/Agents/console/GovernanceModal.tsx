@@ -5,13 +5,16 @@
  * 多方共享）。弹窗内直接说明"改完谁会受影响"，避免管理员盲改权限。
  */
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Modal, Radio, Select, TreeSelect } from "antd";
+import { Alert, Divider, Modal, Radio, Select, TreeSelect } from "antd";
 import { useTranslation } from "react-i18next";
 import type { DepartmentTree } from "@/api/modules/admin";
+import { adminUsersApi } from "@/api/modules/admin/users";
+import type { AdminUserView } from "@/api/modules/admin/types";
 import type {
   DigitalEmployee,
   EmployeeVisibility,
   GovernancePayload,
+  ManageVisibility,
 } from "@/api/modules/employeeRegistry";
 import styles from "./console.module.less";
 
@@ -59,6 +62,13 @@ export function GovernanceModal({
   const [departmentId, setDepartmentId] = useState<string | undefined>();
   const [visibility, setVisibility] = useState<EmployeeVisibility>("org");
   const [granted, setGranted] = useState<string[]>([]);
+  // 后台配置域（可配置范围）：与使用维对称的三控件状态。
+  // manage_visibility 仅 private/department；manage_granted_users 为跨部门兜底。
+  const [manageVisibility, setManageVisibility] =
+    useState<ManageVisibility>("private");
+  const [manageGranted, setManageGranted] = useState<string[]>([]);
+  const [manageUsers, setManageUsers] = useState<string[]>([]);
+  const [users, setUsers] = useState<AdminUserView[]>([]);
   const [saving, setSaving] = useState(false);
 
   const batch = targets.length > 1;
@@ -84,11 +94,64 @@ export function GovernanceModal({
     setGranted(
       uniform(grantedLists) ? (first?.granted_departments ?? []) : [],
     );
+    // 可配置范围（管理授权维）同样按「全目标一致才预填」规则回填
+    const manageVisibilities = targets.map((row) => row.manage_visibility);
+    const manageGrantedLists = targets.map((row) =>
+      JSON.stringify(row.manage_granted_departments ?? []),
+    );
+    const manageUserLists = targets.map((row) =>
+      JSON.stringify(row.manage_granted_users ?? []),
+    );
+    setManageVisibility(
+      uniform(manageVisibilities)
+        ? (first?.manage_visibility ?? "private")
+        : "private",
+    );
+    setManageGranted(
+      uniform(manageGrantedLists)
+        ? (first?.manage_granted_departments ?? [])
+        : [],
+    );
+    setManageUsers(
+      uniform(manageUserLists) ? (first?.manage_granted_users ?? []) : [],
+    );
     setSaving(false);
   }, [open, targets]);
 
+  // 管理授权用户候选：弹窗打开时拉取一次账号列表（治理面为 admin 专属，
+  // 有权访问 /admin/users）。失败静默降级为空候选，不阻断部门维度治理。
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    let alive = true;
+    adminUsersApi
+      .list()
+      .then((list) => {
+        if (alive) setUsers(list);
+      })
+      .catch(() => {
+        if (alive) setUsers([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [open]);
+
   const treeData = useMemo(() => toTreeData(departments), [departments]);
   const departmentOptions = useMemo(() => flatten(departments), [departments]);
+  // 管理授权用户候选项：value 用 username（后端授权以用户名为准），
+  // label 展示 display_name + username 便于管理员辨识同名账号。
+  const userOptions = useMemo(
+    () =>
+      users.map((user) => ({
+        value: user.username,
+        label: user.display_name
+          ? `${user.display_name} (${user.username})`
+          : user.username,
+      })),
+    [users],
+  );
 
   const handleOk = async () => {
     setSaving(true);
@@ -97,6 +160,12 @@ export function GovernanceModal({
         department_id: departmentId ?? "",
         visibility,
         granted_departments: visibility === "department" ? granted : [],
+        // 后台配置域：manage_visibility 恒提交；授权部门仅 department 范围生效，
+        // 否则清空；授权用户为跨部门兜底，独立于 manage_visibility 恒提交。
+        manage_visibility: manageVisibility,
+        manage_granted_departments:
+          manageVisibility === "department" ? manageGranted : [],
+        manage_granted_users: manageUsers,
       });
     } finally {
       setSaving(false);
@@ -189,6 +258,102 @@ export function GovernanceModal({
             </div>
           </div>
         ) : null}
+
+        <Divider style={{ margin: "8px 0" }}>
+          {t(
+            "employee.governance.manageSection",
+            "可配置范围（后台管理授权）",
+          )}
+        </Divider>
+
+        <div>
+          <div className={styles.fieldLabel}>
+            {t("employee.governance.manageVisibility", "可配置范围")}
+          </div>
+          <Radio.Group
+            value={manageVisibility}
+            onChange={(event) =>
+              setManageVisibility(event.target.value as ManageVisibility)
+            }
+            options={[
+              {
+                value: "private",
+                label: t("employee.manageVisibility.private", "仅创建者"),
+              },
+              {
+                value: "department",
+                label: t("employee.manageVisibility.department", "部门可配"),
+              },
+            ]}
+            optionType="button"
+            buttonStyle="solid"
+          />
+          <div className={styles.fieldHint}>
+            {manageVisibility === "department"
+              ? t(
+                  "employee.governance.manageVisibilityHint.department",
+                  "归属部门与管理授权部门（含下属）成员可重新配置该员工。",
+                )
+              : t(
+                  "employee.governance.manageVisibilityHint.private",
+                  "仅创建者、team_lead 与管理员可重新配置该员工（出厂最严）。",
+                )}
+          </div>
+        </div>
+
+        {manageVisibility === "department" ? (
+          <div>
+            <div className={styles.fieldLabel}>
+              {t("employee.governance.manageGranted", "管理授权部门")}
+            </div>
+            <Select
+              mode="multiple"
+              style={{ width: "100%" }}
+              value={manageGranted}
+              options={departmentOptions}
+              allowClear
+              maxTagCount="responsive"
+              placeholder={t(
+                "employee.governance.manageGrantedPlaceholder",
+                "选择可配置该员工的部门",
+              )}
+              onChange={(value) => setManageGranted(value)}
+            />
+            <div className={styles.fieldHint}>
+              {t(
+                "employee.governance.manageGrantedHint",
+                "可配置集合 = 归属部门 ∪ 管理授权部门，授权自动覆盖其下属部门。",
+              )}
+            </div>
+          </div>
+        ) : null}
+
+        <div>
+          <div className={styles.fieldLabel}>
+            {t("employee.governance.manageUsers", "管理授权用户")}
+          </div>
+          <Select
+            mode="multiple"
+            style={{ width: "100%" }}
+            value={manageUsers}
+            options={userOptions}
+            allowClear
+            showSearch
+            optionFilterProp="label"
+            maxTagCount="responsive"
+            placeholder={t(
+              "employee.governance.manageUsersPlaceholder",
+              "按用户名跨部门显式授权可配置该员工",
+            )}
+            onChange={(value) => setManageUsers(value)}
+          />
+          <div className={styles.fieldHint}>
+            {t(
+              "employee.governance.manageUsersHint",
+              "跨部门兜底：无论可配置范围如何，被授权用户都能配置该员工。",
+            )}
+          </div>
+        </div>
 
         {departmentMissing ? (
           <Alert

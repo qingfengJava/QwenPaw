@@ -1,0 +1,59 @@
+refactor(kb): unify KbService facade across three-state backends + JSONL→PG migration（T8）
+
+KbService 门面按 resolve_storage_backend() 三态分流，public 方法签名全部不变
+（消费方 admin/kb.py、kb/tool.py、workforce/engine.py、runtime/builder.py、
+bindings.py 零改动）：
+
+- json：现状文件面逐条不变（回归基线，test_kb.py 钉 json 守住）
+- dual：json primary 读写 + 每个写操作 submit_shadow_write 影子写 pg
+  （fire-and-forget，读仍 json，spec §4.3）
+- pg：pg_store/引擎权威读写，经 kb 局部后台事件循环线程桥接（镜像
+  app/users/store_pg.py 的 run_coroutine_threadsafe 先例；不改 engine
+  ._run_blocking、不动 db/ 共享设施，避开与并发展开的需求线冲突）
+
+门面转换与路由：
+- KbSpace↔KnowledgeBase、KbDocument↔KbDocumentMeta 双向转换（models.py 已预告）
+- search 命中 KbSearchHit→(KbChunk, score)，返回类型不变
+- delete_kb pg 态先逐文档软删 + 清切片再 delete_space（delete_space 拒删
+  非空库），delete_space 同事务回收绑定；顺带修复 T8 前 pg 态删库因门面只读
+  json registry 恒返 404 的缺陷
+- fail-soft：pg 不可用/桥接异常 → WARN 回退文件面，绝不 500 或阻塞启动
+
+scripts/migrate_kb_to_pg.py（存量 JSONL→PG，镜像 migrate_storage_to_pg.py）：
+- 逐库双校验（registry 文档数 + chunk 行数 vs pg kb_chunks），全等才判 OK，
+  任一不符标 MISMATCH 并非零退出（spec §13 风险4）
+- --dry-run 零写、幂等重跑（upsert + index_document 重建语义计数稳定）
+- Non-destructive：绝不删源，成功后写 kb_migration_receipt.json，30 天保留
+  窗口交运维决定
+
+审查修复轮（故障诊断工程师独立审查：P1×4 阻断 + P2 全修，均经真库/单测复验）：
+- P1-1 摄入推进 ready：pg upsert_document 强制落 pending（pg_store 不变式），
+  门面 _pg_ingest_async 切片写完后显式 update_ingest_status(ready)，否则文档
+  永久卡 pending
+- P1-2 迁移同源修复：migrate 脚本每文档 upsert 后同样推进 ready
+- P1-3 dual 影子复用 doc_id：影子摄入传 json 主写 doc_id，否则影子 delete
+  按 json doc_id 在 pg 找不到行 → 孤儿残留
+- P1-4 pg 就绪即权威（防复活）：get_kb/list_kbs 用 ensure_ready 门控区分
+  「pg 不可用」（回退文件面）与「pg 就绪但空」（权威空结果，绝不回退，否则
+  已删空间被 30 天保留的 json 复活）；不采用异常哨兵法——真 pg_store 对二者
+  都返 None/[]，异常法无效
+- P1-5 迁移保真 created_at：pg_store upsert 的 INSERT 强制 created_at=now，
+  迁移 upsert 后按源值 UPDATE 回写，保住原始创建时间与 list_spaces 排序
+- P2-3 dual update_grants 走 read-modify-write（仅改 grants，不覆盖 pg 已配
+  的 embedding_model/engine）；P2-5 --dsn 默认取 $QWENPAW_PG_DSN；P2-6 双校验
+  期望切片数用 registry 文档名下计数（孤儿切片不计）；P2-7 receipt 补
+  content_md 为空 caveat
+
+测试：
+- test_service_facade.py（24）：三态分流/模型转换/fail-soft/dual 影子写/
+  三态读一致性/ACL 签名不变 + 审查守护 3（摄入推进 ready / pg 就绪不复活 /
+  dual 影子复用 doc_id）
+- test_kb.py：加 autouse _json_backend 钉桩（门面后端感知后，文件面用例须
+  显式固定 json，防宿主环境变量 QWENPAW_STORAGE_BACKEND 污染）
+- test_kb_migrate_script.py（4，PG 门控隔离库）：真库双校验/dry-run 零写/
+  幂等重跑 + created_at 与 ingest_status 保真守护；自建隔离库不依赖 app_server
+
+验证：kb 单测 221（含门面 24）+ KB 绑定路由 11 + 迁移集成 4（5433 pgvector
+隔离库，含 created_at/ready 保真守护）全绿；flake8 0；black -l79 clean（六文件）
+
+@author qingfeng

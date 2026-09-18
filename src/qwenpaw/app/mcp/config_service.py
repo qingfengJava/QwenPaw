@@ -285,9 +285,9 @@ class MCPConfigService:
             credential_record=credential,
         )
         if credential.secrets:
-            await self._driver_config.credential_store.put(credential)
+            await self._driver_config.save_credential(credential)
         else:
-            await self._driver_config.credential_store.delete(credential.ref)
+            await self._driver_config.delete_credential(credential.ref)
         await self._driver_config.save_card(card)
         return await self.build_info_from_card(card)
 
@@ -325,9 +325,9 @@ class MCPConfigService:
             existing=existing_card,
         )
         if credential.secrets:
-            await self._driver_config.credential_store.put(credential)
+            await self._driver_config.save_credential(credential)
         else:
-            await self._driver_config.credential_store.delete(credential.ref)
+            await self._driver_config.delete_credential(credential.ref)
         await self._driver_config.save_card(card)
         return await self.build_info_from_card(card)
 
@@ -340,12 +340,13 @@ class MCPConfigService:
     async def delete_client(self, client_key: str) -> dict[str, str]:
         card = await self.load_card(client_key)
         deleted_refs: set[str] = set()
-        store = self._driver_config.credential_store
         for credential_ref in iter_credential_refs(card).values():
             if credential_ref.ref and credential_ref.ref not in deleted_refs:
-                await store.delete(credential_ref.ref)
+                await self._driver_config.delete_credential(credential_ref.ref)
                 deleted_refs.add(credential_ref.ref)
-        await store.delete(mcp_oauth_credential_ref(client_key))
+        await self._driver_config.delete_credential(
+            mcp_oauth_credential_ref(client_key),
+        )
         await self._driver_config.delete_driver_best_effort(client_key)
 
         return {

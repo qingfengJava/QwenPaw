@@ -1,0 +1,32 @@
+feat(kb): agent KB catalog injection + binding-gated tools + kb_read（T9）
+
+Agent 接入层（spec §7）：数字员工运行时按 agent_kb_bindings 绑定注入知识库
+目录，工具注册从「任意库存在即注册」改为「有绑定才注册 kb_search+kb_read」：
+
+- catalog.py：render_kb_catalog(spaces) 渲染 <knowledge-bases> 目录块
+  （id/name/description + kb_search 引导语），空绑定返 ""（零注入）
+- builder._collect_kb_tools 改 async：查 list_bound_space_ids(agent_id)，
+  非空才注册两工具并产出目录块，经 ctx.extras["kb_catalog"] 流转（仿
+  driver_prompt_hints 先例）
+- prompt_contributors.KbCatalogContributor：仿 DriverPolicyHintContributor，
+  从 ctx.extras 取目录块注入 system prompt（skills 走 Toolkit 对象注入，
+  KB 目录搭 driver-hints contributor 通道，非 on_system_prompt hook）
+- tool.make_kb_read_tool：kb_read(doc_id) 拉权威 MD 全文，ACL 与 kb_search
+  人侧一致（解析文档所属库 can_access）；完整绑定 S0 收敛归 T10
+- service.read_document/get_document_meta：三态门面新增（pg=content_md 权威；
+  json=切片按 seq 重建；pg 就绪即权威不复活，不可用 fail-soft 回退文件面）
+
+审查轮（故障诊断工程师 独立复审 → 达标 PASS，无 P0/P1）折叠：
+- P2-1：read_document docstring 明确 json 多切片重建的 overlap 边界重复为
+  已知限制（pg content_md 权威无此问题）+ 补多切片重建完整性测试
+- P3-4：补空 doc_id 守卫测试
+- P3-1（孤绑定门控）/P3-2（错误消息合并，防资源存在性泄露，刻意保留）/
+  P3-3（broad except 日志级别，沿用既有模式）登记 T10
+
+验证：kb 单测 241 passed（catalog 5 + wiring 12 + facade pg 3 新增）+
+runtime 102 passed（builder async 改造零回归）；flake8 0 / black -l79 clean。
+
+提交纪律：builder.py 含用户 PG 线未提交 WIP（54 行，L125-554 区域），本提交
+经 git add -p 仅暂存我的 5 个 hunk（HEAD L413/436/588/992/1016，与之不相交），
+用户 WIP 全程留工作树未暂存；.qoder 预暂存删除已 unstage 排除、提交后还原；
+审查轮 amend 用 --only 仅更新 service.py/test_kb_wiring.py，不触 builder.py。

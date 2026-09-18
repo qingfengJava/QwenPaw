@@ -423,6 +423,23 @@ async def lifespan(  # pylint: disable=too-many-statements,too-many-branches
                     exc_info=True,
                 )
 
+            # ---- Expert 身份列对账（T14） ----
+            # experts 权威（name/description）vs 工作区 agent.json 漂移：
+            # WARN + 以 experts 为准修复（发布物化链的启动兜底）。依赖
+            # enterprise schema 就绪，故置于 bootstrap 之后；无 PG 自动
+            # no-op，后台任务不阻塞启动。
+            try:
+                from .agent_docs.reconcile import (
+                    reconcile_expert_identities,
+                )
+
+                asyncio.create_task(reconcile_expert_identities())
+            except Exception:
+                logger.debug(
+                    "expert identity reconcile launch failed",
+                    exc_info=True,
+                )
+
             # ---- Provider 配置平面（模型配置落库） ----
             # dual/pg 后端：把文件快照与 env 中的 API Key 一次性灌入 PG
             # （api_key 加密入列），pg 后端再从 PG 刷回内存（权威读）。

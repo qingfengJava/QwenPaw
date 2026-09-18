@@ -59,6 +59,7 @@ import {
 } from "./stores/authStore";
 import { getApiToken } from "./api/config";
 import CloseWindowPrompt from "./tauri/CloseWindowPrompt";
+import GlobalManageDeniedToast from "./components/GlobalManageDeniedToast";
 import BackendLoadingPage from "./tauri/BackendLoadingPage";
 import {
   resolveAuthGate,
@@ -477,6 +478,7 @@ function AppInner({ backendInfo }: { backendInfo: BackendInfo }) {
       >
         <AntdApp>
           <CloseWindowPrompt />
+          <GlobalManageDeniedToast />
           <DesktopUpdateProvider>
             <UpdateTakeoverGate>
               <ApprovalProvider>{routedContent}</ApprovalProvider>

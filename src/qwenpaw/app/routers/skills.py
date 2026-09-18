@@ -16,7 +16,15 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Body, File, HTTPException, Request, UploadFile
+from fastapi import (
+    APIRouter,
+    Body,
+    Depends,
+    File,
+    HTTPException,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from qwenpaw.exceptions import (
@@ -54,6 +62,7 @@ from ...agents.skill_system.store import (
     get_workspace_skills_dir,
     mutate_json,
     mutate_pool_manifest,
+    normalize_skill_dir_name,
     normalize_skill_manifest_entry,
     read_pool_skill_automation,
     read_skill_content_and_metadata_from_dir,
@@ -66,6 +75,8 @@ from ...agents.skill_system.store import (
 )
 from ...security.skill_scanner import SkillScanError
 from ..inbox_store import append_event as append_inbox_event
+from ..rbac import PERM_ADMIN_PLATFORM, require_perm
+from ..rbac.deps import require_agent_manage_audited
 from ..utils import check_upload_size, schedule_agent_reload
 
 logger = logging.getLogger(__name__)
@@ -1108,16 +1119,46 @@ def _list_workspace_skill_names(workspace_dir: Path) -> list[str]:
 
 @router.get("")
 async def list_skills(request: Request) -> list[SkillSpec]:
-    workspace_dir = await _request_workspace_dir(request)
-    return _build_workspace_skill_specs(workspace_dir)
+    from ..agent_context import get_agent_for_request
+    from ...agents.skill_system import bundle_store
+
+    # 主查询：员工共享技能（S1）
+    workspace = await get_agent_for_request(request)
+    specs = _build_workspace_skill_specs(Path(workspace.workspace_dir))
+
+    # 合并当前会话用户的个人技能（S2，source=personal）；
+    # 无认证 / 无 PG 个人平面时零动作，列表与既有一致。
+    owner = _personal_owner(request)
+    if owner and bundle_store.bundle_pg_plane_available():
+        bundles = await bundle_store.load_owner_bundles_pg(
+            workspace.agent_id,
+            owner,
+        )
+        specs.extend(_build_personal_skill_specs(bundles))
+    return specs
 
 
 @router.post("/refresh")
 async def refresh_skills(request: Request) -> list[SkillSpec]:
     """Force reconcile and return updated workspace skill list."""
-    workspace_dir = await _request_workspace_dir(request)
+    from ..agent_context import get_agent_for_request
+    from ...agents.skill_system import bundle_store
+
+    workspace = await get_agent_for_request(request)
+    workspace_dir = Path(workspace.workspace_dir)
     reconcile_workspace_manifest(workspace_dir)
-    return _build_workspace_skill_specs(workspace_dir)
+    specs = _build_workspace_skill_specs(workspace_dir)
+
+    # 合并当前会话用户的个人技能（S2），与 GET "" 行为一致；
+    # 无认证 / 无 PG 个人平面时零动作。
+    owner = _personal_owner(request)
+    if owner and bundle_store.bundle_pg_plane_available():
+        bundles = await bundle_store.load_owner_bundles_pg(
+            workspace.agent_id,
+            owner,
+        )
+        specs.extend(_build_personal_skill_specs(bundles))
+    return specs
 
 
 @router.get("/hub/search")
@@ -1156,7 +1197,11 @@ async def list_workspace_skill_sources() -> list[WorkspaceSkillSummary]:
     return summaries
 
 
-@router.post("/hub/install/start", response_model=HubInstallTask)
+@router.post(
+    "/hub/install/start",
+    response_model=HubInstallTask,
+    dependencies=[Depends(require_agent_manage_audited("skills.hub_install"))],
+)
 async def start_install_from_hub(
     request_body: HubInstallRequest,
     request: Request,
@@ -1269,7 +1314,10 @@ async def _overlay_pool_catalog(
     return specs
 
 
-@router.post("/pool/refresh")
+@router.post(
+    "/pool/refresh",
+    dependencies=[Depends(require_perm(PERM_ADMIN_PLATFORM))],
+)
 async def refresh_pool_skills() -> list[PoolSkillSpec]:
     """Force reconcile and return updated pool skill list."""
     result = await asyncio.to_thread(refresh_pool_automation)
@@ -1309,7 +1357,10 @@ async def get_pool_builtin_notice() -> BuiltinUpdateNotice:
     )
 
 
-@router.post("")
+@router.post(
+    "",
+    dependencies=[Depends(require_agent_manage_audited("skills.create"))],
+)
 async def create_skill(
     request: Request,
     body: CreateSkillRequest,
@@ -1344,7 +1395,248 @@ async def create_skill(
     return {"created": True, "name": created}
 
 
-@router.post("/upload")
+class PersonalSkillRequest(BaseModel):
+    """个人技能（S2）保存入参：owner 恒为当前会话用户，前端不可越权指定。"""
+
+    name: str
+    files: dict[str, str] = Field(default_factory=dict)
+    enabled: bool = True
+
+
+def _personal_owner(request: Request) -> str:
+    """当前会话用户名（无认证单机部署为空串）。"""
+    return str(getattr(request.state, "user", "") or "")
+
+
+def _build_personal_skill_specs(bundles: list[dict]) -> list[SkillSpec]:
+    """把个人技能 PG 行投影为 SkillSpec（source=personal），描述取自 SKILL.md。"""
+    import frontmatter
+
+    specs: list[SkillSpec] = []
+    for bundle in bundles:
+        files = bundle.get("files") or {}
+        description = ""
+        skill_md = files.get("SKILL.md") or ""
+        if skill_md:
+            try:
+                meta = frontmatter.loads(skill_md).metadata
+                description = str((meta or {}).get("description", "") or "")
+            except Exception:  # pylint: disable=broad-except
+                description = ""
+        specs.append(
+            SkillSpec(
+                name=str(bundle.get("name", "") or ""),
+                description=description,
+                source="personal",
+                enabled=bool(bundle.get("enabled", True)),
+            ),
+        )
+    return specs
+
+
+async def _resolve_owner_department(owner: str | None) -> str | None:
+    """尽力解析 owner 部门归属快照（无 PG / 无部门 / 抖动 → None）。"""
+    if not owner:
+        return None
+    try:
+        from ..orgs.service import get_org_service
+
+        _org, dept_path = await get_org_service().resolve_user_scope(owner)
+        return dept_path
+    except Exception:  # pylint: disable=broad-except
+        logger.debug("skills: owner department resolve failed", exc_info=True)
+        return None
+
+
+@router.get("/personal")
+async def list_personal_skills(request: Request) -> list[SkillSpec]:
+    """列出当前会话用户的个人技能（S2，仅本人）。"""
+    from ..agent_context import get_agent_for_request
+    from ...agents.skill_system import bundle_store
+
+    owner = _personal_owner(request)
+    if not owner or not bundle_store.bundle_pg_plane_available():
+        return []
+    workspace = await get_agent_for_request(request)
+    bundles = await bundle_store.load_owner_bundles_pg(
+        workspace.agent_id,
+        owner,
+    )
+    return _build_personal_skill_specs(bundles)
+
+
+@router.get("/personal/{skill_name}")
+async def get_personal_skill(
+    request: Request,
+    skill_name: str,
+) -> dict[str, Any]:
+    """读取当前用户的个人技能详情（content 取自 bundle 内 SKILL.md）。"""
+    from ..agent_context import get_agent_for_request
+    from ...agents.skill_system import bundle_store
+
+    owner = _personal_owner(request)
+    if not owner:
+        raise HTTPException(status_code=401, detail="无登录用户")
+    if not bundle_store.bundle_pg_plane_available():
+        raise HTTPException(status_code=503, detail="个人技能平面不可用（需 PG 存储）")
+    workspace = await get_agent_for_request(request)
+    bundle = await bundle_store.load_skill_bundle_pg(
+        workspace.agent_id,
+        owner,
+        skill_name,
+    )
+    if bundle is None:
+        raise HTTPException(status_code=404, detail="个人技能不存在")
+    files = bundle.get("files") or {}
+    specs = _build_personal_skill_specs([bundle])
+    return {
+        "name": str(bundle.get("name") or skill_name),
+        "description": specs[0].description if specs else "",
+        "content": str(files.get("SKILL.md") or ""),
+        "files": files,
+        "source": "personal",
+        "enabled": bool(bundle.get("enabled", True)),
+    }
+
+
+@router.post("/personal")
+async def save_personal_skill(
+    request: Request,
+    body: PersonalSkillRequest,
+) -> dict[str, Any]:
+    """新建 / 更新当前用户的个人技能（owner 强制为本人，禁止越权）。"""
+    from ..agent_context import get_agent_for_request
+    from ...agents.skill_system import bundle_store
+
+    owner = _personal_owner(request)
+    if not owner:
+        raise HTTPException(status_code=401, detail="无登录用户，无法保存个人技能")
+    if not bundle_store.bundle_pg_plane_available():
+        raise HTTPException(status_code=503, detail="个人技能平面不可用（需 PG 存储）")
+    if not (body.files or {}).get("SKILL.md"):
+        raise HTTPException(status_code=400, detail="个人技能必须包含 SKILL.md")
+
+    try:
+        name = normalize_skill_dir_name(body.name)
+    except (ValueError, AppBaseException) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    workspace = await get_agent_for_request(request)
+    department_id = await _resolve_owner_department(owner)
+    await bundle_store.upsert_skill_bundle_pg(
+        agent_id=workspace.agent_id,
+        owner_user_id=owner,
+        name=name,
+        files=body.files,
+        enabled=body.enabled,
+        department_id=department_id,
+    )
+
+    # 物化到 .personal_skills/{owner}/{name}/，供运行时 overlay 注入（T8e）。
+    bundle_store.materialize_owner_bundles(
+        Path(workspace.workspace_dir),
+        owner,
+        [{"name": name, "files": body.files, "enabled": body.enabled}],
+    )
+    if body.enabled:
+        schedule_agent_reload(request, workspace.agent_id)
+    return {"saved": True, "name": name}
+
+
+@router.delete("/personal/{skill_name}")
+async def delete_personal_skill(
+    request: Request,
+    skill_name: str,
+) -> dict[str, Any]:
+    """删除当前用户的个人技能（仅本人）。"""
+    from ..agent_context import get_agent_for_request
+    from ...agents.skill_system import bundle_store
+
+    owner = _personal_owner(request)
+    if not owner:
+        raise HTTPException(status_code=401, detail="无登录用户")
+    if not bundle_store.bundle_pg_plane_available():
+        raise HTTPException(status_code=503, detail="个人技能平面不可用（需 PG 存储）")
+    workspace = await get_agent_for_request(request)
+    deleted = await bundle_store.delete_skill_bundle_pg(
+        workspace.agent_id,
+        owner,
+        skill_name,
+    )
+    if not deleted:
+        raise HTTPException(status_code=404, detail="个人技能不存在")
+
+    # 同步清理已物化目录，避免运行时 overlay 残留。
+    personal_dir = bundle_store.get_personal_skills_dir(
+        Path(workspace.workspace_dir),
+        owner,
+    )
+    shutil.rmtree(personal_dir / skill_name, ignore_errors=True)
+    schedule_agent_reload(request, workspace.agent_id)
+    return {"deleted": True, "name": skill_name}
+
+
+@router.post(
+    "/personal/{skill_name}/promote",
+    dependencies=[Depends(require_agent_manage_audited("skills.promote"))],
+)
+async def promote_personal_skill(
+    request: Request,
+    skill_name: str,
+) -> dict[str, Any]:
+    """把本人个人技能提升为员工共享技能（S2→S1，需员工管理授权）。"""
+    from ..agent_context import get_agent_for_request
+    from ...agents.skill_system import bundle_store
+
+    owner = _personal_owner(request)
+    if not owner:
+        raise HTTPException(status_code=401, detail="无登录用户")
+    if not bundle_store.bundle_pg_plane_available():
+        raise HTTPException(status_code=503, detail="个人技能平面不可用（需 PG 存储）")
+    workspace = await get_agent_for_request(request)
+    bundle = await bundle_store.load_skill_bundle_pg(
+        workspace.agent_id,
+        owner,
+        skill_name,
+    )
+    if bundle is None:
+        raise HTTPException(status_code=404, detail="个人技能不存在")
+
+    # 复用既有共享技能创建链路（双写 json/pg + reconcile），按目录前缀拆分文件。
+    files = bundle.get("files") or {}
+    content = files.get("SKILL.md", "")
+    references = {
+        key[len("references/"):]: value
+        for key, value in files.items()
+        if key.startswith("references/")
+    }
+    scripts = {
+        key[len("scripts/"):]: value
+        for key, value in files.items()
+        if key.startswith("scripts/")
+    }
+    try:
+        created = SkillService(Path(workspace.workspace_dir)).create_skill(
+            name=skill_name,
+            content=content,
+            references=references or None,
+            scripts=scripts or None,
+            enable=True,
+        )
+    except SkillScanError as exc:
+        return _scan_error_response(exc)
+    except (ValueError, AppBaseException) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not created:
+        raise HTTPException(status_code=409, detail="共享技能已存在，无法提升")
+    schedule_agent_reload(request, workspace.agent_id)
+    return {"promoted": True, "name": created}
+
+
+@router.post(
+    "/upload",
+    dependencies=[Depends(require_agent_manage_audited("skills.upload_zip"))],
+)
 async def upload_skill_zip(
     request: Request,
     file: UploadFile = File(...),
@@ -1390,7 +1682,10 @@ async def upload_skill_zip(
     return result
 
 
-@router.post("/pool/create")
+@router.post(
+    "/pool/create",
+    dependencies=[Depends(require_perm(PERM_ADMIN_PLATFORM))],
+)
 async def create_pool_skill(body: CreateSkillRequest) -> dict[str, Any]:
     try:
         created = SkillPoolService().create_skill(
@@ -1415,7 +1710,10 @@ async def create_pool_skill(body: CreateSkillRequest) -> dict[str, Any]:
     return {"created": True, "name": created}
 
 
-@router.put("/pool/save")
+@router.put(
+    "/pool/save",
+    dependencies=[Depends(require_perm(PERM_ADMIN_PLATFORM))],
+)
 async def save_pool_skill(body: SavePoolSkillRequest) -> dict[str, Any]:
     """Save one pool skill.
 
@@ -1450,7 +1748,10 @@ class SkillI18nRequest(BaseModel):
     description_zh: str = ""
 
 
-@router.put("/pool/{skill_name}/i18n")
+@router.put(
+    "/pool/{skill_name}/i18n",
+    dependencies=[Depends(require_perm(PERM_ADMIN_PLATFORM))],
+)
 async def update_pool_skill_i18n(
     skill_name: str,
     body: SkillI18nRequest,
@@ -1479,7 +1780,10 @@ async def update_pool_skill_i18n(
     }
 
 
-@router.post("/pool/upload-zip")
+@router.post(
+    "/pool/upload-zip",
+    dependencies=[Depends(require_perm(PERM_ADMIN_PLATFORM))],
+)
 async def upload_skill_pool_zip(
     file: UploadFile = File(...),
     target_name: str = "",
@@ -1517,7 +1821,10 @@ async def upload_skill_pool_zip(
     return result
 
 
-@router.post("/pool/import")
+@router.post(
+    "/pool/import",
+    dependencies=[Depends(require_perm(PERM_ADMIN_PLATFORM))],
+)
 async def import_skill_pool_from_hub(
     body: HubInstallRequest,
 ) -> dict[str, Any]:
@@ -1545,7 +1852,10 @@ async def import_skill_pool_from_hub(
     }
 
 
-@router.post("/pool/upload")
+@router.post(
+    "/pool/upload",
+    dependencies=[Depends(require_perm(PERM_ADMIN_PLATFORM))],
+)
 async def upload_workspace_skill_to_pool(
     body: UploadToPoolRequest,
 ) -> dict[str, Any]:
@@ -1686,7 +1996,10 @@ def _download_one_or_raise(
     }
 
 
-@router.post("/pool/download")
+@router.post(
+    "/pool/download",
+    dependencies=[Depends(require_perm(PERM_ADMIN_PLATFORM))],
+)
 async def download_pool_skill_to_workspaces(
     body: DownloadFromPoolRequest,
 ) -> dict[str, Any]:
@@ -1731,7 +2044,10 @@ async def download_pool_skill_to_workspaces(
     return {"downloaded": downloaded}
 
 
-@router.post("/pool/import-builtin")
+@router.post(
+    "/pool/import-builtin",
+    dependencies=[Depends(require_perm(PERM_ADMIN_PLATFORM))],
+)
 async def import_pool_builtins(
     body: ImportBuiltinRequest,
 ) -> dict[str, Any]:
@@ -1751,7 +2067,10 @@ async def import_pool_builtins(
     return result
 
 
-@router.post("/pool/{skill_name}/update-builtin")
+@router.post(
+    "/pool/{skill_name}/update-builtin",
+    dependencies=[Depends(require_perm(PERM_ADMIN_PLATFORM))],
+)
 async def update_pool_builtin(
     skill_name: str,
     body: UpdateBuiltinRequest | None = Body(default=None),
@@ -1812,7 +2131,10 @@ async def _pool_skill_in_pg_catalog(catalog_store: Any, skill_name: str) -> bool
     return any(row.get("skill_name") == skill_name for row in rows)
 
 
-@router.delete("/pool/{skill_name}")
+@router.delete(
+    "/pool/{skill_name}",
+    dependencies=[Depends(require_perm(PERM_ADMIN_PLATFORM))],
+)
 async def delete_pool_skill(skill_name: str) -> dict[str, Any]:
     from ...agents.skill_system import catalog_store
     from ...agents.skill_system.store import (
@@ -1885,7 +2207,10 @@ async def get_pool_skill_config(skill_name: str) -> dict[str, Any]:
     return {"config": entry.get("config", {})}
 
 
-@router.put("/pool/{skill_name}/config")
+@router.put(
+    "/pool/{skill_name}/config",
+    dependencies=[Depends(require_perm(PERM_ADMIN_PLATFORM))],
+)
 async def update_pool_skill_config(
     skill_name: str,
     body: SkillConfigRequest,
@@ -1903,7 +2228,10 @@ async def update_pool_skill_config(
     return {"updated": True}
 
 
-@router.delete("/pool/{skill_name}/config")
+@router.delete(
+    "/pool/{skill_name}/config",
+    dependencies=[Depends(require_perm(PERM_ADMIN_PLATFORM))],
+)
 async def delete_pool_skill_config(skill_name: str) -> dict[str, Any]:
     def _update(payload: dict[str, Any]) -> bool:
         entry = payload.get("skills", {}).get(skill_name)
@@ -1932,7 +2260,10 @@ def _validate_tags(tags: list[str]) -> list[str]:
     return cleaned
 
 
-@router.put("/pool/{skill_name}/tags")
+@router.put(
+    "/pool/{skill_name}/tags",
+    dependencies=[Depends(require_perm(PERM_ADMIN_PLATFORM))],
+)
 async def update_pool_skill_tags(
     skill_name: str,
     tags: list[str],
@@ -1947,8 +2278,15 @@ async def update_pool_skill_tags(
     return {"updated": True, "tags": tags}
 
 
-@router.put("/pool/{skill_name}/auto-update", deprecated=True)
-@router.put("/pool/{skill_name}/auto-sync")
+@router.put(
+    "/pool/{skill_name}/auto-update",
+    deprecated=True,
+    dependencies=[Depends(require_perm(PERM_ADMIN_PLATFORM))],
+)
+@router.put(
+    "/pool/{skill_name}/auto-sync",
+    dependencies=[Depends(require_perm(PERM_ADMIN_PLATFORM))],
+)
 async def update_pool_skill_auto_sync(
     skill_name: str,
     body: AutoSyncRequest,
@@ -1976,7 +2314,10 @@ async def update_pool_skill_auto_sync(
     }
 
 
-@router.put("/pool/{skill_name}/automation")
+@router.put(
+    "/pool/{skill_name}/automation",
+    dependencies=[Depends(require_perm(PERM_ADMIN_PLATFORM))],
+)
 async def update_pool_skill_automation(
     skill_name: str,
     body: SkillAutomationRequest,
@@ -2035,7 +2376,12 @@ async def update_pool_skill_automation(
     }
 
 
-@router.post("/batch-delete")
+@router.post(
+    "/batch-delete",
+    dependencies=[
+        Depends(require_agent_manage_audited("skills.batch_delete")),
+    ],
+)
 async def batch_delete_skills(
     request: Request,
     skills: list[str],
@@ -2060,7 +2406,10 @@ async def batch_delete_skills(
     return {"results": results}
 
 
-@router.post("/pool/batch-delete")
+@router.post(
+    "/pool/batch-delete",
+    dependencies=[Depends(require_perm(PERM_ADMIN_PLATFORM))],
+)
 async def batch_delete_pool_skills(
     skills: list[str],
 ) -> dict[str, Any]:
@@ -2094,7 +2443,12 @@ async def batch_delete_pool_skills(
     return {"results": results}
 
 
-@router.post("/batch-disable")
+@router.post(
+    "/batch-disable",
+    dependencies=[
+        Depends(require_agent_manage_audited("skills.batch_disable")),
+    ],
+)
 async def batch_disable_skills(
     request: Request,
     skills: list[str],
@@ -2110,7 +2464,12 @@ async def batch_disable_skills(
     return {"results": results}
 
 
-@router.post("/batch-enable")
+@router.post(
+    "/batch-enable",
+    dependencies=[
+        Depends(require_agent_manage_audited("skills.batch_enable")),
+    ],
+)
 async def batch_enable_skills(
     request: Request,
     skills: list[str],
@@ -2145,7 +2504,10 @@ async def batch_enable_skills(
     return {"results": results}
 
 
-@router.post("/{skill_name}/disable")
+@router.post(
+    "/{skill_name}/disable",
+    dependencies=[Depends(require_agent_manage_audited("skills.disable"))],
+)
 async def disable_skill(
     request: Request,
     skill_name: str,
@@ -2161,7 +2523,10 @@ async def disable_skill(
     return {"disabled": True, **result}
 
 
-@router.post("/{skill_name}/enable")
+@router.post(
+    "/{skill_name}/enable",
+    dependencies=[Depends(require_agent_manage_audited("skills.enable"))],
+)
 async def enable_skill(
     request: Request,
     skill_name: str,
@@ -2193,7 +2558,10 @@ async def get_skill(request: Request, skill_name: str) -> SkillDetail:
     return detail
 
 
-@router.delete("/{skill_name}")
+@router.delete(
+    "/{skill_name}",
+    dependencies=[Depends(require_agent_manage_audited("skills.delete"))],
+)
 async def delete_skill(
     request: Request,
     skill_name: str,
@@ -2226,7 +2594,10 @@ async def load_skill_file(
     return {"content": content}
 
 
-@router.put("/save")
+@router.put(
+    "/save",
+    dependencies=[Depends(require_agent_manage_audited("skills.save"))],
+)
 async def save_workspace_skill(
     request: Request,
     body: SaveSkillRequest,
@@ -2256,7 +2627,10 @@ async def save_workspace_skill(
     return result
 
 
-@router.put("/{skill_name}/channels")
+@router.put(
+    "/{skill_name}/channels",
+    dependencies=[Depends(require_agent_manage_audited("skills.channels"))],
+)
 async def update_skill_channels_endpoint(
     request: Request,
     skill_name: str,
@@ -2276,7 +2650,10 @@ async def update_skill_channels_endpoint(
     return {"updated": True, "channels": channels}
 
 
-@router.put("/{skill_name}/tags")
+@router.put(
+    "/{skill_name}/tags",
+    dependencies=[Depends(require_agent_manage_audited("skills.tags"))],
+)
 async def update_skill_tags(
     request: Request,
     skill_name: str,
@@ -2309,7 +2686,12 @@ async def get_skill_config_endpoint(
     return {"config": entry.get("config", {})}
 
 
-@router.put("/{skill_name}/config")
+@router.put(
+    "/{skill_name}/config",
+    dependencies=[
+        Depends(require_agent_manage_audited("skills.config.write")),
+    ],
+)
 async def update_skill_config_endpoint(
     request: Request,
     skill_name: str,
@@ -2335,7 +2717,12 @@ async def update_skill_config_endpoint(
     return {"updated": True}
 
 
-@router.delete("/{skill_name}/config")
+@router.delete(
+    "/{skill_name}/config",
+    dependencies=[
+        Depends(require_agent_manage_audited("skills.config.delete")),
+    ],
+)
 async def delete_skill_config_endpoint(
     request: Request,
     skill_name: str,

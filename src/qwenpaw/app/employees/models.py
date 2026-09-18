@@ -97,6 +97,21 @@ VISIBILITIES = (
 
 
 # ---------------------------------------------------------------------------
+# 可配置范围（manage_visibility）常量——后台配置域授权维
+# ---------------------------------------------------------------------------
+
+#: 仅创建者：默认值。创建者 + admin + team_lead 可配置，最严出厂语义。
+MANAGE_VISIBILITY_PRIVATE = "private"
+#: 部门可配：归属部门 ∪ 管理授权部门成员（+ 授权用户）可配置。
+MANAGE_VISIBILITY_DEPARTMENT = "department"
+
+MANAGE_VISIBILITIES = (
+    MANAGE_VISIBILITY_PRIVATE,
+    MANAGE_VISIBILITY_DEPARTMENT,
+)
+
+
+# ---------------------------------------------------------------------------
 # 治理记录与写入载荷
 # ---------------------------------------------------------------------------
 
@@ -110,6 +125,10 @@ class GovernanceRecord(BaseModel):
     department_id: Optional[str] = None
     visibility: str = VISIBILITY_ORG
     granted_departments: List[str] = Field(default_factory=list)
+    #: 后台配置域授权维：谁可以重新配置该员工（S1 共享配置写权限）
+    manage_visibility: str = MANAGE_VISIBILITY_PRIVATE
+    manage_granted_departments: List[str] = Field(default_factory=list)
+    manage_granted_users: List[str] = Field(default_factory=list)
     owner_id: Optional[str] = None
     updated_by: str = ""
     created_at: Optional[datetime] = None
@@ -121,6 +140,14 @@ class GovernanceRecord(BaseModel):
         """可见性白名单校验（非法值直接 422，不落库）。"""
         if value not in VISIBILITIES:
             raise ValueError("可见范围只能是 org / department / private")
+        return value
+
+    @field_validator("manage_visibility")
+    @classmethod
+    def _check_manage_visibility(cls, value: str) -> str:
+        """可配置范围白名单校验（不支持 org：全员可配用 team_lead 角色表达）。"""
+        if value not in MANAGE_VISIBILITIES:
+            raise ValueError("可配置范围只能是 private / department")
         return value
 
     @field_validator("entity_kind")
@@ -138,6 +165,9 @@ class GovernanceUpdateBody(BaseModel):
     department_id: Optional[str] = None
     visibility: Optional[str] = None
     granted_departments: Optional[List[str]] = None
+    manage_visibility: Optional[str] = None
+    manage_granted_departments: Optional[List[str]] = None
+    manage_granted_users: Optional[List[str]] = None
 
     @field_validator("visibility")
     @classmethod
@@ -145,6 +175,14 @@ class GovernanceUpdateBody(BaseModel):
         """显式传值时才校验（不传表示保持原可见性）。"""
         if value is not None and value not in VISIBILITIES:
             raise ValueError("可见范围只能是 org / department / private")
+        return value
+
+    @field_validator("manage_visibility")
+    @classmethod
+    def _check_manage_visibility(cls, value: Optional[str]) -> Optional[str]:
+        """可配置范围显式传值时才校验（不传保持原值）。"""
+        if value is not None and value not in MANAGE_VISIBILITIES:
+            raise ValueError("可配置范围只能是 private / department")
         return value
 
 
@@ -155,6 +193,9 @@ class GovernanceBatchUpdateBody(BaseModel):
     department_id: Optional[str] = None
     visibility: Optional[str] = None
     granted_departments: Optional[List[str]] = None
+    manage_visibility: Optional[str] = None
+    manage_granted_departments: Optional[List[str]] = None
+    manage_granted_users: Optional[List[str]] = None
 
     @field_validator("visibility")
     @classmethod
@@ -162,6 +203,14 @@ class GovernanceBatchUpdateBody(BaseModel):
         """批量写入同样只在显式传值时校验可见性。"""
         if value is not None and value not in VISIBILITIES:
             raise ValueError("可见范围只能是 org / department / private")
+        return value
+
+    @field_validator("manage_visibility")
+    @classmethod
+    def _check_manage_visibility(cls, value: Optional[str]) -> Optional[str]:
+        """批量写入同样只在显式传值时校验可配置范围。"""
+        if value is not None and value not in MANAGE_VISIBILITIES:
+            raise ValueError("可配置范围只能是 private / department")
         return value
 
     @field_validator("agent_ids")
@@ -225,6 +274,13 @@ class DigitalEmployeeVO(BaseModel):
     governed: bool = False
     granted_departments: List[str] = Field(default_factory=list)
     granted_department_names: List[str] = Field(default_factory=list)
+    #: 后台配置域授权（可配置范围）——治理编辑 UI 回填当前管理授权配置。
+    #: 与使用维（visibility/granted_*）对称：manage_visibility 仅 private/department，
+    #: manage_granted_users 兜底跨部门显式授权（不支持 org，全员可配用 team_lead 角色）。
+    manage_visibility: str = MANAGE_VISIBILITY_PRIVATE
+    manage_granted_departments: List[str] = Field(default_factory=list)
+    manage_granted_department_names: List[str] = Field(default_factory=list)
+    manage_granted_users: List[str] = Field(default_factory=list)
     member_count: int = 0
     members: List[TeamMemberVO] = Field(default_factory=list)
     usage_count: int = 0
@@ -236,6 +292,9 @@ class DigitalEmployeeVO(BaseModel):
     backend_capabilities: Dict[str, Any] = Field(default_factory=dict)
     owner_id: Optional[str] = None
     usable: bool = True
+    #: 后台配置域判定：当前 viewer 是否可配置该员工（S1 写权限）。
+    #: 注册表按 viewer 一次快照批量判定（manage grants + 角色 + owner 兜底）。
+    manageable: bool = False
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -251,6 +310,9 @@ __all__ = [
     "GovernanceBatchUpdateBody",
     "GovernanceRecord",
     "GovernanceUpdateBody",
+    "MANAGE_VISIBILITIES",
+    "MANAGE_VISIBILITY_DEPARTMENT",
+    "MANAGE_VISIBILITY_PRIVATE",
     "TeamMemberVO",
     "VISIBILITIES",
     "VISIBILITY_DEPARTMENT",

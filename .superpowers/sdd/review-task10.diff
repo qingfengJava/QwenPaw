@@ -1,0 +1,685 @@
+diff --git a/src/qwenpaw/app/kb/tool.py b/src/qwenpaw/app/kb/tool.py
+index cdc0a63b..90184eb5 100644
+--- a/src/qwenpaw/app/kb/tool.py
++++ b/src/qwenpaw/app/kb/tool.py
+@@ -1,10 +1,11 @@
+ # -*- coding: utf-8 -*-
+-"""``kb_search`` agent tool (M4-5): retrieval over accessible bases.
++"""``kb_search`` / ``kb_read`` agent tools: retrieval over bound bases.
+ 
+-The tool resolves the caller from the trusted-identity ContextVar, lists
+-only the bases that identity may read, and returns the fused top hits.
+-It is registered by :class:`AgentBuilder` only when at least one
+-knowledge base exists, so deployments without KBs see no prompt change.
++T10-S0 绑定收敛（spec §6 L171 + §8 决策点1 L240「绑定即授权」）：agent
++工具链的检索可见域 = ``agent_kb_bindings(agent_id)``，**不叠加**对话人
++ACL（严格模式一期不开启）。工具由 :class:`AgentBuilder` 仅在 agent 有
++绑定库时注册（见 builder._collect_kb_tools），无绑定则 prompt 零变化。
++人侧 HTTP ``/api/kb/search`` 不受影响，始终走既有 ``can_access`` ACL。
+ """
+ 
+ from __future__ import annotations
+@@ -31,7 +32,12 @@ def _tool_chunk(text: str, *, ok: bool = True) -> ToolChunk:
+ 
+ 
+ def _current_identity() -> tuple[str, dict]:
+-    """Trusted caller identity + RBAC context for ACL filtering."""
++    """Trusted caller identity + RBAC context.
++
++    T10-S0 起 agent 工具链改走绑定收敛（绑定即授权），本函数**一期不再
++    用于 scope**；保留供未来「严格模式」（agent 检索再 ∩ 对话人可见库，
++    spec §8 L243 预留）复用其 RBAC 解析，勿删。
++    """
+     try:
+         from ..agent_context import get_current_user_id
+         from ..rbac.deps import _resolve_flat_role
+@@ -51,8 +57,13 @@ def _current_identity() -> tuple[str, dict]:
+ 
+ def make_kb_search_tool(
+     service: Optional[KbService] = None,
++    agent_id: str = "",
+ ) -> Callable[..., Any]:
+-    """Build the ``kb_search`` tool bound to a KB service."""
++    """Build the ``kb_search`` tool bound to a KB service + agent.
++
++    T10-S0 绑定收敛：检索可见域 = ``list_bound_space_ids(agent_id)``，
++    绑定即授权（spec §8 决策点1），不叠加对话人 ACL。
++    """
+     svc = service or get_kb_service()
+ 
+     async def kb_search(
+@@ -60,20 +71,20 @@ def make_kb_search_tool(
+         kb_id: str = "",
+         max_results: int = 5,
+     ) -> ToolChunk:
+-        """Search enterprise knowledge bases for relevant document snippets.
++        """Search the knowledge bases bound to you for relevant snippets.
+ 
+         Use this tool to answer questions about shared company/team
+         documents: policies, runbooks, product specs, meeting notes that
+-        were ingested into a knowledge base. Only bases you have access
+-        to are searched. For the user's personal long-term memory, use
+-        ``memory_search`` instead.
++        were ingested into a knowledge base. Only knowledge bases bound
++        to you are searched. For the user's personal long-term memory,
++        use ``memory_search`` instead.
+ 
+         Args:
+             query (`str`):
+                 The search query describing what to find.
+             kb_id (`str`, optional):
+-                Restrict the search to one knowledge base; empty searches
+-                every base the caller can access.
++                Restrict the search to one of your bound knowledge bases;
++                empty searches every base bound to you.
+             max_results (`int`, optional):
+                 Maximum snippets to return. Defaults to 5.
+ 
+@@ -85,24 +96,31 @@ def make_kb_search_tool(
+         if not query:
+             return _tool_chunk("Error: query cannot be empty", ok=False)
+ 
+-        username, access = _current_identity()
++        # S0 权限收敛（先过滤后检索，杜绝越权召回，spec §6 L171-172）：
++        # 候选 space_ids = agent 绑定集 ∩ kb_id；每次调用重解析绑定，
++        # 绑定撤销下次调用即生效（不用 build 期快照）。
++        from .bindings import list_bound_space_ids
++
++        bound_ids = set(await list_bound_space_ids(agent_id))
+         if kb_id:
+-            kb = svc.get_kb(kb_id)
+-            if kb is None:
++            # 未绑定或不存在合并 not-found，不泄露库存在性/绑定态（R2）
++            if kb_id not in bound_ids:
+                 return _tool_chunk(
+                     f"Error: knowledge base '{kb_id}' not found",
+                     ok=False,
+                 )
+-            if not svc.can_access(kb, username, **access):
++            kb = svc.get_kb(kb_id)
++            if kb is None:
+                 return _tool_chunk(
+-                    "Error: you do not have access to this knowledge base",
++                    f"Error: knowledge base '{kb_id}' not found",
+                     ok=False,
+                 )
+             kbs = [kb]
+         else:
+-            kbs = svc.accessible_kbs(username, **access)
++            # 绑定集 ∩ 现存库（孤绑定库已删自然过滤）
++            kbs = [kb for kb in svc.list_kbs() if kb.id in bound_ids]
+         if not kbs:
+-            return _tool_chunk("(no accessible knowledge bases)")
++            return _tool_chunk("(no bound knowledge bases)")
+ 
+         cap = max(1, min(int(max_results or 5), 20))
+         hits: list[tuple[Any, Any, float]] = []
+@@ -129,12 +147,13 @@ def make_kb_search_tool(
+ 
+ def make_kb_read_tool(
+     service: Optional[KbService] = None,
++    agent_id: str = "",
+ ) -> Callable[..., Any]:
+     """Build the ``kb_read`` tool: fetch one document's full Markdown.
+ 
+     仿只读契约（spec §7.4）：``kb_search`` 命中片段不够时，Agent 用
+-    doc_id 拉权威全文，支撑渐进式检索。ACL 与 ``kb_search`` 人侧一致
+-    （解析文档所属库后 ``can_access``）；完整绑定 S0 收敛归 T10。
++    doc_id 拉权威全文，支撑渐进式检索。T10-S0 绑定收敛（spec §8 决策点1）：
++    doc 所属库必须 ∈ agent 绑定集才可读，未绑定/不存在合并 not-found。
+     """
+     svc = service or get_kb_service()
+ 
+@@ -143,7 +162,7 @@ def make_kb_read_tool(
+ 
+         Use this after ``kb_search`` when a snippet is not enough and you
+         need the complete authoritative document. Only documents in bases
+-        you can access are readable.
++        bound to you are readable.
+ 
+         Args:
+             doc_id (`str`):
+@@ -165,11 +184,14 @@ def make_kb_read_tool(
+                 ok=False,
+             )
+ 
+-        username, access = _current_identity()
+-        kb = svc.get_kb(meta.kb_id)
+-        if kb is None or not svc.can_access(kb, username, **access):
++        # S0 绑定收敛：doc 所属库 ∈ agent 绑定集才可读（绑定即授权）；
++        # 未绑定视同不可见，合并 not-found，不泄露存在性/绑定态。
++        from .bindings import list_bound_space_ids
++
++        bound_ids = set(await list_bound_space_ids(agent_id))
++        if meta.kb_id not in bound_ids:
+             return _tool_chunk(
+-                "Error: you do not have access to this document",
++                f"Error: document '{doc_id}' not found",
+                 ok=False,
+             )
+ 
+@@ -179,7 +201,9 @@ def make_kb_read_tool(
+                 f"Error: document '{doc_id}' not found",
+                 ok=False,
+             )
++        kb = svc.get_kb(meta.kb_id)
++        kb_name = kb.name if kb is not None else meta.kb_id
+         title = meta.title or doc_id
+-        return _tool_chunk(f"===== [{kb.name}] {title} =====\n{content}")
++        return _tool_chunk(f"===== [{kb_name}] {title} =====\n{content}")
+ 
+     return kb_read
+diff --git a/src/qwenpaw/runtime/builder.py b/src/qwenpaw/runtime/builder.py
+index fb961fa6..7a64c30f 100644
+--- a/src/qwenpaw/runtime/builder.py
++++ b/src/qwenpaw/runtime/builder.py
+@@ -1036,7 +1036,8 @@ class AgentBuilder:
+         从 M4-5「任意库存在即注册」改为「Agent 有绑定库才注册并注入目录」
+         （spec §7 决策点 2）：查 ``list_bound_space_ids(agent_id)``，非空才
+         注册两工具，并渲染 ``<knowledge-bases>`` 目录块供 system prompt 注入；
+-        空绑定返回 ``([], "")``——不注册、不注入，prompt 零变化。
++        空绑定或孤绑定（绑定库全删）返回 ``([], "")``——不注册、不注入，
++        prompt 零变化。
+ 
+         Returns:
+             ``(tools, catalog)``：tools 为经 ``_wrap_tool`` 包装的工具列表，
+@@ -1059,17 +1060,23 @@ class AgentBuilder:
+             svc = get_kb_service()
+             bound = set(bound_ids)
+             spaces = [kb for kb in svc.list_kbs() if kb.id in bound]
++            # P3-1 孤绑定门控（T10-S0）：绑定库全被删（解析后 spaces 空）
++            # → 不注册不注入，避免注册了工具却无库可查；按 spaces 门控而非
++            # raw bound_ids（task-10-brief R6）。
++            if not spaces:
++                return [], ""
+             catalog = render_kb_catalog(spaces)
+ 
++            # S0 绑定收敛：构造期注入 agent_id，运行期每次调用重解析绑定
+             tools = [
+                 AgentBuilder._wrap_tool(
+-                    make_kb_search_tool(),
++                    make_kb_search_tool(svc, agent_id),
+                     agent_id,
+                     request_context,
+                     governor,
+                 ),
+                 AgentBuilder._wrap_tool(
+-                    make_kb_read_tool(),
++                    make_kb_read_tool(svc, agent_id),
+                     agent_id,
+                     request_context,
+                     governor,
+diff --git a/tests/unit/app/kb/test_kb.py b/tests/unit/app/kb/test_kb.py
+index a4d48b9b..455b5225 100644
+--- a/tests/unit/app/kb/test_kb.py
++++ b/tests/unit/app/kb/test_kb.py
+@@ -201,65 +201,5 @@ def test_ingest_into_missing_kb_rejected(service: KbService) -> None:
+ 
+ 
+ # ---------------------------------------------------------------------------
+-# kb_search tool
++# kb_search tool 的绑定收敛用例已迁至 test_kb_search_tool.py（T10-S0）
+ # ---------------------------------------------------------------------------
+-
+-
+-def _hit_text(chunk) -> str:
+-    block = chunk.content[0]
+-    if isinstance(block, dict):
+-        return block["text"]
+-    return getattr(block, "text", "")
+-
+-
+-async def test_kb_search_tool_acl(
+-    service: KbService,
+-    monkeypatch: pytest.MonkeyPatch,
+-) -> None:
+-    from qwenpaw.app.kb.tool import make_kb_search_tool
+-
+-    mine = service.create_kb("mine", scope=SCOPE_PERSONAL, owner_id="alice")
+-    service.ingest_text(mine.id, "Alice's private deployment notes")
+-    other = service.create_kb("other", scope=SCOPE_PERSONAL, owner_id="bob")
+-    service.ingest_text(other.id, "Bob's private runbook")
+-
+-    import qwenpaw.app.kb.tool as tool_module
+-
+-    monkeypatch.setattr(
+-        tool_module,
+-        "_current_identity",
+-        lambda: (
+-            "alice",
+-            {"flat_role": "employee", "user_roles": [], "user_teams": []},
+-        ),
+-    )
+-    tool = make_kb_search_tool(service)
+-    result = await tool("deployment notes")
+-    text = _hit_text(result)
+-    assert "Alice" in text
+-    assert "Bob" not in text
+-
+-    # Searching an inaccessible kb by id is refused.
+-    denied = await tool("runbook", kb_id=other.id)
+-    assert "do not have access" in _hit_text(denied)
+-
+-    # Unknown kb id errors out.
+-    missing = await tool("x", kb_id="kb_nope")
+-    assert "not found" in _hit_text(missing)
+-
+-
+-async def test_kb_search_tool_no_bases(
+-    service: KbService,
+-    monkeypatch: pytest.MonkeyPatch,
+-) -> None:
+-    from qwenpaw.app.kb.tool import make_kb_search_tool
+-    import qwenpaw.app.kb.tool as tool_module
+-
+-    monkeypatch.setattr(
+-        tool_module,
+-        "_current_identity",
+-        lambda: ("alice", {}),
+-    )
+-    tool = make_kb_search_tool(service)
+-    result = await tool("anything")
+-    assert "no accessible knowledge bases" in _hit_text(result)
+diff --git a/tests/unit/app/kb/test_kb_search_tool.py b/tests/unit/app/kb/test_kb_search_tool.py
+new file mode 100644
+index 00000000..b5ce18c8
+--- /dev/null
++++ b/tests/unit/app/kb/test_kb_search_tool.py
+@@ -0,0 +1,190 @@
++# -*- coding: utf-8 -*-
++"""T10-S0: ``kb_search`` 绑定收敛单测（绑定即授权，spec §8 决策点1）。
++
++覆盖裁定基准 task-10-brief.md：
++- AC1 越权查不到 + R3 S0 先于 S1（spy 证明 ``svc.search`` 从未以未绑定
++  kb_id 被调用 → 先过滤后检索，杜绝越权召回）；
++- AC2 未指定 kb_id 时多绑定库融合按分排序；
++- R2 kb_id ∩ 绑定（命中 / 存在但未绑定 / 不存在，后两者合并 not-found，
++  不泄露库存在性与绑定态）；
++- 空绑定 → 无绑定库提示（不报错、不泄露）。
++
++绑定经 monkeypatch ``bindings.list_bound_space_ids`` 注入（隔离 bindings
++存储，只验工具收敛逻辑，与 test_kb_wiring 的 builder 门控测同约定）；
++json 后端由 autouse 钉桩（T8 教训：防环境变量泄漏误走 pg）。
++
++@author qingfeng
++"""
++
++# pylint: disable=protected-access
++from __future__ import annotations
++
++from pathlib import Path
++
++import pytest
++
++from qwenpaw.app.kb.models import SCOPE_ENTERPRISE
++from qwenpaw.app.kb.service import KbService
++from qwenpaw.db import write_gateway
++
++pytestmark = pytest.mark.unit
++
++
++@pytest.fixture(autouse=True)
++def _json_backend(monkeypatch: pytest.MonkeyPatch) -> None:
++    """钉住 json 后端（本文件测绑定收敛/融合行为，防环境泄漏误走 pg）。"""
++    monkeypatch.setattr(
++        write_gateway,
++        "resolve_storage_backend",
++        lambda: "json",
++    )
++
++
++@pytest.fixture
++def service(tmp_path: Path) -> KbService:
++    return KbService(
++        registry_path=tmp_path / "kb_registry.json",
++        data_dir=tmp_path / "kb_data",
++    )
++
++
++def _hit_text(chunk) -> str:
++    block = chunk.content[0]
++    if isinstance(block, dict):
++        return block["text"]
++    return getattr(block, "text", "")
++
++
++def _bind(monkeypatch: pytest.MonkeyPatch, space_ids) -> None:
++    """把 agent 绑定集钉成 *space_ids*（隔离 bindings 存储）。"""
++    import qwenpaw.app.kb.bindings as bindings_mod
++
++    async def _bound(agent_id: str):
++        return list(space_ids)
++
++    monkeypatch.setattr(bindings_mod, "list_bound_space_ids", _bound)
++
++
++def _spy_search(monkeypatch: pytest.MonkeyPatch, svc: KbService) -> list:
++    """记录 ``svc.search`` 被调用的 kb_id，证明 S0 收敛先于 S1 引擎查询。"""
++    called: list = []
++    orig = svc.search
++
++    def _spy(kb_id, query, **kwargs):
++        called.append(kb_id)
++        return orig(kb_id, query, **kwargs)
++
++    monkeypatch.setattr(svc, "search", _spy)
++    return called
++
++
++async def test_unbound_kb_never_searched_s0_before_s1(
++    service: KbService,
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    """AC1+R3：绑定 A，A/B 均有可命中内容；B 文档绝不出现，且引擎只被以 A 调用。"""
++    from qwenpaw.app.kb.tool import make_kb_search_tool
++
++    a = service.create_kb("甲库", scope=SCOPE_ENTERPRISE)
++    b = service.create_kb("乙库", scope=SCOPE_ENTERPRISE)
++    service.ingest_text(a.id, "zeta token 甲库部署手册", title="甲文档")
++    service.ingest_text(b.id, "zeta token 乙库机密runbook", title="乙文档")
++
++    _bind(monkeypatch, [a.id])
++    called = _spy_search(monkeypatch, service)
++
++    tool = make_kb_search_tool(service, "agent_x")
++    text = _hit_text(await tool("zeta token"))
++
++    # 绑定库 A 命中出现在结果
++    assert "甲库" in text
++    # 未绑定库 B 的正文/标题绝不泄露
++    assert "乙库机密runbook" not in text
++    assert "乙文档" not in text
++    # S0 收敛先于 S1：引擎从未以未绑定库 B.id 被调用
++    assert b.id not in called
++    assert a.id in called
++
++
++async def test_multi_bound_fusion_sorted_by_score(
++    service: KbService,
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    """AC2：绑定 A+B，不指定 kb_id → 跨库命中融合，两库溯源行都出现。"""
++    from qwenpaw.app.kb.tool import make_kb_search_tool
++
++    a = service.create_kb("甲库", scope=SCOPE_ENTERPRISE)
++    b = service.create_kb("乙库", scope=SCOPE_ENTERPRISE)
++    service.ingest_text(a.id, "alpha bravo charlie", title="A文档")
++    service.ingest_text(b.id, "alpha bravo charlie", title="B文档")
++
++    _bind(monkeypatch, [a.id, b.id])
++    tool = make_kb_search_tool(service, "agent_x")
++    text = _hit_text(await tool("alpha bravo charlie"))
++
++    assert "甲库" in text
++    assert "乙库" in text
++
++
++async def test_kb_id_in_bound_hits(
++    service: KbService,
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    """R2：指定的 kb_id ∈ 绑定 → 正常检索该库。"""
++    from qwenpaw.app.kb.tool import make_kb_search_tool
++
++    a = service.create_kb("甲库", scope=SCOPE_ENTERPRISE)
++    service.ingest_text(a.id, "deployment runbook steps", title="甲文档")
++    _bind(monkeypatch, [a.id])
++
++    tool = make_kb_search_tool(service, "agent_x")
++    text = _hit_text(await tool("deployment runbook", kb_id=a.id))
++    assert "甲库" in text
++
++
++async def test_kb_id_not_bound_merged_not_found(
++    service: KbService,
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    """R2：kb_id 存在但未绑定 → 合并 not-found，不泄露正文/存在性。"""
++    from qwenpaw.app.kb.tool import make_kb_search_tool
++
++    a = service.create_kb("甲库", scope=SCOPE_ENTERPRISE)
++    b = service.create_kb("乙库", scope=SCOPE_ENTERPRISE)
++    service.ingest_text(b.id, "secret runbook payload", title="乙文档")
++    _bind(monkeypatch, [a.id])
++
++    tool = make_kb_search_tool(service, "agent_x")
++    text = _hit_text(await tool("secret runbook", kb_id=b.id))
++    assert "not found" in text
++    assert "secret runbook payload" not in text
++
++
++async def test_kb_id_nonexistent_merged_not_found(
++    service: KbService,
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    """R2：kb_id 不存在 → 与未绑定同一 not-found 文案（合并，不区分）。"""
++    from qwenpaw.app.kb.tool import make_kb_search_tool
++
++    a = service.create_kb("甲库", scope=SCOPE_ENTERPRISE)
++    _bind(monkeypatch, [a.id])
++
++    tool = make_kb_search_tool(service, "agent_x")
++    text = _hit_text(await tool("x", kb_id="kb_ghost"))
++    assert "not found" in text
++
++
++async def test_no_binding_reports_no_bound_bases(
++    service: KbService,
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    """空绑定：工具返回无绑定库提示（防御性；正常路径 builder 已不注册）。"""
++    from qwenpaw.app.kb.tool import make_kb_search_tool
++
++    service.create_kb("甲库", scope=SCOPE_ENTERPRISE)
++    _bind(monkeypatch, [])
++
++    tool = make_kb_search_tool(service, "agent_x")
++    text = _hit_text(await tool("anything"))
++    assert "no bound knowledge bases" in text
+diff --git a/tests/unit/app/kb/test_kb_wiring.py b/tests/unit/app/kb/test_kb_wiring.py
+index 26e1f01a..a5c21f19 100644
+--- a/tests/unit/app/kb/test_kb_wiring.py
++++ b/tests/unit/app/kb/test_kb_wiring.py
+@@ -2,8 +2,8 @@
+ """T9: Agent 接入接线单测（kb_read 工具 + read_document 门面 + builder 注册门控）。
+ 
+ 覆盖裁定基准 task-9-brief.md：
+-- AC3 kb_read：pg 态返回 content_md 权威全文（见 test_service_facade.py 的 pg 分支）、
+-  json 态从切片按 seq 重建全文、doc 不存在返 not-found、无权访问返 access-denied；
++- kb_read（T10-S0 绑定收敛）：pg 态返回 content_md 权威全文（见 test_service_facade.py
++  的 pg 分支）、json 态从切片按 seq 重建全文、doc 不存在或所属库未绑定均合并 not-found；
+ - read_document 门面 json 分支（切片重建 / 未命中 None）；
+ - AC2 builder 注册门控（无绑定不注册不注入 / 有绑定注册 kb_search+kb_read 且注入目录）
+   ——该组待 builder.py 接线后追加（冲突协议：builder.py 最后动）。
+@@ -21,7 +21,7 @@ from pathlib import Path
+ 
+ import pytest
+ 
+-from qwenpaw.app.kb.models import SCOPE_ENTERPRISE, SCOPE_PERSONAL
++from qwenpaw.app.kb.models import SCOPE_ENTERPRISE
+ from qwenpaw.app.kb.service import KbService
+ from qwenpaw.db import write_gateway
+ 
+@@ -91,7 +91,7 @@ def test_get_document_meta_json(service: KbService) -> None:
+ 
+ 
+ # ---------------------------------------------------------------------------
+-# kb_read 工具（json 后端；ACL 与现 kb_search 人侧一致）
++# kb_read 工具（json 后端；T10-S0 绑定收敛：doc 所属库 ∈ 绑定才可读）
+ # ---------------------------------------------------------------------------
+ 
+ 
+@@ -99,18 +99,18 @@ async def test_kb_read_tool_returns_content(
+     service: KbService,
+     monkeypatch: pytest.MonkeyPatch,
+ ) -> None:
+-    """kb_read 命中：返回带标题头的权威全文。"""
++    """kb_read 命中：doc 所属库 ∈ 绑定 → 返回带标题头的权威全文。"""
+     from qwenpaw.app.kb.tool import make_kb_read_tool
+-    import qwenpaw.app.kb.tool as tool_module
++    import qwenpaw.app.kb.bindings as bindings_mod
+ 
+     kb = service.create_kb(" readable ", scope=SCOPE_ENTERPRISE)
+     doc = service.ingest_text(kb.id, "甲状腺剂量说明", title="甲减指南")
+-    monkeypatch.setattr(
+-        tool_module,
+-        "_current_identity",
+-        lambda: ("alice", {"flat_role": "employee"}),
+-    )
+-    tool = make_kb_read_tool(service)
++
++    async def _bound(agent_id: str):
++        return [kb.id]
++
++    monkeypatch.setattr(bindings_mod, "list_bound_space_ids", _bound)
++    tool = make_kb_read_tool(service, "agent_x")
+     text = _hit_text(await tool(doc.doc_id))
+     assert "甲减指南" in text
+     assert "甲状腺剂量说明" in text
+@@ -120,37 +120,41 @@ async def test_kb_read_tool_not_found(
+     service: KbService,
+     monkeypatch: pytest.MonkeyPatch,
+ ) -> None:
+-    """kb_read 未命中：返回 not found 错误块。"""
++    """kb_read 未命中：doc 不存在 → not found 错误块。"""
+     from qwenpaw.app.kb.tool import make_kb_read_tool
+-    import qwenpaw.app.kb.tool as tool_module
++    import qwenpaw.app.kb.bindings as bindings_mod
+ 
+-    monkeypatch.setattr(
+-        tool_module, "_current_identity", lambda: ("alice", {})
+-    )
+-    tool = make_kb_read_tool(service)
++    kb = service.create_kb("lib", scope=SCOPE_ENTERPRISE)
++
++    async def _bound(agent_id: str):
++        return [kb.id]
++
++    monkeypatch.setattr(bindings_mod, "list_bound_space_ids", _bound)
++    tool = make_kb_read_tool(service, "agent_x")
+     text = _hit_text(await tool("doc_ghost"))
+     assert "not found" in text
+ 
+ 
+-async def test_kb_read_tool_access_denied(
++async def test_kb_read_tool_unbound_merged_not_found(
+     service: KbService,
+     monkeypatch: pytest.MonkeyPatch,
+ ) -> None:
+-    """kb_read 越权：他人 personal 库文档返回 access-denied，不泄正文。"""
++    """kb_read 越权（S0 收敛）：doc 所属库未绑定 → 合并 not-found，不泄正文。"""
+     from qwenpaw.app.kb.tool import make_kb_read_tool
+-    import qwenpaw.app.kb.tool as tool_module
++    import qwenpaw.app.kb.bindings as bindings_mod
+ 
+-    other = service.create_kb("other", scope=SCOPE_PERSONAL, owner_id="bob")
+-    doc = service.ingest_text(other.id, "Bob 私密runbook", title="私密")
+-    monkeypatch.setattr(
+-        tool_module,
+-        "_current_identity",
+-        lambda: ("alice", {"flat_role": "employee"}),
+-    )
+-    tool = make_kb_read_tool(service)
++    bound_kb = service.create_kb("bound", scope=SCOPE_ENTERPRISE)
++    other = service.create_kb("other", scope=SCOPE_ENTERPRISE)
++    doc = service.ingest_text(other.id, "私密runbook正文", title="私密")
++
++    async def _bound(agent_id: str):
++        return [bound_kb.id]
++
++    monkeypatch.setattr(bindings_mod, "list_bound_space_ids", _bound)
++    tool = make_kb_read_tool(service, "agent_x")
+     text = _hit_text(await tool(doc.doc_id))
+-    assert "do not have access" in text
+-    assert "私密runbook" not in text
++    assert "not found" in text
++    assert "私密runbook正文" not in text
+ 
+ 
+ # ---------------------------------------------------------------------------
+@@ -210,6 +214,37 @@ async def test_collect_kb_tools_bound_registers_and_renders(
+     assert "未绑定库" not in catalog
+ 
+ 
++async def test_collect_kb_tools_orphan_binding_no_registration(
++    monkeypatch: pytest.MonkeyPatch,
++    tmp_path: Path,
++) -> None:
++    """AC3/P3-1：绑定库全被删（孤绑定）→ 不注册工具、目录空。
++
++    T9 按 raw bound_ids 门控（非空即注册），孤绑定时会注册工具但目录空；
++    T10-S0 改按解析后 spaces 门控，孤绑定直接不注册不注入。
++    """
++    from qwenpaw.runtime.builder import AgentBuilder
++    import qwenpaw.app.kb.bindings as bindings_mod
++    import qwenpaw.app.kb.service as service_mod
++
++    svc = KbService(
++        registry_path=tmp_path / "kb_registry.json",
++        data_dir=tmp_path / "kb_data",
++    )
++
++    # 绑定一个已不存在的 space_id（模拟库被删后的孤绑定）
++    async def _orphan(agent_id: str):
++        return ["kb_deleted_ghost"]
++
++    monkeypatch.setattr(bindings_mod, "list_bound_space_ids", _orphan)
++    monkeypatch.setattr(service_mod, "get_kb_service", lambda: svc)
++    monkeypatch.setattr(AgentBuilder, "_wrap_tool", lambda fn, *a, **k: fn)
++
++    tools, catalog = await AgentBuilder._collect_kb_tools("agent_x", {}, None)
++    assert tools == []
++    assert catalog == ""
++
++
+ def test_kb_catalog_contributor_injects_block() -> None:
+     """AC2：contributor 从 ctx.extras[kb_catalog] 取块注入 prompt。"""
+     from types import SimpleNamespace
+@@ -261,15 +296,10 @@ def test_read_document_multichunk_contains_all_paragraphs(
+ 
+ async def test_kb_read_tool_empty_doc_id(
+     service: KbService,
+-    monkeypatch: pytest.MonkeyPatch,
+ ) -> None:
+-    """P3-4：空/空白 doc_id 返回错误块（提前校验，不触存储）。"""
++    """P3-4：空/空白 doc_id 返回错误块（提前校验，不触存储/绑定）。"""
+     from qwenpaw.app.kb.tool import make_kb_read_tool
+-    import qwenpaw.app.kb.tool as tool_module
+ 
+-    monkeypatch.setattr(
+-        tool_module, "_current_identity", lambda: ("alice", {})
+-    )
+-    tool = make_kb_read_tool(service)
++    tool = make_kb_read_tool(service, "agent_x")
+     assert "cannot be empty" in _hit_text(await tool(""))
+     assert "cannot be empty" in _hit_text(await tool("   "))
+diff --git a/tests/unit/app/kb/test_service_facade.py b/tests/unit/app/kb/test_service_facade.py
+index 218145fe..504063ce 100644
+--- a/tests/unit/app/kb/test_service_facade.py
++++ b/tests/unit/app/kb/test_service_facade.py
+@@ -498,6 +498,25 @@ def test_dual_reads_from_json_primary(
+     assert [k.name for k in svc.list_kbs()] == ["JsonPrimary"]
+ 
+ 
++def test_dual_read_document_reconstructs_from_json(
++    svc: Any,
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    """P3-4余（T10-S0）：dual 后端 read_document 走 json primary 重建全文。
++
++    dual 读仍 json（spec §4.3）：read_document 的 pg 权威分支不触发，落
++    json 切片按 seq 重建；kb_read 工具链在 dual 下与 json 行为一致。
++    """
++    _set_backend(monkeypatch, "dual")
++    kb = svc.create_kb("DualRead", scope="enterprise")
++    doc = svc.ingest_text(kb.id, "第一段\n\n第二段", title="DualDoc")
++    assert doc is not None
++    text = svc.read_document(doc.doc_id)
++    assert text is not None
++    assert "第一段" in text
++    assert "第二段" in text
++
++
+ # ---------------------------------------------------------------------------
+ # 三态读一致性
+ # ---------------------------------------------------------------------------

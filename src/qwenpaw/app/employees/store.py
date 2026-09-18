@@ -19,6 +19,7 @@ from sqlalchemy import text
 from ..enterprise import current_tenant_id, require_enterprise_engine
 from .models import (
     EMPLOYEE_KIND_AGENT,
+    MANAGE_VISIBILITY_PRIVATE,
     VISIBILITY_ORG,
     GovernanceRecord,
 )
@@ -27,7 +28,8 @@ logger = logging.getLogger(__name__)
 
 _COLS = (
     "agent_id, entity_kind, entity_id, department_id, visibility, "
-    "granted_departments, owner_id, updated_by, created_at, updated_at"
+    "granted_departments, manage_visibility, manage_granted_departments, "
+    "manage_granted_users, owner_id, updated_by, created_at, updated_at"
 )
 
 
@@ -40,6 +42,11 @@ def _row_to_governance(row) -> GovernanceRecord:
         department_id=row.department_id,
         visibility=row.visibility or VISIBILITY_ORG,
         granted_departments=list(row.granted_departments or []),
+        manage_visibility=row.manage_visibility or MANAGE_VISIBILITY_PRIVATE,
+        manage_granted_departments=list(
+            row.manage_granted_departments or []
+        ),
+        manage_granted_users=list(row.manage_granted_users or []),
         owner_id=row.owner_id,
         updated_by=row.updated_by or "",
         created_at=row.created_at,
@@ -85,7 +92,8 @@ class EmployeeGovernanceStore:
 
         ``rows`` 每项键：``agent_id`` / ``entity_kind`` / ``entity_id`` /
         ``department_id`` / ``visibility`` / ``granted_departments`` /
-        ``owner_id`` / ``updated_by``。
+        ``manage_visibility`` / ``manage_granted_departments`` /
+        ``manage_granted_users`` / ``owner_id`` / ``updated_by``。
         """
         if not rows:
             return []
@@ -99,6 +107,15 @@ class EmployeeGovernanceStore:
                 "granted_departments": list(
                     row.get("granted_departments") or [],
                 ),
+                "manage_visibility": (
+                    row.get("manage_visibility") or MANAGE_VISIBILITY_PRIVATE
+                ),
+                "manage_granted_departments": list(
+                    row.get("manage_granted_departments") or [],
+                ),
+                "manage_granted_users": list(
+                    row.get("manage_granted_users") or [],
+                ),
                 "owner_id": row.get("owner_id"),
                 "updated_by": row.get("updated_by") or "",
             }
@@ -111,14 +128,18 @@ class EmployeeGovernanceStore:
                     "INSERT INTO employee_governance ("
                     "tenant_id, agent_id, entity_kind, entity_id, "
                     "department_id, visibility, granted_departments, "
-                    "owner_id, updated_by) "
+                    "manage_visibility, manage_granted_departments, "
+                    "manage_granted_users, owner_id, updated_by) "
                     "SELECT :tid, x.agent_id, x.entity_kind, x.entity_id, "
                     "x.department_id, x.visibility, x.granted_departments, "
-                    "x.owner_id, x.updated_by "
+                    "x.manage_visibility, x.manage_granted_departments, "
+                    "x.manage_granted_users, x.owner_id, x.updated_by "
                     "FROM jsonb_to_recordset(CAST(:rows AS JSONB)) AS x("
                     "agent_id text, entity_kind text, entity_id text, "
                     "department_id text, visibility text, "
-                    "granted_departments jsonb, owner_id text, "
+                    "granted_departments jsonb, manage_visibility text, "
+                    "manage_granted_departments jsonb, "
+                    "manage_granted_users jsonb, owner_id text, "
                     "updated_by text) "
                     "ON CONFLICT (tenant_id, agent_id) DO UPDATE SET "
                     "entity_kind = EXCLUDED.entity_kind, "
@@ -126,6 +147,10 @@ class EmployeeGovernanceStore:
                     "department_id = EXCLUDED.department_id, "
                     "visibility = EXCLUDED.visibility, "
                     "granted_departments = EXCLUDED.granted_departments, "
+                    "manage_visibility = EXCLUDED.manage_visibility, "
+                    "manage_granted_departments = "
+                    "EXCLUDED.manage_granted_departments, "
+                    "manage_granted_users = EXCLUDED.manage_granted_users, "
                     "owner_id = EXCLUDED.owner_id, "
                     "updated_by = EXCLUDED.updated_by, "
                     "updated_at = now() "
@@ -145,8 +170,37 @@ class EmployeeGovernanceStore:
         granted_departments: List[str],
         owner_id: Optional[str],
         updated_by: str,
+        manage_visibility: Optional[str] = None,
+        manage_granted_departments: Optional[List[str]] = None,
+        manage_granted_users: Optional[List[str]] = None,
     ) -> GovernanceRecord:
-        """写入（或覆盖）单个员工的治理行。"""
+        """写入（或覆盖）单个员工的治理行。
+
+        manage 三参为 ``None`` 时保持既有行原值（先读后写，单条路径
+        专用；批量路径请直接用 :meth:`batch_upsert` 传全量键）。
+        """
+        if (
+            manage_visibility is None
+            or manage_granted_departments is None
+            or manage_granted_users is None
+        ):
+            current = await self.get(agent_id)
+            if manage_visibility is None:
+                manage_visibility = (
+                    current.manage_visibility
+                    if current
+                    else MANAGE_VISIBILITY_PRIVATE
+                )
+            if manage_granted_departments is None:
+                manage_granted_departments = (
+                    list(current.manage_granted_departments)
+                    if current
+                    else []
+                )
+            if manage_granted_users is None:
+                manage_granted_users = (
+                    list(current.manage_granted_users) if current else []
+                )
         records = await self.batch_upsert(
             [
                 {
@@ -156,6 +210,9 @@ class EmployeeGovernanceStore:
                     "department_id": department_id,
                     "visibility": visibility,
                     "granted_departments": granted_departments,
+                    "manage_visibility": manage_visibility,
+                    "manage_granted_departments": manage_granted_departments,
+                    "manage_granted_users": manage_granted_users,
                     "owner_id": owner_id,
                     "updated_by": updated_by,
                 },

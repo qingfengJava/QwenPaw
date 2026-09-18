@@ -118,7 +118,9 @@ class CronExecutor:
         req: Dict[str, Any] = job.request.model_dump(mode="json")
 
         req["channel"] = target_channel
-        req["user_id"] = target_user_id or "cron"
+        # 个人任务以 owner 身份记 run/token（owner 缺省回退派发目标）；
+        # 共享任务 owner 为空 → 派发目标用户 → "cron" 兜底（原语义不变）。
+        req["user_id"] = job.owner_user_id or target_user_id or "cron"
         raw_context = req.get("request_context")
         request_context = (
             dict(raw_context) if isinstance(raw_context, dict) else {}

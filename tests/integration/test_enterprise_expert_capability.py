@@ -25,8 +25,10 @@ DSN = os.environ.get("QWENPAW_TEST_PG_DSN", "").strip()
 
 # 定点清理（仅 captest_ 前缀；逐条静态语句，零插值）
 _CLEANUP_STATEMENTS = (
-    "DELETE FROM expert_task_runs WHERE expert_id LIKE 'captest_%'",
-    "DELETE FROM expert_scheduled_tasks WHERE expert_id LIKE 'captest_%'",
+    "DELETE FROM agent_document_revisions WHERE agent_id LIKE 'captest_%'",
+    "DELETE FROM agent_documents WHERE agent_id LIKE 'captest_%'",
+    "DELETE FROM cron_job_history WHERE agent_id LIKE 'expert_captest_%'",
+    "DELETE FROM cron_jobs WHERE agent_id LIKE 'expert_captest_%'",
     "DELETE FROM expert_memories WHERE expert_id LIKE 'captest_%'",
     "DELETE FROM evolution_proposals WHERE expert_id LIKE 'captest_%'",
     "DELETE FROM message_feedback WHERE expert_id LIKE 'captest_%'",
@@ -399,12 +401,17 @@ async def test_memory_upsert_dedup_and_clear(enterprise_env):
 
 
 # ---------------------------------------------------------------------------
-# 定时任务投影 + 执行留痕（D5，store 层；权威接线由观察者单测覆盖）
+# 定时任务读平面（收口后 store 委托 CronLedgerReader 读 cron 双表）
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_scheduled_task_store_and_runs(enterprise_env):
+async def test_scheduled_task_reads_from_cron_plane(enterprise_env, tmp_path):
+    """收口后无 legacy 台账：执行留痕落 cron_job_history，store 读回。"""
+    from datetime import datetime, timedelta, timezone
+
+    from qwenpaw.app.crons.models import CronExecutionRecord
+    from qwenpaw.app.crons.repo.pg_repo import PgJobRepository
     from qwenpaw.app.experts.scheduling import get_scheduling_store
     from qwenpaw.app.experts.store import get_expert_store
 
@@ -412,35 +419,145 @@ async def test_scheduled_task_store_and_runs(enterprise_env):
         name="排期测试员",
         expert_id="captest_sched",
     )
-    store = get_scheduling_store()
-    task = await store.create_task(
-        expert_id=expert.id,
-        name="每日巡检",
-        task_prompt="巡检线上服务并输出日报",
-        schedule_type="cron",
-        schedule_json={"cron": "0 9 * * 1-5"},
+    # 执行留痕直接落 cron 权威面（agent_id=expert_<id>，UI 前缀 job）
+    repo = PgJobRepository(
+        agent_id=f"expert_{expert.id}",
+        jobs_path=tmp_path / "j.json",
     )
-    assert task.status == "active"
-    assert await store.count_active_by_expert(expert.id) == 1
+    await repo.append_history(
+        "expert_task_w1",
+        CronExecutionRecord(
+            run_at=datetime.now(timezone.utc),
+            status="success",
+            trigger="scheduled",
+            result_summary="巡检完成",
+            run_id="run-w1",
+            session_id="cron:expert_task_w1",
+        ),
+    )
 
-    # 执行留痕：同 scheduled_for 幂等（begin_run 返回同一行）
-    run = await store.begin_run(task, task.created_at)
-    duplicate = await store.begin_run(task, task.created_at)
-    assert run.id == duplicate.id
-    await store.finish_run(run, status="succeeded", result_summary="一切正常")
-    runs = await store.list_runs(task.id)
+    store = get_scheduling_store()
+    # list_runs 经 reader 反推：job_id 去前缀→task_id，success→succeeded
+    runs = await store.list_runs("w1")
     assert len(runs) == 1
     assert runs[0].status == "succeeded"
+    assert runs[0].result_summary == "巡检完成"
+    assert runs[0].run_id == "run-w1"
+    # runs_in_window（worklog 同源）按 agent 维度窗口读
+    window = await store.runs_in_window(
+        expert.id,
+        datetime.now(timezone.utc) - timedelta(days=1),
+    )
+    assert len(window) == 1
 
-    refreshed = await store.get_task(task.id)
-    assert refreshed is not None
-    assert refreshed.last_status == "succeeded"
-    assert refreshed.run_count == 1
 
-    # 归档（删除语义）后默认列表不可见
-    assert await store.delete_task(task.id)
-    assert await store.list_tasks(expert.id) == []
-    assert await store.list_tasks(expert.id, include_archived=True)
+@pytest.mark.asyncio
+async def test_pending_inbox_reads_failed_tasks_from_cron_plane(
+    enterprise_env, tmp_path,
+):
+    """T13d 收口回归：/pending-items 第3段不再直查已 DROP 的
+    ``expert_scheduled_tasks``，改经 ``CronLedgerReader.
+    list_active_failed_tasks`` 从 cron 双表反推「启用中且最近一次
+    执行失败」的专家定时任务。
+
+    播种三任务：①active+最新失败 → 命中；②active+最新成功 →
+    不命中；③paused(enabled=False)+最新失败 → 不命中。覆盖 SQL 的
+    enabled 过滤、latest-per-job DISTINCT ON、status<>success 过滤与
+    expert_ 前缀作用域；末段直调 pending_items() 端点证明不再 500。
+    """
+    from datetime import datetime, timezone
+
+    from qwenpaw.app.crons.models import (
+        CronExecutionRecord,
+        CronJobRequest,
+        CronJobSpec,
+        DispatchSpec,
+        DispatchTarget,
+        JobRuntimeSpec,
+        ScheduleSpec,
+    )
+    from qwenpaw.app.crons.repo.pg_repo import PgJobRepository
+    from qwenpaw.app.experts.cron_ledger import get_cron_ledger_reader
+    from qwenpaw.app.experts.store import get_expert_store
+
+    expert = await get_expert_store().create_expert(
+        name="收件箱测试员",
+        expert_id="captest_pending",
+    )
+    repo = PgJobRepository(
+        agent_id=f"expert_{expert.id}",
+        jobs_path=tmp_path / "j.json",
+    )
+
+    def _spec(job_id: str, name: str, *, enabled: bool) -> CronJobSpec:
+        # 与 UI 链路同形：meta 携带 expert_task_name（读层 name 单一来源）
+        return CronJobSpec(
+            id=job_id,
+            name=name,
+            schedule=ScheduleSpec(
+                type="cron", cron="0 9 * * *", timezone="Asia/Shanghai",
+            ),
+            task_type="agent",
+            request=CronJobRequest(input="巡检"),
+            dispatch=DispatchSpec(
+                target=DispatchTarget(user_id="cron", session_id=""),
+            ),
+            runtime=JobRuntimeSpec(),
+            enabled=enabled,
+            meta={"expert_task_name": name, "origin_source": "ui"},
+        )
+
+    # ① active + 最新失败 → 命中
+    await repo.upsert_job(_spec("expert_task_p1", "失败巡检", enabled=True))
+    await repo.append_history(
+        "expert_task_p1",
+        CronExecutionRecord(
+            run_at=datetime.now(timezone.utc),
+            status="error",
+            trigger="scheduled",
+            error="boom",
+        ),
+    )
+    # ② active + 最新成功 → 不命中（status<>success 过滤）
+    await repo.upsert_job(_spec("expert_task_p2", "正常巡检", enabled=True))
+    await repo.append_history(
+        "expert_task_p2",
+        CronExecutionRecord(
+            run_at=datetime.now(timezone.utc),
+            status="success",
+            trigger="scheduled",
+        ),
+    )
+    # ③ paused + 最新失败 → 不命中（enabled 过滤）
+    await repo.upsert_job(_spec("expert_task_p3", "停用巡检", enabled=False))
+    await repo.append_history(
+        "expert_task_p3",
+        CronExecutionRecord(
+            run_at=datetime.now(timezone.utc),
+            status="error",
+            trigger="scheduled",
+        ),
+    )
+
+    tasks = await get_cron_ledger_reader().list_active_failed_tasks()
+    ids = {t.id for t in tasks}
+    assert "p1" in ids
+    assert "p2" not in ids
+    assert "p3" not in ids
+    p1 = next(t for t in tasks if t.id == "p1")
+    assert p1.expert_id == expert.id
+    assert p1.name == "失败巡检"
+    assert p1.last_status == "failed"
+    assert p1.status == "active"
+
+    # 端点级回归：直调 pending_items（绕鉴权依赖），证明收口后
+    # 不再因直查已 DROP 表而 500，且失败任务入收件箱
+    from qwenpaw.app.routers.admin.pending import pending_items
+
+    payload = await pending_items()
+    task_items = [i for i in payload["items"] if i["kind"] == "task_failed"]
+    assert any(i["id"] == "p1" for i in task_items)
+    assert payload["counts"].get("task_failed", 0) >= 1
 
 
 # ---------------------------------------------------------------------------
@@ -521,9 +638,12 @@ async def test_evolution_proposal_lifecycle(enterprise_env):
 
 
 @pytest.mark.asyncio
-async def test_work_record_aggregation(enterprise_env):
+async def test_work_record_aggregation(enterprise_env, tmp_path):
+    from datetime import datetime, timezone
+
+    from qwenpaw.app.crons.models import CronExecutionRecord
+    from qwenpaw.app.crons.repo.pg_repo import PgJobRepository
     from qwenpaw.app.experts.feedback import get_feedback_store
-    from qwenpaw.app.experts.scheduling import get_scheduling_store
     from qwenpaw.app.experts.store import get_expert_store
     from qwenpaw.app.experts.worklog import get_worklog_service
 
@@ -531,17 +651,22 @@ async def test_work_record_aggregation(enterprise_env):
         name="台账测试员",
         expert_id="captest_worklog",
     )
-    await get_scheduling_store().create_task(
-        expert_id=expert.id,
-        name="每日巡检",
-        task_prompt="巡检",
+    # 收口后执行留痕落 cron_job_history（agent_id=expert_<id>）；worklog
+    # 经 SchedulingStore→CronLedgerReader 读回同一 cron 平面
+    repo = PgJobRepository(
+        agent_id=f"expert_{expert.id}",
+        jobs_path=tmp_path / "j.json",
     )
-    task = (await get_scheduling_store().list_tasks(expert.id))[0]
-    run = await get_scheduling_store().begin_run(task, task.created_at)
-    await get_scheduling_store().finish_run(
-        run,
-        status="succeeded",
-        result_summary="巡检完成",
+    await repo.append_history(
+        "expert_task_w1",
+        CronExecutionRecord(
+            run_at=datetime.now(timezone.utc),
+            status="success",
+            trigger="scheduled",
+            result_summary="巡检完成",
+            run_id="run-w1",
+            session_id="cron:expert_task_w1",
+        ),
     )
     await get_feedback_store().rate(
         "captest_m1",
@@ -810,3 +935,259 @@ async def test_sop_publish_auto_bind_and_private_guards(enterprise_env):
     )
     await delete_sop(copy.id)
     assert await store.get_sop(copy.id) is None
+
+
+@pytest.mark.asyncio
+async def test_sop_owner_attribution_and_list_visibility(enterprise_env):
+    """T10：SOP 归属快照贯穿行生命周期 + 列表可见性分层（draft 仅 owner）。
+
+    1) create 显式归属落库；promote 复制到线上行；存量 production-only
+       行 ensure_draft_row fork 保留归属；owner 无治理/无部门时快照为空
+       （best-effort 不阻断）；
+    2) 无 owner 过滤的跨员工视图仅 production 行（纯草稿 SOP 不外泄）；
+       传 owner_id 时双环境合并、同 id 草稿优先。
+    """
+    from qwenpaw.app.experts.models import (
+        SOP_ENVIRONMENT_DRAFT,
+        SOP_ENVIRONMENT_PRODUCTION,
+    )
+    from qwenpaw.app.experts.sops import get_sop_store
+    from qwenpaw.app.routers.admin import expert_capability as cap_mod
+
+    store = get_sop_store()
+    draft = await store.create_sop(
+        name="归属流程",
+        sop_id="captest_sop_attr",
+        owner_id="captest_expert_attr",
+        environment=SOP_ENVIRONMENT_DRAFT,
+        department_id="dept_captest/sub",
+    )
+    assert draft.department_id == "dept_captest/sub"
+    assert draft.project_id is None
+
+    # promote：归属快照随草稿内容复制到线上行
+    promoted = await store.promote_sop(draft.id, published_by="tester")
+    assert promoted.department_id == "dept_captest/sub"
+
+    # fork：存量 production-only 行首次进画布 → 草稿副本保留归属
+    prod_only = await store.create_sop(
+        name="存量流程",
+        sop_id="captest_sop_attr_fork",
+        owner_id="captest_expert_attr",
+        environment=SOP_ENVIRONMENT_PRODUCTION,
+        department_id="dept_captest",
+    )
+    forked = await store.ensure_draft_row(prod_only.id)
+    assert forked is not None
+    assert forked.environment == SOP_ENVIRONMENT_DRAFT
+    assert forked.department_id == "dept_captest"
+
+    # best-effort 兜底：owner 无治理行/无部门 → 快照为空，不阻断写入
+    bare = await store.create_sop(
+        name="无归属流程",
+        sop_id="captest_sop_attr_bare",
+        owner_id="captest_expert_nobody",
+        environment=SOP_ENVIRONMENT_DRAFT,
+    )
+    assert bare.department_id is None
+
+    # 纯草稿 SOP（从未发布）：跨员工视图中不可见
+    draft_only = await store.create_sop(
+        name="纯草稿",
+        sop_id="captest_sop_attr_draft_only",
+        owner_id="captest_expert_attr",
+        environment=SOP_ENVIRONMENT_DRAFT,
+    )
+    assert draft_only.id == "captest_sop_attr_draft_only"
+
+    # 跨员工视图（无 owner 过滤）：仅 production 行，草稿绝不外泄
+    unscoped = await cap_mod.list_sops(full=True)
+    unscoped_by_id = {r.id: r for r in unscoped}
+    assert all(r.environment == SOP_ENVIRONMENT_PRODUCTION for r in unscoped)
+    assert unscoped_by_id["captest_sop_attr"].environment == (
+        SOP_ENVIRONMENT_PRODUCTION
+    )
+    assert "captest_sop_attr_draft_only" not in unscoped_by_id
+
+    # 员工工作集（owner 过滤）：双环境合并，同 id 草稿优先
+    scoped = {
+        r.id: r
+        for r in await cap_mod.list_sops(
+            owner_id="captest_expert_attr",
+            full=True,
+        )
+    }
+    assert scoped["captest_sop_attr"].environment == SOP_ENVIRONMENT_DRAFT
+    assert scoped["captest_sop_attr_fork"].environment == (
+        SOP_ENVIRONMENT_DRAFT
+    )
+    assert scoped["captest_sop_attr_draft_only"].environment == (
+        SOP_ENVIRONMENT_DRAFT
+    )
+
+
+# ---------------------------------------------------------------------------
+# T11 个人档案草稿（agent_documents owner 平面）
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_personal_doc_draft_plane_roundtrip(enterprise_env):
+    """个人草稿与共享行隔离：多用户共存、共享读不泄露、待应用判定正确。"""
+    from qwenpaw.app.agent_docs.store import (
+        AgentDocsStore,
+        annotate_draft_status,
+    )
+
+    store = AgentDocsStore()
+    agent_id = "captest_doc_plane"
+
+    # 共享行（admin/manager 写）
+    assert await store.upsert_document(agent_id, "profile", "# shared") is True
+    # alice 写四文档落本人 draft 行（不触共享行）
+    assert (
+        await store.upsert_document(
+            agent_id,
+            "profile",
+            "# alice draft",
+            owner_user_id="alice",
+        )
+        is True
+    )
+    # bob 同文档草稿：coalesce 表达式唯一索引允许共存（旧四元约束会冲突）
+    assert (
+        await store.upsert_document(
+            agent_id,
+            "profile",
+            "# bob draft",
+            owner_user_id="bob",
+        )
+        is True
+    )
+
+    # 共享读：owner 过滤，绝不读到他人草稿
+    shared = await store.get_document(agent_id, "profile")
+    assert shared is not None
+    assert shared["content"] == "# shared"
+    # 草稿读：每人只见自己的
+    alice = await store.get_document(
+        agent_id,
+        "profile",
+        owner_user_id="alice",
+    )
+    assert alice is not None and alice["content"] == "# alice draft"
+    bob = await store.get_document(agent_id, "profile", owner_user_id="bob")
+    assert bob is not None and bob["content"] == "# bob draft"
+    assert (
+        await store.get_document(
+            agent_id,
+            "profile",
+            owner_user_id="carol",
+        )
+        is None
+    )
+
+    # 待应用判定：与共享行分叉 → unapplied
+    drafts = await store.list_personal_drafts(agent_id)
+    assert {row["owner_user_id"] for row in drafts} == {"alice", "bob"}
+    single = await store.list_personal_drafts(
+        agent_id,
+        owner_user_id="alice",
+    )
+    assert len(single) == 1 and single[0]["owner_user_id"] == "alice"
+    shared_docs = await store.list_documents(agent_id)
+    annotated = annotate_draft_status(drafts, shared_docs)
+    assert all(row["unapplied"] is True for row in annotated)
+
+    # 个人草稿不写发布链 revision（快照链仅属于共享闸门）：
+    # 任何环境都不得出现本 agent 的 draft 修订
+    from qwenpaw.db import engine as engine_mod
+
+    engine = engine_mod.create_pg_engine(DSN)
+    async with engine.connect() as conn:
+        draft_revisions = (
+            await conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM agent_document_revisions "
+                    "WHERE agent_id = 'captest_doc_plane' "
+                    "AND environment = 'draft'",
+                ),
+            )
+        ).scalar()
+    assert draft_revisions == 0
+
+
+@pytest.mark.asyncio
+async def test_personal_doc_draft_apply_promotes_and_clears_badge(
+    enterprise_env,
+):
+    """apply = promote 共享行 + revision；应用后徽标消除、草稿行保留。"""
+    from qwenpaw.app.agent_docs.store import (
+        AgentDocsStore,
+        annotate_draft_status,
+    )
+
+    store = AgentDocsStore()
+    agent_id = "captest_doc_apply"
+
+    # 共享基线 + alice 草稿
+    await store.upsert_document(agent_id, "soul", "# v1 shared")
+    await store.upsert_document(
+        agent_id,
+        "soul",
+        "# alice proposal",
+        owner_user_id="alice",
+    )
+
+    # apply = 草稿内容 promote 到共享行（version++ + revision 快照）
+    version = await store.promote(
+        agent_id,
+        "soul",
+        "# alice proposal",
+        updated_by="apply:alice:admin",
+    )
+    assert version == 2
+    revision = await store.get_revision(agent_id, "soul", 2)
+    assert revision is not None
+    assert revision["content"] == "# alice proposal"
+
+    # 共享行已更新；徽标消除（内容与共享一致，非「草稿行存在」信号）
+    shared = await store.get_document(agent_id, "soul")
+    assert shared is not None and shared["content"] == "# alice proposal"
+    drafts = await store.list_personal_drafts(agent_id)
+    annotated = annotate_draft_status(drafts, [shared])
+    assert annotated[0]["owner_user_id"] == "alice"
+    assert annotated[0]["unapplied"] is False
+
+
+@pytest.mark.asyncio
+async def test_agent_documents_owner_column_and_unique_index(enterprise_env):
+    """alembic 0038 落地：owner 列 + coalesce 表达式唯一索引存在且生效。"""
+    from qwenpaw.db import engine as engine_mod
+
+    engine = engine_mod.create_pg_engine(DSN)
+    async with engine.connect() as conn:
+        column_names = {
+            row[0]
+            for row in (
+                await conn.execute(
+                    text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_name = 'agent_documents'",
+                    ),
+                )
+            ).fetchall()
+        }
+        assert "owner_user_id" in column_names
+        indexdef = (
+            await conn.execute(
+                text(
+                    "SELECT indexdef FROM pg_indexes "
+                    "WHERE indexname = 'uq_agent_documents_doc_owner'",
+                ),
+            )
+        ).scalar()
+        assert indexdef is not None
+        # 表达式唯一索引：owner NULL 归一为空串（多用户草稿互不冲突）
+        assert "coalesce" in indexdef.lower()
+        assert "unique" in indexdef.lower()

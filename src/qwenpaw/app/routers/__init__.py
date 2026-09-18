@@ -6,6 +6,7 @@ from fastapi import APIRouter
 from .agents import router as agents_router
 from ..employees.api import router as employee_registry_router
 from .config import router as config_router
+from .config import agent_router as config_agent_router
 from .local_models import router as local_models_router
 from .providers import router as providers_router
 from .market import router as market_router
@@ -49,6 +50,9 @@ router = APIRouter()
 router.include_router(employee_registry_router)
 router.include_router(agents_router)
 router.include_router(config_router)
+# 员工域配置面（channels/acp-per-agent/heartbeat）：必须排在 config_router
+# 之后，保证全局 /acp/node-runtime 字面路由先于 /acp/{agent_name} 通配匹配。
+router.include_router(config_agent_router)
 router.include_router(console_router)
 router.include_router(fork_router)
 router.include_router(cron_router)

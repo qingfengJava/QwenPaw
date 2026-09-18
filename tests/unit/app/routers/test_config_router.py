@@ -28,6 +28,7 @@ from fastapi.testclient import TestClient
 
 from qwenpaw.app.crons import heartbeat
 from qwenpaw.app.exception_handlers import register_exception_handlers
+from qwenpaw.app.routers.config import agent_router as config_agent_router
 from qwenpaw.app.routers.config import router as config_router
 from qwenpaw.config import get_available_channels
 from qwenpaw.config.config import (
@@ -73,6 +74,9 @@ def app() -> FastAPI:
     application.state.multi_agent_manager = MagicMock(name="ManagerStub")
     register_exception_handlers(application)
     application.include_router(config_router, prefix="/api")
+    # 员工域配置面（channels/acp-per-agent/heartbeat）已拆到 agent_router；
+    # 排在 config_router 之后，保持 /acp/node-runtime 先于 /acp/{agent_name}。
+    application.include_router(config_agent_router, prefix="/api")
     return application
 
 

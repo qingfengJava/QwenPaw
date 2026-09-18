@@ -37,6 +37,16 @@ class DualChatRepository(BaseChatRepository):
         self.shadow_write_failures = 0
         self._shadow_tasks: set[asyncio.Task] = set()
 
+    @property
+    def path(self) -> str:
+        """Storage identity: the primary read source plus its shadow target.
+
+        Reads are served by the primary while writes are mirrored to the
+        shadow, so the identity names both (the JSON primary exposes a file
+        path, the PostgreSQL shadow a ``pg://`` URL).
+        """
+        return f"{self._primary.path} (+shadow {self._shadow.path})"
+
     # -- shadow plumbing ----------------------------------------------------
 
     def _shadow_write(self, coro_factory, what: str) -> None:

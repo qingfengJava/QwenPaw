@@ -131,21 +131,51 @@ async def test_upsert_document_writes_parameterized_insert() -> None:
     assert written is True
     sql, params = engine.conn.statements[0]
     assert "INSERT INTO agent_documents" in sql
-    assert "ON CONFLICT (tenant_id, agent_id, doc_type, environment)" in sql
+    # 唯一键含 owner 表达式（NULL 归一为空串）：多用户草稿互不冲突
+    assert "ON CONFLICT (tenant_id, agent_id, doc_type, " in sql
+    assert "environment, (COALESCE(owner_user_id, '')))" in sql
     assert params["aid"] == "analyst"
     assert params["dtype"] == "profile"
     assert params["env"] == "production"
+    assert params["owner"] is None
     assert params["chash"] == content_hash("# PROFILE")
     assert params["uby"] == "qingfeng"
 
 
 @pytest.mark.asyncio
 async def test_upsert_document_idempotent_replay_writes_nothing() -> None:
-    """内容未变（hash 相同）时 WHERE 拦截 → 返回 False，版本不抖动。"""
+    """内容未变（hash 相同）时 WHERE 拦截 → 返回 False，版本不抖动、不写快照。"""
     engine = _FakeEngine(unchanged=True)
     store = AgentDocsStore(engine=engine)
     written = await store.upsert_document("analyst", "profile", "# PROFILE")
     assert written is False
+    # 仅 upsert 一条语句（RETURNING 空集 → 无快照/清理）
+    assert len(engine.conn.statements) == 1
+
+
+@pytest.mark.asyncio
+async def test_upsert_document_snapshots_revision_on_version_bump() -> None:
+    """T5：version 递增即快照 revision（复用保留窗口清理），覆盖可回滚。"""
+    engine = _FakeEngine(version=4)
+    store = AgentDocsStore(engine=engine)
+    written = await store.upsert_document(
+        "analyst",
+        "profile",
+        "# v4",
+        updated_by="qingfeng",
+    )
+    assert written is True
+    # 三步：upsert(RETURNING version) + 不可变快照 + 保留窗口清理
+    assert len(engine.conn.statements) == 3
+    upsert_sql, _ = engine.conn.statements[0]
+    assert "RETURNING version" in upsert_sql
+    revision_sql, revision_params = engine.conn.statements[1]
+    assert "INSERT INTO agent_document_revisions" in revision_sql
+    assert revision_params["ver"] == 4
+    assert revision_params["chash"] == content_hash("# v4")
+    cleanup_sql, cleanup_params = engine.conn.statements[2]
+    assert "DELETE FROM agent_document_revisions" in cleanup_sql
+    assert cleanup_params["keep"] == agent_docs_store.REVISION_RETENTION
 
 
 @pytest.mark.asyncio
@@ -157,7 +187,15 @@ async def test_upsert_documents_batch_single_transaction() -> None:
         {"profile": "# P", "soul": "# S"},
     )
     assert written == 2
-    assert len(engine.conn.statements) == 2
+    # 每个内容变化的文档同事务三步：upsert(RETURNING) + 快照 + 保留清理
+    assert len(engine.conn.statements) == 6
+    # 两份文档各写一条 revision 快照（批量覆盖同样可回滚）
+    revision_inserts = [
+        sql
+        for sql, _ in engine.conn.statements
+        if "INSERT INTO agent_document_revisions" in sql
+    ]
+    assert len(revision_inserts) == 2
 
 
 # -- Phase B: promote / revisions ------------------------------------------

@@ -32,6 +32,7 @@ from pydantic import BaseModel, Field
 
 from ...experts.apikeys import get_api_key_store
 from ...experts.capability import get_capability_store
+from ...experts.cron_ledger import get_cron_ledger_reader
 from ...experts.feedback import (
     attribution_heatmap,
     get_evolution_store,
@@ -64,7 +65,7 @@ from ...experts.scheduling import SchedulingService, get_scheduling_store
 from ...experts.sops import get_sop_store
 from ...experts.store import get_expert_store
 from ...experts.worklog import get_worklog_service
-from ...enterprise import current_tenant_id
+from ...enterprise import current_tenant_id, new_id
 from ...events.bus import (
     get_event_bus,
     now_ms,
@@ -124,7 +125,7 @@ async def _scheduling_service(
             status_code=400,
             detail="CronManager not ready (expert not published?)",
         )
-    # expert_id 用于挂注册观察者：对话/接口创建的任务自动入台账
+    # expert_id 用于挂执行观察者：执行检查闭环（inbox 告警）按 expert 归属
     return SchedulingService(cron_manager, expert_id=expert_id)
 
 
@@ -193,17 +194,12 @@ async def capability_counts(
         for row in skill_rows:
             result[row.expert_id]["skills"] = int(row.n)
 
-        task_rows = await conn.execute(
-            text(
-                "SELECT expert_id, count(*) AS n FROM "
-                "expert_scheduled_tasks WHERE tenant_id = :tid AND "
-                "expert_id = ANY(:ids) AND status IN "
-                "('active', 'paused') GROUP BY expert_id"
-            ),
-            {"tid": tid, "ids": ids},
-        )
-        for row in task_rows:
-            result[row.expert_id]["scheduled_tasks"] = int(row.n)
+    # T13d：定时任务计数走 cron 读平面（一条 GROUP BY，禁 N+1）；
+    # expert 两表已 DROP，无 legacy 分支
+    task_counts = await get_cron_ledger_reader().count_active_by_experts(ids)
+    for eid, count in task_counts.items():
+        if eid in result:
+            result[eid]["scheduled_tasks"] = count
     return {"counts": result}
 
 
@@ -384,7 +380,12 @@ async def replace_resources(
     for binding in body.bindings:
         metadata = dict(binding.metadata or {})
         if binding.resource_type == "sop":
-            sop = await sop_store.get_sop(binding.resource_id)
+            # 草稿优先、线上兜底：新建/复制的草稿（仅 draft 行）
+            # 由 owner 直接绑定；owner 私有守卫在下方统一拦截
+            sop = await sop_store.get_sop(
+                binding.resource_id,
+                environment=SOP_ENVIRONMENT_DRAFT,
+            ) or await sop_store.get_sop(binding.resource_id)
             if sop is None:
                 raise HTTPException(
                     status_code=400,
@@ -532,10 +533,23 @@ async def clear_memories(expert_id: str, user_id: str = "") -> None:
 
 
 @router.get("/experts/{expert_id}/scheduled-tasks")
-async def list_scheduled_tasks(expert_id: str) -> Dict[str, Any]:
+async def list_scheduled_tasks(
+    expert_id: str,
+    request: Request,
+) -> Dict[str, Any]:
     """One expert's scheduled tasks (archived hidden)."""
     await _require_expert(expert_id)
     tasks = await get_scheduling_store().list_tasks(expert_id)
+    # T13b：next_run_at 属 APScheduler 运行态（cron 平面无），能解析
+    # 到权威管理器时在内存注入；专家未发布时列表仍可读
+    try:
+        service = await _scheduling_service(request, expert_id)
+        tasks = service.annotate_next_run(tasks)
+    except HTTPException:  # noqa: PERF203 - degrade to no-next-run
+        logger.debug(
+            "next_run_at injection skipped for expert %s",
+            expert_id,
+        )
     return {"tasks": [t.model_dump(mode="json") for t in tasks]}
 
 
@@ -545,29 +559,37 @@ async def create_scheduled_task(
     body: ScheduledTaskCreateBody,
     request: Request,
 ) -> ScheduledTaskRecord:
-    """Create + register (projection row first, authority second).
+    """Create + register（内存构造记录 → 权威注册 → cron 面读回）.
 
-    注册失败回滚投影行（不留孤儿 active 台账，service 层保证）。
+    收口后无投影行：注册即持久化到 ``cron_jobs``（spec.meta 承载
+    专家域注解），service 层读回并注入 next_run_at 运行态。
     """
     await _require_expert(expert_id)
-    store = get_scheduling_store()
-    task = await store.create_task(
+    task = ScheduledTaskRecord(
+        id=new_id("stk"),
         expert_id=expert_id,
         name=body.name,
+        description=body.description,
         task_prompt=body.task_prompt,
         schedule_type=body.schedule_type,
         schedule_json=body.schedule_json,
         timezone=body.timezone,
-        description=body.description,
         owner_id=_actor(request),
+        source="ui",
     )
     service = await _scheduling_service(request, expert_id)
     try:
-        return await service.create_task(task)
+        created = await service.create_task(task)
     except HTTPException:
         raise
     except Exception as exc:  # pylint: disable=broad-except
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if created is None:
+        raise HTTPException(
+            status_code=422,
+            detail="task registration did not persist to the cron plane",
+        )
+    return created
 
 
 @router.patch("/experts/{expert_id}/scheduled-tasks/{task_id}")
@@ -582,23 +604,29 @@ async def update_scheduled_task(
     task = await store.get_task(task_id)
     if task is None or task.expert_id != expert_id:
         raise HTTPException(status_code=404, detail="Task not found")
-    updated = await store.update_task(
-        task_id,
-        name=body.name,
-        description=body.description,
-        task_prompt=body.task_prompt,
-        schedule_json=body.schedule_json,
-        timezone=body.timezone,
-    )
-    if updated is None:
-        raise HTTPException(status_code=404, detail="Task not found")
+    # 收口后无 legacy 行可改：内存合并 body 覆盖项后重注权威 spec
+    updates: Dict[str, Any] = {}
+    if body.name is not None:
+        updates["name"] = body.name
+    if body.description is not None:
+        updates["description"] = body.description
+    if body.task_prompt is not None:
+        updates["task_prompt"] = body.task_prompt
+    if body.schedule_json is not None:
+        updates["schedule_json"] = body.schedule_json
+    if body.timezone is not None:
+        updates["timezone"] = body.timezone
+    merged = task.model_copy(update=updates) if updates else task
     service = await _scheduling_service(request, expert_id)
     try:
-        return await service.update_task(updated)
+        updated = await service.update_task(merged)
     except HTTPException:
         raise
     except Exception as exc:  # pylint: disable=broad-except
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return updated
 
 
 @router.delete("/experts/{expert_id}/scheduled-tasks/{task_id}", status_code=204)
@@ -607,7 +635,7 @@ async def delete_scheduled_task(
     task_id: str,
     request: Request,
 ) -> None:
-    """Authority job first, projection archived second."""
+    """注销权威 job（收口后无投影归档；job 删除即从列表消失，D2）."""
     task = await get_scheduling_store().get_task(task_id)
     if task is None or task.expert_id != expert_id:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -627,7 +655,7 @@ async def pause_scheduled_task(
     task_id: str,
     request: Request,
 ) -> ScheduledTaskRecord:
-    """Pause both sides (authority + projection)."""
+    """Pause the authority job（enabled=false → reader 派生 paused）."""
     task = await get_scheduling_store().get_task(task_id)
     _task_action_guard(task, expert_id)
     service = await _scheduling_service(request, expert_id)
@@ -640,7 +668,7 @@ async def resume_scheduled_task(
     task_id: str,
     request: Request,
 ) -> ScheduledTaskRecord:
-    """Resume both sides (authority + projection)."""
+    """Resume the authority job（enabled=true → reader 派生 active）."""
     task = await get_scheduling_store().get_task(task_id)
     _task_action_guard(task, expert_id)
     service = await _scheduling_service(request, expert_id)
@@ -653,7 +681,7 @@ async def run_scheduled_task_now(
     task_id: str,
     request: Request,
 ) -> Dict[str, Any]:
-    """Manual trigger (fire-and-forget; observer writes the record)."""
+    """Manual trigger (fire-and-forget; 权威落 cron_job_history)."""
     task = await get_scheduling_store().get_task(task_id)
     _task_action_guard(task, expert_id)
     service = await _scheduling_service(request, expert_id)
@@ -752,8 +780,13 @@ async def list_sops(
 ) -> List[SopRecord]:
     """SOP assets (light projection; owner 面板用 full=true 取节点内容).
 
-    environment 为空时返回双环境合并视图（同 id 草稿优先，供员工面板
-    展示工作集）；显式传入时只返回该环境行。
+    environment 为空时按 owner 维度分视图（个人 draft 仅 owner、
+    production 全员）：
+    - 传 owner_id（员工工作集：面板列表/发布徽标）→ 双环境合并，
+      同 id 草稿优先（可编辑工作态）；
+    - 不传 owner_id（跨员工视图：复制搜索等）→ 仅 production 行，
+      他人草稿是员工的私有工作副本，绝不外泄。
+    显式传入 environment 时只返回该环境行。
     """
     store = get_sop_store()
     if environment:
@@ -763,6 +796,14 @@ async def list_sops(
             owner_id=owner_id,
             full=full,
             environment=environment,
+        )
+    if not owner_id:
+        # 跨员工视图仅线上行（草稿只在 owner 上下文出现）
+        return await store.list_sops(
+            status=status,
+            q=q,
+            full=full,
+            environment=SOP_ENVIRONMENT_PRODUCTION,
         )
     drafts = await store.list_sops(
         status=status,

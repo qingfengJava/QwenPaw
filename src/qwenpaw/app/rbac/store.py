@@ -19,7 +19,7 @@ import logging
 import os
 import threading
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from ...constant import SECRET_DIR
 from .models import (
@@ -470,6 +470,44 @@ class RbacStore:
 
     def get_agent_grant(self, agent_id: str) -> Optional[GrantRecord]:
         return self._load().agent_grants.get(agent_id)
+
+    # ------------------------------------------------------------------
+    # manage grants（后台配置域：员工级管理授权 ACL）
+    # ------------------------------------------------------------------
+
+    def set_agent_manage_grant(
+        self,
+        agent_id: str,
+        grant: GrantRecord,
+    ) -> bool:
+        """写入一个员工的管理授权 ACL（治理投影唯一写入口）。"""
+        with self._lock:
+            data = self._load()
+            if self._load_error:
+                return False
+            data.agent_manage_grants[agent_id] = grant
+            self._save(data)
+        return True
+
+    def delete_agent_manage_grant(self, agent_id: str) -> bool:
+        """删除管理授权 ACL（删除不存在的行属幂等成功语义由调用方定）。"""
+        with self._lock:
+            data = self._load()
+            if self._load_error:
+                return False
+            if agent_id not in data.agent_manage_grants:
+                return False
+            del data.agent_manage_grants[agent_id]
+            self._save(data)
+        return True
+
+    def get_agent_manage_grant(self, agent_id: str) -> Optional[GrantRecord]:
+        """返回管理授权 ACL；``None`` = 无行（调用方走兜底语义）。"""
+        return self._load().agent_manage_grants.get(agent_id)
+
+    def list_agent_manage_grants(self) -> Dict[str, GrantRecord]:
+        """全量管理授权快照（注册表批量判定用，禁逐行读文件）。"""
+        return dict(self._load().agent_manage_grants)
 
     def get_model_grant(self, model_key: str) -> Optional[GrantRecord]:
         return self._load().model_grants.get(model_key)

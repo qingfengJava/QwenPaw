@@ -340,6 +340,59 @@ export const skillApi = {
       method: "DELETE",
     }),
 
+  // ── 个人技能（S2，owner=当前会话用户，需认证 + PG 个人平面）─────────
+  // 后端在无认证/无 PG 时降级：list 返回空，写端点 401/503。
+  listPersonalSkills: async (agentId?: string) => {
+    const opts: RequestInit = {};
+    if (agentId) opts.headers = new Headers({ "X-Agent-Id": agentId });
+    return request<SkillSpec[]>("/skills/personal", opts);
+  },
+
+  getPersonalSkill: (skillName: string, agentId?: string) => {
+    const opts: RequestInit = {};
+    if (agentId) opts.headers = new Headers({ "X-Agent-Id": agentId });
+    return request<SkillDetail>(
+      `/skills/personal/${encodeURIComponent(skillName)}`,
+      opts,
+    );
+  },
+
+  savePersonalSkill: (payload: {
+    name: string;
+    files: Record<string, string>;
+    enabled?: boolean;
+    agentId?: string;
+  }) => {
+    const { agentId, ...body } = payload;
+    const opts: RequestInit = {
+      method: "POST",
+      body: JSON.stringify(body),
+    };
+    if (agentId) opts.headers = new Headers({ "X-Agent-Id": agentId });
+    return request<{ saved: boolean; name: string }>(
+      "/skills/personal",
+      opts,
+    );
+  },
+
+  deletePersonalSkill: (skillName: string, agentId?: string) => {
+    const opts: RequestInit = { method: "DELETE" };
+    if (agentId) opts.headers = new Headers({ "X-Agent-Id": agentId });
+    return request<{ deleted: boolean; name: string }>(
+      `/skills/personal/${encodeURIComponent(skillName)}`,
+      opts,
+    );
+  },
+
+  promotePersonalSkill: (skillName: string, agentId?: string) => {
+    const opts: RequestInit = { method: "POST" };
+    if (agentId) opts.headers = new Headers({ "X-Agent-Id": agentId });
+    return request<{ promoted: boolean; name: string }>(
+      `/skills/personal/${encodeURIComponent(skillName)}/promote`,
+      opts,
+    );
+  },
+
   startHubSkillInstall: (
     payload: {
       bundle_url: string;

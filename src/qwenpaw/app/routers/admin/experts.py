@@ -9,7 +9,11 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
-from ...agent_docs.store import DOC_TYPE_BY_FILENAME, get_agent_docs_store
+from ...agent_docs.store import (
+    DOC_TYPE_BY_FILENAME,
+    annotate_draft_status,
+    get_agent_docs_store,
+)
 from ...experts.models import (
     EXPERT_STATUS_PUBLISHED,
     ExpertCreateBody,
@@ -381,6 +385,121 @@ async def rollback_document(
         "expert_id": expert_id,
         "doc_type": doc_type,
         "restored_version": version,
+        "version": new_version,
+        "materialized": materialized,
+    }
+
+
+# ----------------------------------------------------------------------
+# 待应用个人草稿（T11，S2 个人档案草稿的应用闸门）。
+# employee 写四文档落本人 draft 行（不触共享行）；管理员在此列表看到
+# 「待应用」（与共享行内容分叉）的草稿，apply = promote 共享行 + revision
+# + 物化 + 热重载（与文档回滚同一直接生效模式）。
+# ----------------------------------------------------------------------
+
+
+@router.get("/{expert_id}/documents/personal-drafts")
+async def list_personal_drafts(expert_id: str) -> dict:
+    """待应用个人草稿（跨用户；新变更在前；admin 应用闸门数据源）。
+
+    仅返回与共享行内容分叉的草稿（待应用）；apply 后草稿行保留为
+    工作副本但内容与共享一致，不再出现在列表中（内容比对，避免
+    「草稿行存在 = 未应用」的错误信号）。
+    """
+    if await get_expert_store().get_expert(expert_id) is None:
+        raise HTTPException(status_code=404, detail="Expert not found")
+    docs = get_agent_docs_store()
+    if docs is None:
+        # 无 PG 部署：个人草稿平面不可用（诚实空态，前端提示）
+        return {"drafts": [], "available": False}
+    agent_id = expert_agent_id(expert_id)
+    drafts = await docs.list_personal_drafts(agent_id)
+    shared_docs = await docs.list_documents(agent_id)
+    annotated = annotate_draft_status(drafts, shared_docs)
+    return {
+        "drafts": [row for row in annotated if row.get("unapplied")],
+        "available": True,
+    }
+
+
+@router.post(
+    "/{expert_id}/documents/personal-drafts/{owner_user_id}/apply",
+)
+async def apply_personal_draft(
+    expert_id: str,
+    owner_user_id: str,
+    body: dict = Body(...),
+    request: Request = None,
+) -> dict:
+    """应用一条个人草稿到共享面（promote 共享行 + revision + 物化 + reload）。
+
+    与文档回滚同模式：直接生效（production 行 version++ + 新快照 + 正式
+    工作区文件物化 + 热重载）；草稿行保留为工作副本（内容自此与共享
+    一致，徽标/列表自动消失）。幂等：草稿内容与共享一致时不产生新版本。
+    """
+    doc_type = str(body.get("doc_type") or "")
+    _validate_doc_type(doc_type)
+    docs = get_agent_docs_store()
+    if docs is None:
+        raise HTTPException(
+            status_code=503,
+            detail="档案文档存储未启用（未配置 PostgreSQL）",
+        )
+    agent_id = expert_agent_id(expert_id)
+    draft = await docs.get_document(
+        agent_id,
+        doc_type,
+        owner_user_id=owner_user_id,
+    )
+    if draft is None:
+        raise HTTPException(status_code=404, detail="Personal draft not found")
+    content = str(draft.get("content") or "")
+    actor = "admin"
+    if request is not None:
+        actor = getattr(request.state, "user", None) or "admin"
+    # apply = 草稿内容重走发布闸门（共享行 version++ + 新快照，幂等）
+    new_version = await docs.promote(
+        agent_id,
+        doc_type,
+        content,
+        updated_by=f"apply:{owner_user_id}:{actor}",
+    )
+    # 物化正式工作区文件 + 热生效（仅已发布专家有正式工作区）
+    materialized = False
+    workspace_dir = _expert_workspace_dir(expert_id)
+    if (workspace_dir / "agent.json").is_file():
+        target = workspace_dir / _FILENAME_BY_DOC_TYPE[doc_type]
+        await asyncio.to_thread(
+            lambda: (
+                target.parent.mkdir(parents=True, exist_ok=True),
+                target.write_text(content, encoding="utf-8"),
+            ),
+        )
+        materialized = True
+        manager = _manager(request)
+        if manager is not None:
+            try:
+                await manager.reload_agent(agent_id)
+            except Exception:  # pylint: disable=broad-except
+                logger.warning(
+                    "expert %s personal draft applied but hot-reload "
+                    "failed",
+                    expert_id,
+                    exc_info=True,
+                )
+    logger.info(
+        "Expert %s document %s personal draft of %s applied "
+        "(new v%s) by %s",
+        expert_id,
+        doc_type,
+        owner_user_id,
+        new_version,
+        actor,
+    )
+    return {
+        "expert_id": expert_id,
+        "doc_type": doc_type,
+        "owner_user_id": owner_user_id,
         "version": new_version,
         "materialized": materialized,
     }

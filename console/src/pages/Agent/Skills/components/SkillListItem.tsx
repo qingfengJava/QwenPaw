@@ -17,6 +17,8 @@ interface SkillListItemProps {
   onClick: () => void;
   onToggleEnabled: () => Promise<void>;
   onDelete: () => void;
+  /** 「我的」分区个人技能：发布为员工共享技能（S2→S1） */
+  onPromote?: () => void;
 }
 
 export function SkillListItem({
@@ -27,6 +29,7 @@ export function SkillListItem({
   onClick,
   onToggleEnabled,
   onDelete,
+  onPromote,
 }: SkillListItemProps) {
   const { t } = useTranslation();
   const isBuiltin = isSkillBuiltin(skill.source);
@@ -101,6 +104,18 @@ export function SkillListItem({
             onChange={onToggleEnabled}
           />
         </span>
+        {onPromote && (
+          <Button
+            type="primary"
+            disabled={batchModeEnabled}
+            onClick={(e) => {
+              e.stopPropagation();
+              onPromote();
+            }}
+          >
+            {t("skills.promoteToShared")}
+          </Button>
+        )}
         <Button
           danger
           disabled={batchModeEnabled}

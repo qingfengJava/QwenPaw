@@ -7,7 +7,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, Body, HTTPException, Path, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Request
 from pydantic import BaseModel, Field
 
 from ...config import load_config
@@ -20,6 +20,7 @@ from ...security.secret_store import (
 )
 from ...utils.io_utils import run_sync_io
 from ..driver_config_service import DriverConfigService
+from ..rbac.deps import require_agent_manage_audited
 from ..utils import schedule_agent_reload
 
 router = APIRouter(prefix="/tools", tags=["tools"])
@@ -251,7 +252,11 @@ async def list_tools(
     ]
 
 
-@router.patch("/{tool_name}/toggle", response_model=ToolInfo)
+@router.patch(
+    "/{tool_name}/toggle",
+    response_model=ToolInfo,
+    dependencies=[Depends(require_agent_manage_audited("tools.toggle"))],
+)
 async def toggle_tool(
     tool_name: str = Path(...),
     request: Request = None,
@@ -296,7 +301,13 @@ async def toggle_tool(
     return _build_tool_info(tool_config, tool_name)
 
 
-@router.patch("/{tool_name}/async-execution", response_model=ToolInfo)
+@router.patch(
+    "/{tool_name}/async-execution",
+    response_model=ToolInfo,
+    dependencies=[
+        Depends(require_agent_manage_audited("tools.async_execution")),
+    ],
+)
 async def update_tool_async_execution(
     tool_name: str = Path(...),
     async_execution: bool = Body(..., embed=True),
@@ -442,7 +453,10 @@ async def get_tool_config(
     return config
 
 
-@router.post("/{tool_name}/config")
+@router.post(
+    "/{tool_name}/config",
+    dependencies=[Depends(require_agent_manage_audited("tools.config.write"))],
+)
 async def update_tool_config(
     tool_name: str = Path(...),
     body: ToolConfigUpdate = Body(...),
@@ -578,7 +592,7 @@ async def update_tool_config(
     if credential_action:
         try:
             if credential_action[0] == "put":
-                await credential_service.credential_store.put(
+                await credential_service.save_credential(
                     CredentialRecord(
                         ref=credential_action[1],
                         kind="static",
@@ -586,7 +600,7 @@ async def update_tool_config(
                     ),
                 )
             else:
-                await credential_service.credential_store.delete(
+                await credential_service.delete_credential(
                     credential_action[1],
                 )
         except Exception as e:

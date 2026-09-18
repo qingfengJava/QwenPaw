@@ -6,7 +6,7 @@ from __future__ import annotations
 from dataclasses import asdict
 import logging
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from ...checkpoints.models import (
@@ -17,6 +17,7 @@ from ...checkpoints.models import (
 from ...checkpoints.policy import session_key
 from ...checkpoints.runtime import RUNTIME
 from ..agent_context import get_agent_for_request
+from ..rbac.deps import require_agent_manage_audited
 
 router = APIRouter(prefix="/workspace/checkpoints", tags=["checkpoints"])
 logger = logging.getLogger(__name__)
@@ -131,7 +132,10 @@ async def checkpoint_status(request: Request) -> dict:
     }
 
 
-@router.patch("/auto")
+@router.patch(
+    "/auto",
+    dependencies=[Depends(require_agent_manage_audited("checkpoints.auto"))],
+)
 async def set_checkpoint_auto(body: AutoRequest, request: Request) -> dict:
     service = await _service(request)
     try:
@@ -223,7 +227,12 @@ async def preview_checkpoint_restore(
     return await _restore(body, request, dry_run=True)
 
 
-@router.post("/restore")
+@router.post(
+    "/restore",
+    dependencies=[
+        Depends(require_agent_manage_audited("checkpoints.restore")),
+    ],
+)
 async def apply_checkpoint_restore(
     body: RestoreRequest,
     request: Request,
@@ -260,7 +269,10 @@ async def preview_checkpoint_gc(body: GcRequest, request: Request) -> dict:
     return await _run_gc(body, request, dry_run=True)
 
 
-@router.post("/gc")
+@router.post(
+    "/gc",
+    dependencies=[Depends(require_agent_manage_audited("checkpoints.gc"))],
+)
 async def apply_checkpoint_gc(body: GcRequest, request: Request) -> dict:
     return await _run_gc(body, request, dry_run=False)
 
@@ -274,7 +286,12 @@ async def get_checkpoint_gc_settings(request: Request) -> dict:
         raise _checkpoint_error(exc) from exc
 
 
-@router.patch("/gc/settings")
+@router.patch(
+    "/gc/settings",
+    dependencies=[
+        Depends(require_agent_manage_audited("checkpoints.gc_settings")),
+    ],
+)
 async def update_checkpoint_gc_settings(
     body: GcSettingsRequest,
     request: Request,
@@ -290,7 +307,10 @@ async def update_checkpoint_gc_settings(
         raise _checkpoint_error(exc) from exc
 
 
-@router.delete("")
+@router.delete(
+    "",
+    dependencies=[Depends(require_agent_manage_audited("checkpoints.reset"))],
+)
 async def reset_checkpoints(request: Request) -> dict:
     service = await _service(request)
     try:

@@ -71,6 +71,12 @@ const DEFAULT_TIMEOUT_MS = 30000;
 const DEFAULT_RETRIES = 0;
 const DEFAULT_RETRY_DELAY_MS = 1000;
 
+/**
+ * 后台配置域越权 403 的 detail 签名（与后端 rbac/deps.py `_deny_manage` 的
+ * 固定中文文案对齐）。命中即派发全局事件统一 toast，不在各页面重复处理。
+ */
+const MANAGE_DENIED_SIGNATURE = "无该员工配置权限";
+
 export async function request<T = unknown>(
   path: string,
   options: RequestOptions = {},
@@ -132,6 +138,22 @@ export async function request<T = unknown>(
         const text = await response.text().catch(() => "");
         const contentType = response.headers.get("content-type") || "";
         const errorMessage = getErrorMessageFromBody(text, contentType);
+
+        // 后台配置域越权（缺员工管理授权）统一 toast：后端 _deny_manage 以固定
+        // 中文 detail 返回并要求前端直接展示，这里派发一次全局事件，由挂在
+        // antd App 上下文的 GlobalManageDeniedToast 弹一次提示。按 detail 签名
+        // 精确匹配，避免干扰其它 403 流程（各页面自有错误处理保持不变）。
+        if (
+          response.status === 403 &&
+          typeof errorMessage === "string" &&
+          errorMessage.includes(MANAGE_DENIED_SIGNATURE)
+        ) {
+          window.dispatchEvent(
+            new CustomEvent("qwenpaw:manage-denied", {
+              detail: { message: errorMessage, method, path },
+            }),
+          );
+        }
 
         // Preserve raw body for parseErrorDetail() to extract structured fields
         const finalMessage = errorMessage

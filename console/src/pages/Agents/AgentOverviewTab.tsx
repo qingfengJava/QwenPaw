@@ -20,6 +20,7 @@ import { Pin, Sparkles } from "lucide-react";
 import { StatCard, StatusPill } from "@/components/staffdeck";
 import ExpertAvatar from "@/components/ExpertAvatar";
 import { avatarGradient } from "@/utils/avatarGradient";
+import { agentsApi, type AgentDocDraftInfo } from "@/api/modules/agents";
 import { workspaceApi } from "@/api/modules/workspace";
 import { providerApi } from "@/api/modules/provider";
 import { isExpertAgentId } from "@/api/modules/xianFeedback";
@@ -38,6 +39,14 @@ import styles from "./detail.module.less";
  * identityDocFiles.ts），避免展示/预填/回填三处定义漂移。
  */
 const CONFIG_FILES = IDENTITY_DOC_FILES;
+
+/** doc_type（agent_documents）→ 工作区文件名（个人草稿徽标映射）。 */
+const DOC_FILE_BY_TYPE: Record<string, string> = {
+  profile: "PROFILE.md",
+  agents: "AGENTS.md",
+  soul: "SOUL.md",
+  agent_json: "agent.json",
+};
 
 /** 大数缩写：12000 → 12k，3400000 → 3.4M。 */
 function formatStatNumber(n: number): string {
@@ -100,6 +109,27 @@ export default function AgentOverviewTab({
   const [configsLoading, setConfigsLoading] = useState(true);
   const [activeConfig, setActiveConfig] = useState<string | null>(null);
 
+  // ── T11 我的个人档案草稿：徽标「我的草稿未应用」（当前激活文件）──
+  const [myDrafts, setMyDrafts] = useState<AgentDocDraftInfo[]>([]);
+  const refreshMyDrafts = useCallback(async () => {
+    try {
+      const res = await agentsApi.listMyDocDrafts(aid);
+      setMyDrafts(res.drafts ?? []);
+    } catch {
+      // 无认证（单机）/无 PG/无权限：无个人草稿平面，不显示徽标
+      setMyDrafts([]);
+    }
+  }, [aid]);
+
+  const draftByFile = useMemo(() => {
+    const map: Record<string, AgentDocDraftInfo> = {};
+    myDrafts.forEach((draft) => {
+      const file = DOC_FILE_BY_TYPE[draft.doc_type];
+      if (file) map[file] = draft;
+    });
+    return map;
+  }, [myDrafts]);
+
   // 并发探测白名单档案文件，取到内容的进入 chip 列表（供挂载与
   // 对话修改刷新共用；root="workspace"：智能体自身存储根，跟随
   // selectedAgent 借壳，工作台调试模式下自动指向草稿工作区）。
@@ -137,8 +167,13 @@ export default function AgentOverviewTab({
     };
   }, [aid, fetchConfigDocs]);
 
+  // 个人草稿徽标：首次挂载拉取一次（切换员工时刷新）
+  useEffect(() => {
+    void refreshMyDrafts();
+  }, [refreshMyDrafts]);
+
   // 对话修改闭环：聊天流结束（本轮引用了档案文件）后广播的变更事件
-  // → 静默重拉档案内容；保持当前选中文件，消失时回退到第一个。
+  // → 静默重拉档案内容 + 个人草稿徽标；保持当前选中文件，消失时回退到第一个。
   useEffect(() => {
     const handleDocsChanged = () => {
       void fetchConfigDocs().then((docs) => {
@@ -150,11 +185,12 @@ export default function AgentOverviewTab({
             : (Object.keys(docs)[0] ?? null),
         );
       });
+      void refreshMyDrafts();
     };
     window.addEventListener(AGENT_DOCS_CHANGED_EVENT, handleDocsChanged);
     return () =>
       window.removeEventListener(AGENT_DOCS_CHANGED_EVENT, handleDocsChanged);
-  }, [fetchConfigDocs]);
+  }, [fetchConfigDocs, refreshMyDrafts]);
 
   const quickPrompts = useMemo(
     () => [
@@ -292,6 +328,23 @@ export default function AgentOverviewTab({
                   onClick={() => setActiveConfig(name)}
                 >
                   {name}
+                  {draftByFile[name]?.unapplied ? (
+                    <span
+                      style={{
+                        display: "inline-block",
+                        width: 6,
+                        height: 6,
+                        borderRadius: "50%",
+                        background: "var(--qwenpaw-color-warning, #faad14)",
+                        marginLeft: 6,
+                        verticalAlign: "middle",
+                      }}
+                      title={t(
+                        "agentDetail.myDraftDotTitle",
+                        "该文件有未应用的个人草稿",
+                      )}
+                    />
+                  ) : null}
                 </button>
               ))}
               {activeConfig && (
@@ -317,6 +370,18 @@ export default function AgentOverviewTab({
               )}
             </div>
           )}
+
+          {/* T11：当前激活文件有未应用个人草稿 → owner 徽标（仅本人可见） */}
+          {activeConfig && draftByFile[activeConfig]?.unapplied ? (
+            <div style={{ marginBottom: 8 }}>
+              <StatusPill tone="amber">
+                {t(
+                  "agentDetail.myDraftUnapplied",
+                  "我的草稿未应用（待管理员应用为共享配置）",
+                )}
+              </StatusPill>
+            </div>
+          ) : null}
 
           {/* 内容区：Markdown 渲染 / agent.json 格式化 JSON */}
           {configsLoading ? (

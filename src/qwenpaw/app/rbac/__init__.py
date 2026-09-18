@@ -9,12 +9,21 @@ Public surface:
   teams registry;
 - permission/role name constants.
 """
-from .deps import RBAC_ENFORCE_ENV, rbac_enforcement_enabled, require_perm
+from .deps import (
+    RBAC_ENFORCE_ENV,
+    is_platform_admin,
+    manage_allowed,
+    rbac_enforcement_enabled,
+    require_agent_manage,
+    require_agent_manage_audited,
+    require_perm,
+)
 from .models import (
     PERM_ADMIN_AUDIT,
     PERM_ADMIN_EXPERTS,
     PERM_ADMIN_KB,
     PERM_ADMIN_ORGS,
+    PERM_ADMIN_PLATFORM,
     PERM_ADMIN_QUOTAS,
     PERM_ADMIN_ROLES,
     PERM_ADMIN_USERS,
@@ -43,6 +52,7 @@ __all__ = [
     "PERM_ADMIN_EXPERTS",
     "PERM_ADMIN_KB",
     "PERM_ADMIN_ORGS",
+    "PERM_ADMIN_PLATFORM",
     "PERM_ADMIN_QUOTAS",
     "PERM_ADMIN_ROLES",
     "PERM_ADMIN_USERS",
@@ -64,8 +74,12 @@ __all__ = [
     "TeamRecord",
     "get_rbac_store",
     "has_permission",
+    "is_platform_admin",
+    "manage_allowed",
     "permission_matches",
     "rbac_enforcement_enabled",
+    "require_agent_manage",
+    "require_agent_manage_audited",
     "require_perm",
     "reset_rbac_store",
 ]

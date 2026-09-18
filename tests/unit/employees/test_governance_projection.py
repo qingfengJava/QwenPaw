@@ -16,6 +16,8 @@ from qwenpaw.app.employees.models import (
     EMPLOYEE_KIND_AGENT,
     EMPLOYEE_KIND_EXPERT,
     EMPLOYEE_KIND_TEAM,
+    MANAGE_VISIBILITY_DEPARTMENT,
+    MANAGE_VISIBILITY_PRIVATE,
     VISIBILITY_DEPARTMENT,
     VISIBILITY_ORG,
     VISIBILITY_PRIVATE,
@@ -26,11 +28,14 @@ from qwenpaw.app.employees.projection import (
     clear_department_reference,
     expand_department_subtree,
     grant_for_record,
+    manage_grant_for_record,
     project,
     refresh_for_new_department,
     refresh_for_removed_department,
     selected_department_ids,
+    selected_manage_department_ids,
     write_grant,
+    write_manage_grant,
 )
 from qwenpaw.app.orgs.models import DepartmentRecord
 from qwenpaw.app.rbac.models import GrantRecord
@@ -74,6 +79,7 @@ class _FakeRbac:
         self._set_ok = set_ok
         self.set_calls: list[tuple[str, object]] = []
         self.deleted: list[str] = []
+        self.manage_set_calls: list[tuple[str, object]] = []
 
     def set_agent_grant(self, agent_id, grant):
         self.set_calls.append((agent_id, grant))
@@ -83,6 +89,10 @@ class _FakeRbac:
         self.deleted.append(agent_id)
         # Mirrors the store: absent grant deletion is an idempotent success.
         return True
+
+    def set_agent_manage_grant(self, agent_id, grant):
+        self.manage_set_calls.append((agent_id, grant))
+        return self._set_ok
 
 
 class _FakeExpertStore:
@@ -296,6 +306,10 @@ async def test_project_mirrors_expert_columns(monkeypatch):
         {"id": "sales", "visibility": "department", "department": "Sales"},
     ]
     assert len(rbac.set_calls) == 1
+    # manage 平面与 use 平面同源同生命周期：每次投影必落一行 manage grant
+    assert len(rbac.manage_set_calls) == 1
+    assert rbac.manage_set_calls[0][0] == "expert_sales"
+    assert rbac.manage_set_calls[0][1].users == ["alice"]
 
 
 async def test_project_skips_mirror_for_non_expert_kinds(monkeypatch):
@@ -476,3 +490,152 @@ async def test_clear_department_reference_falls_back_to_org(monkeypatch):
     assert by_agent["b"]["updated_by"] == "department_cleanup"
     # Org-wide rows are never rewritten by cleanup.
     assert "c" not in by_agent
+
+
+# ---------------------------------------------------------------------------
+# manage grant translation（后台配置域授权维）
+# ---------------------------------------------------------------------------
+
+
+def test_selected_manage_department_ids_dedupe_and_order():
+    record = _record(
+        department_id="d_sales",
+        manage_granted_departments=["d_support", "d_sales", ""],
+    )
+    assert selected_manage_department_ids(record) == [
+        "d_sales",
+        "d_support",
+    ]
+
+
+def test_manage_private_grants_owner_plus_explicit_users():
+    grant = manage_grant_for_record(
+        _record(
+            manage_visibility=MANAGE_VISIBILITY_PRIVATE,
+            owner_id="alice",
+            manage_granted_users=["bob", "alice"],
+        ),
+        DEPARTMENTS,
+    )
+    # 创建者 ∪ 显式名单，去重保序；private 不带部门 team
+    assert grant.users == ["alice", "bob"]
+    assert grant.teams == []
+
+
+def test_manage_private_without_owner_only_explicit_users():
+    grant = manage_grant_for_record(
+        _record(
+            manage_visibility=MANAGE_VISIBILITY_PRIVATE,
+            owner_id=None,
+            manage_granted_users=["bob"],
+        ),
+        DEPARTMENTS,
+    )
+    assert grant.users == ["bob"]
+
+
+def test_manage_department_expands_subtree_into_dept_teams():
+    grant = manage_grant_for_record(
+        _record(
+            manage_visibility=MANAGE_VISIBILITY_DEPARTMENT,
+            department_id="d_sales",
+            manage_granted_departments=["d_support"],
+            owner_id="alice",
+            manage_granted_users=["carol"],
+        ),
+        DEPARTMENTS,
+    )
+    assert set(grant.teams) == {
+        "dept:sales",
+        "dept:sales/beijing",
+        "dept:sales/beijing_jr",
+        "dept:support",
+    }
+    assert "dept:salesmate" not in grant.teams
+    assert grant.users == ["alice", "carol"]
+
+
+def test_manage_grant_is_never_none_even_for_org_visibility():
+    # 使用维 org = 删 grant（不限制）；管理维没有这个语义，恒投影一行
+    grant = manage_grant_for_record(
+        _record(visibility=VISIBILITY_ORG, owner_id="alice"),
+        DEPARTMENTS,
+    )
+    assert grant is not None
+    assert grant.users == ["alice"]
+
+
+def test_write_manage_grant_raises_when_rbac_file_unreadable(monkeypatch):
+    rbac = _FakeRbac(load_error=True)
+    _patch(monkeypatch, rbac=rbac)
+    with pytest.raises(GrantProjectionError, match="expert_sales"):
+        write_manage_grant(_record(), GrantRecord(users=["alice"]))
+    assert rbac.manage_set_calls == []
+
+
+def test_write_manage_grant_raises_when_store_rejects_write(monkeypatch):
+    rbac = _FakeRbac(set_ok=False)
+    _patch(monkeypatch, rbac=rbac)
+    with pytest.raises(GrantProjectionError, match="expert_sales"):
+        write_manage_grant(_record(), GrantRecord(users=["alice"]))
+
+
+async def test_refresh_for_new_department_covers_manage_department_rows(
+    monkeypatch,
+):
+    # 管理维 department 行也必须在新建部门后重投影（否则管理授权漏新子部门）
+    rbac = _FakeRbac()
+    new_dept = _department("d_new", name="New", path="sales/new")
+    # 部门快照含新部门（生产路径 list_departments 在创建后取回）
+    _patch(monkeypatch, rbac=rbac, departments=[*DEPARTMENTS, new_dept])
+    monkeypatch.setattr(
+        projection_mod,
+        "get_employee_governance_store",
+        lambda: _FakeGovernanceStore(
+            [
+                _record(
+                    agent_id="a",
+                    visibility=VISIBILITY_ORG,
+                    manage_visibility=MANAGE_VISIBILITY_DEPARTMENT,
+                    department_id="d_sales",
+                ),
+            ],
+        ),
+    )
+    refreshed = await refresh_for_new_department(new_dept)
+    assert refreshed == 1
+    assert set(rbac.manage_set_calls[0][1].teams) == {
+        "dept:sales",
+        "dept:sales/beijing",
+        "dept:sales/beijing_jr",
+        "dept:sales/new",
+    }
+
+
+async def test_clear_department_reference_falls_back_to_manage_private(
+    monkeypatch,
+):
+    # 部门可配却再无生效部门 → 回落 private（管理维无 org，锁严不放宽）
+    rbac = _FakeRbac()
+    _patch(monkeypatch, rbac=rbac)
+    store = _FakeGovernanceStore(
+        [
+            _record(
+                agent_id="a",
+                manage_visibility=MANAGE_VISIBILITY_DEPARTMENT,
+                department_id="d_gone",
+                manage_granted_departments=["d_gone"],
+            ),
+        ],
+    )
+    monkeypatch.setattr(
+        projection_mod,
+        "get_employee_governance_store",
+        lambda: store,
+    )
+
+    cleared = await clear_department_reference("d_gone")
+
+    assert cleared == 1
+    assert store.upserts[0]["manage_visibility"] == MANAGE_VISIBILITY_PRIVATE
+    assert store.upserts[0]["manage_granted_departments"] == []

@@ -16,7 +16,6 @@ from qwenpaw.agent_stats.service import (
     AgentStatsService,
     _process_session_file,
 )
-from qwenpaw.token_usage.manager import TokenUsageStats, TokenUsageSummary
 from qwenpaw.token_usage.turn_usage import TURN_USAGE_META_KEY
 
 
@@ -353,17 +352,14 @@ class TestProcessSessionFileAgentTokens:
 
 @pytest.mark.asyncio
 class TestAgentStatsServiceAgentTokens:
-    """Cover get_summary wiring for agent_* vs global totals."""
+    """Cover get_summary token overlay: PG per-agent aggregate, no-PG
+    fallback to session agent_*, and scope=mine viewer wiring."""
 
-    async def test_get_summary_keeps_global_and_fills_agent_fields(
-        self,
-        tmp_path: Path,
-    ):
-        workspace = tmp_path / "agent-a"
+    @staticmethod
+    def _write_session(workspace: Path) -> None:
         sessions = workspace / "sessions" / "console"
         sessions.mkdir(parents=True)
-        session_file = sessions / "s1.json"
-        session_file.write_text(
+        (sessions / "s1.json").write_text(
             json.dumps(
                 {
                     "agent": {
@@ -389,52 +385,109 @@ class TestAgentStatsServiceAgentTokens:
             encoding="utf-8",
         )
 
-        global_summary = TokenUsageSummary(
-            total_prompt_tokens=4_000_000,
-            total_completion_tokens=284_800,
-            total_calls=72,
-            by_model={},
-            by_date={
-                "2026-07-23": TokenUsageStats(
-                    prompt_tokens=4_000_000,
-                    completion_tokens=284_800,
-                    call_count=72,
-                ),
-            },
-        )
-        mock_manager = AsyncMock()
-        mock_manager.get_summary = AsyncMock(return_value=global_summary)
+    async def test_get_summary_falls_back_to_agent_tokens_without_pg(
+        self,
+        tmp_path: Path,
+    ):
+        workspace = tmp_path / "agent-a"
+        self._write_session(workspace)
 
         with patch(
-            "qwenpaw.agent_stats.service.get_token_usage_manager",
-            return_value=mock_manager,
+            "qwenpaw.agent_stats.service.aggregate_agent_token_usage",
+            new=AsyncMock(return_value=None),
         ):
             summary = await AgentStatsService().get_summary(
                 workspace_dir=workspace,
                 start_date=date(2026, 7, 23),
                 end_date=date(2026, 7, 24),
+                agent_id="agent-a",
             )
 
         assert isinstance(summary, AgentStatsSummary)
-        # Global totals remain from token_usage manager
-        assert summary.total_prompt_tokens == 4_000_000
-        assert summary.total_completion_tokens == 284_800
-        assert summary.total_llm_calls == 72
-        assert summary.by_date[0].prompt_tokens == 4_000_000
-        assert summary.by_date[0].completion_tokens == 284_800
-        assert summary.by_date[0].llm_calls == 72
-        # Agent-scoped fields come from session turn metadata
+        # 无 PG：token 叠加回退会话派生 agent_*（本员工口径）
+        assert summary.total_prompt_tokens == 111
+        assert summary.total_completion_tokens == 22
+        assert summary.total_llm_calls == 1
+        assert summary.by_date[0].prompt_tokens == 111
+        assert summary.by_date[0].completion_tokens == 22
+        assert summary.by_date[0].llm_calls == 1
+        # 会话派生 agent_* 字段独立保留
         assert summary.agent_prompt_tokens == 111
         assert summary.agent_completion_tokens == 22
         assert summary.agent_llm_calls == 1
         assert summary.total_messages == 2
-        # Daily agent token fields are independent of global overlay
-        assert summary.by_date[0].agent_prompt_tokens == 111
-        assert summary.by_date[0].agent_completion_tokens == 22
-        assert summary.by_date[0].agent_llm_calls == 1
+        # 无会话的日期回退为 0
+        assert summary.by_date[1].prompt_tokens == 0
         assert summary.by_date[1].agent_prompt_tokens == 0
-        assert summary.by_date[1].agent_completion_tokens == 0
-        assert summary.by_date[1].agent_llm_calls == 0
+
+    async def test_get_summary_uses_pg_agent_aggregate(self, tmp_path: Path):
+        workspace = tmp_path / "agent-a"
+        self._write_session(workspace)
+
+        pg_usage = {
+            "total_prompt": 5_000,
+            "total_completion": 300,
+            "total_calls": 9,
+            "by_date": {
+                "2026-07-23": {
+                    "prompt": 5_000,
+                    "completion": 300,
+                    "calls": 9,
+                },
+            },
+        }
+        mock_agg = AsyncMock(return_value=pg_usage)
+
+        with patch(
+            "qwenpaw.agent_stats.service.aggregate_agent_token_usage",
+            new=mock_agg,
+        ):
+            summary = await AgentStatsService().get_summary(
+                workspace_dir=workspace,
+                start_date=date(2026, 7, 23),
+                end_date=date(2026, 7, 24),
+                agent_id="agent-a",
+            )
+
+        # PG 可用：token 叠加取按 agent 聚合的权威值
+        assert summary.total_prompt_tokens == 5_000
+        assert summary.total_completion_tokens == 300
+        assert summary.total_llm_calls == 9
+        assert summary.by_date[0].prompt_tokens == 5_000
+        assert summary.by_date[0].completion_tokens == 300
+        assert summary.by_date[0].llm_calls == 9
+        # 无 PG 行的日期不被覆盖，保持初始 0
+        assert summary.by_date[1].prompt_tokens == 0
+        # 会话派生 agent_* 仍独立于叠加口径
+        assert summary.agent_prompt_tokens == 111
+        assert summary.agent_completion_tokens == 22
+        # scope 默认 agent：按 agent_id 聚合、不按 user 收敛
+        args, kwargs = mock_agg.call_args
+        assert args[0] == "agent-a"
+        assert kwargs.get("user_id") is None
+
+    async def test_get_summary_scope_mine_passes_viewer(self, tmp_path: Path):
+        workspace = tmp_path / "agent-a"
+        self._write_session(workspace)
+
+        mock_agg = AsyncMock(return_value=None)
+
+        with patch(
+            "qwenpaw.agent_stats.service.aggregate_agent_token_usage",
+            new=mock_agg,
+        ):
+            await AgentStatsService().get_summary(
+                workspace_dir=workspace,
+                start_date=date(2026, 7, 23),
+                end_date=date(2026, 7, 23),
+                agent_id="agent-a",
+                scope="mine",
+                viewer="zhangsan",
+            )
+
+        # scope=mine：按发起用户收敛（token_usage_events.user_id）
+        _, kwargs = mock_agg.call_args
+        assert kwargs.get("user_id") == "zhangsan"
 
     async def test_agent_tokens_isolated_per_workspace(self, tmp_path: Path):
         def _write_workspace(name: str, prompt: int, completion: int) -> Path:
@@ -464,19 +517,9 @@ class TestAgentStatsServiceAgentTokens:
         ws_a = _write_workspace("agent-a", 100, 10)
         ws_b = _write_workspace("agent-b", 500, 50)
 
-        empty_global = TokenUsageSummary(
-            total_prompt_tokens=999,
-            total_completion_tokens=99,
-            total_calls=9,
-            by_model={},
-            by_date={},
-        )
-        mock_manager = AsyncMock()
-        mock_manager.get_summary = AsyncMock(return_value=empty_global)
-
         with patch(
-            "qwenpaw.agent_stats.service.get_token_usage_manager",
-            return_value=mock_manager,
+            "qwenpaw.agent_stats.service.aggregate_agent_token_usage",
+            new=AsyncMock(return_value=None),
         ):
             summary_a = await AgentStatsService().get_summary(
                 workspace_dir=ws_a,
@@ -495,9 +538,9 @@ class TestAgentStatsServiceAgentTokens:
         assert summary_b.agent_prompt_tokens == 500
         assert summary_b.agent_completion_tokens == 50
         assert summary_b.agent_llm_calls == 1
-        # Global fields stay identical (same mocked manager)
-        assert summary_a.total_prompt_tokens == 999
-        assert summary_b.total_prompt_tokens == 999
+        # 无 PG 时叠加回退会话 agent_*，两员工口径天然隔离（不再全站相同）
+        assert summary_a.total_prompt_tokens == 100
+        assert summary_b.total_prompt_tokens == 500
 
 
 def _write_trend_workspace(root: Path, n_turns: int, n_tools: int) -> Path:
@@ -541,7 +584,7 @@ async def test_get_global_llm_tool_by_date_sums_skips_and_fills(tmp_path):
             ),
         ),
         patch(
-            "qwenpaw.agent_stats.service.get_token_usage_manager",
+            "qwenpaw.agent_stats.service.aggregate_agent_token_usage",
         ) as mock_overlay,
     ):
         rows = await AgentStatsService().get_global_llm_tool_by_date(

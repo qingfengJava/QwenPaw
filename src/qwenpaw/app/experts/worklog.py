@@ -4,7 +4,8 @@
 数据单一来源（决策 D6）：全部从既有权威表聚合，不建流水新表——
 - 团队任务：``team_run_nodes``（assignee_expert_id 维度）→
   ``team_runs``（批查补齐 run 状态/目标）；
-- 定时任务：``expert_task_runs``；
+- 定时任务：经 SchedulingStore（只读 facade）→ CronLedgerReader 读 cron
+  双表（T13d 收口后唯一读平面，无门控/无 json 回退）；
 - 反馈：``message_feedback``；
 - 成长记录：``evolution_proposals``（published/rolled_back 即成长点）；
 - 能力分配：``expert_resource_bindings`` + ``expert_skills``（挂载时间线）。
@@ -88,19 +89,8 @@ class WorklogService:
                     {"tid": tid, "rids": run_ids},
                 )
                 runs = {r.id: r for r in run_rows}
-            # 3) 定时任务执行留痕（窗口内）
-            task_runs = (
-                await conn.execute(
-                    text(
-                        "SELECT id, task_id, status, result_summary, "
-                        "started_at, finished_at FROM expert_task_runs "
-                        "WHERE tenant_id = :tid AND expert_id = :eid "
-                        "AND started_at >= :since "
-                        "ORDER BY started_at DESC"
-                    ),
-                    {"tid": tid, "eid": expert_id, "since": since},
-                )
-            ).all()
+            # 3) 定时任务执行留痕（窗口内）经 CronLedgerReader 读 cron
+            #    双表，见 conn 块外（T13d 收口后唯一读平面，与 list_runs 同源）
             # 4) 反馈（窗口内）
             feedback_rows = (
                 await conn.execute(
@@ -125,6 +115,16 @@ class WorklogService:
                     {"tid": tid, "eid": expert_id},
                 )
             ).all()
+
+        # 定时任务执行留痕经 SchedulingStore（只读 facade）→
+        # CronLedgerReader 读 cron 双表（T13d 收口后唯一读平面）——与
+        # list_runs/count_active 同一入口，杜绝 work-record 读旧表漂移。
+        from .scheduling import get_scheduling_store
+
+        task_runs = await get_scheduling_store().runs_in_window(
+            expert_id,
+            since,
+        )
 
         # ---- 内存组装：按天统计 ----
         by_day: Dict[str, Dict[str, int]] = {}

@@ -128,6 +128,32 @@ export interface ExpertDocRollbackResult {
   materialized: boolean;
 }
 
+/** 一条待应用个人草稿（T11；与共享行内容分叉的个人草稿行）。 */
+export interface ExpertPersonalDraftInfo {
+  owner_user_id: string;
+  doc_type: string;
+  version: string;
+  updated_by: string | null;
+  updated_at: string | null;
+  /** 恒 true（列表仅返回与共享分叉的行）——保留字段便于前端复用。 */
+  unapplied: boolean;
+}
+
+/** 待应用个人草稿列表响应（available=false 表示未启用 PG 档案存储）。 */
+export interface ExpertPersonalDraftsResult {
+  drafts: ExpertPersonalDraftInfo[];
+  available: boolean;
+}
+
+/** 应用个人草稿结果（promote 共享行 + revision + 物化 + 热重载）。 */
+export interface ExpertPersonalDraftApplyResult {
+  expert_id: string;
+  doc_type: string;
+  owner_user_id: string;
+  version: number | null;
+  materialized: boolean;
+}
+
 const enc = encodeURIComponent;
 
 export const adminExpertsApi = {
@@ -207,5 +233,24 @@ export const adminExpertsApi = {
     request<ExpertDocRollbackResult>(
       `/admin/experts/${enc(expertId)}/documents/${enc(docType)}/rollback`,
       { method: "POST", body: JSON.stringify({ version }) },
+    ),
+
+  // ── 待应用个人草稿（T11；apply = promote 共享行 + revision）──
+
+  listPersonalDrafts: (expertId: string) =>
+    request<ExpertPersonalDraftsResult>(
+      `/admin/experts/${enc(expertId)}/documents/personal-drafts`,
+    ),
+
+  applyPersonalDraft: (
+    expertId: string,
+    ownerUserId: string,
+    docType: string,
+  ) =>
+    request<ExpertPersonalDraftApplyResult>(
+      `/admin/experts/${enc(expertId)}/documents/personal-drafts/${enc(
+        ownerUserId,
+      )}/apply`,
+      { method: "POST", body: JSON.stringify({ doc_type: docType }) },
     ),
 };

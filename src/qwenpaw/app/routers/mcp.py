@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Body, Path, Request
+from fastapi import APIRouter, Body, Depends, Path, Request
 from pydantic import BaseModel, Field
 
 from ..mcp.config_service import (
@@ -13,6 +13,7 @@ from ..mcp.config_service import (
     ensure_mcp_display_name_unique,
     ensure_mcp_driver_active,
 )
+from ..rbac.deps import require_agent_manage_audited
 from ..mcp.schemas import (
     MCPAccessPolicy,
     MCPAccessPrincipalOption,
@@ -98,6 +99,7 @@ class MCPToolWhitelistRequest(BaseModel):
     "/tools/{client_key:path}",
     response_model=List[MCPToolInfo],
     summary="Update tool whitelist for an MCP client",
+    dependencies=[Depends(require_agent_manage_audited("mcp.tool_whitelist"))],
 )
 async def update_mcp_tool_whitelist(
     request: Request,
@@ -135,6 +137,7 @@ async def get_mcp_policy(
     "/policy/{client_key:path}",
     response_model=MCPAccessPolicy,
     summary="Update saved MCP access policy",
+    dependencies=[Depends(require_agent_manage_audited("mcp.policy.write"))],
 )
 async def update_mcp_policy(
     request: Request,
@@ -175,6 +178,7 @@ async def list_mcp_clients(request: Request) -> List[MCPClientInfo]:
     response_model=MCPClientInfo,
     summary="Create a new MCP client",
     status_code=201,
+    dependencies=[Depends(require_agent_manage_audited("mcp.client.create"))],
 )
 async def create_mcp_client(
     request: Request,
@@ -190,6 +194,7 @@ async def create_mcp_client(
     "/toggle/{client_key:path}",
     response_model=MCPClientInfo,
     summary="Toggle MCP client enabled status",
+    dependencies=[Depends(require_agent_manage_audited("mcp.client.toggle"))],
 )
 async def toggle_mcp_client(
     request: Request,
@@ -226,6 +231,7 @@ async def get_mcp_client(
     "/{client_key:path}",
     response_model=MCPClientInfo,
     summary="Update an MCP client",
+    dependencies=[Depends(require_agent_manage_audited("mcp.client.update"))],
 )
 async def update_mcp_client(
     request: Request,
@@ -241,6 +247,7 @@ async def update_mcp_client(
     "/{client_key:path}",
     response_model=Dict[str, str],
     summary="Delete an MCP client",
+    dependencies=[Depends(require_agent_manage_audited("mcp.client.delete"))],
 )
 async def delete_mcp_client(
     request: Request,

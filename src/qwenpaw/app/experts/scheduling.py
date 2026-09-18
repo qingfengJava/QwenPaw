@@ -1,18 +1,24 @@
 # -*- coding: utf-8 -*-
-"""Expert scheduled tasks: projection ledger + CronManager wiring.
+"""Expert scheduled tasks: cron-plane authority wiring (T13d 收口后).
 
-员工定时任务（决策 D5，复用 automations 的「投影 + 权威分离」模式）：
-- 台账：``expert_scheduled_tasks``（UI 管理/统计投影）；
-- 权威：该专家 workspace 的 ``CronManager``（APScheduler），
-  job id 前缀 ``expert_task_``，``meta.expert_task_id`` 双保险定位；
-- 执行：task_type=agent、``request.input=task_prompt``——即对该数字
+员工定时任务（决策 D5「投影 + 权威分离」的收口终态）：
+
+- **权威**：该专家 workspace 的 ``CronManager``（APScheduler）——
+  job id 前缀 ``expert_task_``，``spec.meta`` 承载专家域注解
+  （原始名/描述/来源）；规格与执行留痕只落 ``cron_jobs`` /
+  ``cron_job_history``（Phase 1 已补齐 result_summary/run_id/
+  session_id/scheduled_for/run_count）；
+- **读**：:mod:`.cron_ledger` 的 ``CronLedgerReader`` 从 cron 双表
+  反推 :class:`ScheduledTaskRecord` / :class:`TaskRunRecord`（expert
+  两表已 DROP，不再有第二套台账与门控回退）；
+- **执行**：task_type=agent、``request.input=task_prompt``——对该数字
   员工发起一次真实任务（走其自身 ReAct 引擎），独立会话累积
-  （share_session=False → 会话 ``cron:{job_id}``）；
-- 留痕：CronManager 执行观察者把每次执行写 ``expert_task_runs``
-  并回写投影（last_run_at/last_status/run_count/next_run_at）。
+  （share_session=False → 会话 ``cron:{job_id}``）；执行留痕由
+  CronManager 权威落 history，执行观察者只做结果自检（inbox 告警）。
 
-逆向：delete=注销权威 job + 行置 archived；pause/resume 双侧同步；
-创建时注册失败回滚投影行。
+存储后端约束（决策 D1）：专家域 cron 平面必须 PG 权威，即部署须
+``QWENPAW_STORAGE_BACKEND ∈ {dual,pg}``；json 后端下双表为空，启动
+经 :func:`.cron_ledger.warn_if_json_backend` 告警。
 @author qingfeng
 """
 
@@ -22,14 +28,9 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import text
-
-from ..enterprise import current_tenant_id, new_id, require_enterprise_engine
+from .cron_ledger import get_cron_ledger_reader, warn_if_json_backend
 from .models import (
     TASK_STATUS_ACTIVE,
-    TASK_STATUS_ARCHIVED,
-    TASK_STATUS_COMPLETED,
-    TASK_STATUS_PAUSED,
     ScheduledTaskRecord,
     TaskRunRecord,
 )
@@ -39,437 +40,80 @@ logger = logging.getLogger(__name__)
 #: CronManager 权威 job id 前缀（观察者据此识别本域任务）
 EXPERT_TASK_JOB_PREFIX = "expert_task_"
 
-_TASK_COLS = (
-    "id, expert_id, name, description, task_prompt, schedule_type, "
-    "schedule_json, timezone, status, cron_job_id, next_run_at, "
-    "last_run_at, last_status, run_count, source, origin, "
-    "owner_id, created_at, updated_at"
-)
-
-_RUN_COLS = (
-    "id, task_id, expert_id, scheduled_for, status, result_summary, "
-    "error, run_id, session_id, started_at, finished_at"
-)
-
-
-def _row_to_task(row) -> ScheduledTaskRecord:
-    """Map one expert_scheduled_tasks row."""
-    return ScheduledTaskRecord(
-        id=row.id,
-        expert_id=row.expert_id,
-        name=row.name,
-        description=row.description or "",
-        task_prompt=row.task_prompt,
-        schedule_type=row.schedule_type,
-        schedule_json=row.schedule_json or {},
-        timezone=row.timezone or "Asia/Shanghai",
-        status=row.status,
-        cron_job_id=row.cron_job_id or "",
-        next_run_at=row.next_run_at,
-        last_run_at=row.last_run_at,
-        last_status=row.last_status or "",
-        run_count=int(row.run_count or 0),
-        source=row.source or "ui",
-        origin=row.origin or {},
-        owner_id=row.owner_id,
-        created_at=row.created_at,
-        updated_at=row.updated_at,
-    )
-
-
-def _row_to_run(row) -> TaskRunRecord:
-    """Map one expert_task_runs row."""
-    return TaskRunRecord(
-        id=row.id,
-        task_id=row.task_id,
-        expert_id=row.expert_id,
-        scheduled_for=row.scheduled_for,
-        status=row.status,
-        result_summary=row.result_summary or "",
-        error=row.error or "",
-        run_id=row.run_id or "",
-        session_id=row.session_id or "",
-        started_at=row.started_at,
-        finished_at=row.finished_at,
-    )
-
 
 class SchedulingStore:
-    """CRUD over ``expert_scheduled_tasks`` / ``expert_task_runs``."""
+    """Read-only facade over the cron double-table plane (T13d 收口).
 
-    async def create_task(
-        self,
-        expert_id: str,
-        name: str,
-        task_prompt: str,
-        schedule_type: str = "cron",
-        schedule_json: Optional[dict] = None,
-        timezone: str = "Asia/Shanghai",
-        description: str = "",
-        owner_id: Optional[str] = None,
-        task_id: Optional[str] = None,
-        source: str = "ui",
-        origin: Optional[dict] = None,
-    ) -> ScheduledTaskRecord:
-        """Insert the projection row (authority registration is the
-        service layer's job — this stays a pure table writer)."""
-        tid = current_tenant_id()
-        task_id = task_id or new_id("stk")
-        engine = require_enterprise_engine()
-        async with engine.begin() as conn:
-            result = await conn.execute(
-                text(
-                    "INSERT INTO expert_scheduled_tasks (tenant_id, id, "
-                    "expert_id, name, description, task_prompt, "
-                    "schedule_type, schedule_json, timezone, status, "
-                    "source, origin, owner_id) VALUES "
-                    "(:tid, :id, :eid, :name, :desc, :prompt, :stype, "
-                    "CAST(:sjson AS JSONB), :tz, :status, :source, "
-                    "CAST(:origin AS JSONB), :owner) RETURNING " + _TASK_COLS
-                ),
-                {
-                    "tid": tid,
-                    "id": task_id,
-                    "eid": expert_id,
-                    "name": name,
-                    "desc": description,
-                    "prompt": task_prompt,
-                    "stype": schedule_type,
-                    "sjson": _dumps(schedule_json or {}),
-                    "tz": timezone,
-                    "status": TASK_STATUS_ACTIVE,
-                    "source": source,
-                    "origin": _dumps(origin or {}),
-                    "owner": owner_id,
-                },
-            )
-            return _row_to_task(result.one())
-
-    async def upsert_task_from_spec(
-        self,
-        expert_id: str,
-        job_id: str,
-        name: str,
-        task_prompt: str,
-        schedule_type: str,
-        schedule_json: dict,
-        timezone: str,
-        status: str,
-        source: str,
-        origin: Optional[dict] = None,
-        owner_id: Optional[str] = None,
-    ) -> Optional[ScheduledTaskRecord]:
-        """Idempotent ledger upsert for registration-observer projection.
-
-        台账行 id 直接复用权威 job_id（对话/接口创建链路），重复注册
-        事件（create_or_replace 幂等重放）只刷新调度语义字段，不重置
-        run_count 等运行时统计。
-        """
-        tid = current_tenant_id()
-        engine = require_enterprise_engine()
-        async with engine.begin() as conn:
-            result = await conn.execute(
-                text(
-                    "INSERT INTO expert_scheduled_tasks (tenant_id, id, "
-                    "expert_id, name, task_prompt, schedule_type, "
-                    "schedule_json, timezone, status, cron_job_id, "
-                    "source, origin, owner_id) VALUES "
-                    "(:tid, :id, :eid, :name, :prompt, :stype, "
-                    "CAST(:sjson AS JSONB), :tz, :status, :jid, "
-                    ":source, CAST(:origin AS JSONB), :owner) "
-                    "ON CONFLICT (tenant_id, id) DO UPDATE SET "
-                    "name = EXCLUDED.name, "
-                    "task_prompt = EXCLUDED.task_prompt, "
-                    "schedule_type = EXCLUDED.schedule_type, "
-                    "schedule_json = EXCLUDED.schedule_json, "
-                    "timezone = EXCLUDED.timezone, status = EXCLUDED.status, "
-                    "cron_job_id = EXCLUDED.cron_job_id, "
-                    "origin = EXCLUDED.origin, updated_at = now() "
-                    "RETURNING " + _TASK_COLS
-                ),
-                {
-                    "tid": tid,
-                    "id": job_id,
-                    "eid": expert_id,
-                    "name": name,
-                    "prompt": task_prompt,
-                    "stype": schedule_type,
-                    "sjson": _dumps(schedule_json or {}),
-                    "tz": timezone,
-                    "status": status,
-                    "jid": job_id,
-                    "source": source,
-                    "origin": _dumps(origin or {}),
-                    "owner": owner_id,
-                },
-            )
-            row = result.first()
-            return _row_to_task(row) if row else None
+    expert 两表已 DROP：所有读经 :class:`CronLedgerReader` 反推 cron
+    权威面；写路径唯一入口是 CronManager（:class:`SchedulingService`
+    的注册/暂停/恢复/删除）。本类保留原方法签名以兼容既有调用方
+    （router / worklog），内部一律委托 reader。
+    """
 
     async def get_task(self, task_id: str) -> Optional[ScheduledTaskRecord]:
-        engine = require_enterprise_engine()
-        async with engine.connect() as conn:
-            result = await conn.execute(
-                text(
-                    "SELECT " + _TASK_COLS + " FROM expert_scheduled_tasks "
-                    "WHERE tenant_id = :tid AND id = :id"
-                ),
-                {"tid": current_tenant_id(), "id": task_id},
-            )
-            row = result.first()
-            return _row_to_task(row) if row else None
+        """One task（cron 双表权威读）."""
+        return await get_cron_ledger_reader().get_task(task_id)
 
     async def list_tasks(
         self,
         expert_id: str,
         include_archived: bool = False,
     ) -> List[ScheduledTaskRecord]:
-        """List one expert's tasks (archived hidden by default)."""
-        engine = require_enterprise_engine()
-        clauses = ["tenant_id = :tid", "expert_id = :eid"]
-        params: Dict[str, object] = {
-            "tid": current_tenant_id(),
-            "eid": expert_id,
-        }
-        if not include_archived:
-            clauses.append("status <> :archived")
-            params["archived"] = TASK_STATUS_ARCHIVED
-        async with engine.connect() as conn:
-            result = await conn.execute(
-                text(
-                    "SELECT " + _TASK_COLS + " FROM expert_scheduled_tasks "
-                    "WHERE " + " AND ".join(clauses)
-                    + " ORDER BY created_at DESC"
-                ),
-                params,
-            )
-            return [_row_to_task(r) for r in result]
+        """List one expert's tasks.
 
-    async def update_task(
-        self,
-        task_id: str,
-        **fields,
-    ) -> Optional[ScheduledTaskRecord]:
-        """Partial update (None=不修改；schedule_json 传 dict 整体替换)."""
-        sets = []
-        params: Dict[str, object] = {
-            "tid": current_tenant_id(),
-            "id": task_id,
-        }
-        if fields.get("name") is not None:
-            sets.append("name = :name")
-            params["name"] = fields["name"]
-        if fields.get("description") is not None:
-            sets.append("description = :desc")
-            params["desc"] = fields["description"]
-        if fields.get("task_prompt") is not None:
-            sets.append("task_prompt = :prompt")
-            params["prompt"] = fields["task_prompt"]
-        if fields.get("schedule_json") is not None:
-            sets.append("schedule_json = CAST(:sjson AS JSONB)")
-            params["sjson"] = _dumps(fields["schedule_json"])
-        if fields.get("timezone") is not None:
-            sets.append("timezone = :tz")
-            params["tz"] = fields["timezone"]
-        if fields.get("status") is not None:
-            sets.append("status = :status")
-            params["status"] = fields["status"]
-        if not sets:
-            return await self.get_task(task_id)
-        engine = require_enterprise_engine()
-        async with engine.begin() as conn:
-            result = await conn.execute(
-                text(
-                    "UPDATE expert_scheduled_tasks SET "
-                    + ", ".join(sets)
-                    + ", updated_at = now() WHERE tenant_id = :tid "
-                    "AND id = :id RETURNING " + _TASK_COLS
-                ),
-                params,
-            )
-            row = result.first()
-            return _row_to_task(row) if row else None
-
-    async def delete_task(self, task_id: str) -> bool:
-        """Archive (delete 语义：权威 job 由 service 层先注销)."""
-        updated = await self.update_task(
-            task_id,
-            status=TASK_STATUS_ARCHIVED,
-        )
-        return updated is not None
+        cron 平面读时 archived（job 已删）天然缺席（决策 D2），
+        ``include_archived`` 收口后无对应语义，仅为兼容签名保留。
+        """
+        return await get_cron_ledger_reader().list_tasks(expert_id)
 
     async def count_active_by_expert(self, expert_id: str) -> int:
         """Detail-page 四计数之一：active+paused 任务数。"""
-        engine = require_enterprise_engine()
-        async with engine.connect() as conn:
-            result = await conn.execute(
-                text(
-                    "SELECT count(*) AS n FROM expert_scheduled_tasks "
-                    "WHERE tenant_id = :tid AND expert_id = :eid "
-                    "AND status IN (:a, :p)"
-                ),
-                {
-                    "tid": current_tenant_id(),
-                    "eid": expert_id,
-                    "a": TASK_STATUS_ACTIVE,
-                    "p": TASK_STATUS_PAUSED,
-                },
-            )
-            return int(result.scalar() or 0)
-
-    # ------------------------------------------------------------------
-    # execution records（观察者写，worklog 读）
-    # ------------------------------------------------------------------
-
-    async def begin_run(
-        self,
-        task: ScheduledTaskRecord,
-        scheduled_for: Optional[datetime],
-        run_id: str = "",
-        session_id: str = "",
-    ) -> TaskRunRecord:
-        """Create one running record (idempotent per scheduled_for)."""
-        tid = current_tenant_id()
-        engine = require_enterprise_engine()
-        run_id_row = new_id("trn")
-        async with engine.begin() as conn:
-            await conn.execute(
-                text(
-                    "INSERT INTO expert_task_runs (tenant_id, id, task_id, "
-                    "expert_id, scheduled_for, status, run_id, session_id) "
-                    "VALUES (:tid, :id, :task, :eid, :sfor, 'running', "
-                    ":run_id, :session_id) "
-                    "ON CONFLICT (tenant_id, task_id, scheduled_for) "
-                    "WHERE scheduled_for IS NOT NULL DO NOTHING"
-                ),
-                {
-                    "tid": tid,
-                    "id": run_id_row,
-                    "task": task.id,
-                    "eid": task.expert_id,
-                    "sfor": scheduled_for,
-                    "run_id": run_id,
-                    "session_id": session_id,
-                },
-            )
-            # 幂等命中时取回已存在行（DO NOTHING 不返回 id）
-            result = await conn.execute(
-                text(
-                    "SELECT " + _RUN_COLS + " FROM expert_task_runs WHERE "
-                    "tenant_id = :tid AND task_id = :task "
-                    "AND scheduled_for IS NOT DISTINCT FROM :sfor "
-                    "ORDER BY started_at DESC LIMIT 1"
-                ),
-                {
-                    "tid": tid,
-                    "task": task.id,
-                    "sfor": scheduled_for,
-                },
-            )
-            return _row_to_run(result.one())
-
-    async def finish_run(
-        self,
-        run: TaskRunRecord,
-        status: str,
-        result_summary: str = "",
-        error: str = "",
-    ) -> None:
-        """Finalize one run record (succeeded/failed)."""
-        engine = require_enterprise_engine()
-        tid = current_tenant_id()
-        async with engine.begin() as conn:
-            await conn.execute(
-                text(
-                    "UPDATE expert_task_runs SET status = :status, "
-                    "result_summary = :summary, error = :error, "
-                    "finished_at = now() WHERE tenant_id = :tid "
-                    "AND id = :id"
-                ),
-                {
-                    "tid": tid,
-                    "id": run.id,
-                    "status": status,
-                    "summary": result_summary,
-                    "error": error,
-                },
-            )
-            # 同步投影台账（run_count 只在终结时 +1，重试不重复计数）
-            await conn.execute(
-                text(
-                    "UPDATE expert_scheduled_tasks SET last_run_at = now(), "
-                    "last_status = :status, run_count = run_count + 1, "
-                    "updated_at = now() WHERE tenant_id = :tid "
-                    "AND id = :task"
-                ),
-                {
-                    "tid": tid,
-                    "status": status,
-                    "task": run.task_id,
-                },
-            )
-            # 一次性任务成功即完结（completed 终态）
-            if status == "succeeded":
-                await conn.execute(
-                    text(
-                        "UPDATE expert_scheduled_tasks SET "
-                        "status = :completed, updated_at = now() "
-                        "WHERE tenant_id = :tid AND id = :task "
-                        "AND schedule_type = 'once'"
-                    ),
-                    {
-                        "tid": tid,
-                        "task": run.task_id,
-                        "completed": TASK_STATUS_COMPLETED,
-                    },
-                )
+        return await get_cron_ledger_reader().count_active_by_expert(
+            expert_id,
+        )
 
     async def list_runs(
         self,
         task_id: str,
         limit: int = 50,
     ) -> List[TaskRunRecord]:
-        """Recent runs of one task (newest first)."""
-        engine = require_enterprise_engine()
-        async with engine.connect() as conn:
-            result = await conn.execute(
-                text(
-                    "SELECT " + _RUN_COLS + " FROM expert_task_runs WHERE "
-                    "tenant_id = :tid AND task_id = :task "
-                    "ORDER BY started_at DESC LIMIT :lim"
-                ),
-                {
-                    "tid": current_tenant_id(),
-                    "task": task_id,
-                    "lim": limit,
-                },
-            )
-            return [_row_to_run(r) for r in result]
+        """Recent runs of one task（cron 平面只存已完成 run，决策 D4）."""
+        return await get_cron_ledger_reader().list_runs(task_id, limit)
+
+    async def runs_in_window(
+        self,
+        expert_id: str,
+        since: datetime,
+    ) -> List[TaskRunRecord]:
+        """Work-record 窗口内执行留痕（新→旧，cron 平面读）.
+
+        worklog 专用：cron 分支按 run_at 过滤（started/finished 同值，
+        决策 D5）。
+        """
+        return await get_cron_ledger_reader().recent_runs(expert_id, since)
 
 
 class SchedulingService:
-    """Projection ↔ CronManager authority synchronization.
+    """CronManager authority synchronization（收口后唯一写路径）.
 
     Router 层从 ``request.app.state.multi_agent_manager`` 解析出专家
     workspace 后把 ``cron_manager`` 传进来——service 不直接依赖 app
-    状态（保持可测）。
+    状态（保持可测）。创建/更新即向权威注册 spec（``spec.meta`` 承载
+    专家域注解），读回经 :class:`CronLedgerReader`；无投影行可回滚。
     """
 
     def __init__(self, cron_manager: Any, expert_id: Optional[str] = None):
         self._cron = cron_manager
-        # 幂等挂执行观察者（manager 可能因 LRU 重建，每次接线都尝试）
+        # 幂等挂执行观察者（manager 可能因 LRU 重建，每次接线都尝试）：
+        # 收口后观察者只负责执行检查闭环（inbox 告警），不再写台账
         _attach_execution_observer(cron_manager, expert_id)
-        # 幂等挂注册观察者：对话/接口创建的任务自动投影入台账
-        # （需 expert_id 定位台账行归属；UI 链路自身管理台账行）
-        if expert_id:
-            _attach_registration_observer(cron_manager, expert_id)
 
     def _job_id(self, task_id: str) -> str:
         """Authority job id for one projection task."""
         return f"{EXPERT_TASK_JOB_PREFIX}{task_id}"
 
     def _build_spec(self, task: ScheduledTaskRecord):
-        """Map one projection task to an authoritative CronJobSpec.
+        """Map one task record to an authoritative CronJobSpec.
 
         - share_session=False → 每任务独立会话 ``cron:{job_id}``，执行
           历史在对话端可追溯；
@@ -504,6 +148,15 @@ class SchedulingService:
                 cron=cron_expr,
                 timezone=task.timezone,
             )
+        # T13 收口：expert 台账专属字段落入权威 spec.meta，作为
+        # CronLedgerReader 反推的单一来源；原始名/描述不依赖
+        # "[数字员工] " 前缀剥离，来源标记 UI 链路补齐。
+        spec_meta = {
+            "expert_task_id": task.id,
+            "expert_task_name": task.name,
+            "expert_description": task.description or "",
+            "origin_source": "ui",
+        }
         return CronJobSpec(
             id=self._job_id(task.id),
             name=f"[数字员工] {task.name}",
@@ -514,97 +167,103 @@ class SchedulingService:
             dispatch=DispatchSpec(
                 type="channel",
                 channel="console",
-                target=DispatchTarget(user_id=task.owner_id or "cron"),
+                # session_id 置空串：executor 的 share_session=False 分支
+                # 据此派生专属会话 ``cron:{job_id}``（与本模块头注一致）；
+                # DispatchTarget.session_id 为必填字段，缺失会直接
+                # ValidationError（T13a 探查时修复的存量 Bug）。
+                target=DispatchTarget(
+                    user_id=task.owner_id or "cron",
+                    session_id="",
+                ),
                 silent=True,
-                meta={"expert_task_id": task.id},
+                meta=spec_meta,
             ),
             runtime=JobRuntimeSpec(
                 tool_safety=False,
                 share_session=False,
                 timeout_seconds=600,
             ),
-            meta={"expert_task_id": task.id},
+            meta=spec_meta,
         )
 
     async def create_task(
         self,
         task: ScheduledTaskRecord,
-    ) -> ScheduledTaskRecord:
-        """Register the authority job for a fresh projection row.
+    ) -> Optional[ScheduledTaskRecord]:
+        """Register the authority job for one task record.
 
-        逆向保护：注册失败时归档投影行（不留孤儿 active 台账）。
+        收口后注册即持久化到 ``cron_jobs``（spec.meta 承载注解），
+        无投影行需回滚；注册失败直接抛出，读回经 cron 平面。
         """
-        spec = self._build_spec(task)
-        try:
-            await self._cron.create_or_replace_job(spec)
-        except Exception:
-            await get_scheduling_store().delete_task(task.id)
-            raise
-        return await self._refresh_projection(task.id)
+        await self._cron.create_or_replace_job(self._build_spec(task))
+        return await self._read_back(task.id)
 
-    async def update_task(self, task: ScheduledTaskRecord):
+    async def update_task(
+        self,
+        task: ScheduledTaskRecord,
+    ) -> Optional[ScheduledTaskRecord]:
         """Replace the authority job (create_or_replace is idempotent)."""
         await self._cron.create_or_replace_job(self._build_spec(task))
-        return await self._refresh_projection(task.id)
+        return await self._read_back(task.id)
 
     async def pause_task(self, task_id: str):
+        """Pause the authority job（enabled=false → reader 派生 paused）."""
         await self._cron.pause_job(self._job_id(task_id))
-        store = get_scheduling_store()
-        await store.update_task(task_id, status=TASK_STATUS_PAUSED)
-        return await self._refresh_projection(task_id)
+        return await self._read_back(task_id)
 
     async def resume_task(self, task_id: str):
+        """Resume the authority job（enabled=true → reader 派生 active）."""
         await self._cron.resume_job(self._job_id(task_id))
-        store = get_scheduling_store()
-        await store.update_task(task_id, status=TASK_STATUS_ACTIVE)
-        return await self._refresh_projection(task_id)
+        return await self._read_back(task_id)
 
-    async def delete_task(self, task_id: str):
-        """Authority first, projection second（先注销调度再归档台账）."""
+    async def delete_task(self, task_id: str) -> None:
+        """注销权威 job（cron 行删除即从列表消失，决策 D2）."""
         job_id = self._job_id(task_id)
         try:
             await self._cron.delete_job(job_id)
         except Exception:  # pylint: disable=broad-except
             # 权威 job 可能已不存在（once 执行完被 APScheduler 移除）
-            logger.info(
-                "authority job %s already gone; archive projection only",
-                job_id,
-            )
-        await get_scheduling_store().delete_task(task_id)
+            logger.info("authority job %s already gone", job_id)
 
     async def run_now(self, task_id: str) -> None:
-        """Manual trigger (fire-and-forget; observer writes the record)."""
+        """Manual trigger (fire-and-forget; authority writes the record)."""
         await self._cron.run_job(self._job_id(task_id))
 
-    async def _refresh_projection(
+    async def _read_back(
         self,
         task_id: str,
     ) -> Optional[ScheduledTaskRecord]:
-        """Best-effort next_run_at sync from the authority state."""
-        store = get_scheduling_store()
-        task = await store.get_task(task_id)
+        """读回权威投影 + 注入 next_run_at 运行态（内存，不落库）."""
+        task = await get_scheduling_store().get_task(task_id)
         if task is None:
             return None
         state = self._cron.get_state(self._job_id(task_id))
         next_run_at = getattr(state, "next_run_at", None)
-        if not next_run_at or next_run_at == task.next_run_at:
-            return task
-        # next_run_at 不开放给用户编辑（派生字段），这里走专用 SQL 直更
-        engine = require_enterprise_engine()
-        async with engine.begin() as conn:
-            await conn.execute(
-                text(
-                    "UPDATE expert_scheduled_tasks SET "
-                    "next_run_at = :next, updated_at = now() "
-                    "WHERE tenant_id = :tid AND id = :id"
-                ),
-                {
-                    "tid": current_tenant_id(),
-                    "id": task_id,
-                    "next": next_run_at,
-                },
+        if next_run_at:
+            return task.model_copy(update={"next_run_at": next_run_at})
+        return task
+
+    def annotate_next_run(
+        self,
+        tasks: List[ScheduledTaskRecord],
+    ) -> List[ScheduledTaskRecord]:
+        """读切换后的 next_run_at 注入（cron 平面只有规格与历史）。
+
+        GET 列表类端点专用：逐任务查 APScheduler 运行态（内存字典，
+        不触发任何 IO）；chat/api 链路 job_id 即任务 id，靠
+        ``cron_job_id`` 定位。
+        """
+        annotated: List[ScheduledTaskRecord] = []
+        for task in tasks:
+            job_id = task.cron_job_id or self._job_id(task.id)
+            state = self._cron.get_state(job_id)
+            next_run_at = getattr(state, "next_run_at", None)
+            annotated.append(
+                task.model_copy(update={"next_run_at": next_run_at})
+                if next_run_at
+                else task,
             )
-        return await store.get_task(task_id)
+        return annotated
 
 
 async def _verify_execution_result(
@@ -635,15 +294,13 @@ async def record_execution(
     execution_result: Dict[str, Any],
     expert_id: Optional[str] = None,
 ) -> None:
-    """CronManager 执行观察者：把一次执行落成 expert_task_runs。
+    """CronManager 执行观察者：执行检查闭环（收口后不再写台账）.
 
-    - expert_task_ 前缀 job：UI 链路任务，task_id 即去前缀 job id；
-    - 其余（对话/接口创建）：台账行 id 复用 job_id；行缺失且已知
-      expert_id 时先兜底补投影（观察者挂载前创建的历史任务）；
-    - scheduled 触发以执行时刻为幂等锚 scheduled_for；
-    - CronExecutionRecord.status → succeeded/failed 投影映射；
-    - run_id/session_id 随行写入：详情层经 run_id 关联 agent_runs，
-      复用会话日志权威结构（span 树 + 会话回放）。
+    执行留痕已由权威 CronManager 落 ``cron_job_history``（Phase 1 补齐
+    result_summary/run_id/session_id/scheduled_for），本观察者只负责
+    执行结果自检——异常时落 inbox 告警供运维介入，不再写第二套台账。
+    任务信息经 :class:`CronLedgerReader` 从 cron 平面读回（UI 前缀 job
+    去前缀、chat/api job 原样）。
     """
     job_id = getattr(job, "id", "") or ""
     store = get_scheduling_store()
@@ -651,20 +308,17 @@ async def record_execution(
         task = await store.get_task(job_id[len(EXPERT_TASK_JOB_PREFIX):])
     else:
         task = await store.get_task(job_id)
-        if task is None and expert_id:
-            task = await _upsert_task_row(expert_id, job_id, job)
     if task is None:
         logger.warning(
-            "task projection missing for %s (expert_id=%s); skip run record",
+            "cron plane task missing for %s (expert_id=%s); "
+            "skip run check alert",
             job_id,
             expert_id,
         )
         return
 
     cron_status = getattr(record, "status", "") or "error"
-    error = getattr(record, "error", "") or ""
     status = "failed" if cron_status != "success" else "succeeded"
-    result_summary = str(execution_result.get("final_text") or "")[:500]
     # 执行记录与会话日志的关联键（agent 任务才产生 run_id/session_id）。
     # executor 自建 trace 的 uuid 与 hook 写入 agent_runs 的权威
     # run id 不同轨——详情页跳转以 agent_runs 为准，按 cron_job_id
@@ -674,29 +328,9 @@ async def record_execution(
     if execution_result.get("task_type") == "agent":
         from ..run_log_pg_store import get_latest_run_id_for_cron_job
 
-        authority_run_id = await get_latest_run_id_for_cron_job(
-            job_id,
-        )
+        authority_run_id = await get_latest_run_id_for_cron_job(job_id)
         if authority_run_id:
             run_id = authority_run_id
-
-    scheduled_for = (
-        getattr(record, "run_at", None)
-        if getattr(record, "trigger", "") == "scheduled"
-        else None
-    )
-    run = await store.begin_run(
-        task,
-        scheduled_for,
-        run_id=run_id,
-        session_id=session_id,
-    )
-    await store.finish_run(
-        run,
-        status=status,
-        result_summary=result_summary,
-        error=error,
-    )
 
     # 执行检查闭环：结论异常时落 inbox 告警（fire-and-forget 语义，
     # 检查本身不改变执行记录的真实状态）
@@ -716,7 +350,7 @@ async def record_execution(
                 body=check_failure,
                 payload={
                     "task_id": task.id,
-                    "run_id": run.id,
+                    "run_id": run_id,
                     "agent_run_id": run_id,
                     "session_id": session_id,
                     "status": status,
@@ -760,7 +394,7 @@ def _attach_execution_observer(
 
 
 # ---------------------------------------------------------------------------
-# 注册观察者：对话/接口创建的任务自动投影入统一台账
+# CronJobSpec 反推工具（CronLedgerReader 复用；纯函数无 IO）
 # ---------------------------------------------------------------------------
 
 
@@ -822,129 +456,19 @@ def _origin_from_spec(spec: Any) -> dict:
     }
 
 
-async def _upsert_task_row(
-    expert_id: str,
-    job_id: str,
-    spec: Any,
-) -> Any:
-    """Reverse-map one CronJobSpec and upsert its unified ledger row.
-
-    注册观察者（事件驱动）与执行留痕/启动回填（兑底）共用：
-    字段映射单一出口；来源标记 meta.origin_source 优先（api），
-    缺省 chat；enabled=False → paused。
-    """
-    schedule_type, schedule_json = _schedule_json_from_spec(spec)
-    meta = getattr(spec, "meta", None) or {}
-    source = str(meta.get("origin_source") or "chat")
-    target = getattr(getattr(spec, "dispatch", None), "target", None)
-    owner_id = getattr(target, "user_id", None) if target else None
-    if not owner_id or owner_id == "cron":
-        owner_id = None
-    schedule = getattr(spec, "schedule", None)
-    timezone = getattr(schedule, "timezone", "") or "Asia/Shanghai"
-    enabled = bool(getattr(spec, "enabled", True))
-    return await get_scheduling_store().upsert_task_from_spec(
-        expert_id=expert_id,
-        job_id=job_id,
-        name=getattr(spec, "name", "") or job_id,
-        task_prompt=_task_prompt_from_spec(spec),
-        schedule_type=schedule_type,
-        schedule_json=schedule_json,
-        timezone=timezone,
-        status=(TASK_STATUS_ACTIVE if enabled else TASK_STATUS_PAUSED),
-        source=source,
-        origin=_origin_from_spec(spec),
-        owner_id=owner_id,
-    )
-
-
-def _make_registration_observer(expert_id: str):
-    """Build one registration observer bound to one expert (ledger row)."""
-
-    async def observe_registration(
-        event: str,
-        spec: Any,
-        job_id: str,
-    ) -> None:
-        """Project one CronManager registration event into the ledger.
-
-        - expert_task_ 前缀 job：UI 链路已管理台账行，观察者跳过；
-        - 其余（对话 slash cron-create / 开放接口）：台账行 id 复用
-          job_id，created/paused/resumed 幂等 upsert，deleted 归档；
-        - 来源标记：spec.meta.origin_source 优先（api），缺省 chat。
-        """
-        if job_id.startswith(EXPERT_TASK_JOB_PREFIX):
-            return
-        store = get_scheduling_store()
-        if event == "deleted":
-            # 权威 job 已删，对应台账行归档（行不存在时 update 无效，幂等）
-            await store.update_task(job_id, status=TASK_STATUS_ARCHIVED)
-            return
-        if spec is None:
-            return
-        await _upsert_task_row(expert_id, job_id, spec)
-
-    # 观察者身分标记：重挂时按 expert 替换旧闭包（幂等且支持重建）
-    observe_registration._expert_id = expert_id  # type: ignore[attr-defined]
-    return observe_registration
-
-
-def _attach_registration_observer(cron_manager: Any, expert_id: str) -> None:
-    """Idempotently bind one expert's registration observer."""
-    observers = getattr(cron_manager, "registration_observers", None)
-    if observers is None:
-        return
-    observers[:] = [
-        o for o in observers if getattr(o, "_expert_id", None) != expert_id
-    ]
-    observers.append(_make_registration_observer(expert_id))
-
-
-async def _backfill_tasks_from_authority(
-    cron_manager: Any,
-    expert_id: str,
-) -> None:
-    """Startup backfill: project pre-existing chat/api jobs.
-
-    以权威 cron jobs 为源补台账行（幂等）：
-    - expert_task_ 前缀 job 由 UI 链路管理，跳过；
-    - 已入账（含 archived）的 job 跳过——已删任务台账行不复活；
-    - 行缺失（观察者挂载前创建的任务）→ upsert 补投影。
-    """
-    list_jobs = getattr(cron_manager, "list_jobs", None)
-    if not callable(list_jobs):
-        return
-    store = get_scheduling_store()
-    for job in await list_jobs():
-        job_id = getattr(job, "id", "") or ""
-        if not job_id or job_id.startswith(EXPERT_TASK_JOB_PREFIX):
-            continue
-        if await store.get_task(job_id) is not None:
-            continue
-        await _upsert_task_row(expert_id, job_id, job)
-
-
 async def attach_expert_scheduling(
     cron_manager: Any,
     expert_id: str,
 ) -> None:
-    """Workspace 装配点一次性接线（对话创建任务入统一台账的根）。
+    """Workspace 装配点接线（收口后仅挂执行检查观察者）.
 
-    观察者此前只在对台账的写操作（SchedulingService factory）时
-    挂载，而对话链路（/cron/jobs）从不过 factory——created 与
-    执行事件全部丢失。专家 workspace 启动时在此挂注册+执行观察
-    者，并回填挂载前已存在的任务。
+    注册观察者与台账回填已随 expert 两表退役移除：chat/api 创建的
+    任务本就直接落 ``cron_jobs`` 权威面，:class:`CronLedgerReader`
+    统一读取，无需二次投影。执行观察者仅保留执行检查闭环（inbox
+    告警）；json 后端另出 D1 告警。
     """
-    _attach_registration_observer(cron_manager, expert_id)
+    warn_if_json_backend(expert_id)
     _attach_execution_observer(cron_manager, expert_id)
-    await _backfill_tasks_from_authority(cron_manager, expert_id)
-
-
-def _dumps(value: object) -> str:
-    """JSON dump helper (keeps the SQL blocks terse)."""
-    import json
-
-    return json.dumps(value or {})
 
 
 _store: SchedulingStore | None = None

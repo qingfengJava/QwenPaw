@@ -56,6 +56,13 @@ export interface CronJobSpecInput {
   dispatch: CronJobDispatch;
   runtime?: CronJobRuntime;
   meta?: Record<string, unknown>;
+  // S2 个人任务归属：非空=个人任务（仅 owner 本人 + 平台管理员可见可改），
+  // 空/缺省=员工共享任务（使用授权内全员可见、员工级管理授权者可写）。
+  owner_user_id?: string | null;
+  // owner 部门归属快照（后端写入时经 org 目录解析，前端只读）。
+  department_id?: string | null;
+  // owner 项目归属快照（预留字段，个人定时任务暂无项目维度，恒空）。
+  project_id?: string | null;
 }
 
 export type CronJobSpecOutput = CronJobSpecInput;

@@ -1743,3 +1743,296 @@ COMMENT ON COLUMN agent_kb_bindings.space_id IS
 COMMENT ON COLUMN agent_kb_bindings.granted_by IS '授权人（用户账号）';
 COMMENT ON COLUMN agent_kb_bindings.remark IS '备注（授权说明）';
 COMMENT ON COLUMN agent_kb_bindings.created_at IS '绑定时间（DB 自动维护，UTC）';
+
+
+-- [变更说明] 定时任务表增加个人任务归属三列（owner_user_id /
+--            department_id / project_id），落地双平面模型的 S2 用户个人平面：
+--            1) owner_user_id 非空=个人任务（仅 owner 本人 + 平台管理员可见可改，
+--               跨人严格隔离）；为空=员工共享任务（S1，使用授权内全员可见、
+--               员工级管理授权者可写）；
+--            2) department_id 为 owner 部门归属快照（写入时经 org 目录解析的部门
+--               path，ops 按部门检索/归属统计用）；project_id 为预留列（个人定时
+--               任务暂无项目维度，恒空）；
+--            3) 三列均为 spec JSONB 内 CronJobSpec 同名字段的可查询投影——权威仍在
+--               spec（随 json/pg 两平面往返），投影列仅供运维按 owner/部门检索。
+-- [变更时间] 2026-09-17
+-- [变更人]   清风
+-- [适用环境] 测试环境（在已有库基础上增量执行）
+-- [同步至 db/feature/agent_run_logs_20260908/test.sql] 是
+-- [同步至 db/feature/agent_run_logs_20260908/prod.sql] 是
+-- [等价 alembic] 0035_cron_jobs_owner
+--
+-- 存量行语义：owner_user_id 默认 NULL → 自动落"员工共享"语义，与既有全员可见
+-- 行为一致，无越权收紧。全部 DDL 幂等（ADD COLUMN / CREATE INDEX IF NOT EXISTS）。
+
+-- 加列幂等：ADD COLUMN IF NOT EXISTS，存量库重复执行不报错
+ALTER TABLE cron_jobs ADD COLUMN IF NOT EXISTS owner_user_id TEXT;
+ALTER TABLE cron_jobs ADD COLUMN IF NOT EXISTS department_id TEXT;
+ALTER TABLE cron_jobs ADD COLUMN IF NOT EXISTS project_id TEXT;
+
+-- 归属检索索引（tenant + agent + owner）：list 过滤共享/个人与 ops 归属统计走此
+CREATE INDEX IF NOT EXISTS ix_cron_jobs_owner
+    ON cron_jobs (tenant_id, agent_id, owner_user_id);
+
+COMMENT ON COLUMN cron_jobs.owner_user_id IS
+    '个人任务归属用户（spec.owner_user_id 的可查询投影）: 非空=个人任务'
+    '（仅 owner+平台管理员可见可改，跨人隔离）, 空=员工共享任务'
+    '（使用授权内全员可见、员工级管理授权者可写）';
+COMMENT ON COLUMN cron_jobs.department_id IS
+    'owner 部门归属快照（写入时经 org 目录解析的部门 path；无 PG 或'
+    'owner 无部门时为空；ops 按部门检索/归属统计用）';
+COMMENT ON COLUMN cron_jobs.project_id IS
+    'owner 项目归属快照（预留列；个人定时任务暂无项目维度，恒空）';
+
+
+-- [变更说明] 新增个人技能包权威表 agent_skill_bundles（S2 用户个人平面）：
+--            1) 承载用户个人技能的完整文件树（files JSONB path→content 扁平映射），
+--               owner_user_id 非空即个人技能，仅 owner 本人 + 平台管理员可见可改
+--               （跨人严格隔离）；
+--            2) 与员工共享技能刻意分表——共享技能维持既有「技能池 + workspace
+--               skill.json 文件链」平面（skill_catalog / agent_skill_bindings /
+--               skill_content_snapshots），本表不承载共享技能，避免三平面语义分叉；
+--            3) 运行时物化到 workspace/.personal_skills/{user}/{skill}/ 参与并集
+--               扫描（不进共享 manifest）；department_id/project_id 为 owner 归属
+--               快照（ops 检索/归属统计用）；
+--            4) QWENPAW_STORAGE_BACKEND=json（默认）时本表零动作，dual/pg 时权威。
+-- [变更时间] 2026-09-17
+-- [变更人]   清风
+-- [适用环境] 测试环境（在已有库基础上增量执行）
+-- [同步至 db/feature/agent_run_logs_20260908/test.sql] 是
+-- [同步至 db/feature/agent_run_logs_20260908/prod.sql] 是
+-- [等价 alembic] 0036_agent_skill_bundles
+
+-- 建表幂等：CREATE TABLE IF NOT EXISTS，存量库重复执行不报错
+CREATE TABLE IF NOT EXISTS agent_skill_bundles (
+    tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
+    agent_id VARCHAR(64) NOT NULL,
+    owner_user_id VARCHAR(64) NOT NULL,
+    name VARCHAR(128) NOT NULL,
+    files JSONB NOT NULL DEFAULT '{}',
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    version INTEGER NOT NULL DEFAULT 1,
+    department_id TEXT,
+    project_id TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT pk_agent_skill_bundles
+        PRIMARY KEY (tenant_id, agent_id, owner_user_id, name)
+);
+
+-- 归属检索索引（tenant + agent + owner）：个人技能列表按 owner 拉取走此
+CREATE INDEX IF NOT EXISTS ix_agent_skill_bundles_owner
+    ON agent_skill_bundles (tenant_id, agent_id, owner_user_id);
+
+COMMENT ON TABLE agent_skill_bundles IS
+    '个人技能包权威表（S2 用户个人平面：user×agent 私有技能的完整文件树；'
+    '与共享技能池/绑定平面刻意分表，仅承载个人技能，避免三平面语义分叉。'
+    'json 后端零动作、dual/pg 权威；运行时物化到 .personal_skills 参与并集扫描）';
+COMMENT ON COLUMN agent_skill_bundles.tenant_id IS '租户 ID（多租户预留，现阶段固定 default）';
+COMMENT ON COLUMN agent_skill_bundles.agent_id IS '数字员工 ID（workspace 目录名，与 agent_skill_bindings 同约定）';
+COMMENT ON COLUMN agent_skill_bundles.owner_user_id IS '个人技能归属用户（非空即个人技能；仅 owner+平台管理员可见可改，跨人隔离）';
+COMMENT ON COLUMN agent_skill_bundles.name IS '技能名（规范化目录名；同 owner+agent 内唯一，与共享技能名空间独立）';
+COMMENT ON COLUMN agent_skill_bundles.files IS '技能目录全树 JSONB（path→content 扁平映射，含 SKILL.md/references/scripts；物化到 .personal_skills/{user}/{skill}/ 的权威源）';
+COMMENT ON COLUMN agent_skill_bundles.enabled IS '是否启用（禁用后不物化、不注入该用户运行时）';
+COMMENT ON COLUMN agent_skill_bundles.version IS '内容版本号（同技能单调递增，乐观并发/变更追溯用）';
+COMMENT ON COLUMN agent_skill_bundles.department_id IS 'owner 部门归属快照（写入时经 org 目录解析的部门 path；无 PG 或 owner 无部门时为空；ops 按部门检索/归属统计用）';
+COMMENT ON COLUMN agent_skill_bundles.project_id IS 'owner 项目归属快照（预留列；个人技能暂无项目维度，恒空）';
+COMMENT ON COLUMN agent_skill_bundles.created_at IS '创建时间（首次写入时生成）';
+COMMENT ON COLUMN agent_skill_bundles.updated_at IS '更新时间（每次内容变更时刷新）';
+
+
+-- [变更说明] SOP 表增加归属快照两列（department_id / project_id），补齐
+--            S2 个人资产的业务域归属（SOP 私有能力化后 owner_id = 归属员工 id）：
+--            1) department_id 为 owner 部门归属快照（写入时经 org 目录解析的部门
+--               path：员工 owner 取其治理行归属部门，用户名 owner 按部门成员解析；
+--               无 PG 或 owner 无部门时为空）；行诞生即快照，随 promote/fork/
+--               rollback 复制，不随重复发布抖动；
+--            2) project_id 为预留列（SOP 暂无项目维度，恒空）；
+--            3) 两列为普通可查询投影（非 JSONB 内字段），ops 按部门检索/归属统计
+--               用；存量行 NULL 无越权语义变化（可见性仍由 environment + owner_id
+--               决定：“个人 draft 仅 owner、production 全员”）。
+-- [变更时间] 2026-09-17
+-- [变更人]   清风
+-- [适用环境] 测试环境（在已有库基础上增量执行）
+-- [同步至 db/feature/agent_run_logs_20260908/test.sql] 是
+-- [同步至 db/feature/agent_run_logs_20260908/prod.sql] 是
+-- [等价 alembic] 0037_sops_owner_attributes
+--
+-- 全部 DDL 幂等（ADD COLUMN / CREATE INDEX IF NOT EXISTS）。
+
+-- 加列幂等：ADD COLUMN IF NOT EXISTS，存量库重复执行不报错
+ALTER TABLE sops ADD COLUMN IF NOT EXISTS department_id TEXT;
+ALTER TABLE sops ADD COLUMN IF NOT EXISTS project_id TEXT;
+
+-- 归属检索索引（tenant + department）：ops 按部门检索/归属统计走此
+CREATE INDEX IF NOT EXISTS ix_sops_department
+    ON sops (tenant_id, department_id);
+
+COMMENT ON COLUMN sops.department_id IS
+    'owner 部门归属快照（写入时经 org 目录解析的部门 path；员工 owner '
+    '取治理行归属部门，用户名 owner 按部门成员解析；无 PG 或 owner 无'
+    '部门时为空；ops 按部门检索/归属统计用）';
+COMMENT ON COLUMN sops.project_id IS
+    'owner 项目归属快照（预留列；SOP 暂无项目维度，恒空）';
+
+-- [变更说明] agent_documents 增加 owner_user_id 个人草稿维（T11 个人档案草稿）：
+--            1) 加列 owner_user_id（NULL=员工共享行；非空=该用户的个人草稿行，
+--               与正式 agent_id 的 environment=draft 组合承载「员工写四文档
+--               落本人 draft 行（不触共享行）」）；
+--            2) 唯一约束重建：旧约束 uq_agent_documents_doc
+--               (tenant,agent,doc_type,environment) 删除，改为表达式唯一索引
+--               （owner NULL 归一为空串）——允许同一文档下多用户各持一份
+--               个人草稿，同时保持共享行唯一；
+--            3) 存量行 owner_user_id 为 NULL，语义不变（共享行）。
+-- [变更时间] 2026-09-18
+-- [变更人]   清风
+-- [适用环境] 测试环境（在已有库基础上增量执行）
+-- [同步至 db/feature/agent_run_logs_20260908/test.sql] 是
+-- [同步至 db/feature/agent_run_logs_20260908/prod.sql] 是
+-- [等价 alembic] 0038_agent_documents_owner_draft
+--
+-- 全部 DDL 幂等（ADD COLUMN IF NOT EXISTS / DROP CONSTRAINT IF EXISTS /
+-- CREATE UNIQUE INDEX IF NOT EXISTS）。
+
+ALTER TABLE agent_documents ADD COLUMN IF NOT EXISTS owner_user_id VARCHAR(64);
+
+ALTER TABLE agent_documents DROP CONSTRAINT IF EXISTS uq_agent_documents_doc;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_documents_doc_owner
+    ON agent_documents (tenant_id, agent_id, doc_type, environment,
+                        COALESCE(owner_user_id, ''));
+
+COMMENT ON COLUMN agent_documents.owner_user_id IS
+    '个人草稿 owner（NULL=员工共享行；非空=该用户的个人草稿行，与 environment=draft 组合；管理员应用 apply 后 promote 到共享行）';
+
+
+-- ==== T12 driver_cards / driver_credentials (changelog 20260918/02) ====
+-- [变更说明] 新增 MCP/ACP 驱动卡 PG 权威双表（T12 driver PG 权威）：
+--            1) driver_cards：数字员工外部能力驱动卡（MCP/ACP）权威表，
+--               自然键 (tenant, agent, protocol, name)；enabled 独立列，
+--               spec JSONB 承载 endpoint/config/credentials(alias→{kind,ref})，
+--               policy JSONB 承载 DriverPolicy（默认效应 + 规则数组）；
+--            2) driver_credentials：驱动凭据密文表，自然键
+--               (tenant, agent, ref)；cipher 存放经 secret_store（Fernet）
+--               加密后的凭据 JSON（kind/public/secrets/meta），明文不落库。
+--            json 后端（无 PG）两表零动作，驱动卡仍走 workspace 文件平面；
+--            pg/dual 后端以本两表为权威源，文件降级为投影（写穿 + 启动回填）。
+-- [变更时间] 2026-09-18
+-- [变更人]   清风
+-- [适用环境] 测试环境（在已有库基础上增量执行）
+-- [同步至 db/feature/agent_run_logs_20260908/test.sql] 是
+-- [同步至 db/feature/agent_run_logs_20260908/prod.sql] 是
+-- [等价 alembic] 0039_driver_cards_credentials
+--
+-- 全部 DDL 幂等（CREATE TABLE IF NOT EXISTS / CREATE INDEX IF NOT EXISTS）。
+
+CREATE TABLE IF NOT EXISTS driver_cards (
+    tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
+    agent_id VARCHAR(64) NOT NULL,
+    protocol VARCHAR(64) NOT NULL,
+    name VARCHAR(128) NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    spec JSONB NOT NULL DEFAULT '{}',
+    policy JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT pk_driver_cards
+        PRIMARY KEY (tenant_id, agent_id, protocol, name)
+);
+
+CREATE INDEX IF NOT EXISTS ix_driver_cards_agent
+    ON driver_cards (tenant_id, agent_id);
+
+CREATE TABLE IF NOT EXISTS driver_credentials (
+    tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
+    agent_id VARCHAR(64) NOT NULL,
+    ref VARCHAR(255) NOT NULL,
+    cipher TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT pk_driver_credentials
+        PRIMARY KEY (tenant_id, agent_id, ref)
+);
+
+CREATE INDEX IF NOT EXISTS ix_driver_credentials_agent
+    ON driver_credentials (tenant_id, agent_id);
+
+COMMENT ON TABLE driver_cards IS
+    'MCP/ACP 驱动卡权威表（数字员工外部能力配置：endpoint/config/凭据引用/访问策略；json 后端零动作、pg/dual 权威，文件降级为写穿投影 + 启动回填）';
+COMMENT ON COLUMN driver_cards.tenant_id IS '租户 ID（多租户预留，现阶段固定 default）';
+COMMENT ON COLUMN driver_cards.agent_id IS '数字员工 ID（workspace 目录名，与 agent_documents 同约定）';
+COMMENT ON COLUMN driver_cards.protocol IS '驱动协议（如 mcp/acp，与文件投影目录 drivers/{protocol}/{name}.yaml 对齐）';
+COMMENT ON COLUMN driver_cards.name IS '驱动卡名（同 agent+protocol 内唯一，运行时全局唯一）';
+COMMENT ON COLUMN driver_cards.enabled IS '是否启用（禁用后运行时不构建该 driver）';
+COMMENT ON COLUMN driver_cards.spec IS '驱动卡主体 JSONB（endpoint/config/credentials：alias→{kind,ref}；凭据密文另存 driver_credentials）';
+COMMENT ON COLUMN driver_cards.policy IS '访问策略 JSONB（DriverPolicy：default_effect + rules 数组）';
+COMMENT ON COLUMN driver_cards.created_at IS '创建时间（首次写入时生成）';
+COMMENT ON COLUMN driver_cards.updated_at IS '更新时间（每次内容变更时刷新）';
+
+COMMENT ON TABLE driver_credentials IS
+    '驱动凭据密文表（secret_store/Fernet 加密后的凭据 JSON：kind/public/secrets/meta；明文绝不落库，cipher 为空表示无密文）';
+COMMENT ON COLUMN driver_credentials.tenant_id IS '租户 ID（多租户预留，现阶段固定 default）';
+COMMENT ON COLUMN driver_credentials.agent_id IS '数字员工 ID（workspace 目录名）';
+COMMENT ON COLUMN driver_credentials.ref IS '凭据引用（与 DriverCard.credentials 的 ref 对应，env: 前缀引用不落库）';
+COMMENT ON COLUMN driver_credentials.cipher IS '凭据密文（secret_store.encrypt 后的 JSON，带 ENC: 前缀；读取时 decrypt 还原）';
+COMMENT ON COLUMN driver_credentials.created_at IS '创建时间（首次写入时生成）';
+COMMENT ON COLUMN driver_credentials.updated_at IS '更新时间（每次内容变更时刷新）';
+
+-- [变更说明] cron 双台账收口 Phase 1（T13a EXPAND，设计文档 docs/design/
+--            2026-09-18-cron-ledger-convergence.md）：expert 两表
+--            （expert_scheduled_tasks/expert_task_runs）收口进 cron 双表前，
+--            先补齐权威面缺失的执行留痕与统计字段——
+--            1) cron_job_history 补 4 列：result_summary（执行结果摘要，
+--               worklog 时间线标题来源）、run_id/session_id（关联 agent_runs
+--               运行详情与会话回放的跳转键；模型早有且 manager 已赋值，
+--               pg_repo INSERT 此前丢列，本次补齐落库面）、scheduled_for
+--               （调度槽位时间：trigger=scheduled 时取 run_at，手动为空）；
+--            2) cron_jobs 补 run_count：历史累计执行次数冗余计数
+--               （append_history 同事务 +1；history 仅留最近 50 条，
+--               COUNT 反推会被修剪窗截断——决策 D3）。
+--            全部新列带默认值，写路径补列对老代码零影响；读路径切换
+--            在 Phase 2（回填+委托），DROP expert 两表在 Phase 3。
+-- [变更时间] 2026-09-18
+-- [变更人]   清风
+-- [适用环境] 测试环境（在已有库基础上增量执行）
+-- [同步至 db/feature/agent_run_logs_20260908/test.sql] 是
+-- [同步至 db/feature/agent_run_logs_20260908/prod.sql] 是
+-- [等价 alembic] 0040_cron_ledger_expand
+--
+-- 全部 DDL 幂等（ADD COLUMN IF NOT EXISTS）。
+
+ALTER TABLE cron_job_history ADD COLUMN IF NOT EXISTS result_summary TEXT NOT NULL DEFAULT '';
+ALTER TABLE cron_job_history ADD COLUMN IF NOT EXISTS run_id VARCHAR(64) NOT NULL DEFAULT '';
+ALTER TABLE cron_job_history ADD COLUMN IF NOT EXISTS session_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE cron_job_history ADD COLUMN IF NOT EXISTS scheduled_for TIMESTAMPTZ;
+
+ALTER TABLE cron_jobs ADD COLUMN IF NOT EXISTS run_count INTEGER NOT NULL DEFAULT 0;
+
+COMMENT ON COLUMN cron_job_history.result_summary IS '执行结果摘要（final_text 截断 500 字，worklog 时间线标题来源）';
+COMMENT ON COLUMN cron_job_history.run_id IS '关联 agent_runs 的运行 ID（执行详情跳转键；text 任务为空）';
+COMMENT ON COLUMN cron_job_history.session_id IS '本次执行落库的会话 ID（share_session=False 时为 cron:{job_id}，会话回放跳转键）';
+COMMENT ON COLUMN cron_job_history.scheduled_for IS '调度槽位时间（trigger=scheduled 时等于 run_at，手动触发为空）';
+COMMENT ON COLUMN cron_jobs.run_count IS '历史累计执行次数（append_history 同事务 +1；history 仅留最近 50 条，精确计数不能靠 COUNT 反推）';
+
+-- [变更说明] cron 双台账收口 Phase 3（T13d CONTRACT，设计文档 docs/design/
+--            2026-09-18-cron-ledger-convergence.md §4.4）：expert 两表全部读
+--            字段已由 0040 补入 cron 双表、写路径已改基 CronManager 权威 +
+--            CronLedgerReader 读回（scheduling.py / expert_capability.py 停写），
+--            两张 legacy 台账表退役 DROP——
+--            1) expert_task_runs：执行留痕已落 cron_job_history；
+--            2) expert_scheduled_tasks：规格投影已落 cron_jobs + spec.meta。
+--            前置（运维步骤，本文件不含）：DROP 前 pg_dump 备份两表；先停写
+--            观察业务无异常再 DROP（expand-contract 分变更日原则）。
+-- [变更时间] 2026-09-18
+-- [变更人]   清风
+-- [适用环境] 测试环境（在已有库基础上增量执行）
+-- [同步至 db/feature/agent_run_logs_20260908/test.sql] 是
+-- [同步至 db/feature/agent_run_logs_20260908/prod.sql] 是
+-- [等价 alembic] 0041_drop_expert_ledger
+--
+-- DROP TABLE IF EXISTS 幂等；DROP 顺序先 runs 后 tasks（子表语义）。
+-- 回滚：alembic downgrade 0041 内置完整重建 DDL（0012 建表 + 0029 加列/
+--       索引/约束），但重建为空表，历史数据须从 DROP 前 pg_dump 备份恢复。
+
+DROP TABLE IF EXISTS expert_task_runs;
+DROP TABLE IF EXISTS expert_scheduled_tasks;

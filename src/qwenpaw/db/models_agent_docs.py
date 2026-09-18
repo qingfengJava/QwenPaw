@@ -32,6 +32,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -41,9 +42,13 @@ from .base import Base, TenantMixin, TimestampMixin
 class AgentDocumentRow(TenantMixin, TimestampMixin, Base):
     """One identity document of one agent (mirrors a workspace file).
 
-    The natural key is ``(tenant_id, agent_id, doc_type, environment)``;
-    ``agent_id`` is the workspace directory name (same convention as
-    ``AgentProfileRef.id``), not a UUID foreign key.
+    The natural key is ``(tenant_id, agent_id, doc_type, environment,
+    COALESCE(owner_user_id, ''))``; ``agent_id`` is the workspace directory
+    name (same convention as ``AgentProfileRef.id``), not a UUID foreign
+    key. ``owner_user_id`` NULL marks the shared row (admin/manager writes
+    and the publish plane); a non-NULL value marks one user's personal
+    draft row (S2 plane, ``environment='draft'``), promoted to the shared
+    row by the admin apply gate.
     """
 
     __tablename__ = "agent_documents"
@@ -85,14 +90,22 @@ class AgentDocumentRow(TenantMixin, TimestampMixin, Base):
         server_default="1",
     )
     updated_by: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # NULL=共享行；非空=该用户的个人草稿行（与 environment='draft' 组合）
+    owner_user_id: Mapped[Optional[str]] = mapped_column(
+        String(64),
+        nullable=True,
+    )
 
     __table_args__ = (
-        UniqueConstraint(
+        # 表达式唯一索引：owner NULL 归一为空串，多用户个人草稿互不冲突
+        Index(
+            "uq_agent_documents_doc_owner",
             "tenant_id",
             "agent_id",
             "doc_type",
             "environment",
-            name="uq_agent_documents_doc",
+            text("COALESCE(owner_user_id, '')"),
+            unique=True,
         ),
         Index("ix_agent_documents_agent", "tenant_id", "agent_id"),
     )

@@ -316,7 +316,7 @@ SOP_ENVIRONMENT_DRAFT = "draft"
 SOP_ENVIRONMENT_PRODUCTION = "production"
 SOP_ENVIRONMENTS = (SOP_ENVIRONMENT_DRAFT, SOP_ENVIRONMENT_PRODUCTION)
 
-#: 定时任务状态（expert_scheduled_tasks.status）
+#: 定时任务状态命名空间（T13d 收口后由 CronLedgerReader 从 cron 双表反推）
 TASK_STATUS_ACTIVE = "active"
 TASK_STATUS_PAUSED = "paused"
 TASK_STATUS_COMPLETED = "completed"
@@ -391,6 +391,10 @@ class SopRecord(BaseModel):
     owner_id: Optional[str] = None
     #: 环境: draft-调试草稿, production-线上发布（对齐 agent_documents）
     environment: str = SOP_ENVIRONMENT_PRODUCTION
+    #: 归属部门快照（写入时经 org 目录解析的部门 path，S2 业务域归属检索用）
+    department_id: Optional[str] = None
+    #: 归属项目快照（预留列；SOP 暂无项目维度，恒空）
+    project_id: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -598,13 +602,13 @@ class WorkRecord(BaseModel):
     """Aggregated work record of one expert (read-only view, D6).
 
     数据来源全部是既有权威表：任务留痕 team_runs/team_run_nodes、定时
-    执行 expert_task_runs、反馈 message_feedback、动态 feed_events——
-    本视图不建流水新表。
+    执行 cron_job_history（经 CronLedgerReader 反推）、反馈
+    message_feedback、动态 feed_events——本视图不建流水新表。
     """
 
     #: 统计窗口（天）
     days: int = 30
-    #: 窗口内任务总数（team_runs + expert_task_runs）
+    #: 窗口内任务总数（team_runs + cron 面定时执行）
     total_tasks: int = 0
     #: 窗口内成功任务数
     succeeded_tasks: int = 0

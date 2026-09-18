@@ -175,6 +175,13 @@ export const agentsApi = {
         method: "POST",
       },
     ),
+
+  // T11 个人档案草稿：当前用户在该员工下的草稿状态（档案页
+  // 「我的草稿未应用」徽标数据源；无认证/无 PG 返回空列表）
+  listMyDocDrafts: (agentId: string) =>
+    request<AgentDocDraftsResult>(
+      `/agents/${encodeURIComponent(agentId)}/documents/personal-drafts`,
+    ),
 };
 
 /** POST /agents/{id}/documents/sync-from-files 响应。 */
@@ -186,4 +193,22 @@ export interface AgentDocsSyncResult {
   unchanged: string[];
   /** 未回填的档案文件（不存在 / 非 PG 平面 / 落库失败）。 */
   skipped: string[];
+}
+
+/** 一条个人档案草稿（agent_documents 个人草稿行，仅本人可见）。 */
+export interface AgentDocDraftInfo {
+  doc_type: string;
+  version: string;
+  owner_user_id: string;
+  updated_by: string | null;
+  updated_at: string | null;
+  /** 与共享行内容分叉（待应用）；false=已应用（内容与共享一致）。 */
+  unapplied: boolean;
+}
+
+/** GET /agents/{id}/documents/personal-drafts 响应。 */
+export interface AgentDocDraftsResult {
+  drafts: AgentDocDraftInfo[];
+  /** false = 未启用 PG 档案存储（诚实空态）。 */
+  available: boolean;
 }

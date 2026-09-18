@@ -36,6 +36,8 @@ import {
 } from "./components";
 import { parseCron, serializeCron } from "./components/parseCron";
 import { PageHeader } from "@/components/PageHeader";
+import { Segmented } from "antd";
+import { useAuthStore } from "@/stores/authStore";
 import styles from "./index.module.less";
 
 type CronJob = CronJobSpecOutput;
@@ -73,6 +75,11 @@ function CronJobsPage() {
     toggleEnabled,
     executeNow,
   } = useCronJobs(aid);
+  // 当前登录用户（认证关闭时为空串）：驱动「共享/我的」分区与 owner 归属
+  const currentUsername = useAuthStore((s) => s.username);
+  // 认证开启才有个人/共享之分；单机（无认证）恒共享，不显示 scope 切换
+  const scopeEnabled = Boolean(currentUsername);
+  const [scopeFilter, setScopeFilter] = useState<"shared" | "mine">("shared");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingJob, setEditingJob] = useState<CronJob | null>(null);
   const [saving, setSaving] = useState(false);
@@ -409,6 +416,13 @@ function CronJobsPage() {
       }
     }
 
+    // 新建按当前 scope 注入归属：我的=本人（个人任务）/共享=空（员工共享）。
+    // 编辑不改归属（后端 replace 沿用现有行 owner，防越权篡改）。
+    if (!editingJob && scopeEnabled) {
+      processedValues.owner_user_id =
+        scopeFilter === "mine" ? currentUsername : null;
+    }
+
     let success = false;
     setSaving(true);
     try {
@@ -465,12 +479,29 @@ function CronJobsPage() {
     return dayjs.tz(timeText, timezoneName);
   };
 
-  const oneTimeJobs = useMemo(() => jobs.filter(isOneTimeJob).slice(), [jobs]);
+  // scope 分区：共享（owner 空）/ 我的（owner==本人）。后端 list 已按可见性
+  // 过滤（共享 + 本人个人），此处仅前端二次分区，不复刻权限判定。
+  const scopedJobs = useMemo(() => {
+    if (!scopeEnabled) {
+      return jobs;
+    }
+    if (scopeFilter === "mine") {
+      return jobs.filter(
+        (job) => job.owner_user_id && job.owner_user_id === currentUsername,
+      );
+    }
+    return jobs.filter((job) => !job.owner_user_id);
+  }, [jobs, scopeEnabled, scopeFilter, currentUsername]);
+
+  const oneTimeJobs = useMemo(
+    () => scopedJobs.filter(isOneTimeJob).slice(),
+    [scopedJobs],
+  );
 
   const filteredListJobs = useMemo(() => {
-    if (scheduleTypeFilter === "all") return jobs;
-    return jobs.filter((job) => job.schedule?.type === scheduleTypeFilter);
-  }, [jobs, scheduleTypeFilter]);
+    if (scheduleTypeFilter === "all") return scopedJobs;
+    return scopedJobs.filter((job) => job.schedule?.type === scheduleTypeFilter);
+  }, [scopedJobs, scheduleTypeFilter]);
 
   const calendarDays = useMemo(() => {
     const monthStart = calendarMonth.startOf("month");
@@ -580,6 +611,18 @@ function CronJobsPage() {
         items={[{ title: t("nav.control") }, { title: t("cronJobs.title") }]}
         extra={
           <div className={styles.headerActions}>
+            {scopeEnabled && (
+              <Segmented
+                value={scopeFilter}
+                onChange={(value) =>
+                  setScopeFilter(value as "shared" | "mine")
+                }
+                options={[
+                  { label: t("cronJobs.scopeShared"), value: "shared" },
+                  { label: t("cronJobs.scopeMine"), value: "mine" },
+                ]}
+              />
+            )}
             {viewMode === "list" && (
               <Select<ScheduleTypeFilter>
                 value={scheduleTypeFilter}

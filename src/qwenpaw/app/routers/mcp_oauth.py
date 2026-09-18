@@ -30,9 +30,7 @@ from ...drivers.adapters.mcp_console import (
     mcp_oauth_credential_ref,
 )
 from ...drivers.constants import PROTOCOL_MCP
-from ...drivers.credentials.store import AsyncCredentialStore
 from ...drivers.credentials.types import CredentialRecord
-from ...drivers.errors import CredentialNotFoundError
 from ...utils.oauth_callback import managed_oauth_callback_url
 
 logger = logging.getLogger(__name__)
@@ -604,9 +602,8 @@ async def _persist_tokens(
         session.client_key,
     )
     config_service = DriverConfigService(workspace)
-    store = config_service.credential_store
     oauth_ref = mcp_oauth_credential_ref(session.client_key)
-    existing = await _load_optional_credential(store, oauth_ref)
+    existing = await config_service.load_optional_credential(oauth_ref)
     public = dict(existing.public) if existing else {}
     secrets_map = dict(existing.secrets) if existing else {}
     public.update(
@@ -624,7 +621,7 @@ async def _persist_tokens(
     if refresh_token:
         secrets_map["refresh_token"] = refresh_token
 
-    await store.put(
+    await config_service.save_credential(
         CredentialRecord(
             ref=oauth_ref,
             kind="oauth2_auth_code",
@@ -638,10 +635,6 @@ async def _persist_tokens(
     )
     card = attach_mcp_oauth_credential(card, oauth_ref)
     await config_service.save_card(card)
-
-
-def _workspace_credential_store(workspace) -> AsyncCredentialStore:
-    return DriverConfigService(workspace).credential_store
 
 
 async def _load_mcp_card_for_oauth(workspace, client_key: str):
@@ -667,22 +660,12 @@ async def _load_mcp_card_for_oauth_value_error(workspace, client_key: str):
         ) from exc
 
 
-async def _load_optional_credential(
-    store: AsyncCredentialStore,
-    ref: str,
-) -> CredentialRecord | None:
-    try:
-        return await store.get(ref)
-    except CredentialNotFoundError:
-        return None
-
-
 async def _load_optional_oauth_credential(
     workspace,
     client_key: str,
 ) -> CredentialRecord | None:
-    return await _load_optional_credential(
-        _workspace_credential_store(workspace),
+    # 经 DriverConfigService 读取：PG 权威优先、回退文件投影
+    return await DriverConfigService(workspace).load_optional_credential(
         mcp_oauth_credential_ref(client_key),
     )
 
@@ -793,8 +776,9 @@ async def oauth_revoke(
     agent = await get_agent_for_request(request)
     card = await _load_mcp_card_for_oauth(agent, client_key)
     config_service = DriverConfigService(agent)
-    store = config_service.credential_store
-    await store.delete(mcp_oauth_credential_ref(client_key))
+    await config_service.delete_credential(
+        mcp_oauth_credential_ref(client_key),
+    )
     card = detach_mcp_oauth_credential(card)
     await config_service.save_card(card)
 

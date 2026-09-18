@@ -27,6 +27,8 @@ interface SkillCardProps {
   onMouseLeave?: () => void;
   onToggleEnabled: (e: React.MouseEvent) => void;
   onDelete?: (e?: React.MouseEvent) => void;
+  /** 「我的」分区个人技能：发布为员工共享技能（S2→S1） */
+  onPromote?: (e?: React.MouseEvent) => void;
 }
 
 const useIsMobile = () => {
@@ -145,6 +147,7 @@ export const SkillCard = React.memo(function SkillCard({
   onMouseLeave,
   onToggleEnabled,
   onDelete,
+  onPromote,
 }: SkillCardProps) {
   const { t } = useTranslation();
   const batchMode = selected !== undefined;
@@ -283,6 +286,19 @@ export const SkillCard = React.memo(function SkillCard({
       {/* Footer - only show on hover or batch mode, always on mobile */}
       {(isHover || batchMode || isMobile) && (
         <div className={styles.cardFooter}>
+          {onPromote && (
+            <Button
+              type="primary"
+              className={styles.actionButton}
+              disabled={batchMode}
+              onClick={(e) => {
+                e.stopPropagation();
+                onPromote(e);
+              }}
+            >
+              {t("skills.promoteToShared")}
+            </Button>
+          )}
           <Button
             type="default"
             className={styles.actionButton}

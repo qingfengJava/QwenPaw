@@ -33,6 +33,9 @@ export type {
   ExpertDocRevisionInfo,
   ExpertDocRevisionsResult,
   ExpertDocRollbackResult,
+  ExpertPersonalDraftInfo,
+  ExpertPersonalDraftsResult,
+  ExpertPersonalDraftApplyResult,
 } from "./experts";
 export { adminExpertTeamsApi } from "./expertTeams";
 export type {

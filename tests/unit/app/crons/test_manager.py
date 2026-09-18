@@ -389,6 +389,55 @@ async def test_execute_once_records_last_run_in_job_timezone(
     assert history[0].run_at == state.last_run_at
 
 
+@pytest.mark.asyncio
+async def test_execute_once_records_summary_and_scheduled_for(
+    manager: CronManager,
+    repo: InMemoryJobRepository,
+):
+    """T13a：执行记录补齐摘要/幂等锚（口径与 expert 观察者一致）。"""
+    spec = make_cron_job_spec(job_id="detail")
+    await repo.upsert_job(spec)
+    manager._executor.execute = AsyncMock(
+        return_value={
+            "final_text": "x" * 600,
+            "run_id": "run-7",
+            "session_id": "cron:detail",
+        },
+    )
+
+    await manager._execute_once(spec, trigger="scheduled")
+
+    rec = (await manager.get_history("detail"))[0]
+    # final_text 截断 500 字；run_id/session_id 贯通保持原值
+    assert rec.result_summary == "x" * 500
+    assert rec.run_id == "run-7"
+    assert rec.session_id == "cron:detail"
+    # 定时触发：槽位时间取执行时刻
+    assert rec.scheduled_for == rec.run_at
+
+    # 手动触发：不落 scheduled_for（幂等锚仅属于调度槽位）
+    await manager._execute_once(spec, trigger="manual")
+    rec = (await manager.get_history("detail"))[0]
+    assert rec.scheduled_for is None
+
+
+@pytest.mark.asyncio
+async def test_record_skipped_sets_scheduled_for(
+    manager: CronManager,
+    repo: InMemoryJobRepository,
+):
+    """T13a：skipped 留痕无摘要，但槽位时间同样落 scheduled_for。"""
+    spec = make_cron_job_spec(job_id="skipped")
+    await repo.upsert_job(spec)
+
+    await manager._record_skipped(spec, "max instances reached")
+
+    rec = (await manager.get_history("skipped"))[0]
+    assert rec.status == "skipped"
+    assert rec.result_summary is None
+    assert rec.scheduled_for == rec.run_at
+
+
 # ---------------------------------------------------------------------------
 # delete_job cleans up in-memory state
 # ---------------------------------------------------------------------------

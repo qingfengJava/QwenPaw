@@ -33,7 +33,7 @@ from ..experts.store import get_expert_store
 from ..orgs.models import DepartmentRecord
 from ..orgs.service import get_org_service
 from ..rbac.deps import _resolve_flat_role
-from ..rbac.models import GrantRecord
+from ..rbac.models import PERM_AGENT_MANAGE, GrantRecord
 from ..rbac.store import get_rbac_store
 from .models import (
     DRAFT_AGENT_SUFFIX,
@@ -41,6 +41,7 @@ from .models import (
     EMPLOYEE_KIND_EXPERT,
     EMPLOYEE_KIND_TAB_AGENT,
     EMPLOYEE_KIND_TEAM,
+    MANAGE_VISIBILITY_PRIVATE,
     VISIBILITY_ORG,
     DigitalEmployeeVO,
     GovernanceRecord,
@@ -199,6 +200,18 @@ def build_row(
     granted_ids = (
         list(governance.granted_departments) if governance else []
     )
+    # 后台配置域授权快照（无治理行回落最严 private，与运行期闸门同源）
+    manage_granted_dept_ids = (
+        list(governance.manage_granted_departments) if governance else []
+    )
+    manage_granted_user_ids = (
+        list(governance.manage_granted_users) if governance else []
+    )
+    manage_visibility = (
+        governance.manage_visibility
+        if governance
+        else MANAGE_VISIBILITY_PRIVATE
+    )
     visibility = governance.visibility if governance else VISIBILITY_ORG
     entity_id = expert.id if expert else (team.id if team else agent_id)
     # 归属人：治理行优先（可人工改派），回落领域记录创建者
@@ -248,6 +261,13 @@ def build_row(
         granted_department_names=[
             name_by_department.get(item, item) for item in granted_ids
         ],
+        manage_visibility=manage_visibility,
+        manage_granted_departments=manage_granted_dept_ids,
+        manage_granted_department_names=[
+            name_by_department.get(item, item)
+            for item in manage_granted_dept_ids
+        ],
+        manage_granted_users=manage_granted_user_ids,
         member_count=len(members),
         members=members,
         usage_count=_record_field(expert, None, "usage_count", 0),
@@ -387,6 +407,9 @@ def _apply_viewer_scope(
     if _is_privileged(viewer, flat_role):
         # 管理员/免认证部署只解除 ACL 限制；“未物化就没有工作台”是
         # 客观事实，不能顺手把 usable 抬成 True（否则前端会跳到空工作台）
+        # 管理平面同理放开：admin/单机部署可配置全部员工
+        for row in rows:
+            row.manageable = True
         return rows
 
     rbac = get_rbac_store()
@@ -401,8 +424,15 @@ def _apply_viewer_scope(
         return []
     # 权限快照一次取回，逐行内存判定（禁止每行读一次 rbac.json）
     grants: Dict[str, GrantRecord] = rbac.list_agent_grants()
+    manage_grants: Dict[str, GrantRecord] = rbac.list_agent_manage_grants()
     role_names = rbac.roles_for_user(viewer, flat_role)
     team_names = rbac.teams_for_user(viewer)
+    # team_lead 等持有 agent:manage 的角色：全员工可配（与闸门同源）
+    can_manage_all = rbac.user_has_permission(
+        viewer,
+        PERM_AGENT_MANAGE,
+        flat_role=flat_role,
+    )
 
     visible: List[DigitalEmployeeVO] = []
     for row in rows:
@@ -413,6 +443,20 @@ def _apply_viewer_scope(
             team_names,
         )
         row.usable = allowed and row.usable
+        # 管理平面判定：角色全通 → manage grant → 无行兜底创建者
+        if can_manage_all:
+            row.manageable = True
+        else:
+            manage_grant = manage_grants.get(row.agent_id)
+            if manage_grant is not None:
+                row.manageable = rbac.grant_allows(
+                    manage_grant,
+                    viewer,
+                    role_names,
+                    team_names,
+                )
+            else:
+                row.manageable = bool(row.owner_id) and row.owner_id == viewer
         if allowed:
             visible.append(row)
     return visible

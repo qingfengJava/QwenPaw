@@ -16,7 +16,11 @@ from fastapi import (
 from pydantic import BaseModel, Field
 
 from ...agents.acp.core import ACPAgentConfig, ACPConfig
-from ..rbac.deps import require_perm
+from ..rbac.deps import (
+    require_agent_manage,
+    require_agent_manage_audited,
+    require_perm,
+)
 from ..rbac.models import PERM_ADMIN_PLATFORM
 from ...agents.acp.node_runtime import (
     ACPNodeRuntimeStatus,
@@ -61,10 +65,18 @@ from .schemas_config import (
 router = APIRouter(
     prefix="/config",
     tags=["config"],
-    # 全局配置面（平台运维）：渠道 token / 应用级配置跨租户共享，
+    # 全局配置面（平台运维）：安全/沙箱/llm-routing/user-timezone/
+    # acp node-runtime 等写根配置（mutate_config），跨租户共享，
     # 仅 platform_admin 可读写（enforce 默认跟随认证开关）。
     dependencies=[Depends(require_perm(PERM_ADMIN_PLATFORM))],
 )
+
+# 员工域配置面（S1）：channels / acp(per-agent) / heartbeat 写的是
+# save_agent_config(agent_id)，属单个员工的共享配置，权限 = 对该员工的
+# 管理授权（require_agent_manage）而非 platform_admin。拆到独立 router
+# 以便脱离上面的平台闸；include 时必须排在 router 之后（保证
+# /acp/node-runtime 字面路由先于 /acp/{agent_name} 通配匹配）。
+agent_router = APIRouter(prefix="/config", tags=["config"])
 
 
 def _channel_config_class(name: str) -> Optional[type[BaseModel]]:
@@ -92,10 +104,11 @@ class ACPNodeRuntimeUpdate(BaseModel):
     node_path: str = ""
 
 
-@router.get(
+@agent_router.get(
     "/channels",
     summary="List all channels",
     description="Retrieve configuration for all available channels",
+    dependencies=[Depends(require_agent_manage())],
 )
 async def list_channels(request: Request) -> dict:
     """List all channel configs (filtered by available channels)."""
@@ -134,23 +147,25 @@ async def list_channels(request: Request) -> dict:
     return result
 
 
-@router.get(
+@agent_router.get(
     "/channels/types",
     summary="List channel types",
     description="Return all available channel type identifiers",
+    dependencies=[Depends(require_agent_manage())],
 )
 async def list_channel_types() -> List[str]:
     """Return available channel type identifiers (env-filtered)."""
     return list(get_available_channels())
 
 
-@router.get(
+@agent_router.get(
     "/channels/schemas",
     summary="Get plugin channel config schemas",
     description=(
         "Return config_fields metadata for plugin-registered channels "
         "so the frontend can render dynamic forms."
     ),
+    dependencies=[Depends(require_agent_manage())],
 )
 async def list_channel_schemas() -> dict:
     """Return plugin channel schemas for frontend form rendering."""
@@ -170,11 +185,14 @@ async def list_channel_schemas() -> dict:
     return result
 
 
-@router.put(
+@agent_router.put(
     "/channels",
     response_model=ChannelConfig,
     summary="Update all channels",
     description="Update configuration for all channels at once",
+    dependencies=[
+        Depends(require_agent_manage_audited("config.channels.write")),
+    ],
 )
 async def put_channels(
     request: Request,
@@ -228,11 +246,12 @@ async def _resolve_channel_manager(
     return channel_manager
 
 
-@router.get(
+@agent_router.get(
     "/channels/{channel_name}/health",
     response_model=ChannelHealthResponse,
     summary="Health check for a channel",
     description="Return the runtime health status of a specific channel",
+    dependencies=[Depends(require_agent_manage())],
 )
 async def get_channel_health(
     channel_name: str = Path(
@@ -257,13 +276,16 @@ async def get_channel_health(
         ) from exc
 
 
-@router.post(
+@agent_router.post(
     "/channels/{channel_name}/restart",
     response_model=ChannelRestartResponse,
     summary="Restart a channel",
     description=(
         "Stop and re-start a specific channel without restarting the agent"
     ),
+    dependencies=[
+        Depends(require_agent_manage_audited("config.channel.restart")),
+    ],
 )
 async def restart_channel(
     channel_name: str = Path(
@@ -296,13 +318,14 @@ async def restart_channel(
 # ── Unified QR code endpoints for all channels ─────────────────────────────
 
 
-@router.get(
+@agent_router.get(
     "/channels/{channel}/qrcode",
     summary="Get channel authorization QR code",
     description=(
         "Fetch a QR code image (base64 PNG) for the given channel. "
         "Supported channels: " + ", ".join(QRCODE_AUTH_HANDLERS.keys())
     ),
+    dependencies=[Depends(require_agent_manage())],
 )
 async def get_channel_qrcode(request: Request, channel: str) -> dict:
     """Return {qrcode_img, poll_token} for the requested channel."""
@@ -318,9 +341,10 @@ async def get_channel_qrcode(request: Request, channel: str) -> dict:
     return {"qrcode_img": qrcode_img, "poll_token": result.poll_token}
 
 
-@router.get(
+@agent_router.get(
     "/channels/{channel}/qrcode/status",
     summary="Poll channel QR code authorization status",
+    dependencies=[Depends(require_agent_manage())],
 )
 async def get_channel_qrcode_status(
     request: Request,
@@ -339,11 +363,12 @@ async def get_channel_qrcode_status(
     return {"status": result.status, "credentials": result.credentials}
 
 
-@router.get(
+@agent_router.get(
     "/channels/{channel_name}",
     response_model=ChannelConfigUnion,
     summary="Get channel config",
     description="Retrieve configuration for a specific channel by name",
+    dependencies=[Depends(require_agent_manage())],
 )
 async def get_channel(
     request: Request,
@@ -383,11 +408,12 @@ async def get_channel(
     return single_channel_config
 
 
-@router.post(
+@agent_router.post(
     "/channels/{channel_name}/conflict-check",
     response_model=ChannelConflictResponse,
     summary="Check channel Bot conflicts",
     description="Check whether another running agent uses the same Bot",
+    dependencies=[Depends(require_agent_manage())],
 )
 async def check_channel_conflict(
     request: Request,
@@ -467,11 +493,14 @@ async def check_channel_conflict(
     )
 
 
-@router.put(
+@agent_router.put(
     "/channels/{channel_name}",
     response_model=ChannelConfigUnion,
     summary="Update channel config",
     description="Update configuration for a specific channel by name",
+    dependencies=[
+        Depends(require_agent_manage_audited("config.channel.write")),
+    ],
 )
 async def put_channel(
     request: Request,
@@ -519,11 +548,12 @@ async def put_channel(
     return channel_config
 
 
-@router.get(
+@agent_router.get(
     "/acp",
     response_model=ACPConfig,
     summary="Get ACP config",
     description="Retrieve ACP configuration for current agent",
+    dependencies=[Depends(require_agent_manage())],
 )
 async def get_acp_config(request: Request) -> ACPConfig:
     """Return ACP config for the current agent."""
@@ -533,11 +563,12 @@ async def get_acp_config(request: Request) -> ACPConfig:
     return agent.config.acp or ACPConfig()
 
 
-@router.put(
+@agent_router.put(
     "/acp",
     response_model=ACPConfig,
     summary="Update ACP config",
     description="Update ACP configuration for current agent",
+    dependencies=[Depends(require_agent_manage_audited("config.acp.write"))],
 )
 async def put_acp_config(
     request: Request,
@@ -601,11 +632,12 @@ async def put_acp_node_runtime(
     )
 
 
-@router.get(
+@agent_router.get(
     "/acp/{agent_name}",
     response_model=ACPAgentConfig,
     summary="Get ACP agent config",
     description="Retrieve ACP configuration for a specific ACP agent",
+    dependencies=[Depends(require_agent_manage())],
 )
 async def get_acp_agent_config(
     request: Request,
@@ -629,11 +661,14 @@ async def get_acp_agent_config(
     return acp_agent
 
 
-@router.put(
+@agent_router.put(
     "/acp/{agent_name}",
     response_model=ACPAgentConfig,
     summary="Update ACP agent config",
     description="Update ACP configuration for a specific ACP agent",
+    dependencies=[
+        Depends(require_agent_manage_audited("config.acp_agent.write")),
+    ],
 )
 async def put_acp_agent_config(
     request: Request,
@@ -677,10 +712,11 @@ async def put_acp_agent_config(
     return agent.config.acp.agents[agent_name]
 
 
-@router.get(
+@agent_router.get(
     "/heartbeat",
     summary="Get heartbeat config",
     description="Return current heartbeat config (interval, target, etc.)",
+    dependencies=[Depends(require_agent_manage())],
 )
 async def get_heartbeat(request: Request) -> Any:
     """Return effective heartbeat config (from file or default)."""
@@ -695,10 +731,13 @@ async def get_heartbeat(request: Request) -> Any:
     return hb.model_dump(mode="json", by_alias=True)
 
 
-@router.put(
+@agent_router.put(
     "/heartbeat",
     summary="Update heartbeat config",
     description="Update heartbeat and hot-reload the scheduler",
+    dependencies=[
+        Depends(require_agent_manage_audited("config.heartbeat.write")),
+    ],
 )
 async def put_heartbeat(
     request: Request,
@@ -736,10 +775,13 @@ async def put_heartbeat(
     return hb.model_dump(mode="json", by_alias=True)
 
 
-@router.post(
+@agent_router.post(
     "/heartbeat/run",
     summary="Run heartbeat now",
     description="Trigger one heartbeat execution immediately",
+    dependencies=[
+        Depends(require_agent_manage_audited("config.heartbeat.run")),
+    ],
 )
 async def run_heartbeat_now(request: Request) -> Any:
     """Trigger one heartbeat run in background for quick testing."""

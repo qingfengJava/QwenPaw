@@ -70,6 +70,11 @@ function employee(
     backend_capabilities: {},
     owner_id: null,
     usable: true,
+    manageable: true,
+    manage_visibility: "private",
+    manage_granted_departments: [],
+    manage_granted_department_names: [],
+    manage_granted_users: [],
     ...overrides,
   };
 }

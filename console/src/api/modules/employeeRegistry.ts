@@ -13,6 +13,12 @@ export type EmployeeKind = "agent" | "expert" | "team" | "workflow";
 /** 可见范围：全员共享 / 部门专属 / 仅创建者。 */
 export type EmployeeVisibility = "org" | "department" | "private";
 
+/**
+ * 可配置范围（后台配置域授权维）：仅创建者可配 / 部门可配。
+ * 不支持 org——「全员可配」用 team_lead 角色表达，避免误配。
+ */
+export type ManageVisibility = "private" | "department";
+
 /** 专家团成员（名称与形象来自 experts 权威源）。 */
 export interface TeamMemberItem {
   expert_id: string;
@@ -57,6 +63,20 @@ export interface DigitalEmployee {
   backend_capabilities: Record<string, unknown>;
   owner_id: string | null;
   usable: boolean;
+  /**
+   * 后台配置域判定：当前 viewer 是否可配置该员工（S1 写权限）。
+   * 后端注册表按 viewer 一次快照批量判定（manage grants + 角色 + owner 兜底），
+   * 前端据此过滤工作台管理型 Tab、只读化 ModelSelector，禁止本地复刻判定逻辑。
+   */
+  manageable: boolean;
+  /** 可配置范围（管理授权维）：private-仅创建者 / department-部门可配。 */
+  manage_visibility: ManageVisibility;
+  /** 管理授权部门集合（department 可配范围时生效）。 */
+  manage_granted_departments: string[];
+  /** 管理授权部门名称（与 manage_granted_departments 同序，展示用）。 */
+  manage_granted_department_names: string[];
+  /** 管理授权用户集合（跨部门显式授权兜底）。 */
+  manage_granted_users: string[];
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -68,6 +88,12 @@ export interface GovernancePayload {
   visibility?: EmployeeVisibility;
   /** 授权部门集合；传数组（含空数组）整体替换，缺省不修改。 */
   granted_departments?: string[];
+  /** 可配置范围（管理授权维）；缺省不修改。 */
+  manage_visibility?: ManageVisibility;
+  /** 管理授权部门集合；传数组（含空数组）整体替换，缺省不修改。 */
+  manage_granted_departments?: string[];
+  /** 管理授权用户集合；传数组（含空数组）整体替换，缺省不修改。 */
+  manage_granted_users?: string[];
 }
 
 /** 注册表读取筛选参数（与后端 query 一一对应）。 */

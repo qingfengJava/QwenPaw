@@ -143,3 +143,35 @@ def test_cron_job_spec_text_rejects_silent_delivery():
                 silent=True,
             ),
         )
+
+
+# ---------------------------------------------------------------------------
+# CronJobSpec owner fields — S2 用户个人平面归属
+# ---------------------------------------------------------------------------
+
+
+def test_cron_job_spec_owner_fields_default_none():
+    # 未指定归属 → 三字段均 None（落员工共享语义）
+    spec = make_cron_job_spec()
+    assert spec.owner_user_id is None
+    assert spec.department_id is None
+    assert spec.project_id is None
+
+
+def test_cron_job_spec_owner_fields_round_trip():
+    # 个人任务归属随 spec 序列化在 json/pg 两平面往返不丢失
+    spec = make_cron_job_spec().model_copy(
+        update={
+            "owner_user_id": "alice",
+            "department_id": "/root/eng",
+            "project_id": None,
+        },
+    )
+    payload = spec.model_dump(mode="json")
+    assert payload["owner_user_id"] == "alice"
+    assert payload["department_id"] == "/root/eng"
+
+    restored = CronJobSpec.model_validate(payload)
+    assert restored.owner_user_id == "alice"
+    assert restored.department_id == "/root/eng"
+    assert restored.project_id is None

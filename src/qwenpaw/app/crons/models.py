@@ -211,6 +211,18 @@ class CronJobSpec(BaseModel):
     runtime: JobRuntimeSpec = Field(default_factory=JobRuntimeSpec)
     meta: Dict[str, Any] = Field(default_factory=dict)
 
+    #: 个人任务归属（S2 用户个人平面）：owner_user_id 非空=个人任务，仅
+    #: owner 本人 + 平台管理员可见可改（跨人严格隔离）；为空=员工共享任务
+    #: （S1，使用授权内全员可见，员工级管理授权者可写）。随 spec 序列化
+    #: 在 json（jobs.json）与 pg（cron_jobs.spec JSONB + 投影列）两平面往返。
+    owner_user_id: Optional[str] = None
+    #: owner 部门归属快照（写入时经 org 目录解析，ops 检索/归属统计用；
+    #: 无 PG 或 owner 无部门时为 None）。存部门 path（本系统部门稳定标识，
+    #: 与 RBAC ``dept:{path}`` 团队镜像同源）。
+    department_id: Optional[str] = None
+    #: owner 项目归属快照（预留列；个人定时任务暂无项目维度，恒 None）。
+    project_id: Optional[str] = None
+
     @model_validator(mode="after")
     def _validate_task_type_fields(self) -> "CronJobSpec":
         if self.task_type == "text":
@@ -265,6 +277,10 @@ class CronExecutionRecord(BaseModel):
     run_id: Optional[str] = None
     #: 本次执行落库的会话 ID（share_session=False 时为 cron:{job_id}）
     session_id: Optional[str] = None
+    #: 执行结果摘要（final_text 截断 500 字，worklog 时间线标题来源）
+    result_summary: Optional[str] = None
+    #: 调度槽位时间（trigger=scheduled 时取 run_at，手动触发为空）
+    scheduled_for: Optional[datetime] = None
 
 
 class CronJobView(BaseModel):

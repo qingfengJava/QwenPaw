@@ -23,8 +23,8 @@ from qwenpaw.exceptions import (
 
 from ..agent_context import get_agent_for_request
 from ..utils import schedule_agent_reload
-from ..rbac.deps import require_perm
-from ..rbac.models import PERM_AGENT_MANAGE, PERM_MODEL_MANAGE
+from ..rbac.deps import require_agent_manage, require_perm
+from ..rbac.models import PERM_MODEL_MANAGE
 from ...governance.audit import AuditLog
 from ...governance.policy import (
     GovernanceAction,
@@ -1056,8 +1056,12 @@ async def set_active_model(
             detail="agent_id is required when scope is 'agent'",
         )
 
-    # 员工级治理边界：改员工的模型/参数需 agent:manage（RBAC 关闭时直通）
-    await require_perm(PERM_AGENT_MANAGE)(request)
+    # 员工级治理边界：改员工的模型/参数属 S1 共享配置写，需对该员工的
+    # 管理授权（require_agent_manage）。目标员工以 body.agent_id 为准，显式
+    # 写入 request.state 供闸门解析，不依赖 X-Agent-Id 头巧合一致；RBAC
+    # 关闭（单机免认证部署）时闸门直通，行为零变化。
+    request.state.agent_id = body.agent_id
+    await require_agent_manage()(request)
 
     _validate_model_slot(manager, body.provider_id, body.model)
 

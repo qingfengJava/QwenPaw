@@ -20,6 +20,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import text
 
 from ...enterprise import current_tenant_id, require_enterprise_engine
+from ...experts.cron_ledger import get_cron_ledger_reader
 from ...rbac import PERM_ADMIN_EXPERTS, require_perm
 
 logger = logging.getLogger(__name__)
@@ -101,30 +102,25 @@ async def pending_items() -> Dict[str, Any]:
                     "link": f"/admin/experts/{row.expert_id}?tab=work",
                 },
             )
-        # 3) 员工定时任务：启用中且最近一次执行失败
-        task_rows = (
-            await conn.execute(
-                text(
-                    "SELECT id, expert_id, name, last_run_at, last_status, "
-                    "updated_at FROM expert_scheduled_tasks WHERE "
-                    "tenant_id = :tid AND status = 'active' "
-                    "AND last_status = 'failed' "
-                    "ORDER BY last_run_at DESC NULLS LAST LIMIT :lim"
-                ),
-                {"tid": tid, "lim": _SECTION_LIMIT},
-            )
-        ).all()
-        for row in task_rows:
-            items.append(
-                {
-                    "kind": "task_failed",
-                    "id": row.id,
-                    "title": f"定时任务「{row.name}」最近一次执行失败",
-                    "detail": f"任务 id：{row.id}",
-                    "at": row.last_run_at or row.updated_at,
-                    "link": f"/admin/experts/{row.expert_id}",
-                },
-            )
+
+    # 3) 员工定时任务：启用中且最近一次执行失败
+    #    T13d 收口后 expert 两表已 DROP，改走 cron 权威读平面
+    #    （CronLedgerReader 单一出口，跨全部专家一次批查）；reader
+    #    自管连接，故置于上方 engine.connect() 块之外
+    failed_tasks = await get_cron_ledger_reader().list_active_failed_tasks(
+        limit=_SECTION_LIMIT,
+    )
+    for task in failed_tasks:
+        items.append(
+            {
+                "kind": "task_failed",
+                "id": task.id,
+                "title": f"定时任务「{task.name}」最近一次执行失败",
+                "detail": f"任务 id：{task.id}",
+                "at": task.last_run_at or task.updated_at,
+                "link": f"/admin/experts/{task.expert_id}",
+            },
+        )
 
     items.sort(
         key=lambda x: x.get("at") or datetime.min.replace(tzinfo=dt_timezone.utc),

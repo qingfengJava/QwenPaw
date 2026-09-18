@@ -27,6 +27,7 @@ from urllib.parse import quote
 from fastapi import (
     APIRouter,
     Body,
+    Depends,
     File,
     HTTPException,
     Query,
@@ -88,6 +89,11 @@ from ..agent_context import (
     get_agent_project_dir,
     get_project_dir_for_request,
     get_project_dirs_for_request,
+)
+from ..rbac import PERM_ADMIN_PLATFORM, require_perm
+from ..rbac.deps import (
+    require_agent_manage_audited,
+    resolve_agent_doc_write_plane,
 )
 
 router = APIRouter(prefix="/workspace", tags=["workspace"])
@@ -223,13 +229,60 @@ async def _persist_identity_document(
         ) from exc
 
 
+async def _persist_personal_draft(
+    agent_id: str,
+    doc_type: str,
+    content: str,
+    *,
+    owner_user_id: str,
+) -> None:
+    """写个人档案草稿行：只落 PG（不触共享行、不物化共享文件）。
+
+    employee 写四文档的落点（T11，S2 个人平面）：草稿内容仅本人可见/
+    可续编，经管理员「应用」（apply=promote）后才进共享面。拒绝文件回退
+    ——文件是共享物化缓存，绝不能被个人草稿覆盖；无 PG 时直接 503
+    （与共享写「编辑必须落库」同语义）。
+    """
+    store = get_agent_docs_store()
+    if store is None:
+        raise HTTPException(
+            status_code=503,
+            detail="个人档案草稿需要启用 PostgreSQL 档案存储",
+        )
+    try:
+        await store.upsert_document(
+            agent_id,
+            doc_type,
+            content,
+            owner_user_id=owner_user_id,
+            updated_by=owner_user_id,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Agent docs personal draft write failed: agent=%s "
+            "doc=%s owner=%s: %s",
+            agent_id,
+            doc_type,
+            owner_user_id,
+            exc,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="个人档案草稿落库失败，请稍后重试",
+        ) from exc
+
+
 async def _read_identity_document(
     agent_id: str,
     filename: str,
+    *,
+    viewer_user: str | None = None,
 ) -> str | None:
     """读档案文档：白名单文件 PG 优先，异常/无行回退文件（返回 None）。
 
-    PG 平面绝不阻塞业务：任何异常静默回退，由调用方走原文件读取。
+    T11 个人草稿优先：viewer 有本人草稿时返回草稿（继续编辑自己的
+    工作副本），否则读共享行；PG 平面绝不阻塞业务：任何异常静默
+    回退，由调用方走原文件读取。
     """
     doc_type = DOC_TYPE_BY_FILENAME.get(filename)
     if doc_type is None:
@@ -238,6 +291,14 @@ async def _read_identity_document(
     if store is None:
         return None
     try:
+        if viewer_user:
+            draft = await store.get_document(
+                agent_id,
+                doc_type,
+                owner_user_id=viewer_user,
+            )
+            if draft is not None:
+                return str(draft.get("content") or "")
         row = await store.get_document(agent_id, doc_type)
     except Exception:
         logger.warning(
@@ -297,10 +358,12 @@ async def read_working_file(
     try:
         workspace = await get_agent_for_request(request)
         # 档案文档 PG 优先读（Phase B）：白名单文件命中 PG 行直接返回；
+        # T11 个人草稿优先（viewer 有本人草稿时读草稿）；
         # PG 异常/无行回退文件读取（行为与历史一致）
         pg_content = await _read_identity_document(
             workspace.agent_id,
             md_name,
+            viewer_user=str(getattr(request.state, "user", "") or "") or None,
         )
         if pg_content is not None:
             return MdFileContent(content=pg_content)
@@ -329,7 +392,26 @@ async def write_working_file(
 ) -> dict:
     """Write a working directory markdown file."""
     try:
+        doc_type = DOC_TYPE_BY_FILENAME.get(md_name)
+        # T11 写平面分流：管理权 → 共享行（原行为）；仅使用授权且目标为
+        # 白名单档案文件 → 本人草稿行；非白名单文件仍仅限管理员
+        plane = await resolve_agent_doc_write_plane(
+            request,
+            allow_personal=doc_type is not None,
+            audit_action="workspace.files.write",
+        )
         workspace = await get_agent_for_request(request)
+        if doc_type is not None and plane == "personal":
+            # employee 写四文档：落本人 draft 行（不触共享行/共享文件）
+            await _persist_personal_draft(
+                workspace.agent_id,
+                doc_type,
+                body.content,
+                owner_user_id=str(
+                    getattr(request.state, "user", "") or "",
+                ),
+            )
+            return {"written": True, "plane": "personal"}
         # 档案文件 PG 权威先行（Phase B）：白名单文件先落 agent_documents
         # （PG 失败 → 503，编辑必须落库），成功后再物化工作区文件；
         # 无 PG 部署（store 为 None）与非白名单文件保持纯文件行为。
@@ -343,7 +425,7 @@ async def write_working_file(
             agent_id=workspace.agent_id,
         )
         workspace_manager.write_working_md(md_name, body.content)
-        return {"written": True}
+        return {"written": True, "plane": plane}
     except HTTPException:
         raise
     except Exception as exc:
@@ -596,10 +678,12 @@ async def read_workspace_file_content(
     files_root = await _resolve_files_root(request, workspace, root)
     if root == "workspace":
         # 档案文档 PG 优先读（Phase B，仅工作区根白名单文件生效）：
+        # T11 个人草稿优先（viewer 有本人草稿时读草稿）；
         # 命中 PG 行返回单块完整内容；异常/无行回退文件分块读取
         pg_content = await _read_identity_document(
             workspace.agent_id,
             Path(path).name,
+            viewer_user=str(getattr(request.state, "user", "") or "") or None,
         )
         if pg_content is not None:
             return _identity_file_chunk(files_root, path, pg_content)
@@ -639,7 +723,32 @@ async def write_workspace_file_content(
     content = body.get("content")
     if not isinstance(content, str):
         raise HTTPException(status_code=422, detail="content must be a string")
+    # T11 写平面分流：管理权 → 共享行（原行为）；仅使用授权且目标为
+    # 工作区根白名单档案文件 → 本人草稿行；其余仍仅限管理员
+    filename = Path(path).name if root == "workspace" else ""
+    doc_type = DOC_TYPE_BY_FILENAME.get(filename)
+    plane = await resolve_agent_doc_write_plane(
+        request,
+        allow_personal=doc_type is not None,
+        audit_action="workspace.file_content.write",
+    )
     workspace = await get_agent_for_request(request)
+    if doc_type is not None and plane == "personal":
+        # employee 写四文档：落本人 draft 行（不触共享行/共享文件）；
+        # 不物化文件——个人草稿由读路径（草稿优先）回读
+        owner = str(getattr(request.state, "user", "") or "")
+        await _persist_personal_draft(
+            workspace.agent_id,
+            doc_type,
+            content,
+            owner_user_id=owner,
+        )
+        size = len(content.encode("utf-8"))
+        return {
+            "path": path,
+            "size": size,
+            "etag": f'W/"pg-draft-{size}"',
+        }
     # 档案文件 PG 权威先行（Phase B，白名单 + root=workspace 才生效）：
     # 落库失败 → 503；成功后再物化文件（下游 save_text_file）
     if root == "workspace":
@@ -909,6 +1018,9 @@ def _prepare_upload_targets(
 @router.post(
     "/file-upload",
     summary="Stream ordinary files into one workspace directory",
+    dependencies=[
+        Depends(require_agent_manage_audited("workspace.file_upload")),
+    ],
 )
 async def upload_workspace_files(
     request: Request,
@@ -1171,6 +1283,9 @@ async def read_code_file(file_path: str, request: Request):
 @router.put(
     "/code-files/{file_path:path}",
     summary="Write any workspace file (Coding Mode)",
+    dependencies=[
+        Depends(require_agent_manage_audited("workspace.code_file.write")),
+    ],
 )
 async def write_code_file(
     file_path: str,
@@ -1361,6 +1476,9 @@ async def read_memory_file(
     response_model=dict,
     summary="Write a memory file",
     description="Create or update a memory file (uses active agent)",
+    dependencies=[
+        Depends(require_agent_manage_audited("workspace.memory.write")),
+    ],
 )
 async def write_memory_file(
     md_path: str,
@@ -1408,6 +1526,9 @@ async def get_agent_language(request: Request) -> dict:
         "Update the language for agent MD files. "
         "Optionally copies MD files for the new language to agent workspace."
     ),
+    dependencies=[
+        Depends(require_agent_manage_audited("workspace.language.write")),
+    ],
 )
 async def put_agent_language(
     request: Request,
@@ -1480,6 +1601,8 @@ async def get_audio_mode() -> dict:
         '"auto": transcribe if provider available, else file placeholder; '
         '"native": send audio directly to model (may need ffmpeg).'
     ),
+    # 写根配置（config.agents.audio_mode）→ S0 全局面，仅 platform_admin
+    dependencies=[Depends(require_perm(PERM_ADMIN_PLATFORM))],
 )
 async def put_audio_mode(
     body: dict = Body(
@@ -1532,6 +1655,8 @@ async def get_transcription_provider_type() -> dict:
         '"whisper_api": remote Whisper endpoint; '
         '"local_whisper": locally installed openai-whisper.'
     ),
+    # 写根配置（config.agents.transcription_provider_type）→ S0 全局面
+    dependencies=[Depends(require_perm(PERM_ADMIN_PLATFORM))],
 )
 async def put_transcription_provider_type(
     body: dict = Body(
@@ -1605,6 +1730,8 @@ async def get_transcription_providers() -> dict:
         "Set the provider to use for audio transcription. "
         'Use empty string "" to unset.'
     ),
+    # 写根配置（config.agents.transcription_provider_id）→ S0 全局面
+    dependencies=[Depends(require_perm(PERM_ADMIN_PLATFORM))],
 )
 async def put_transcription_provider(
     body: dict = Body(
@@ -1901,6 +2028,9 @@ async def _rollback_embedding_update(
     response_model=AgentsRunningConfig,
     summary="Update agent running config",
     description="Update running configuration for active agent",
+    dependencies=[
+        Depends(require_agent_manage_audited("workspace.running_config")),
+    ],
 )
 async def put_agents_running_config(
     running_config: AgentsRunningConfig = Body(
@@ -2040,6 +2170,13 @@ async def get_system_prompt_files(
     response_model=list[str],
     summary="Update system prompt files",
     description="Update system prompt files for active agent",
+    dependencies=[
+        Depends(
+            require_agent_manage_audited(
+                "workspace.system_prompt_files.write",
+            ),
+        ),
+    ],
 )
 async def put_system_prompt_files(
     files: list[str] = Body(
@@ -2171,6 +2308,9 @@ async def download_workspace(request: Request):
         "Download packs the entire workspace; upload only "
         "overwrites/merges zip contents."
     ),
+    dependencies=[
+        Depends(require_agent_manage_audited("workspace.upload_zip")),
+    ],
 )
 async def upload_workspace(
     request: Request,

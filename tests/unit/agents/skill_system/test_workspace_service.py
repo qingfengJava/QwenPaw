@@ -291,3 +291,53 @@ class TestZipImport:
         service, _ws = ws_env
         with pytest.raises(SkillsError):
             service.import_from_zip(b"not a zip")
+
+
+class TestOverlayUnionScan:
+    """个人技能 overlay 并集扫描（S2 用户个人平面，不进共享 manifest）。"""
+
+    def _write_personal(self, workspace_dir, owner, name):
+        overlay = workspace_dir / ".personal_skills" / owner
+        skill_dir = overlay / name
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(
+            _skill_md(name),
+            encoding="utf-8",
+        )
+        return overlay
+
+    def test_default_overlay_empty_no_behavior_change(self, ws_env):
+        service, _ws = ws_env
+        assert service.overlay_dirs == []
+        service.create_skill("shared", _skill_md("shared"))
+        assert {s.name for s in service.list_all_skills()} == {"shared"}
+
+    def test_list_merges_personal_overlay(self, ws_env):
+        service, workspace_dir = ws_env
+        service.create_skill("shared", _skill_md("shared"))
+        overlay = self._write_personal(workspace_dir, "alice", "mine")
+        svc = SkillService(workspace_dir, overlay_dirs=[overlay])
+        skills = {s.name: s for s in svc.list_all_skills()}
+        assert "shared" in skills
+        assert "mine" in skills
+        assert skills["mine"].source == "personal"
+        assert skills["shared"].source != "personal"
+
+    def test_shared_name_wins_over_personal(self, ws_env):
+        service, workspace_dir = ws_env
+        service.create_skill("dup", _skill_md("dup"))
+        overlay = self._write_personal(workspace_dir, "alice", "dup")
+        svc = SkillService(workspace_dir, overlay_dirs=[overlay])
+        matches = [s for s in svc.list_all_skills() if s.name == "dup"]
+        # 同名以共享为准：仅一条且非 personal
+        assert len(matches) == 1
+        assert matches[0].source != "personal"
+
+    def test_missing_overlay_dir_skipped(self, ws_env):
+        _service, workspace_dir = ws_env
+        svc = SkillService(
+            workspace_dir,
+            overlay_dirs=[workspace_dir / ".personal_skills" / "ghost"],
+        )
+        # overlay 目录不存在：静默跳过，不报错
+        assert svc.list_all_skills() == []

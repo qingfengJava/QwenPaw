@@ -1,23 +1,27 @@
 /**
  * WorkbenchVersionsTab — 发布历史（published_experts 不可变快照链）
- * + 档案文档历史（agent_document_revisions，回滚直接生效）。
+ * + 档案文档历史（agent_document_revisions，回滚直接生效）
+ * + 待应用个人草稿（T11，apply = promote 共享行 + revision）。
  *
  * - 发布历史：版本号 / 发布人 / 发布时间（新版本在前）；回滚写回草稿，
  *   需再次「发布」才影响线上；快照只增不可变；
  * - 档案历史：基础档案文件（PROFILE/AGENTS/SOUL/agent.json）的每次
- *   发布/回滚快照；回滚直接生效（production 行 + 文件物化 + 热重载）。
+ *   发布/回滚快照；回滚直接生效（production 行 + 文件物化 + 热重载）；
+ * - 待应用个人草稿：员工使用者写入的个人草稿（不触共享行），管理员
+ *   在此查看并「应用」到共享面（直接生效，同回滚模式）。
  *
  * 诚实数据原则：从未发布过/无快照时给出明确空态，不造假。
  */
 import { useCallback, useEffect, useState } from "react";
 import { Button, Empty, Popconfirm, Table, Tag } from "antd";
-import { History, RotateCcw } from "lucide-react";
+import { History, Inbox, RotateCcw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { StatusPill } from "@/components/staffdeck";
 import { useAppMessage } from "../../../hooks/useAppMessage";
 import {
   adminExpertsApi,
   type ExpertDocRevisionInfo,
+  type ExpertPersonalDraftInfo,
   type ExpertPreviewStatus,
   type ExpertVersionInfo,
 } from "../../../api/modules/admin";
@@ -62,6 +66,25 @@ export default function WorkbenchVersionsTab({
   const [docAvailable, setDocAvailable] = useState(true);
   const [docRollingBack, setDocRollingBack] = useState<number | null>(null);
 
+  // ── 待应用个人草稿（T11）──
+  const [personalDrafts, setPersonalDrafts] = useState<
+    ExpertPersonalDraftInfo[] | null
+  >(null);
+  const [draftsAvailable, setDraftsAvailable] = useState(true);
+  const [applyingDraft, setApplyingDraft] = useState<string | null>(null);
+
+  const fileNameOf = useCallback(
+    (docType: string) =>
+      docType === "profile"
+        ? "PROFILE.md"
+        : docType === "agents"
+          ? "AGENTS.md"
+          : docType === "soul"
+            ? "SOUL.md"
+            : "agent.json",
+    [],
+  );
+
   const loadDocRevisions = useCallback(async () => {
     try {
       const res = await adminExpertsApi.listDocRevisions(
@@ -76,6 +99,18 @@ export default function WorkbenchVersionsTab({
       setDocAvailable(false);
     }
   }, [expertId, activeDoc]);
+
+  const loadPersonalDrafts = useCallback(async () => {
+    try {
+      const res = await adminExpertsApi.listPersonalDrafts(expertId);
+      setPersonalDrafts(res.drafts ?? []);
+      setDraftsAvailable(res.available !== false);
+    } catch {
+      // 无权限 / 无 PG：诚实空态（不显示假数据）
+      setPersonalDrafts([]);
+      setDraftsAvailable(false);
+    }
+  }, [expertId]);
 
   const load = useCallback(async () => {
     try {
@@ -94,6 +129,10 @@ export default function WorkbenchVersionsTab({
   useEffect(() => {
     void loadDocRevisions();
   }, [loadDocRevisions]);
+
+  useEffect(() => {
+    void loadPersonalDrafts();
+  }, [loadPersonalDrafts]);
 
   const handleRestore = async (version: number) => {
     setRestoring(version);
@@ -137,6 +176,35 @@ export default function WorkbenchVersionsTab({
       return null;
     } finally {
       setDocRollingBack(null);
+    }
+  };
+
+  const handleApplyDraft = async (record: ExpertPersonalDraftInfo) => {
+    const key = `${record.owner_user_id}:${record.doc_type}`;
+    setApplyingDraft(key);
+    try {
+      await adminExpertsApi.applyPersonalDraft(
+        expertId,
+        record.owner_user_id,
+        record.doc_type,
+      );
+      message.success(
+        t(
+          "workbench.personalDraftApplySuccess",
+          "已应用 {{file}}：{{owner}} 的草稿已写入共享并生效",
+          { file: fileNameOf(record.doc_type), owner: record.owner_user_id },
+        ),
+      );
+      void loadPersonalDrafts();
+      // 应用的是当前档案历史选中的文档时，顺手刷新版本链
+      if (fileNameOf(record.doc_type) === activeDoc) {
+        void loadDocRevisions();
+      }
+      onChanged();
+    } catch (err) {
+      message.error(String(err));
+    } finally {
+      setApplyingDraft(null);
     }
   };
 
@@ -335,6 +403,114 @@ export default function WorkbenchVersionsTab({
                       loading={docRollingBack === record.version}
                     >
                       {t("workbench.restore", "回滚")}
+                    </Button>
+                  </Popconfirm>
+                ),
+              },
+            ]}
+          />
+        )}
+      </div>
+
+      {/* ── 待应用个人草稿（T11；apply = promote 共享行 + revision）── */}
+      <div>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            marginBottom: 8,
+          }}
+        >
+          <Inbox size={15} />
+          <span style={{ fontSize: 13, fontWeight: 600 }}>
+            {t("workbench.personalDraftsTitle", "待应用个人草稿")}
+          </span>
+          <span style={{ fontSize: 12, color: "var(--sd-text-3)" }}>
+            {t(
+              "workbench.personalDraftsHint",
+              "员工使用者保存的档案草稿；应用后写入共享并立即生效",
+            )}
+          </span>
+          {personalDrafts && personalDrafts.length > 0 ? (
+            <StatusPill tone="amber">{personalDrafts.length}</StatusPill>
+          ) : null}
+        </div>
+        {personalDrafts === null ? (
+          <Empty description={t("staffdeck.detail.loading", "加载中…")} />
+        ) : !draftsAvailable ? (
+          <Empty
+            description={t(
+              "workbench.personalDraftsUnavailable",
+              "个人草稿需启用 PostgreSQL 档案存储",
+            )}
+          />
+        ) : (
+          <Table<ExpertPersonalDraftInfo>
+            size="small"
+            rowKey={(record) => `${record.owner_user_id}:${record.doc_type}`}
+            dataSource={personalDrafts}
+            locale={{
+              emptyText: t(
+                "workbench.personalDraftsEmpty",
+                "暂无待应用的个人草稿",
+              ),
+            }}
+            pagination={{ hideOnSinglePage: true, pageSize: 10 }}
+            columns={[
+              {
+                title: t("workbench.colSubmitter", "提交人"),
+                dataIndex: "owner_user_id",
+                key: "owner_user_id",
+                width: 160,
+                align: "center",
+              },
+              {
+                title: t("workbench.colDocument", "文档"),
+                dataIndex: "doc_type",
+                key: "doc_type",
+                width: 140,
+                align: "center",
+                render: (value: string) => <Tag>{fileNameOf(value)}</Tag>,
+              },
+              {
+                title: t("workbench.colTime", "更新时间"),
+                dataIndex: "updated_at",
+                key: "updated_at",
+                align: "center",
+                render: (value: string | null) => value ?? "—",
+              },
+              {
+                title: t("workbench.colActions", "操作"),
+                key: "actions",
+                width: 130,
+                align: "center",
+                render: (_: unknown, record: ExpertPersonalDraftInfo) => (
+                  <Popconfirm
+                    title={t(
+                      "workbench.personalDraftApplyConfirm",
+                      "应用 {{file}}（{{owner}} 的草稿）？",
+                      {
+                        file: fileNameOf(record.doc_type),
+                        owner: record.owner_user_id,
+                      },
+                    )}
+                    description={t(
+                      "workbench.personalDraftApplyHint",
+                      "写入共享档案并立即生效（production 行 + 版本快照）",
+                    )}
+                    onConfirm={() => handleApplyDraft(record)}
+                  >
+                    <Button
+                      size="small"
+                      type="primary"
+                      ghost
+                      loading={
+                        applyingDraft ===
+                        `${record.owner_user_id}:${record.doc_type}`
+                      }
+                    >
+                      {t("workbench.personalDraftApply", "应用")}
                     </Button>
                   </Popconfirm>
                 ),

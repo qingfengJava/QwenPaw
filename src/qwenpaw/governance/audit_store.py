@@ -98,10 +98,20 @@ class PgAuditStore:
     async def _insert_batch_async(self, rows: List[dict]) -> None:
         from sqlalchemy import text
 
-        params = [
-            {**{k: row[k] for k in _ROW_KEYS}, "tid": self._tenant_id}
-            for row in rows
-        ]
+        params = []
+        for row in rows:
+            param = {k: row[k] for k in _ROW_KEYS}
+            # asyncpg 无法把 dict 直接编码进 JSONB 绑定参数（raw text + CAST
+            # 场景下 SQLAlchemy 不做类型序列化，会报 'dict' object has no
+            # attribute 'encode'）：extra 统一 JSON 化为字符串，交 SQL 侧
+            # CAST(:extra AS JSONB) 落库；已是字符串则原样透传（幂等）。
+            extra = param.get("extra")
+            if not isinstance(extra, str):
+                param["extra"] = json.dumps(
+                    extra or {}, ensure_ascii=False, default=str
+                )
+            param["tid"] = self._tenant_id
+            params.append(param)
         async with self._engine.begin() as conn:
             await conn.execute(text(self._INSERT_SQL), params)
 

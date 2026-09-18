@@ -15,6 +15,7 @@ import {
   type GovernancePayload,
 } from "@/api/modules/employeeRegistry";
 import { adminOrgsApi, type DepartmentTree } from "@/api/modules/admin";
+import { invalidateManageable } from "@/hooks/useManageable";
 
 /** 分类 Tab 键：全部 / 智能体（单体形态）/ 专家团 / 工作流（预留）。 */
 export type EmployeeTabKey = "all" | "agents" | "team" | "workflow";
@@ -164,6 +165,8 @@ export function useEmployeeRegistry() {
     async (agentId: string, payload: GovernancePayload) => {
       const updated = await employeeRegistryApi.setGovernance(agentId, payload);
       patchRows([updated]);
+      // 管理授权可能已变：失效可管理缓存，桌面端同标签导航的工作台/选择器重取
+      invalidateManageable();
       return updated;
     },
     [patchRows],
@@ -177,6 +180,7 @@ export function useEmployeeRegistry() {
         agent_ids: agentIds,
       });
       patchRows(updated);
+      invalidateManageable();
       return updated;
     },
     [patchRows],

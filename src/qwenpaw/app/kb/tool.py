@@ -33,6 +33,10 @@ _MAX_TOTAL_CHARS = 16000
 #: expand 合法取值（graph 留待后续切片；未支持值显式报错而非静默降级）
 _VALID_EXPAND = frozenset({"none", "section"})
 
+#: S3 精排候选池大小（spec §6 L181：候选 20 → qwen3-rerank → top max_results）。
+#: per-kb 检索超量取回此数，融合后取前 20 交精排；缺凭证时精排原序截断。
+_RERANK_CANDIDATES = 20
+
 
 def _tool_chunk(text: str, *, ok: bool = True) -> ToolChunk:
     return ToolChunk(
@@ -230,23 +234,50 @@ def make_kb_search_tool(
             return _tool_chunk("(no bound knowledge bases)")
 
         cap = max(1, min(int(max_results or 5), 20))
-        hits: list[tuple[Any, Any, float]] = []
-        for kb in kbs:
-            for chunk, score in svc.search(kb.id, query, top_k=cap):
-                hits.append((kb, chunk, score))
-        if not hits:
-            return _tool_chunk("(no matching knowledge snippets)")
-        hits.sort(key=lambda item: item[2], reverse=True)
-        top = hits[:cap]
 
-        # expand 白名单校验：未支持值（含尚未实装的 graph）显式报错，
-        # 不静默按 none 降级（否则 agent 误以为拿到了扩展上下文）。
+        # expand 白名单校验（先于检索，非法值不浪费 S1/S3）：未支持值
+        # （含尚未实装的 graph）显式报错，不静默按 none 降级。
         expand_mode = str(expand or "none").strip().lower()
         if expand_mode not in _VALID_EXPAND:
             return _tool_chunk(
                 f"Error: expand must be one of {sorted(_VALID_EXPAND)}",
                 ok=False,
             )
+
+        # S1 库内混合检索：超量取回候选池供 S3 精排（rerank.py L102 要求
+        # 超量取回，否则精排只能在已截断小集合内换位，收益有限）。
+        hits: list[tuple[Any, Any, float]] = []
+        for kb in kbs:
+            for chunk, score in svc.search(
+                kb.id,
+                query,
+                top_k=_RERANK_CANDIDATES,
+            ):
+                hits.append((kb, chunk, score))
+        if not hits:
+            return _tool_chunk("(no matching knowledge snippets)")
+        hits.sort(key=lambda item: item[2], reverse=True)
+
+        # S3 rerank（融合后、截断前、expand 前，plan L819 / spec §6 L181）：
+        # 候选池交 qwen3-rerank 精排选 cap 条；缺凭证/单条/超时/坏序 →
+        # rerank_hits 原序截断（RRF 序），检索永不因精排报错（降级内建 T4）。
+        # 返回同一批 chunk 对象，用 id 映射还原 (kb, score) 三元组（D3）。
+        from .rerank import rerank_hits
+
+        pool = hits[:_RERANK_CANDIDATES]
+        chunk_meta: dict = {}
+        for kb, chunk, score in pool:
+            chunk_meta.setdefault(id(chunk), (kb, score))
+        ranked = await rerank_hits(
+            query,
+            [chunk for (_kb, chunk, _score) in pool],
+            top_n=cap,
+            agent_id=agent_id,
+        )
+        top: list[tuple[Any, Any, float]] = []
+        for chunk in ranked:
+            meta_kb, meta_score = chunk_meta[id(chunk)]
+            top.append((meta_kb, chunk, meta_score))
 
         # S2 expand=section：命中块回补同小节兄弟块。异常整体隔离 → 降级
         # 单块（brief D5/AC3 + 审查 P2-7：扩展是增强路径，绝不让检索报错）。

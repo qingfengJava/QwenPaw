@@ -86,6 +86,11 @@ async def create_driver_service(
     # endpoint validator and tests.  This PR intentionally keeps the concrete
     # runtime surface to MCP while leaving DriverManager protocol-neutral.
     await migrate_legacy_mcp_if_needed(ws, driver_manager)
+    # T12 driver PG 权威：启动一次性把存量文件卡/凭据回填进 PG（best-effort，
+    # 仅本员工 PG 尚无卡时执行；json 后端/异常静默跳过，绝不阻塞启动）。
+    from ..driver_config_service import DriverConfigService
+
+    await DriverConfigService(ws).backfill_to_pg()
     await driver_manager.start()
     logger.debug(
         "DriverManager external capability runtime initialized for agent: %s",

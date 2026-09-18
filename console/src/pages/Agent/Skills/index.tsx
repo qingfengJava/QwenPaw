@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { PlusOutlined } from "@ant-design/icons";
 import { Button } from "@agentscope-ai/design";
+import { Segmented } from "antd";
 import {
   SkillCard,
   SkillDrawer,
@@ -34,6 +35,12 @@ function SkillsPage() {
     poolSkills,
     allTags,
     sortedSkills,
+    scopedSkills,
+    scopeEnabled,
+    scopeFilter,
+    isPersonalScope,
+    handleScopeChange,
+    handlePromote,
     conflictRenameModal,
     loading,
     uploading,
@@ -78,8 +85,6 @@ function SkillsPage() {
     selectAll,
     clearSelection,
     toggleBatchMode,
-    toggleEnabled,
-    refreshSkills,
     hardRefresh,
     cancelImport,
   } = useSkillsPage();
@@ -119,10 +124,12 @@ function SkillsPage() {
         onSelect={() => toggleSelect(skill.name)}
         onClick={() => handleEdit(skill)}
         onToggleEnabled={async () => {
-          await toggleEnabled(skill);
-          await refreshSkills();
+          await handleToggleEnabled(skill);
         }}
         onDelete={() => handleDelete(skill)}
+        onPromote={
+          isPersonalScope ? () => handlePromote(skill) : undefined
+        }
       />
     ),
     [
@@ -130,9 +137,10 @@ function SkillsPage() {
       selectedSkills,
       toggleSelect,
       handleEdit,
-      toggleEnabled,
-      refreshSkills,
+      handleToggleEnabled,
       handleDelete,
+      isPersonalScope,
+      handlePromote,
     ],
   );
 
@@ -141,30 +149,58 @@ function SkillsPage() {
       <PageHeader
         items={[{ title: t("nav.agent") }, { title: t("skills.title") }]}
         extra={
-          <HeaderActions
-            batchModeEnabled={batchModeEnabled}
-            selectedSkills={selectedSkills}
-            loading={loading}
-            uploading={uploading}
-            fileInputRef={fileInputRef}
-            onSelectAll={selectAll}
-            onClearSelection={clearSelection}
-            onUploadToPool={handleUploadToPool}
-            onBatchEnable={handleBatchEnable}
-            onBatchDisable={handleBatchDisable}
-            onBatchDelete={handleBatchDelete}
-            onToggleBatchMode={toggleBatchMode}
-            onHardRefresh={hardRefresh}
-            onOpenDownloadPool={() => setPoolModal("download")}
-            onOpenUploadPool={() => setPoolModal("upload")}
-            onUploadClick={handleUploadClick}
-            onImportHub={() => setImportModalOpen(true)}
-            onCreate={handleCreate}
-            onBrowseMarket={openMarket}
-            onFileChange={handleFileChange}
-          />
+          isPersonalScope ? (
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={handleCreate}
+            >
+              {t("skills.newPersonalSkill")}
+            </Button>
+          ) : (
+            <HeaderActions
+              batchModeEnabled={batchModeEnabled}
+              selectedSkills={selectedSkills}
+              loading={loading}
+              uploading={uploading}
+              fileInputRef={fileInputRef}
+              onSelectAll={selectAll}
+              onClearSelection={clearSelection}
+              onUploadToPool={handleUploadToPool}
+              onBatchEnable={handleBatchEnable}
+              onBatchDisable={handleBatchDisable}
+              onBatchDelete={handleBatchDelete}
+              onToggleBatchMode={toggleBatchMode}
+              onHardRefresh={hardRefresh}
+              onOpenDownloadPool={() => setPoolModal("download")}
+              onOpenUploadPool={() => setPoolModal("upload")}
+              onUploadClick={handleUploadClick}
+              onImportHub={() => setImportModalOpen(true)}
+              onCreate={handleCreate}
+              onBrowseMarket={openMarket}
+              onFileChange={handleFileChange}
+            />
+          )
         }
       />
+
+      {scopeEnabled && (
+        <div className={styles.scopeToolbar}>
+          <Segmented
+            value={scopeFilter}
+            onChange={(value) => handleScopeChange(value as "shared" | "mine")}
+            options={[
+              { label: t("skills.scopeShared"), value: "shared" },
+              { label: t("skills.scopeMine"), value: "mine" },
+            ]}
+          />
+          {isPersonalScope && (
+            <span className={styles.scopeHint}>
+              {t("skills.personalHint")}
+            </span>
+          )}
+        </div>
+      )}
 
       <ImportHubModal
         open={importModalOpen}
@@ -175,7 +211,7 @@ function SkillsPage() {
         hint={t("skillPool.externalHubHint")}
       />
 
-      {providerSkills.length > 0 && (
+      {!isPersonalScope && providerSkills.length > 0 && (
         <div className={styles.managementBanner}>
           <Sparkles size={16} />
           <div>
@@ -185,7 +221,7 @@ function SkillsPage() {
         </div>
       )}
 
-      {!loading && skills.length > 0 && (
+      {!loading && scopedSkills.length > 0 && (
         <SkillsToolbar
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
@@ -203,30 +239,56 @@ function SkillsPage() {
         <div className={styles.loading}>
           <span className={styles.loadingText}>{t("common.loading")}</span>
         </div>
-      ) : skills.length === 0 ? (
-        <div
-          className={`${styles.emptyState} ${
-            providerSkills.length > 0 ? styles.emptyStateCompact : ""
-          }`}
-        >
-          <div className={styles.emptyStateBadge}>
-            {t("skills.emptyStateBadge")}
+      ) : scopedSkills.length === 0 ? (
+        isPersonalScope ? (
+          <div className={styles.emptyState}>
+            <div className={styles.emptyStateBadge}>
+              {t("skills.scopeMine")}
+            </div>
+            <h2 className={styles.emptyStateTitle}>
+              {t("skills.personalEmptyTitle")}
+            </h2>
+            <p className={styles.emptyStateText}>
+              {t("skills.personalEmptyText")}
+            </p>
+            <div className={styles.emptyStateActions}>
+              <Button
+                type="primary"
+                className={styles.primaryActionButton}
+                onClick={handleCreate}
+                icon={<PlusOutlined />}
+              >
+                {t("skills.personalEmptyCreate")}
+              </Button>
+            </div>
           </div>
-          <h2 className={styles.emptyStateTitle}>
-            {t("skills.emptyStateTitle")}
-          </h2>
-          <p className={styles.emptyStateText}>{t("skills.emptyStateText")}</p>
-          <div className={styles.emptyStateActions}>
-            <Button
-              type="primary"
-              className={styles.primaryActionButton}
-              onClick={handleCreate}
-              icon={<PlusOutlined />}
-            >
-              {t("skills.emptyStateCreate")}
-            </Button>
+        ) : (
+          <div
+            className={`${styles.emptyState} ${
+              providerSkills.length > 0 ? styles.emptyStateCompact : ""
+            }`}
+          >
+            <div className={styles.emptyStateBadge}>
+              {t("skills.emptyStateBadge")}
+            </div>
+            <h2 className={styles.emptyStateTitle}>
+              {t("skills.emptyStateTitle")}
+            </h2>
+            <p className={styles.emptyStateText}>
+              {t("skills.emptyStateText")}
+            </p>
+            <div className={styles.emptyStateActions}>
+              <Button
+                type="primary"
+                className={styles.primaryActionButton}
+                onClick={handleCreate}
+                icon={<PlusOutlined />}
+              >
+                {t("skills.emptyStateCreate")}
+              </Button>
+            </div>
           </div>
-        </div>
+        )
       ) : sortedSkills.length === 0 ? (
         <div className={styles.noSearchResults}>
           <span className={styles.noSearchResultsIcon}>🔍</span>
@@ -264,6 +326,11 @@ function SkillsPage() {
                       onMouseLeave={() => {}}
                       onToggleEnabled={(e) => handleToggleEnabled(skill, e)}
                       onDelete={(e) => handleDelete(skill, e)}
+                      onPromote={
+                        isPersonalScope
+                          ? () => handlePromote(skill)
+                          : undefined
+                      }
                     />
                   ))}
                 </div>
@@ -325,7 +392,7 @@ function SkillsPage() {
         </>
       )}
 
-      {providerSkills.length > 0 && (
+      {!isPersonalScope && providerSkills.length > 0 && (
         <section className={styles.providerSkillsSection}>
           <div className={styles.providerSkillsHeading}>
             <div>
@@ -403,6 +470,7 @@ function SkillsPage() {
         availableTags={allTags}
         onClose={handleDrawerClose}
         onSubmit={handleSubmit}
+        personal={isPersonalScope || editingSkill?.source === "personal"}
       />
     </div>
   );

@@ -37,12 +37,14 @@ logger = logging.getLogger(__name__)
 
 _COLS = (
     "id, name, description, business_domain, goal, nodes, edges, slots, "
-    "status, version, owner_id, environment, created_at, updated_at"
+    "status, version, owner_id, environment, department_id, project_id, "
+    "created_at, updated_at"
 )
 
 _LIGHT_COLS = (
     "id, name, description, business_domain, goal, status, version, "
-    "owner_id, environment, created_at, updated_at"
+    "owner_id, environment, department_id, project_id, created_at, "
+    "updated_at"
 )
 
 
@@ -83,9 +85,44 @@ def _row_to_sop(row, *, light: bool = False) -> SopRecord:
         version=row.version,
         owner_id=row.owner_id,
         environment=getattr(row, "environment", SOP_ENVIRONMENT_PRODUCTION),
+        department_id=getattr(row, "department_id", None),
+        project_id=getattr(row, "project_id", None),
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
+
+
+async def _resolve_owner_department(owner: Optional[str]) -> Optional[str]:
+    """尽力解析 SOP owner 部门归属快照（部门 path；无 PG/无部门/抖动 → None）。
+
+    owner 为员工 id（SOP 私有能力常态）：读其治理行归属部门并换 path；
+    治理缺行或无归属部门时回落按用户名部门成员关系解析（SOP 直属用户
+    场景）。与 cron / 个人技能的归属快照同口径，绝不阻断写主链路。
+    """
+    if not owner:
+        return None
+    try:
+        from ..employees.store import get_employee_governance_store
+        from ..orgs.service import get_org_service
+        from .models import expert_agent_id
+
+        governance = await get_employee_governance_store().get(
+            expert_agent_id(owner),
+        )
+        department_id = governance.department_id if governance else None
+        if department_id:
+            departments = await get_org_service().list_departments()
+            path = {item.id: item.path for item in departments}.get(
+                department_id,
+            )
+            if path:
+                return path
+        # owner 非员工（登录用户名）场景：按用户名部门成员关系解析
+        _org, dept_path = await get_org_service().resolve_user_scope(owner)
+        return dept_path
+    except Exception:  # pylint: disable=broad-except
+        logger.debug("sops: owner department resolve failed", exc_info=True)
+        return None
 
 
 class SopStore:
@@ -103,24 +140,31 @@ class SopStore:
         owner_id: Optional[str] = None,
         sop_id: Optional[str] = None,
         environment: str = SOP_ENVIRONMENT_PRODUCTION,
+        department_id: Optional[str] = None,
+        project_id: Optional[str] = None,
     ) -> SopRecord:
         """Insert one SOP row in the given environment.
 
         默认写 production（兼容旧调用面）；UI/AI 新建草稿时显式传
-        ``environment='draft'``，promote 后才进线上。
+        ``environment='draft'``，promote 后才进线上。归属列在行诞生时
+        快照：未显式传入时按 owner 尽力解析部门 path（失败为空，不阻断）。
         """
         tid = current_tenant_id()
         sop_id = sop_id or new_id("sop")
+        if department_id is None:
+            # 行诞生即快照 owner 部门归属（无 PG/无部门 → None）
+            department_id = await _resolve_owner_department(owner_id)
         engine = require_enterprise_engine()
         async with engine.begin() as conn:
             result = await conn.execute(
                 text(
                     "INSERT INTO sops (tenant_id, id, name, description, "
                     "business_domain, goal, nodes, edges, slots, status, "
-                    "version, owner_id, environment) VALUES (:tid, :id, "
-                    ":name, :desc, :domain, :goal, CAST(:nodes AS JSONB), "
-                    "CAST(:edges AS JSONB), CAST(:slots AS JSONB), "
-                    ":status, 1, :owner, :env) RETURNING " + _COLS
+                    "version, owner_id, environment, department_id, "
+                    "project_id) VALUES (:tid, :id, :name, :desc, :domain, "
+                    ":goal, CAST(:nodes AS JSONB), CAST(:edges AS JSONB), "
+                    "CAST(:slots AS JSONB), :status, 1, :owner, :env, "
+                    ":dept, :proj) RETURNING " + _COLS
                 ),
                 {
                     "tid": tid,
@@ -135,6 +179,8 @@ class SopStore:
                     "status": SOP_STATUS_DRAFT,
                     "owner": owner_id,
                     "env": environment,
+                    "dept": department_id,
+                    "proj": project_id,
                 },
             )
             record = _row_to_sop(result.one())
@@ -404,10 +450,11 @@ class SopStore:
                 text(
                     "INSERT INTO sops (tenant_id, id, name, description, "
                     "business_domain, goal, nodes, edges, slots, status, "
-                    "version, owner_id, environment) VALUES (:tid, :id, "
-                    ":name, :desc, :domain, :goal, CAST(:nodes AS JSONB), "
-                    "CAST(:edges AS JSONB), CAST(:slots AS JSONB), "
-                    ":status, :version, :owner, :prod) "
+                    "version, owner_id, environment, department_id, "
+                    "project_id) VALUES (:tid, :id, :name, :desc, :domain, "
+                    ":goal, CAST(:nodes AS JSONB), CAST(:edges AS JSONB), "
+                    "CAST(:slots AS JSONB), :status, :version, :owner, "
+                    ":prod, :dept, :proj) "
                     "ON CONFLICT (tenant_id, id, environment) DO UPDATE SET "
                     "name = EXCLUDED.name, description = EXCLUDED.description, "
                     "business_domain = EXCLUDED.business_domain, "
@@ -431,6 +478,8 @@ class SopStore:
                     "version": next_version,
                     "owner": draft_record.owner_id,
                     "prod": SOP_ENVIRONMENT_PRODUCTION,
+                    "dept": draft_record.department_id,
+                    "proj": draft_record.project_id,
                 },
             )
             row = result.first()
@@ -488,8 +537,8 @@ class SopStore:
             # 归属沿用现有行（draft/production 同主），无行则 SOP 不存在
             owner = await conn.execute(
                 text(
-                    "SELECT owner_id FROM sops WHERE tenant_id = :tid "
-                    "AND id = :id LIMIT 1"
+                    "SELECT owner_id, department_id, project_id FROM sops "
+                    "WHERE tenant_id = :tid AND id = :id LIMIT 1"
                 ),
                 {"tid": tid, "id": sop_id},
             )
@@ -501,10 +550,11 @@ class SopStore:
                 text(
                     "INSERT INTO sops (tenant_id, id, name, description, "
                     "business_domain, goal, nodes, edges, slots, status, "
-                    "version, owner_id, environment) VALUES (:tid, :id, "
-                    ":name, :desc, :domain, :goal, CAST(:nodes AS JSONB), "
-                    "CAST(:edges AS JSONB), CAST(:slots AS JSONB), "
-                    ":status, 1, :owner, :draft) "
+                    "version, owner_id, environment, department_id, "
+                    "project_id) VALUES (:tid, :id, :name, :desc, :domain, "
+                    ":goal, CAST(:nodes AS JSONB), CAST(:edges AS JSONB), "
+                    "CAST(:slots AS JSONB), :status, 1, :owner, :draft, "
+                    ":dept, :proj) "
                     "ON CONFLICT (tenant_id, id, environment) DO UPDATE SET "
                     "name = EXCLUDED.name, "
                     "description = EXCLUDED.description, "
@@ -527,6 +577,8 @@ class SopStore:
                     "status": SOP_STATUS_DRAFT,
                     "owner": owner_row.owner_id,
                     "draft": SOP_ENVIRONMENT_DRAFT,
+                    "dept": owner_row.department_id,
+                    "proj": owner_row.project_id,
                 },
             )
             row = result.first()
@@ -751,10 +803,11 @@ class SopStore:
                 text(
                     "INSERT INTO sops (tenant_id, id, name, description, "
                     "business_domain, goal, nodes, edges, slots, status, "
-                    "version, owner_id, environment) VALUES (:tid, :id, "
-                    ":name, :desc, :domain, :goal, CAST(:nodes AS JSONB), "
-                    "CAST(:edges AS JSONB), CAST(:slots AS JSONB), "
-                    ":status, 1, :owner, :draft) "
+                    "version, owner_id, environment, department_id, "
+                    "project_id) VALUES (:tid, :id, :name, :desc, :domain, "
+                    ":goal, CAST(:nodes AS JSONB), CAST(:edges AS JSONB), "
+                    "CAST(:slots AS JSONB), :status, 1, :owner, :draft, "
+                    ":dept, :proj) "
                     "ON CONFLICT (tenant_id, id, environment) DO UPDATE SET "
                     "name = EXCLUDED.name, description = EXCLUDED.description, "
                     "business_domain = EXCLUDED.business_domain, "
@@ -775,6 +828,8 @@ class SopStore:
                     "status": SOP_STATUS_DRAFT,
                     "owner": source.owner_id,
                     "draft": SOP_ENVIRONMENT_DRAFT,
+                    "dept": source.department_id,
+                    "proj": source.project_id,
                 },
             )
             row = result.first()

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Card, Empty, Button } from "@agentscope-ai/design";
-import { Spin, Tooltip } from "antd";
+import { Segmented, Spin, Tooltip } from "antd";
 import { DatePicker } from "antd";
 import type { Dayjs } from "dayjs";
 import dayjs from "dayjs";
@@ -25,10 +25,10 @@ type ChartDataItem = {
   userMessages: number;
   assistantMessages: number;
   toolCalls: number;
-  agentPromptTokens: number;
-  agentCompletionTokens: number;
-  agentCacheReadTokens: number;
-  agentLlmCalls: number;
+  promptTokens: number;
+  completionTokens: number;
+  cacheReadTokens: number;
+  llmCalls: number;
 };
 
 interface ColumnSeries {
@@ -110,14 +110,21 @@ function AgentStatsPage() {
   const [data, setData] = useState<AgentStatsSummary | null>(null);
   const [startDate, setStartDate] = useState<Dayjs>(dayjs().subtract(7, "day"));
   const [endDate, setEndDate] = useState<Dayjs>(dayjs());
+  // 统计视角：个人 / 员工切换；员工角色的个人口径由后端强制（前端不复刻判定）
+  const [scope, setScope] = useState<"mine" | "agent">("agent");
 
-  const fetchData = async (start: Dayjs, end: Dayjs) => {
+  const fetchData = async (
+    start: Dayjs,
+    end: Dayjs,
+    scopeArg: "mine" | "agent",
+  ) => {
     setLoading(true);
     setError(null);
     try {
       const summary = await api.getAgentStats({
         start_date: start.format("YYYY-MM-DD"),
         end_date: end.format("YYYY-MM-DD"),
+        scope: scopeArg,
       });
       setData(summary);
     } catch (e) {
@@ -132,8 +139,8 @@ function AgentStatsPage() {
   };
 
   useEffect(() => {
-    fetchData(startDate, endDate);
-  }, [selectedAgent]);
+    fetchData(startDate, endDate, scope);
+  }, [selectedAgent, scope]);
 
   const handleDateChange = (dates: [Dayjs | null, Dayjs | null] | null) => {
     const newStart = dates?.[0] || startDate;
@@ -141,7 +148,7 @@ function AgentStatsPage() {
     if (dates?.[0]) setStartDate(newStart);
     if (dates?.[1]) setEndDate(newEnd);
     if (dates?.[0] && dates?.[1]) {
-      fetchData(newStart, newEnd);
+      fetchData(newStart, newEnd, scope);
     }
   };
 
@@ -159,10 +166,12 @@ function AgentStatsPage() {
       userMessages: d.user_messages,
       assistantMessages: d.assistant_messages,
       toolCalls: d.tool_calls,
-      agentPromptTokens: d.agent_prompt_tokens ?? 0,
-      agentCompletionTokens: d.agent_completion_tokens ?? 0,
-      agentCacheReadTokens: d.agent_cache_read_tokens,
-      agentLlmCalls: d.agent_llm_calls ?? 0,
+      // token/llm 走 scope-aware 叠加口径（PG 权威，无 PG 回退会话 agent_*）
+      promptTokens: d.prompt_tokens ?? 0,
+      completionTokens: d.completion_tokens ?? 0,
+      llmCalls: d.llm_calls ?? 0,
+      // 缓存无 PG 计量源，维持会话派生（图表内 clamp 为 prompt 子集）
+      cacheReadTokens: d.agent_cache_read_tokens ?? 0,
     }));
   }, [data?.by_date]);
 
@@ -171,7 +180,7 @@ function AgentStatsPage() {
     ((data.total_active_sessions ?? 0) > 0 ||
       (data.total_messages ?? 0) > 0 ||
       (data.total_tool_calls ?? 0) > 0 ||
-      (data.agent_llm_calls ?? 0) > 0);
+      (data.total_llm_calls ?? 0) > 0);
 
   const messageColumnConfig = useMemo(
     () =>
@@ -212,8 +221,8 @@ function AgentStatsPage() {
     const cacheHitLabel = t("tokenUsage.cacheRead");
     const tokenData = chartData.flatMap((day) => {
       const cacheHit = Math.min(
-        Math.max(day.agentCacheReadTokens, 0),
-        day.agentPromptTokens,
+        Math.max(day.cacheReadTokens, 0),
+        day.promptTokens,
       );
       return [
         {
@@ -225,15 +234,15 @@ function AgentStatsPage() {
         },
         {
           date: day.date,
-          value: Math.max(day.agentPromptTokens - cacheHit, 0),
-          displayValue: day.agentPromptTokens,
+          value: Math.max(day.promptTokens - cacheHit, 0),
+          displayValue: day.promptTokens,
           barType: inputLabel,
           segment: inputLabel,
         },
         {
           date: day.date,
-          value: day.agentCompletionTokens,
-          displayValue: day.agentCompletionTokens,
+          value: day.completionTokens,
+          displayValue: day.completionTokens,
           barType: outputLabel,
           segment: outputLabel,
         },
@@ -284,7 +293,7 @@ function AgentStatsPage() {
         chartData,
         [
           {
-            key: "agentLlmCalls",
+            key: "llmCalls",
             label: t("agentStats.currentAgentLlmCalls"),
           },
           { key: "toolCalls", label: t("agentStats.toolCalls") },
@@ -348,7 +357,7 @@ function AgentStatsPage() {
             <p>{error}</p>
             <Button
               type="primary"
-              onClick={() => fetchData(startDate, endDate)}
+              onClick={() => fetchData(startDate, endDate, scope)}
             >
               {t("agentStats.retry")}
             </Button>
@@ -370,6 +379,26 @@ function AgentStatsPage() {
                   current && current.isAfter(dayjs(), "day")
                 }
               />
+              <Tooltip title={t("agentStats.scope.toggleHint")}>
+                <Segmented
+                  size="small"
+                  disabled={loading}
+                  value={scope}
+                  onChange={(value) =>
+                    setScope(value as "mine" | "agent")
+                  }
+                  options={[
+                    {
+                      label: t("agentStats.scope.mine"),
+                      value: "mine",
+                    },
+                    {
+                      label: t("agentStats.scope.agent"),
+                      value: "agent",
+                    },
+                  ]}
+                />
+              </Tooltip>
               {loading && <Spin size="small" />}
             </div>
 
@@ -390,7 +419,7 @@ function AgentStatsPage() {
                     tooltip={t("agentStats.totalMessagesTooltip")}
                   />
                   <SummaryCard
-                    value={data.agent_prompt_tokens ?? 0}
+                    value={data.total_prompt_tokens}
                     label={t("agentStats.promptTokens")}
                     tooltip={t("agentStats.currentAgentPromptTokensTooltip")}
                   />
@@ -401,14 +430,14 @@ function AgentStatsPage() {
                     formatValue={(value) => formatPercent(value ?? null)}
                   />
                   <SummaryCard
-                    value={data.agent_completion_tokens ?? 0}
+                    value={data.total_completion_tokens}
                     label={t("agentStats.completionTokens")}
                     tooltip={t(
                       "agentStats.currentAgentCompletionTokensTooltip",
                     )}
                   />
                   <SummaryCard
-                    value={data.agent_llm_calls ?? 0}
+                    value={data.total_llm_calls}
                     label={t("agentStats.currentAgentLlmCalls")}
                     tooltip={t("agentStats.currentAgentLlmCallsTooltip")}
                   />

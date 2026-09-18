@@ -16,7 +16,10 @@ from typing import Any, Optional
 
 import pytest
 
-from qwenpaw.app.crons.models import JobsFile
+from qwenpaw.app.crons.models import (
+    CronExecutionRecord,
+    JobsFile,
+)
 from qwenpaw.app.crons.repo import build_job_repository
 from qwenpaw.app.crons.repo.json_repo import JsonJobRepository
 from qwenpaw.app.crons.repo.pg_repo import (
@@ -361,6 +364,40 @@ async def test_save_projects_authoritative_plane_to_json(tmp_path):
     assert [j["id"] for j in projected["jobs"]] == ["j1"]
 
 
+@pytest.mark.asyncio
+async def test_save_projects_owner_columns(tmp_path):
+    # owner/department/project 三列作为 spec 字段的可查询投影写入 INSERT
+    engine = _FakeEngine(_default_script)
+    repo = PgJobRepository(
+        agent_id="a1",
+        jobs_path=tmp_path / "jobs.json",
+        engine=engine,
+    )
+    personal = make_cron_job_spec(job_id="p1", name="Personal").model_copy(
+        update={
+            "owner_user_id": "alice",
+            "department_id": "/root/eng",
+            "project_id": None,
+        },
+    )
+    shared = make_cron_job_spec(job_id="s1", name="Shared")
+
+    await repo.save(JobsFile(version=2, jobs=[personal, shared]))
+
+    upserts = {
+        params["jid"]: params
+        for sql, params in engine.conns[0].calls
+        if "INSERT INTO cron_jobs" in sql
+    }
+    # 个人任务投影 owner/部门列；共享任务归属列为空
+    assert upserts["p1"]["owner"] == "alice"
+    assert upserts["p1"]["dept"] == "/root/eng"
+    assert upserts["p1"]["proj"] is None
+    assert upserts["s1"]["owner"] is None
+    assert upserts["s1"]["dept"] is None
+    assert upserts["s1"]["proj"] is None
+
+
 # ---------------------------------------------------------------------------
 # append_history：seq 分配、naive 时间归一、修剪窗口
 # ---------------------------------------------------------------------------
@@ -503,3 +540,122 @@ async def test_projection_failure_is_swallowed(tmp_path, monkeypatch):
     # 投影失败只告警，不阻塞权威写入路径
     await repo.save(JobsFile(version=2, jobs=[make_cron_job_spec()]))
     assert not jobs_path.exists()
+
+
+# ---------------------------------------------------------------------------
+# T13a 收口 Phase 1：执行明细补列落库 + run_count 同事务计数
+# ---------------------------------------------------------------------------
+
+
+def _detail_record(**overrides) -> CronExecutionRecord:
+    """一条带全部明细字段的执行记录（定时触发成功样本）。"""
+    run_at = datetime(2030, 1, 1, 9, 0, 0, tzinfo=tz.utc)
+    payload = {
+        "run_at": run_at,
+        "status": "success",
+        "trigger": "scheduled",
+        "run_id": "run-9",
+        "session_id": "cron:j1",
+        "result_summary": "摘要文本",
+        "scheduled_for": run_at,
+    }
+    payload.update(overrides)
+    return CronExecutionRecord(**payload)
+
+
+@pytest.mark.asyncio
+async def test_append_history_persists_detail_columns(tmp_path):
+    """result_summary/run_id/session_id/scheduled_for 随 INSERT 落库，
+    且同事务刷新 cron_jobs.run_count（决策 D3）。"""
+    engine = _FakeEngine(
+        lambda sql, params: _FakeResult(first_row={"next_seq": 3}),
+    )
+    repo = PgJobRepository(
+        agent_id="a1",
+        jobs_path=tmp_path / "jobs.json",
+        engine=engine,
+    )
+    record = _detail_record()
+    await repo.append_history("j1", record)
+
+    calls = engine.conns[0].calls
+    inserts = [
+        params
+        for sql, params in calls
+        if "INSERT INTO cron_job_history" in sql
+    ]
+    assert len(inserts) == 1
+    assert inserts[0]["summary"] == "摘要文本"
+    assert inserts[0]["run_id"] == "run-9"
+    assert inserts[0]["session_id"] == "cron:j1"
+    assert inserts[0]["scheduled_for"] == record.run_at
+    # run_count +1 与 history INSERT 在同一事务连接内
+    bumps = [
+        params
+        for sql, params in calls
+        if "run_count = run_count + 1" in sql
+    ]
+    assert len(bumps) == 1
+    assert bumps[0]["jid"] == "j1"
+
+
+@pytest.mark.asyncio
+async def test_append_history_missing_detail_columns_default_empty(tmp_path):
+    """旧式记录（无明细字段）：空串/None 写库，run_count 照常 +1。"""
+    engine = _FakeEngine(
+        lambda sql, params: _FakeResult(first_row={"next_seq": 5}),
+    )
+    repo = PgJobRepository(
+        agent_id="a1",
+        jobs_path=tmp_path / "jobs.json",
+        engine=engine,
+    )
+    await repo.append_history(
+        "j1",
+        make_execution_record(status="success"),
+    )
+
+    inserts = [
+        params
+        for sql, params in engine.conns[0].calls
+        if "INSERT INTO cron_job_history" in sql
+    ]
+    assert inserts[0]["summary"] == ""
+    assert inserts[0]["run_id"] == ""
+    assert inserts[0]["session_id"] == ""
+    assert inserts[0]["scheduled_for"] is None
+    assert any(
+        "run_count = run_count + 1" in sql
+        for sql, _ in engine.conns[0].calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_history_restores_detail_columns(tmp_path):
+    """回读还原明细列；空串列归一为 None（与 json 平面同形）。"""
+    run_at = datetime(2030, 1, 1, 9, 0, 0, tzinfo=tz.utc)
+    rows = [
+        {
+            "run_at": run_at,
+            "status": "success",
+            "error": None,
+            "trigger": "scheduled",
+            "result_summary": "",
+            "run_id": "run-9",
+            "session_id": "",
+            "scheduled_for": run_at,
+        },
+    ]
+    engine = _FakeEngine(lambda sql, params: _FakeResult(rows=rows))
+    repo = PgJobRepository(
+        agent_id="a1",
+        jobs_path=tmp_path / "jobs.json",
+        engine=engine,
+    )
+    history = await repo.get_history("j1")
+
+    assert len(history) == 1
+    assert history[0].run_id == "run-9"
+    assert history[0].result_summary is None
+    assert history[0].session_id is None
+    assert history[0].scheduled_for == run_at
