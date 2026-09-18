@@ -14,6 +14,7 @@ Contributors read configuration from ``ctx.extras``:
 * ``env_context``       — ``ctx.extras.get("env_context")``
 * ``agent_config``      — ``ctx.extras.get("agent_config")``
 * ``driver_prompt_hints`` — ``ctx.extras.get("driver_prompt_hints", [])``
+* ``kb_catalog`` — ``ctx.extras.get("kb_catalog", "")``（T9 绑定知识库目录块）
 """
 
 from __future__ import annotations
@@ -453,6 +454,23 @@ class DriverPolicyHintContributor(SyncPromptContributor):
         return rendered or None
 
 
+class KbCatalogContributor(SyncPromptContributor):
+    """Append the bound knowledge-base catalog block (T9 Agent 接入层).
+
+    builder 在工具采集阶段把 ``render_kb_catalog`` 产出的
+    ``<knowledge-bases>`` 块塞进 ``ctx.extras["kb_catalog"]``；无绑定 Agent
+    该值为空串，contributor 返 None（零注入，prompt 不含目录块）。
+    """
+
+    name = "kb_catalog"
+    priority = 87
+
+    def contribute_sync(self, ctx: "HookContext") -> str | None:
+        extras = getattr(ctx, "extras", {}) or {}
+        catalog = extras.get("kb_catalog") or ""
+        return catalog.strip() or None
+
+
 # ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
@@ -465,6 +483,7 @@ _ALL_CONTRIBUTORS = (
     CodingModeContributor,
     ScrollContextContributor,
     DriverPolicyHintContributor,
+    KbCatalogContributor,
     EnvContextContributor,
 )
 
@@ -488,6 +507,7 @@ __all__ = [
     "CodingModeContributor",
     "ScrollContextContributor",
     "DriverPolicyHintContributor",
+    "KbCatalogContributor",
     "EnvContextContributor",
     "build_default_prompt_manager",
 ]

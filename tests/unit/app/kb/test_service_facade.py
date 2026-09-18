@@ -623,3 +623,64 @@ def test_dual_shadow_ingest_reuses_doc_id(
     # pg 中的 doc_id 必须与 json 主写一致（P1-3），且已推进 ready
     assert doc.doc_id in store.docs
     assert store.docs[doc.doc_id].ingest_status == INGEST_READY
+
+
+# ---------------------------------------------------------------------------
+# T9：kb_read 数据源——read_document / get_document_meta 的 pg 权威分支
+# ---------------------------------------------------------------------------
+
+
+def test_pg_read_document_returns_content_md(
+    svc: Any,
+    store: FakeStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC3 pg 分支：read_document 返回 kb_documents.content_md 权威全文。"""
+    _set_backend(monkeypatch, "pg")
+    _seed_space(store, "kb_read", "Readable")
+    store.docs["doc_r1"] = KbDocument(
+        id="doc_r1",
+        space_id="kb_read",
+        path="孕产/甲减.md",
+        title="甲减指南",
+        content_md="# 甲减\n\n左甲状腺素剂量权威全文。",
+    )
+    assert svc.read_document("doc_r1") == "# 甲减\n\n左甲状腺素剂量权威全文。"
+
+
+def test_pg_get_document_meta_converts(
+    svc: Any,
+    store: FakeStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC3 pg 分支：get_document_meta 将 KbDocument 转 Meta（space_id→kb_id）。"""
+    _set_backend(monkeypatch, "pg")
+    _seed_space(store, "kb_meta", "Meta")
+    store.docs["doc_m1"] = KbDocument(
+        id="doc_m1",
+        space_id="kb_meta",
+        path="p.md",
+        title="元文档",
+        content_md="正文",
+    )
+    meta = svc.get_document_meta("doc_m1")
+    assert meta is not None
+    assert meta.kb_id == "kb_meta"
+    assert meta.title == "元文档"
+
+
+def test_pg_read_document_absent_no_json_fallback(
+    svc: Any,
+    store: FakeStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P1-4 同源：pg 就绪即权威——不存在文档不被 json 复活（返 None）。"""
+    # json 面先造一篇同名文档（模拟 30 天保留的旧源）
+    _set_backend(monkeypatch, "json")
+    kb = svc.create_kb("GhostDoc", scope="enterprise")
+    doc = svc.ingest_text(kb.id, "legacy text", title="L")
+    # 切 pg：store 就绪但无该文档 → 权威空结果，不回退 json
+    _set_backend(monkeypatch, "pg")
+    store.fail = False
+    assert svc.read_document(doc.doc_id) is None
+    assert svc.get_document_meta(doc.doc_id) is None

@@ -568,6 +568,19 @@ class KbService:
             )
             return []
 
+    def _pg_get_document(self, doc_id: str) -> Optional[KbDocument]:
+        """pg 权威读单文档（含 content_md）；不可用/异常/未命中返 None。"""
+        try:
+            store = self._pg_store()
+            if store is None:
+                return None
+            return self._run_async(store.get_document(doc_id))
+        except Exception:  # pylint: disable=broad-except
+            logger.warning(
+                "[kb] pg get_document failed; doc=%s", doc_id, exc_info=True
+            )
+            return None
+
     def _pg_search(
         self,
         kb_id: str,
@@ -858,6 +871,46 @@ class KbService:
             for doc in self._load().documents.values()
             if doc.kb_id == kb_id
         ]
+
+    def get_document_meta(self, doc_id: str) -> Optional[KbDocumentMeta]:
+        """按 doc_id 取文档元数据（三态门面；kb_read 据此解析所属库做 ACL）。
+
+        pg 就绪即权威：命中转换返回、未命中返 None（不回退，防已删文档被
+        30 天保留的 json 复活）；pg 不可用 fail-soft 回退文件面 registry。
+        """
+        if self._backend() == write_gateway.BACKEND_PG:
+            if self._pg_available():
+                doc = self._pg_get_document(doc_id)
+                return self._doc_to_meta(doc) if doc is not None else None
+            # pg 不可用 → fail-soft 回退文件面
+        return self._load().documents.get(doc_id)
+
+    def read_document(self, doc_id: str) -> Optional[str]:
+        """取一篇文档的权威 Markdown 全文（三态门面，kb_read 工具数据源）。
+
+        pg 后端取 ``kb_documents.content_md``（权威源全文，逐字精确）；
+        json/dual 后端从切片按 seq 拼接重建（遗留 JSONL 无独立 MD 源，
+        best-effort）。注意：chunk_text 为检索连续性在切片间保留 ~100
+        字符 overlap，故多切片文档重建时边界处会有少量文本重复（已知
+        限制，仅为遗留 json 后端；pg 后端取权威 content_md 无此问题）。
+        未命中或无切片返 None。
+        """
+        if self._backend() == write_gateway.BACKEND_PG:
+            if self._pg_available():
+                doc = self._pg_get_document(doc_id)
+                return doc.content_md if doc is not None else None
+            # pg 不可用 → fail-soft 回退文件面
+        with self._lock:
+            meta = self._load().documents.get(doc_id)
+            if meta is None:
+                return None
+            chunks = [
+                c for c in self._load_chunks(meta.kb_id) if c.doc_id == doc_id
+            ]
+        if not chunks:
+            return None
+        chunks.sort(key=lambda c: c.seq)
+        return "\n\n".join(c.text for c in chunks)
 
     # ------------------------------------------------------------------
     # retrieval

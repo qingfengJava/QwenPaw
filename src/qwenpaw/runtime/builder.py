@@ -413,9 +413,12 @@ class AgentBuilder:
             request_context,
             governor,
         )
-        extra_tools.extend(
-            self._collect_kb_tools(agent_id, request_context, governor),
+        kb_tools, kb_catalog = await self._collect_kb_tools(
+            agent_id,
+            request_context,
+            governor,
         )
+        extra_tools.extend(kb_tools)
         extra_tools.extend(
             self._collect_visual_compression_tools(
                 agent_config,
@@ -436,6 +439,7 @@ class AgentBuilder:
         if not hasattr(ctx, "extras") or ctx.extras is None:
             ctx.extras = {}
         ctx.extras["driver_prompt_hints"] = driver_prompt_hints
+        ctx.extras["kb_catalog"] = kb_catalog
 
         # Model + formatter (built before the toolkit so the scroll context
         # strategy, which needs the model for token counting, can wire in).
@@ -588,6 +592,7 @@ class AgentBuilder:
                 "env_context": self._build_env_context(ctx, agent_config),
                 "agent_config": agent_config,
                 "driver_prompt_hints": self._get_driver_prompt_hints(ctx),
+                "kb_catalog": self._get_kb_catalog(ctx),
             },
         )
 
@@ -993,6 +998,11 @@ class AgentBuilder:
         return [str(hint) for hint in hints if hint]
 
     @staticmethod
+    def _get_kb_catalog(ctx: Any) -> str:
+        extras = getattr(ctx, "extras", {}) or {}
+        return str(extras.get("kb_catalog") or "")
+
+    @staticmethod
     async def _collect_driver_tools_and_prompts(
         ctx: Any,
         request_context: dict[str, Any],
@@ -1016,35 +1026,59 @@ class AgentBuilder:
         )
 
     @staticmethod
-    def _collect_kb_tools(
+    async def _collect_kb_tools(
         agent_id: str,
         request_context: dict[str, Any],
         governor: Any = None,
-    ) -> list[Any]:
-        """M4-5: register ``kb_search`` when any knowledge base exists.
+    ) -> tuple[list[Any], str]:
+        """T9: register ``kb_search`` + ``kb_read`` only for bound agents.
 
-        The tool filters bases by the caller's ACL at call time, so the
-        registration itself is unconditional once the deployment has at
-        least one base; without any base the tool would only ever answer
-        "(no accessible knowledge bases)", so it is omitted entirely.
+        从 M4-5「任意库存在即注册」改为「Agent 有绑定库才注册并注入目录」
+        （spec §7 决策点 2）：查 ``list_bound_space_ids(agent_id)``，非空才
+        注册两工具，并渲染 ``<knowledge-bases>`` 目录块供 system prompt 注入；
+        空绑定返回 ``([], "")``——不注册、不注入，prompt 零变化。
+
+        Returns:
+            ``(tools, catalog)``：tools 为经 ``_wrap_tool`` 包装的工具列表，
+            catalog 为目录块字符串（空绑定时为 ``""``）。
         """
         try:
+            from ..app.kb.bindings import list_bound_space_ids
+            from ..app.kb.catalog import render_kb_catalog
             from ..app.kb.service import get_kb_service
-            from ..app.kb.tool import make_kb_search_tool
+            from ..app.kb.tool import (
+                make_kb_read_tool,
+                make_kb_search_tool,
+            )
 
-            if not get_kb_service().list_kbs():
-                return []
-            return [
+            bound_ids = await list_bound_space_ids(agent_id)
+            if not bound_ids:
+                return [], ""
+
+            # 目录数据源经门面（三态一致）：取绑定库的 name/description
+            svc = get_kb_service()
+            bound = set(bound_ids)
+            spaces = [kb for kb in svc.list_kbs() if kb.id in bound]
+            catalog = render_kb_catalog(spaces)
+
+            tools = [
                 AgentBuilder._wrap_tool(
                     make_kb_search_tool(),
                     agent_id,
                     request_context,
                     governor,
                 ),
+                AgentBuilder._wrap_tool(
+                    make_kb_read_tool(),
+                    agent_id,
+                    request_context,
+                    governor,
+                ),
             ]
+            return tools, catalog
         except Exception:  # pylint: disable=broad-except
             _logger.debug("kb tool registration skipped", exc_info=True)
-            return []
+            return [], ""
 
     @staticmethod
     def _get_memory_manager(ctx: Any) -> Any:

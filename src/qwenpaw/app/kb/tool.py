@@ -125,3 +125,61 @@ def make_kb_search_tool(
         return _tool_chunk("\n\n".join(parts))
 
     return kb_search
+
+
+def make_kb_read_tool(
+    service: Optional[KbService] = None,
+) -> Callable[..., Any]:
+    """Build the ``kb_read`` tool: fetch one document's full Markdown.
+
+    仿只读契约（spec §7.4）：``kb_search`` 命中片段不够时，Agent 用
+    doc_id 拉权威全文，支撑渐进式检索。ACL 与 ``kb_search`` 人侧一致
+    （解析文档所属库后 ``can_access``）；完整绑定 S0 收敛归 T10。
+    """
+    svc = service or get_kb_service()
+
+    async def kb_read(doc_id: str) -> ToolChunk:
+        """Read the full Markdown text of one knowledge document.
+
+        Use this after ``kb_search`` when a snippet is not enough and you
+        need the complete authoritative document. Only documents in bases
+        you can access are readable.
+
+        Args:
+            doc_id (`str`):
+                The document id, taken from a kb_search result's tracing
+                line.
+
+        Returns:
+            `ToolResponse`:
+                The document's full Markdown text, or an error message.
+        """
+        doc_id = (doc_id or "").strip()
+        if not doc_id:
+            return _tool_chunk("Error: doc_id cannot be empty", ok=False)
+
+        meta = svc.get_document_meta(doc_id)
+        if meta is None:
+            return _tool_chunk(
+                f"Error: document '{doc_id}' not found",
+                ok=False,
+            )
+
+        username, access = _current_identity()
+        kb = svc.get_kb(meta.kb_id)
+        if kb is None or not svc.can_access(kb, username, **access):
+            return _tool_chunk(
+                "Error: you do not have access to this document",
+                ok=False,
+            )
+
+        content = svc.read_document(doc_id)
+        if content is None:
+            return _tool_chunk(
+                f"Error: document '{doc_id}' not found",
+                ok=False,
+            )
+        title = meta.title or doc_id
+        return _tool_chunk(f"===== [{kb.name}] {title} =====\n{content}")
+
+    return kb_read
