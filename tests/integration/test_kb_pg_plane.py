@@ -493,6 +493,27 @@ def test_kb_pg_engine_roundtrip(app_server) -> None:
             child = next(h for h in tsh_hits if h.seq == 1)
             assert child.parent_seq == 0
 
+            # S2 expand=section：按文档列出全部切片（真库验证
+            # _LIST_DOCUMENT_CHUNKS_SQL）——seq 升序、heading_path 随行、
+            # score 恒 0（列表非排名）、parent_chunk_id 反解 parent_seq。
+            listed = await l1.list_document_chunks(
+                _IT_L1_SPACE,
+                _IT_L1_DOC,
+            )
+            assert [h.seq for h in listed] == [0, 1, 2]
+            assert [h.heading_path for h in listed] == [
+                "甲减 > 用药",
+                "甲减 > 监测",
+                "孕期 > 营养",
+            ]
+            assert all(h.score == 0.0 for h in listed)
+            assert listed[0].parent_seq is None
+            assert listed[1].parent_seq == 0
+            # 不存在文档 → 空列表（不抛）
+            assert (
+                await l1.list_document_chunks(_IT_L1_SPACE, "doc_ghost") == []
+            )
+
             # 向量路径：重建索引带 1024 维向量（seq1 缺向量→仅 BM25 可见）
             dense_a = [0.0] * 1024
             dense_a[0] = 1.0

@@ -296,7 +296,11 @@ class KbService:
         )
 
     def _hit_to_chunk(self, hit: KbSearchHit) -> KbChunk:
-        """KbSearchHit → KbChunk（embedding 不回传，置 None）。"""
+        """KbSearchHit → KbChunk（embedding 不回传，置 None）。
+
+        S2 expand=section 依赖结构锚点：heading_path/parent_seq 随命中回传
+        （L0/json 面命中本就为空，pg/milvus 面为真值）。
+        """
         return KbChunk(
             chunk_id=hit.chunk_id,
             kb_id=hit.space_id,
@@ -304,6 +308,8 @@ class KbService:
             seq=hit.seq,
             text=hit.text,
             title="",
+            heading_path=hit.heading_path,
+            parent_seq=hit.parent_seq,
             embedding=None,
         )
 
@@ -942,6 +948,64 @@ class KbService:
             query_embedding=query_embedding,
             top_k=top_k,
         )
+
+    def document_chunks(self, kb_id: str, doc_id: str) -> List[KbChunk]:
+        """一份文档的全部切片（seq 升序，带 heading_path/parent_seq）。
+
+        S2 ``expand=section`` 的兄弟块来源，亦是 T11 ``GET .../documents/
+        {docId}/chunks`` 预览的数据源（共享基建）。工具层按 doc_id 去重后
+        每 doc 只调一次，杜绝 per-hit N+1（项目规范 §2.4）。
+
+        三态分派：pg 面经引擎 ``list_document_chunks`` 查 kb_chunks（权威）；
+        json/L0 面过滤已载 chunk（heading_path 恒空，S2 自然降级为单块）。
+        pg 不可用 fail-soft 回退文件面，绝不抛给调用方。
+        """
+        if self._backend() == write_gateway.BACKEND_PG:
+            hits = self._pg_list_document_chunks(kb_id, doc_id)
+            if hits is not None:
+                chunks = [self._hit_to_chunk(h) for h in hits]
+                chunks.sort(key=lambda c: c.seq)
+                return chunks
+            # pg 不可用 → fail-soft 回退文件面
+        with self._lock:
+            chunks = [
+                c for c in self._load_chunks(kb_id) if c.doc_id == doc_id
+            ]
+        chunks.sort(key=lambda c: c.seq)
+        return chunks
+
+    def _pg_list_document_chunks(
+        self,
+        kb_id: str,
+        doc_id: str,
+    ) -> Optional[List[KbSearchHit]]:
+        """pg 面按文档取全部切片（与 ``search`` 同级的检索增强取数）。
+
+        返回：None = 引擎未实现 ``list_document_chunks``（如 milvus 面本
+        切片未实现，见 brief D7）或桥接/引擎解析本身报错 → 回退文件面；
+        ``[]`` = 引擎就绪但无切片（权威空）。注：``PgVectorEngine`` 内部
+        broad-except 已把连接/SQL 失败收敛为 ``[]``（非 None），故 pg 拖动
+        不会误回退文件面。
+
+        回退策略与 :meth:`search` 一致（同为检索面）：document_chunks 只为
+        search 已命中的 doc 做小节扩展，若 pg 不可用则 search 也已回退文件面，
+        两者同源——故不另加 ``_pg_available`` 门控（区别于 read_document/
+        get_document_meta 的“pg 就绪即权威”读语义）。
+        """
+        try:
+            engine = self._engine()
+            lister = getattr(engine, "list_document_chunks", None)
+            if lister is None:
+                return None
+            return list(self._run_async(lister(kb_id, doc_id)) or [])
+        except Exception:  # pylint: disable=broad-except
+            logger.warning(
+                "[kb] pg list_document_chunks failed; kb=%s doc=%s",
+                kb_id,
+                doc_id,
+                exc_info=True,
+            )
+            return None
 
 
 _default_service: Optional[KbService] = None

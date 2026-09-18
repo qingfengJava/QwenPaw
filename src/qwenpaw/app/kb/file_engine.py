@@ -173,6 +173,32 @@ class FileKbEngine:
             for chunk, score in pairs
         ]
 
+    async def list_document_chunks(
+        self,
+        space_id: str,
+        document_id: str,
+    ) -> List[KbSearchHit]:
+        """按文档列出切片（L0 面）；heading_path 恒空，S2 降级为单块。
+
+        与 :meth:`search` 同一语义边界（json 面不承载结构锚点）：回传的
+        命中 ``heading_path`` 为空串、``parent_seq`` 为 None，需小节回补的
+        部署须切 pg/milvus。
+        """
+        return [
+            KbSearchHit(
+                space_id=chunk.kb_id,
+                document_id=chunk.doc_id,
+                chunk_id=chunk.chunk_id,
+                seq=chunk.seq,
+                heading_path="",
+                text=chunk.text,
+                score=0.0,
+                parent_seq=None,
+            )
+            for chunk in self.load_chunks(space_id)
+            if chunk.doc_id == document_id
+        ]
+
     # ------------------------------------------------------------------
     # 写入面
     # ------------------------------------------------------------------

@@ -140,6 +140,7 @@ class FakeEngine:
     def __init__(self) -> None:
         self.indexed: Dict[str, List[ChunkSpec]] = {}
         self.hits: List[KbSearchHit] = []
+        self.doc_chunks: List[KbSearchHit] = []
         self.calls: List[Any] = []
 
     async def index_document(
@@ -169,6 +170,19 @@ class FakeEngine:
     ) -> List[KbSearchHit]:
         self.calls.append(("search", tuple(space_ids)))
         return [h for h in self.hits if h.space_id in set(space_ids)][:top_k]
+
+    async def list_document_chunks(
+        self,
+        space_id: str,
+        document_id: str,
+    ) -> List[KbSearchHit]:
+        """S2 expand=section 兄弟块取数（space_id + document_id 双谓词，镜像 pg_engine）。"""
+        self.calls.append(("list_document_chunks", document_id))
+        return [
+            h
+            for h in self.doc_chunks
+            if h.document_id == document_id and h.space_id == space_id
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -703,3 +717,111 @@ def test_pg_read_document_absent_no_json_fallback(
     store.fail = False
     assert svc.read_document(doc.doc_id) is None
     assert svc.get_document_meta(doc.doc_id) is None
+
+
+# ---------------------------------------------------------------------------
+# T10-S2 expand=section：document_chunks 兄弟块取数 + _hit_to_chunk 结构锚点
+# ---------------------------------------------------------------------------
+
+
+def test_hit_to_chunk_carries_heading_path(
+    svc: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D1：_hit_to_chunk 回填 heading_path/parent_seq（S2 结构锚点不再丢弃）。"""
+    _set_backend(monkeypatch, "json")
+    hit = KbSearchHit(
+        space_id="kb",
+        document_id="d",
+        chunk_id="c",
+        seq=3,
+        heading_path="孕产 > 甲减",
+        text="t",
+        score=0.5,
+        parent_seq=1,
+    )
+    chunk = svc._hit_to_chunk(hit)
+    assert chunk.heading_path == "孕产 > 甲减"
+    assert chunk.parent_seq == 1
+
+
+def test_document_chunks_json_filters_and_sorts(
+    svc: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D2 文件面：document_chunks 只返目标 doc、seq 升序。"""
+    _set_backend(monkeypatch, "json")
+    mixed = [
+        KbChunk(chunk_id="d1_2", kb_id="kb", doc_id="d1", seq=2, text="c"),
+        KbChunk(chunk_id="d2_0", kb_id="kb", doc_id="d2", seq=0, text="x"),
+        KbChunk(chunk_id="d1_0", kb_id="kb", doc_id="d1", seq=0, text="a"),
+        KbChunk(chunk_id="d1_1", kb_id="kb", doc_id="d1", seq=1, text="b"),
+    ]
+    monkeypatch.setattr(
+        svc, "_load_chunks", lambda kb_id: mixed, raising=False
+    )
+    got = svc.document_chunks("kb", "d1")
+    assert [c.seq for c in got] == [0, 1, 2]
+    assert all(c.doc_id == "d1" for c in got)
+
+
+def test_document_chunks_pg_returns_sorted_hits(
+    svc: Any,
+    store: FakeStore,
+    engine: FakeEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D2/D4 pg 面：经引擎 list_document_chunks 取兄弟块，转 KbChunk 带 heading_path。"""
+    _set_backend(monkeypatch, "pg")
+    engine.doc_chunks = [
+        KbSearchHit(
+            space_id="kb_p",
+            document_id="dp",
+            chunk_id="dp_1",
+            seq=1,
+            heading_path="H",
+            text="b",
+            score=0.0,
+            parent_seq=0,
+        ),
+        KbSearchHit(
+            space_id="kb_p",
+            document_id="dp",
+            chunk_id="dp_0",
+            seq=0,
+            heading_path="H",
+            text="a",
+            score=0.0,
+        ),
+    ]
+    got = svc.document_chunks("kb_p", "dp")
+    # seq 升序（引擎返回乱序，门面排序）
+    assert [c.seq for c in got] == [0, 1]
+    assert got[0].heading_path == "H"
+    assert got[0].text == "a"
+    assert ("list_document_chunks", "dp") in engine.calls
+
+
+def test_document_chunks_pg_space_mismatch_empty(
+    svc: Any,
+    store: FakeStore,
+    engine: FakeEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P1-5：pg 面 kb_id 与 chunk 的 space_id 不符 → 空（库维度收敛防越权）。"""
+    _set_backend(monkeypatch, "pg")
+    engine.doc_chunks = [
+        KbSearchHit(
+            space_id="kb_real",
+            document_id="dp",
+            chunk_id="dp_0",
+            seq=0,
+            heading_path="H",
+            text="a",
+            score=0.0,
+        ),
+    ]
+    # 传入不匹配的 kb_id → 按 space_id 过滤 → 空（即使 doc_id 命中）
+    assert svc.document_chunks("kb_wrong", "dp") == []
+    # 匹配则正常返回
+    assert len(svc.document_chunks("kb_real", "dp")) == 1

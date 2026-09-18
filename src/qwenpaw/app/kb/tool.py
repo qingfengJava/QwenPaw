@@ -22,6 +22,17 @@ logger = logging.getLogger(__name__)
 
 _MAX_SNIPPET_CHARS = 600
 
+#: S2 expand=section 单节合并全文的字符上限（一节可跨多块，预算高于单块）
+_MAX_SECTION_CHARS = 2400
+
+#: S2 expand=section 全部命中的总输出预算：对齐 ToolResultPruningMiddleware
+#: 的裁剪阈值，防「小节扩展放大输出反被上下文层截断」抵消收益（每节
+#: 额度按命中数动态分配，总额不超此值）。
+_MAX_TOTAL_CHARS = 16000
+
+#: expand 合法取值（graph 留待后续切片；未支持值显式报错而非静默降级）
+_VALID_EXPAND = frozenset({"none", "section"})
+
 
 def _tool_chunk(text: str, *, ok: bool = True) -> ToolChunk:
     return ToolChunk(
@@ -29,6 +40,94 @@ def _tool_chunk(text: str, *, ok: bool = True) -> ToolChunk:
         state=ToolResultState.SUCCESS if ok else ToolResultState.ERROR,
         content=[TextBlock(type="text", text=text)],
     )
+
+
+def _clip(text: str, limit: int) -> str:
+    """按字符预算截断，超出加省略号（单块 snippet 用）。"""
+    if len(text) > limit:
+        return text[:limit] + "…"
+    return text
+
+
+def _section_key(chunk: Any) -> int:
+    """小节精确键（chunker 父子回补不变式）。
+
+    同节非首块 ``parent_seq`` 指向节首块 seq，节首块 ``parent_seq`` 为 None
+    → 用自身 seq。故同节所有块 section_key 相同；文档内**同名 heading_path**
+    的两个不同小节因节首 seq 不同而键不同，不会被误并（比按 heading 字符串
+    归组更精确）。parent_seq 缺失（L0/扁平切片）→ 退化为按 seq 各自成节。
+    """
+    parent = getattr(chunk, "parent_seq", None)
+    if parent is not None:
+        return int(parent)
+    return int(getattr(chunk, "seq", 0) or 0)
+
+
+def _join_blocks_cap(texts: list, limit: int) -> tuple[str, int, int]:
+    """按块边界拼接兄弟块，超预算即停（不切断块/表格/代码）。
+
+    返回 ``(拼接文本, 已含块数, 总块数)``；``已含 < 总`` 时调用方追加省略
+    标记，使「小节被截断」对 agent 可见（不静默丢证据）。至少保留首块。
+    """
+    kept: list = []
+    total = 0
+    for text in texts:
+        extra = len(text) + (2 if kept else 0)
+        if kept and total + extra > limit:
+            break
+        kept.append(text)
+        total += extra
+    return "\n\n".join(kept), len(kept), len(texts)
+
+
+def _build_section_index(svc: KbService, top: list) -> dict:
+    """预建 ``{(kb_id, doc_id, section_key): (heading, [块文本 by seq])}``。
+
+    S2 expand=section 核心（brief D5 + 审查修复）：
+    - 每份文档只调一次 ``svc.document_chunks``（防 per-hit N+1，规范 §2.4）；
+    - 取数用**命中元组里 S0 校验过的** ``kb.id``（非数据行 ``chunk.kb_id``），
+      键含 kb 维度 → 绝不因扩展触碰未绑定库（AC5），且同 doc_id 跨库不串号；
+    - 仅为**命中所在小节**归组（section_key 精确键），不为整篇所有小节建索引；
+    - heading_path 空的命中不入索引（L0/json 面 → 调用方降级为单块）。
+    每 doc 取数异常隔离（WARN + 跳过该 doc），绝不抛穿「永不报错的检索」。
+    """
+    # (kb.id, doc_id) → 命中的 section_key 集（仅 heading_path 非空的命中）
+    wanted: dict = {}
+    for kb, chunk, _score in top:
+        heading = getattr(chunk, "heading_path", "") or ""
+        if not heading:
+            continue
+        wanted.setdefault((kb.id, chunk.doc_id), set()).add(
+            _section_key(chunk),
+        )
+    index: dict = {}
+    for (kb_id, doc_id), keys in wanted.items():
+        try:
+            siblings = svc.document_chunks(kb_id, doc_id)
+        except Exception:  # pylint: disable=broad-except
+            logger.warning(
+                "[kb] document_chunks failed; degrade doc=%s",
+                doc_id,
+                exc_info=True,
+            )
+            continue
+        # 同文档内按 section_key 归组（仅命中所在小节），seq 升序
+        groups: dict = {}
+        for c in sorted(siblings, key=lambda x: x.seq):
+            sk = _section_key(c)
+            if sk in keys:
+                groups.setdefault(sk, []).append(c)
+        for sk, chunks in groups.items():
+            heading = next(
+                (
+                    getattr(c, "heading_path", "") or ""
+                    for c in chunks
+                    if getattr(c, "heading_path", "")
+                ),
+                "",
+            )
+            index[(kb_id, doc_id, sk)] = (heading, [c.text for c in chunks])
+    return index
 
 
 def _current_identity() -> tuple[str, dict]:
@@ -70,6 +169,7 @@ def make_kb_search_tool(
         query: str,
         kb_id: str = "",
         max_results: int = 5,
+        expand: str = "none",
     ) -> ToolChunk:
         """Search the knowledge bases bound to you for relevant snippets.
 
@@ -87,6 +187,13 @@ def make_kb_search_tool(
                 empty searches every base bound to you.
             max_results (`int`, optional):
                 Maximum snippets to return. Defaults to 5.
+            expand (`str`, optional):
+                ``"section"`` expands each hit to its full section (all
+                sibling chunks under the same heading), giving more context
+                than the matched snippet alone; ``"none"`` (default) returns
+                just the matched snippet. Section expansion needs a
+                structure-aware backend (pg/milvus); on the file backend it
+                gracefully degrades to the single snippet.
 
         Returns:
             `ToolResponse`:
@@ -130,15 +237,68 @@ def make_kb_search_tool(
         if not hits:
             return _tool_chunk("(no matching knowledge snippets)")
         hits.sort(key=lambda item: item[2], reverse=True)
+        top = hits[:cap]
+
+        # expand 白名单校验：未支持值（含尚未实装的 graph）显式报错，
+        # 不静默按 none 降级（否则 agent 误以为拿到了扩展上下文）。
+        expand_mode = str(expand or "none").strip().lower()
+        if expand_mode not in _VALID_EXPAND:
+            return _tool_chunk(
+                f"Error: expand must be one of {sorted(_VALID_EXPAND)}",
+                ok=False,
+            )
+
+        # S2 expand=section：命中块回补同小节兄弟块。异常整体隔离 → 降级
+        # 单块（brief D5/AC3 + 审查 P2-7：扩展是增强路径，绝不让检索报错）。
+        sections: dict = {}
+        if expand_mode == "section":
+            try:
+                sections = _build_section_index(svc, top)
+            except Exception:  # pylint: disable=broad-except
+                logger.warning(
+                    "[kb] section expansion failed; degrade to snippets",
+                    exc_info=True,
+                )
+                sections = {}
+
+        # 每节额度按命中数动态分配，总额受 _MAX_TOTAL_CHARS 约束（审查
+        # P2-4：防扩展后输出超 tool-result 裁剪阈值反被截断）。
+        per_section = max(
+            _MAX_SNIPPET_CHARS,
+            min(_MAX_SECTION_CHARS, _MAX_TOTAL_CHARS // max(1, len(top))),
+        )
 
         parts: list[str] = []
-        for kb, chunk, score in hits[:cap]:
-            snippet = chunk.text
-            if len(snippet) > _MAX_SNIPPET_CHARS:
-                snippet = snippet[:_MAX_SNIPPET_CHARS] + "…"
+        rendered: set[tuple[str, str, int]] = set()
+        for kb, chunk, score in top:
+            heading = getattr(chunk, "heading_path", "") or ""
+            # 键含 S0 校验过的 kb.id + section_key（审查 P2-1/P2-2：跨库不
+            # 串号、同名 heading 不误并）
+            skey = (kb.id, chunk.doc_id, _section_key(chunk))
+            if heading and skey in sections:
+                # 同小节多命中去重：整节只渲染一次（top 已按分降序，首次即最高分）
+                if skey in rendered:
+                    continue
+                rendered.add(skey)
+                sec_heading, blocks = sections[skey]
+                body, shown, total_blocks = _join_blocks_cap(
+                    blocks,
+                    per_section,
+                )
+                # 块边界截断对 agent 可见（不静默丢证据，审查 P1-2）
+                if shown < total_blocks:
+                    body += f"\n…[小节共 {total_blocks} 块，已显示 {shown} 块]"
+                heading = heading or sec_heading
+            else:
+                body = _clip(
+                    chunk.text,
+                    min(_MAX_SNIPPET_CHARS, per_section),
+                )
+            # D6：heading_path 非空即显示面包屑（与 expand 模式无关）
+            crumb = f" #{heading}" if heading else ""
             parts.append(
-                f"===== [{kb.name}] {chunk.title or chunk.doc_id} "
-                f"[score={score:.4f}] =====\n{snippet}",
+                f"===== [{kb.name}] {chunk.title or chunk.doc_id}{crumb} "
+                f"[score={score:.4f}] =====\n{body}",
             )
         return _tool_chunk("\n\n".join(parts))
 

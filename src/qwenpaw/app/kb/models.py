@@ -112,6 +112,11 @@ class KbChunk(BaseModel):
     title: str = ""
     seq: int = 0
     text: str
+    # S2 expand=section 的结构锚点（切片器 heading_path/parent_seq 随行）。
+    # L0/json 面不承载结构字段（file_engine 边界）→ 恒空串/None，S2 自然降级
+    # 为单块；pg/milvus 面由 _hit_to_chunk 从 KbSearchHit 回填真值。
+    heading_path: str = ""
+    parent_seq: Optional[int] = None
     embedding: Optional[List[float]] = None
 
 

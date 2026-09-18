@@ -131,6 +131,19 @@ DELETE FROM kb_chunks
 WHERE tenant_id = :tenant AND document_id = :document_id
 """
 
+#: 按文档列出全部切片（S2 expand=section 兄弟块取数 / T11 chunk 预览）；
+#: score 恒 0.0（列表非排名），走 ix_kb_chunks_document 索引。
+#: 带 space_id 谓词：与文件面（按 space 载入）语义一致，且为 T11 人侧
+#: chunk 预览（kb_id 来自 URL/ACL）提供库维度收敛，杜绝跨库越权读。
+_LIST_DOCUMENT_CHUNKS_SQL = """
+SELECT c.id, c.space_id, c.document_id, c.seq, c.heading_path,
+       c.content_text, c.parent_chunk_id, 0.0 AS score
+FROM kb_chunks c
+WHERE c.tenant_id = :tenant AND c.space_id = :space_id
+      AND c.document_id = :document_id
+ORDER BY c.seq, c.id
+"""
+
 
 def _vector_literal(values: Sequence[float]) -> str:
     """pgvector 文本字面量（``[v1,v2,...]``；``repr`` 保证浮点往返精度）。"""
@@ -215,6 +228,45 @@ class PgVectorEngine:
         except Exception:  # pylint: disable=broad-except
             logger.warning(
                 "[kb] pg engine search failed; returning empty set",
+                exc_info=True,
+            )
+            return []
+        return [_hit_from_row(row) for row in rows]
+
+    async def list_document_chunks(
+        self,
+        space_id: str,
+        document_id: str,
+    ) -> List[KbSearchHit]:
+        """按文档列出全部切片（seq 升序）；S2 expand=section 兄弟块来源。
+
+        与检索面同一 fail-soft 约定：任何失败返回空列表（调用方降级为
+        单块，不阻断检索）。``score`` 恒 0（列表非排名）；按 ``space_id`` +
+        ``document_id`` 双谓词收敛（与文件面一致，T11 人侧预览防跨库越权），
+        任一为空即返空。
+        """
+        doc = str(document_id or "")
+        space = str(space_id or "")
+        if not doc or not space:
+            return []
+        try:
+            from sqlalchemy import text
+
+            async with self._get_engine().connect() as conn:
+                rows = (
+                    await conn.execute(
+                        text(_LIST_DOCUMENT_CHUNKS_SQL),
+                        {
+                            "tenant": DEFAULT_TENANT_ID,
+                            "space_id": space,
+                            "document_id": doc,
+                        },
+                    )
+                ).fetchall()
+        except Exception:  # pylint: disable=broad-except
+            logger.warning(
+                "[kb] pg list_document_chunks failed; doc=%s",
+                doc,
                 exc_info=True,
             )
             return []
