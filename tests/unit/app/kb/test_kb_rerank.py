@@ -207,6 +207,36 @@ async def test_rerank_invalid_indices_keep_order(
 
 
 @pytest.mark.asyncio
+async def test_rerank_untyped_or_unhashable_indices_keep_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """响应元素类型不受控：不可 hash（list/dict）或非 int（str/float）索引
+    必须原序返回。
+
+    ``set(order)`` 遇不可 hash 元素抛 ``TypeError``；float 能骗过集合相等
+    却在 ``items[index]`` 取值时抛错——两者都会击穿「精排永不抛错」。
+    """
+    items = _hits(3)
+    monkeypatch.setattr(
+        kb_rr,
+        "_resolve_rerank_config",
+        lambda **_kw: _reranker(),
+    )
+    for bad in (
+        [0, [1], 2],
+        [{"i": 0}, 1, 2],
+        ["0", "1", "2"],
+        [0.0, 1.0, 2.0],
+    ):
+        recorder = _ApiRecorder(list(bad))
+        monkeypatch.setattr(kb_rr, "call_reranker_api", recorder)
+
+        result = await kb_rr.rerank_hits("问题", items)
+
+        assert _refs(result) == ["h0", "h1", "h2"], bad
+
+
+@pytest.mark.asyncio
 async def test_rerank_skips_empty_query(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

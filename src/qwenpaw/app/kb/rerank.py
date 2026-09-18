@@ -77,8 +77,18 @@ def _resolve_rerank_config(agent_id: str = "") -> Optional[RerankerConfig]:
 
 
 def _valid_order(order: Sequence[int], size: int) -> bool:
-    """精排返回的索引序必须是 ``range(size)`` 的一个排列，否则放弃重排。"""
-    return len(order) == size and set(order) == set(range(size))
+    """精排返回的索引序必须是 ``range(size)`` 的一个排列，否则放弃重排。
+
+    先逐元素做 ``int`` 类型守卫再判集合相等：``set()`` 遇不可 hash 的外部
+    元素（如嵌套 list/dict）会抛 ``TypeError``，float 索引又能骗过集合比较
+    却在 ``items[index]`` 取值时抛错——类型检查必须先于一切集合运算，
+    否则「精排永不抛错」的承诺被响应形状击穿。
+    """
+    if len(order) != size:
+        return False
+    if not all(isinstance(index, int) for index in order):
+        return False
+    return set(order) == set(range(size))
 
 
 async def rerank_hits(

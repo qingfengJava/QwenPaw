@@ -53,9 +53,10 @@ def resolve_memory_config(agent_id: str = "") -> Any:
     """
     target = (agent_id or "").strip()
     if not target:
+        # 配置目录不可读等环境问题同样降级，不向检索链路抛错
         try:
             target = str(load_config().agents.active_agent or "").strip()
-        except Exception:  # 配置目录不可读等环境问题同样降级
+        except Exception:
             logger.warning(
                 "[kb] cannot read global config; vector search disabled",
                 exc_info=True,
@@ -109,6 +110,17 @@ async def _call_model(
     try:
         model = create_embedding_model(config)
         response = await model(list(texts))
+        # 响应后处理同在保护区内：外部 SDK 的响应形状不受控，
+        # len() 遇非序列、list() 遇 None 元素都会抛 TypeError。
+        embeddings = getattr(response, "embeddings", None)
+        if embeddings is None or len(embeddings) != len(texts):
+            logger.warning(
+                "[kb] embedding count mismatch: want=%d got=%s",
+                len(texts),
+                0 if embeddings is None else len(embeddings),
+            )
+            return None
+        vectors = [list(embedding) for embedding in embeddings]
     except Exception:
         logger.warning(
             "[kb] embedding request failed: model=%s batch=%d",
@@ -117,16 +129,6 @@ async def _call_model(
             exc_info=True,
         )
         return None
-
-    embeddings = getattr(response, "embeddings", None)
-    if embeddings is None or len(embeddings) != len(texts):
-        logger.warning(
-            "[kb] embedding count mismatch: want=%d got=%s",
-            len(texts),
-            0 if embeddings is None else len(embeddings),
-        )
-        return None
-    vectors = [list(embedding) for embedding in embeddings]
     if not all(_is_valid_vector(vector) for vector in vectors):
         logger.warning(
             "[kb] embedding rejected: expected %d finite dims",
@@ -187,6 +189,8 @@ async def embed_texts(
         stop = start + batch_size
         batch = items[start:stop]
         result = await _call_model(config, batch)
+        # _call_model 契约内已判条数，这里再判一层是纵深防御：
+        # 万一其契约被后人改坏，也能挡住错位 extend（宁整批失败不错位）。
         if result is None or len(result) != len(batch):
             return None
         vectors.extend(result)

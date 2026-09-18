@@ -143,6 +143,24 @@ def test_resolve_config_missing_agent_profile_is_none(
     assert kb_emb._resolve_config() is None
 
 
+def test_resolve_config_unreadable_global_config_is_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """根配置目录不可读（load_config 抛错）时降级 None，不进 agent 读取。"""
+
+    def _boom() -> Any:
+        raise RuntimeError("config 目录不可读")
+
+    monkeypatch.setattr(kb_emb, "load_config", _boom)
+    monkeypatch.setattr(
+        kb_emb,
+        "load_agent_config",
+        lambda _aid: pytest.fail("读根配置失败后不应再读 agent 配置"),
+    )
+
+    assert kb_emb._resolve_config() is None
+
+
 def test_resolve_config_requires_credentials(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -237,22 +255,36 @@ async def test_embed_batch_order_is_preserved(
     assert [vec[0] for vec in out] == [float(i) for i in range(6)]
 
 
+@pytest.mark.parametrize(
+    ("max_batch_size", "expected_sizes"),
+    [
+        (1, [1] * 25),
+        (2, [2] * 12 + [1]),
+        (3, [3] * 8 + [1]),
+        (7, [7, 7, 7, 4]),
+        (10, [10, 10, 5]),
+        (25, [25]),
+    ],
+)
 @pytest.mark.asyncio
 async def test_embed_splits_batches_by_max_batch_size(
     monkeypatch: pytest.MonkeyPatch,
+    max_batch_size: int,
+    expected_sizes: List[int],
 ) -> None:
-    """25 条 / max_batch_size=10 → 三批 [10,10,5]，跨批拼接仍严格对齐。"""
+    """25 条按配置的 max_batch_size 切批；参数化覆盖非默认值，切分一旦被
+    硬编码（如 10）变异必须被抓，跨批拼接仍严格对齐。"""
     recorder = _BatchRecorder()
     monkeypatch.setattr(
         kb_emb,
         "_resolve_config",
-        lambda **_kw: _config(max_batch_size=10),
+        lambda **_kw: _config(max_batch_size=max_batch_size),
     )
     monkeypatch.setattr(kb_emb, "_call_model", recorder)
 
     out = await kb_emb.embed_texts([str(i) for i in range(25)])
 
-    assert recorder.batch_sizes == [10, 10, 5]
+    assert recorder.batch_sizes == expected_sizes
     assert out is not None
     assert [vec[0] for vec in out] == [float(i) for i in range(25)]
 
@@ -429,6 +461,47 @@ async def test_call_model_rejects_non_finite_numbers(
         kb_emb,
         "create_embedding_model",
         lambda *_args, **_kwargs: _FakeModel(),
+    )
+
+    assert await kb_emb._call_model(_config(), ["甲"]) is None
+
+
+@pytest.mark.asyncio
+async def test_call_model_non_sequence_embeddings_is_fail_soft(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """响应形状不受控：embeddings 为非序列（如 int）时 len() 会 TypeError，
+    必须降级为 None 而不是把异常抛给检索链路。"""
+
+    class _BadShapeModel:
+        async def __call__(self, inputs: Sequence[str]) -> Any:
+            return types.SimpleNamespace(embeddings=3)
+
+    monkeypatch.setattr(
+        kb_emb,
+        "create_embedding_model",
+        lambda *_args, **_kwargs: _BadShapeModel(),
+    )
+
+    assert await kb_emb._call_model(_config(), ["甲", "乙"]) is None
+
+
+@pytest.mark.asyncio
+async def test_call_model_none_entries_is_fail_soft(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """embeddings=[None,...] 时 list(None) 会 TypeError，同样必须降级。"""
+
+    class _NoneEntryModel:
+        async def __call__(self, inputs: Sequence[str]) -> Any:
+            return types.SimpleNamespace(
+                embeddings=[None for _ in inputs],
+            )
+
+    monkeypatch.setattr(
+        kb_emb,
+        "create_embedding_model",
+        lambda *_args, **_kwargs: _NoneEntryModel(),
     )
 
     assert await kb_emb._call_model(_config(), ["甲"]) is None
