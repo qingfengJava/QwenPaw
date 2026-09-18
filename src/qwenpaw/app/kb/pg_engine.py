@@ -42,10 +42,11 @@ logger = logging.getLogger(__name__)
 #: 各分支进入融合的候选池大小（spec §5：单分支 top50）
 _POOL_SIZE = 50
 
-#: 向量分支 CTE：内层 top-k 扫描（HNSW 友好），外层对候选池编排名
+#: 向量分支 CTE：内层 top-k 扫描（HNSW 友好），外层对候选池编排名；
+#: 排名取 ``- 1``（0 基）与内存融合 ``weight / (k + rank)`` 的 rank 口径对齐
 _VEC_CTE = f"""
 vec AS (
-    SELECT id, row_number() OVER (ORDER BY distance) AS rank
+    SELECT id, row_number() OVER (ORDER BY distance) - 1 AS rank
     FROM (
         SELECT id, embedding <=> CAST(:qv AS vector) AS distance
         FROM kb_chunks
@@ -57,10 +58,10 @@ vec AS (
 )
 """
 
-#: 全文分支 CTE：GIN 命中后按 ts_rank 取候选池
+#: 全文分支 CTE：GIN 命中后按 ts_rank 取候选池；排名同为 0 基
 _KW_CTE = f"""
 kw AS (
-    SELECT id, row_number() OVER (ORDER BY score DESC) AS rank
+    SELECT id, row_number() OVER (ORDER BY score DESC) - 1 AS rank
     FROM (
         SELECT id, ts_rank(tsv, to_tsquery('simple', :tsq)) AS score
         FROM kb_chunks

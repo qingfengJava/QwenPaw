@@ -40,8 +40,9 @@ import json
 import logging
 import threading
 import time
+import uuid
 from datetime import datetime, timezone
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Sequence, Tuple
 
 from ...db import write_gateway
 from .models import (
@@ -808,6 +809,90 @@ class KbPgStore:
                 },
             )
             return bool(result.rowcount)
+
+    # ------------------------------------------------------------------
+    # link ops（wikilink 出边：重建语义 = 删本源旧边 + 插新边）
+    # ------------------------------------------------------------------
+
+    async def replace_document_links(
+        self,
+        space_id: str,
+        src_document_id: str,
+        edges: Sequence[Tuple[str, str, str]],
+    ) -> int:
+        """Replace one document's outgoing wikilink edges (single txn).
+
+        入参 ``edges`` 已在摄入侧解析完毕（``dst_path`` / 归一化后的
+        ``dst_document_id`` / ``context_snippet`` 三元组，悬挂目标落空串，
+        见 Task 6）：本方法只负责「删本源旧边 + 插新边」的原子替换。
+        空列表等价于「清除本源全部出边」——正文删掉 wikilink 的收敛路径。
+
+        Returns:
+            写入的边条数。
+        """
+        if not await self.ensure_ready():
+            return 0
+        from sqlalchemy import text
+
+        rows = list(edges)
+        async with self._get_engine().begin() as conn:
+            await conn.execute(
+                text(
+                    "DELETE FROM kb_links "
+                    "WHERE tenant_id = :tid "
+                    "AND src_document_id = :src",
+                ),
+                {"tid": self._tenant_id, "src": src_document_id},
+            )
+            for dst_path, dst_document_id, context in rows:
+                await conn.execute(
+                    text(
+                        "INSERT INTO kb_links (tenant_id, id, space_id, "
+                        "src_document_id, dst_path, dst_document_id, "
+                        "context_snippet, created_at) "
+                        "VALUES (:tid, :link_id, :space_id, :src, "
+                        ":dst_path, :dst_document_id, :context, now())",
+                    ),
+                    {
+                        "tid": self._tenant_id,
+                        "link_id": f"lnk_{uuid.uuid4().hex[:12]}",
+                        "space_id": space_id,
+                        "src": src_document_id,
+                        "dst_path": dst_path,
+                        "dst_document_id": dst_document_id,
+                        "context": context,
+                    },
+                )
+        return len(rows)
+
+    async def list_document_links(
+        self,
+        src_document_id: str,
+    ) -> List[Tuple[str, str, str]]:
+        """List one document's outgoing edges as ``(dst, dst_id, context)``."""
+        if not await self.ensure_ready():
+            return []
+        from sqlalchemy import text
+
+        async with self._get_engine().connect() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT dst_path, dst_document_id, context_snippet "
+                    "FROM kb_links "
+                    "WHERE tenant_id = :tid "
+                    "AND src_document_id = :src ORDER BY id ASC",
+                ),
+                {"tid": self._tenant_id, "src": src_document_id},
+            )
+            rows = result.mappings().all()
+        return [
+            (
+                str(_row_value(row, "dst_path") or ""),
+                str(_row_value(row, "dst_document_id") or ""),
+                str(_row_value(row, "context_snippet") or ""),
+            )
+            for row in rows
+        ]
 
     # ------------------------------------------------------------------
     # fire-and-forget shadow writes（同步调用方不阻塞）

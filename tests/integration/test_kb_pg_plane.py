@@ -448,6 +448,7 @@ def test_kb_pg_engine_roundtrip(app_server) -> None:
     async def _run() -> None:
         from qwenpaw.app.kb.chunker import ChunkSpec
         from qwenpaw.app.kb.pg_engine import PgVectorEngine
+        from qwenpaw.app.kb.search import RRF_K, VECTOR_WEIGHT
 
         engine = _isolation_asyncpg_engine()
         l1 = PgVectorEngine(engine=engine)
@@ -509,6 +510,12 @@ def test_kb_pg_engine_roundtrip(app_server) -> None:
             vec_hits = await l1.search([_IT_L1_SPACE], "探针", dense_a, 5)
             assert vec_hits, "dense probe must return vector-path hits"
             assert vec_hits[0].chunk_id.endswith("_0")
+            # F2 口径：CTE 排名 0 基（row_number - 1），与内存融合
+            # ``weight / (k + rank)`` 同形——vec-only rank0 得分恰为
+            # VECTOR_WEIGHT / RRF_K（1 基口径下即为红）
+            assert vec_hits[0].score == pytest.approx(
+                VECTOR_WEIGHT / RRF_K,
+            )
 
             # 删除后不可见
             assert await l1.delete_document(_IT_L1_SPACE, _IT_L1_DOC) == 3

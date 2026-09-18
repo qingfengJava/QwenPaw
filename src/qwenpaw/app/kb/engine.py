@@ -93,9 +93,10 @@ class KbRetrievalEngine(Protocol):
 def _run_blocking(coro: Any) -> Any:
     """在同步函数里执行协程：循环外 ``asyncio.run``；循环内独立线程执行。
 
-    ``get_kb_engine()`` 是同步 API（legacy 同步检索面也在用），而表探测
-    本质是 async IO——本函数是模块内唯一的建线程点。探测结果的缓存
-    （正永久 / 负 TTL）沉在 :class:`KbPgStore` 内，稳态调用零网络往返。
+    ``get_kb_engine()`` 是同步 API（供同步调用方取默认引擎；生产接线
+    T8/T10），而表探测本质是 async IO——本函数是模块内唯一的建线程点。
+    探测结果的缓存（正永久 / 负 TTL）沉在 :class:`KbPgStore` 内，稳态调用
+    零网络往返。
     """
     try:
         asyncio.get_running_loop()
