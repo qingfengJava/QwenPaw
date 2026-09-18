@@ -2,8 +2,8 @@
 """T9: Agent 接入接线单测（kb_read 工具 + read_document 门面 + builder 注册门控）。
 
 覆盖裁定基准 task-9-brief.md：
-- AC3 kb_read：pg 态返回 content_md 权威全文（见 test_service_facade.py 的 pg 分支）、
-  json 态从切片按 seq 重建全文、doc 不存在返 not-found、无权访问返 access-denied；
+- kb_read（T10-S0 绑定收敛）：pg 态返回 content_md 权威全文（见 test_service_facade.py
+  的 pg 分支）、json 态从切片按 seq 重建全文、doc 不存在或所属库未绑定均合并 not-found；
 - read_document 门面 json 分支（切片重建 / 未命中 None）；
 - AC2 builder 注册门控（无绑定不注册不注入 / 有绑定注册 kb_search+kb_read 且注入目录）
   ——该组待 builder.py 接线后追加（冲突协议：builder.py 最后动）。
@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from qwenpaw.app.kb.models import SCOPE_ENTERPRISE, SCOPE_PERSONAL
+from qwenpaw.app.kb.models import SCOPE_ENTERPRISE
 from qwenpaw.app.kb.service import KbService
 from qwenpaw.db import write_gateway
 
@@ -91,7 +91,7 @@ def test_get_document_meta_json(service: KbService) -> None:
 
 
 # ---------------------------------------------------------------------------
-# kb_read 工具（json 后端；ACL 与现 kb_search 人侧一致）
+# kb_read 工具（json 后端；T10-S0 绑定收敛：doc 所属库 ∈ 绑定才可读）
 # ---------------------------------------------------------------------------
 
 
@@ -99,18 +99,18 @@ async def test_kb_read_tool_returns_content(
     service: KbService,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """kb_read 命中：返回带标题头的权威全文。"""
+    """kb_read 命中：doc 所属库 ∈ 绑定 → 返回带标题头的权威全文。"""
     from qwenpaw.app.kb.tool import make_kb_read_tool
-    import qwenpaw.app.kb.tool as tool_module
+    import qwenpaw.app.kb.bindings as bindings_mod
 
     kb = service.create_kb(" readable ", scope=SCOPE_ENTERPRISE)
     doc = service.ingest_text(kb.id, "甲状腺剂量说明", title="甲减指南")
-    monkeypatch.setattr(
-        tool_module,
-        "_current_identity",
-        lambda: ("alice", {"flat_role": "employee"}),
-    )
-    tool = make_kb_read_tool(service)
+
+    async def _bound(agent_id: str):
+        return [kb.id]
+
+    monkeypatch.setattr(bindings_mod, "list_bound_space_ids", _bound)
+    tool = make_kb_read_tool(service, "agent_x")
     text = _hit_text(await tool(doc.doc_id))
     assert "甲减指南" in text
     assert "甲状腺剂量说明" in text
@@ -120,37 +120,41 @@ async def test_kb_read_tool_not_found(
     service: KbService,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """kb_read 未命中：返回 not found 错误块。"""
+    """kb_read 未命中：doc 不存在 → not found 错误块。"""
     from qwenpaw.app.kb.tool import make_kb_read_tool
-    import qwenpaw.app.kb.tool as tool_module
+    import qwenpaw.app.kb.bindings as bindings_mod
 
-    monkeypatch.setattr(
-        tool_module, "_current_identity", lambda: ("alice", {})
-    )
-    tool = make_kb_read_tool(service)
+    kb = service.create_kb("lib", scope=SCOPE_ENTERPRISE)
+
+    async def _bound(agent_id: str):
+        return [kb.id]
+
+    monkeypatch.setattr(bindings_mod, "list_bound_space_ids", _bound)
+    tool = make_kb_read_tool(service, "agent_x")
     text = _hit_text(await tool("doc_ghost"))
     assert "not found" in text
 
 
-async def test_kb_read_tool_access_denied(
+async def test_kb_read_tool_unbound_merged_not_found(
     service: KbService,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """kb_read 越权：他人 personal 库文档返回 access-denied，不泄正文。"""
+    """kb_read 越权（S0 收敛）：doc 所属库未绑定 → 合并 not-found，不泄正文。"""
     from qwenpaw.app.kb.tool import make_kb_read_tool
-    import qwenpaw.app.kb.tool as tool_module
+    import qwenpaw.app.kb.bindings as bindings_mod
 
-    other = service.create_kb("other", scope=SCOPE_PERSONAL, owner_id="bob")
-    doc = service.ingest_text(other.id, "Bob 私密runbook", title="私密")
-    monkeypatch.setattr(
-        tool_module,
-        "_current_identity",
-        lambda: ("alice", {"flat_role": "employee"}),
-    )
-    tool = make_kb_read_tool(service)
+    bound_kb = service.create_kb("bound", scope=SCOPE_ENTERPRISE)
+    other = service.create_kb("other", scope=SCOPE_ENTERPRISE)
+    doc = service.ingest_text(other.id, "私密runbook正文", title="私密")
+
+    async def _bound(agent_id: str):
+        return [bound_kb.id]
+
+    monkeypatch.setattr(bindings_mod, "list_bound_space_ids", _bound)
+    tool = make_kb_read_tool(service, "agent_x")
     text = _hit_text(await tool(doc.doc_id))
-    assert "do not have access" in text
-    assert "私密runbook" not in text
+    assert "not found" in text
+    assert "私密runbook正文" not in text
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +214,37 @@ async def test_collect_kb_tools_bound_registers_and_renders(
     assert "未绑定库" not in catalog
 
 
+async def test_collect_kb_tools_orphan_binding_no_registration(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """AC3/P3-1：绑定库全被删（孤绑定）→ 不注册工具、目录空。
+
+    T9 按 raw bound_ids 门控（非空即注册），孤绑定时会注册工具但目录空；
+    T10-S0 改按解析后 spaces 门控，孤绑定直接不注册不注入。
+    """
+    from qwenpaw.runtime.builder import AgentBuilder
+    import qwenpaw.app.kb.bindings as bindings_mod
+    import qwenpaw.app.kb.service as service_mod
+
+    svc = KbService(
+        registry_path=tmp_path / "kb_registry.json",
+        data_dir=tmp_path / "kb_data",
+    )
+
+    # 绑定一个已不存在的 space_id（模拟库被删后的孤绑定）
+    async def _orphan(agent_id: str):
+        return ["kb_deleted_ghost"]
+
+    monkeypatch.setattr(bindings_mod, "list_bound_space_ids", _orphan)
+    monkeypatch.setattr(service_mod, "get_kb_service", lambda: svc)
+    monkeypatch.setattr(AgentBuilder, "_wrap_tool", lambda fn, *a, **k: fn)
+
+    tools, catalog = await AgentBuilder._collect_kb_tools("agent_x", {}, None)
+    assert tools == []
+    assert catalog == ""
+
+
 def test_kb_catalog_contributor_injects_block() -> None:
     """AC2：contributor 从 ctx.extras[kb_catalog] 取块注入 prompt。"""
     from types import SimpleNamespace
@@ -261,15 +296,10 @@ def test_read_document_multichunk_contains_all_paragraphs(
 
 async def test_kb_read_tool_empty_doc_id(
     service: KbService,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """P3-4：空/空白 doc_id 返回错误块（提前校验，不触存储）。"""
+    """P3-4：空/空白 doc_id 返回错误块（提前校验，不触存储/绑定）。"""
     from qwenpaw.app.kb.tool import make_kb_read_tool
-    import qwenpaw.app.kb.tool as tool_module
 
-    monkeypatch.setattr(
-        tool_module, "_current_identity", lambda: ("alice", {})
-    )
-    tool = make_kb_read_tool(service)
+    tool = make_kb_read_tool(service, "agent_x")
     assert "cannot be empty" in _hit_text(await tool(""))
     assert "cannot be empty" in _hit_text(await tool("   "))

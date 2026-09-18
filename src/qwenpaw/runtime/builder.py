@@ -1036,7 +1036,8 @@ class AgentBuilder:
         从 M4-5「任意库存在即注册」改为「Agent 有绑定库才注册并注入目录」
         （spec §7 决策点 2）：查 ``list_bound_space_ids(agent_id)``，非空才
         注册两工具，并渲染 ``<knowledge-bases>`` 目录块供 system prompt 注入；
-        空绑定返回 ``([], "")``——不注册、不注入，prompt 零变化。
+        空绑定或孤绑定（绑定库全删）返回 ``([], "")``——不注册、不注入，
+        prompt 零变化。
 
         Returns:
             ``(tools, catalog)``：tools 为经 ``_wrap_tool`` 包装的工具列表，
@@ -1059,17 +1060,23 @@ class AgentBuilder:
             svc = get_kb_service()
             bound = set(bound_ids)
             spaces = [kb for kb in svc.list_kbs() if kb.id in bound]
+            # P3-1 孤绑定门控（T10-S0）：绑定库全被删（解析后 spaces 空）
+            # → 不注册不注入，避免注册了工具却无库可查；按 spaces 门控而非
+            # raw bound_ids（task-10-brief R6）。
+            if not spaces:
+                return [], ""
             catalog = render_kb_catalog(spaces)
 
+            # S0 绑定收敛：构造期注入 agent_id，运行期每次调用重解析绑定
             tools = [
                 AgentBuilder._wrap_tool(
-                    make_kb_search_tool(),
+                    make_kb_search_tool(svc, agent_id),
                     agent_id,
                     request_context,
                     governor,
                 ),
                 AgentBuilder._wrap_tool(
-                    make_kb_read_tool(),
+                    make_kb_read_tool(svc, agent_id),
                     agent_id,
                     request_context,
                     governor,

@@ -498,6 +498,25 @@ def test_dual_reads_from_json_primary(
     assert [k.name for k in svc.list_kbs()] == ["JsonPrimary"]
 
 
+def test_dual_read_document_reconstructs_from_json(
+    svc: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P3-4余（T10-S0）：dual 后端 read_document 走 json primary 重建全文。
+
+    dual 读仍 json（spec §4.3）：read_document 的 pg 权威分支不触发，落
+    json 切片按 seq 重建；kb_read 工具链在 dual 下与 json 行为一致。
+    """
+    _set_backend(monkeypatch, "dual")
+    kb = svc.create_kb("DualRead", scope="enterprise")
+    doc = svc.ingest_text(kb.id, "第一段\n\n第二段", title="DualDoc")
+    assert doc is not None
+    text = svc.read_document(doc.doc_id)
+    assert text is not None
+    assert "第一段" in text
+    assert "第二段" in text
+
+
 # ---------------------------------------------------------------------------
 # 三态读一致性
 # ---------------------------------------------------------------------------
