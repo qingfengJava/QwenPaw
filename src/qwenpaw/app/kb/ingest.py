@@ -312,8 +312,9 @@ async def ingest_space_document(
         engine: 检索引擎（None → 按 space 路由解析；测试注入 fake）。
 
     Returns:
-        :class:`IngestResult`——短路时 ``chunk_count=0``；
-        链路异常时 ``status=failed``（失败态已持久化，可重摄重建）。
+        :class:`IngestResult`——短路时 ``chunk_count=0``；写链异常
+        ``status=failed``（失败态已持久化，可重摄重建）；工厂/短路探测
+        故障亦为 ``status=failed``（未建文档，无持久化）。
 
     Raises:
         ValueError: ``content_md`` 为空白（编程错误，值级拒绝）。

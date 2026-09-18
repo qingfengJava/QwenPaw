@@ -862,7 +862,7 @@ class KbPgStore:
                     ),
                     {
                         "tid": self._tenant_id,
-                        "link_id": f"lnk_{seq:06d}_{uuid.uuid4().hex[:8]}",
+                        "link_id": f"lnk_{seq:06d}_{uuid.uuid4().hex[:12]}",
                         "space_id": space_id,
                         "src": src_document_id,
                         "dst_path": dst_path,

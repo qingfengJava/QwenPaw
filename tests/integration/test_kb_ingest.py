@@ -34,7 +34,7 @@ _MAIN_MD = (
     "tags: [用药]\n"
     "---\n"
     "# 甲减 > 用药\n\n"
-    "见 [[ref]] 与 [[悬挂/目标]]。\n\n"
+    "见 [[悬挂/目标]] 与 [[ref]]。\n\n"
     "另见 [[第二目标]]。\n\n"
     "左甲状腺素的妊娠早期剂量调整需要监测 TSH。\n"
 )
@@ -184,11 +184,13 @@ def test_kb_ingest_roundtrip(app_server, monkeypatch) -> None:
             assert detail.source_meta["tags"] == ["用药"]
             assert await _version_count(engine, main.doc_id) == 1
 
-            # links 出边：[[ref]] 归一化命中 / 悬挂落空串 / 读回保序（F2）
+            # links 出边：归一化命中 / 悬挂落空串 / 读回保序（F2）——
+            # 插入序刻意非字典序（悬挂/目标 < ref 按首次出现，码点序反），
+            # 排除「按 dst_path 排序」的伪绿
             edges = await store.list_document_links(main.doc_id)
             assert [dst for dst, _, _ in edges] == [
-                "ref",
                 "悬挂/目标",
+                "ref",
                 "第二目标",
             ]
             resolved = {dst: dst_id for dst, dst_id, _ in edges}
