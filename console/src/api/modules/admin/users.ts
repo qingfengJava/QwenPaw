@@ -9,18 +9,47 @@ export interface CreateUserBody {
   password: string;
   role?: string;
   display_name?: string;
+  real_name?: string;
+  phone?: string;
+  gender?: number;
+  position?: string;
+  department_ids?: string[];
 }
 
 export interface UpdateUserBody {
   disabled?: boolean;
   role?: string;
   display_name?: string;
+  real_name?: string;
+  phone?: string;
+  gender?: number;
+  position?: string;
+}
+
+export interface ListUsersQuery {
+  department_id?: string;
+  disabled?: boolean;
+  keyword?: string;
 }
 
 const enc = encodeURIComponent;
 
+function toQuery(params: ListUsersQuery): string {
+  const sp = new URLSearchParams();
+  if (params.department_id) sp.set("department_id", params.department_id);
+  if (params.disabled !== undefined && params.disabled !== null) {
+    sp.set("disabled", String(params.disabled));
+  }
+  if (params.keyword && params.keyword.trim()) {
+    sp.set("keyword", params.keyword.trim());
+  }
+  const s = sp.toString();
+  return s ? `?${s}` : "";
+}
+
 export const adminUsersApi = {
-  list: () => request<AdminUserView[]>("/admin/users"),
+  list: (query: ListUsersQuery = {}) =>
+    request<AdminUserView[]>(`/admin/users${toQuery(query)}`),
 
   create: (body: CreateUserBody) =>
     request<AdminUserView>("/admin/users", {

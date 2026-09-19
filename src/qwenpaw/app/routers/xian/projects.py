@@ -76,11 +76,47 @@ async def list_projects(
     templates: bool = False,
     service: ProjectService = Depends(get_project_service),
 ):
-    """Org-visible projects; ``templates=true`` lists template sources."""
-    return await service.list_projects(
-        username=caller_username(request),
+    """Org-visible projects; ``templates=true`` lists template sources.
+
+    数据权限（M5+）：在既有「组织可见」列表之上叠加一层 RBAC 数据范围过滤
+    （resource=``project``，部门维度 ``department_id`` + owner 维度
+    ``created_by``）。``all`` 范围或 PG 不可用时不过滤；任何异常都优雅降级
+    回未过滤列表，绝不阻断正常请求。
+    """
+    username = caller_username(request)
+    items = await service.list_projects(
+        username=username,
         templates_only=templates,
     )
+    return _apply_project_data_scope(items, username)
+
+
+def _apply_project_data_scope(
+    items: list[ProjectRecord],
+    username: str,
+) -> list[ProjectRecord]:
+    """对 project 列表追加数据范围过滤（附加收敛层，失败即回落不过滤）。"""
+    if not username or username == "local":
+        # 单机免认证部署：无身份，不施加数据范围收敛
+        return items
+    try:
+        from ...rbac.data_scope import DataScopeFilter
+        from ...rbac.scope_helpers import get_user_scope_context
+
+        scope = DataScopeFilter.resolve_scope(username, "project")
+        ctx = get_user_scope_context(username)
+        return DataScopeFilter.apply_to_list(
+            items,
+            scope,
+            username,
+            user_dept_id=ctx["dept_id"],
+            dept_id_field="department_id",
+            owner_field="created_by",
+            all_child_dept_ids=ctx["dept_and_child_ids"],
+        )
+    except Exception:  # pylint: disable=broad-except
+        logger.debug("project data-scope filter skipped", exc_info=True)
+        return items
 
 
 @router.post("", status_code=201, response_model=ProjectRecord)

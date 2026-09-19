@@ -14,6 +14,20 @@ export interface AuthStatusResponse {
   mode?: "hub";
   bootstrap_required?: boolean;
   registration_enabled?: boolean;
+  /** 默认超管仍使用内置默认口令时 true，登录页提示尽快修改。 */
+  default_admin_hint?: boolean;
+}
+
+/**
+ * Phase 4: minimal organization record exposed by the public
+ * `GET /auth/orgs` endpoint. Only fields safe to reveal before login
+ * are included; sensitive attributes (settings / plan / status) stay
+ * server-side.
+ */
+export interface OrgInfo {
+  id: string;
+  name: string;
+  slug: string;
 }
 
 /**
@@ -31,11 +45,22 @@ export interface VerifyResponse {
 }
 
 export const authApi = {
-  login: async (username: string, password: string): Promise<LoginResponse> => {
+  login: async (
+    username: string,
+    password: string,
+    rememberMe = false,
+  ): Promise<LoginResponse> => {
+    // Phase 4: "记住我" = permanent token (expires_in = -1 → 100 years)
+    // vs default 7 days. Backend `LoginRequest.expires_in` already
+    // supports this; nothing new server-side.
+    const body: Record<string, unknown> = { username, password };
+    if (rememberMe) {
+      body.expires_in = -1;
+    }
     const res = await fetch(getApiUrl("/auth/login"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) {
       throw new Error(await responseErrorMessage(res, "Login failed"));
@@ -46,16 +71,37 @@ export const authApi = {
   register: async (
     username: string,
     password: string,
+    orgId?: string,
   ): Promise<LoginResponse> => {
+    const body: Record<string, unknown> = { username, password };
+    if (orgId) {
+      body.org_id = orgId;
+    }
     const res = await fetch(getApiUrl("/auth/register"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) {
       throw new Error(await responseErrorMessage(res, "Registration failed"));
     }
     return res.json();
+  },
+
+  /**
+   * Phase 4: fetch organizations selectable at registration. Public
+   * endpoint — no auth required. Returns an empty list when the orgs
+   * service is unavailable (single-tenant / non-enterprise deployment).
+   */
+  getOrgs: async (): Promise<OrgInfo[]> => {
+    const res = await fetch(getApiUrl("/auth/orgs"));
+    if (!res.ok) {
+      // Degrade gracefully: the registration form hides the org select
+      // when the list is empty, matching the non-enterprise default.
+      return [];
+    }
+    const data = await res.json();
+    return Array.isArray(data) ? (data as OrgInfo[]) : [];
   },
 
   getStatus: async (): Promise<AuthStatusResponse> => {

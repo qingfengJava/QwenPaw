@@ -76,4 +76,27 @@ export const adminOrgsApi = {
       `/admin/orgs/departments/${enc(deptId)}/members/${enc(username)}`,
       { method: "DELETE" },
     ),
+
+  // 批量成员操作（部门员工工作台：添加/移出/调整部门）。
+  assignMembersBatch: (deptId: string, usernames: string[]) =>
+    request<void>(
+      `/admin/orgs/departments/${enc(deptId)}/members/batch`,
+      { method: "POST", body: JSON.stringify({ usernames }) },
+    ),
+
+  removeMembersBatch: (deptId: string, usernames: string[]) =>
+    request<void>(
+      `/admin/orgs/departments/${enc(deptId)}/members/batch-remove`,
+      { method: "POST", body: JSON.stringify({ usernames }) },
+    ),
+
+  moveMembers: (body: {
+    usernames: string[];
+    target_dept_id: string;
+    source_dept_id?: string | null;
+  }) =>
+    request<{ moved: number }>("/admin/orgs/departments/move-members", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 };

@@ -13,6 +13,7 @@ import LanguageSwitcher, {
   LANGUAGE_LIST,
 } from "../components/LanguageSwitcher/index";
 import ThemeToggleButton from "../components/ThemeToggleButton";
+import UserAccountMenu from "./UserAccountMenu";
 import BrandMark, { BRAND_NAME } from "../components/BrandMark";
 import { useTranslation } from "react-i18next";
 import { Button, Modal } from "@agentscope-ai/design";
@@ -81,7 +82,12 @@ function UpdateCodeBlock({ code }: { code: string }) {
   );
 }
 
-export default function Header() {
+export default function Header({
+  hubMode = false,
+}: {
+  /** True when the backend runs in self-hosted Hub mode (M6). */
+  hubMode?: boolean;
+}) {
   const { t, i18n } = useTranslation();
   const { setThemeMode } = useTheme();
   const desktop = useDesktopUpdate();
@@ -459,6 +465,9 @@ export default function Header() {
             <LanguageSwitcher ariaLabel={t("sidebar.settings.language")} />
             <ThemeToggleButton ariaLabel={t("sidebar.settings.theme")} />
           </div>
+          {/* 当前登录用户头像下拉（账户管理 / 退出登录 / Hub 平台管理），
+              从侧栏底部迁出至右上角，侧栏底部不再堆操作按钮。 */}
+          <UserAccountMenu hubMode={hubMode} />
           <Dropdown menu={{ items: mobileMenuItems }} placement="bottomRight">
             <Button
               type="text"

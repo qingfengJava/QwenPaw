@@ -67,6 +67,12 @@ const AdminKnowledgePage = lazyImportWithRetry(
 const AdminOrganizationPage = lazyImportWithRetry(
   "../../pages/Admin/Organization.tsx",
 );
+const AdminMenuManagementPage = lazyImportWithRetry(
+  "../../pages/Admin/MenuManagement.tsx",
+);
+const AdminPermissionsPage = lazyImportWithRetry(
+  "../../pages/Admin/Permissions.tsx",
+);
 const AgentsManagePage = lazyImportWithRetry(
   "../../pages/Agents/manage/ExpertsManagePage.tsx",
 );
@@ -247,6 +253,16 @@ export const BUILTIN_ROUTES: Route[] = [
     id: "core.admin-organization",
     path: "/admin/organization",
     component: withRequireAdmin(AdminOrganizationPage),
+  },
+  {
+    id: "core.admin-menus",
+    path: "/admin/menus",
+    component: withRequireAdmin(AdminMenuManagementPage),
+  },
+  {
+    id: "core.admin-permissions",
+    path: "/admin/permissions",
+    component: withRequireAdmin(AdminPermissionsPage),
   },
   // ── Digital-employee management (C1 merge): admin-only, under /agents. ──
   {

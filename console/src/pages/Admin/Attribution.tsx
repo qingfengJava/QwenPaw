@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Drawer, Empty, Segmented, Table } from "antd";
 import { useTranslation } from "react-i18next";
 import { PageHeader } from "@/components/PageHeader";
-import { StatCard, StatusPill } from "@/components/staffdeck";
+import { StatusPill } from "@/components/staffdeck";
 import { useAppMessage } from "../../hooks/useAppMessage";
 import {
   attributionApi,
@@ -17,6 +17,7 @@ import {
   type AttributionHeatmap,
   type EvolutionProposal,
 } from "../../api/modules/admin";
+import styles from "./attribution.module.less";
 
 /** 13 桶中文释义（与后端 ATTRIBUTION_BUCKETS 一一对应；统计维度展示名）。 */
 const BUCKET_LABELS: Record<string, string> = {
@@ -113,9 +114,11 @@ export default function AttributionPage() {
     return "";
   };
 
-  const hottestLabel = hottestBucket
-    ? `${BUCKET_LABELS[hottestBucket] ?? hottestBucket}（${data?.totals[hottestBucket] ?? 0}）`
-    : "—";
+  /** 最热桶展示名（不含计数，计数由徽章单独呈现）；无数据时为空串。 */
+  const hottestName = hottestBucket
+    ? (BUCKET_LABELS[hottestBucket] ?? hottestBucket)
+    : "";
+  const hottestCount = hottestBucket ? (data?.totals[hottestBucket] ?? 0) : 0;
 
   return (
     <div className="sd-page">
@@ -127,22 +130,12 @@ export default function AttributionPage() {
         )}
       />
 
-      {/* 统计卡行 + 时间窗口 */}
-      <div
-        style={{
-          display: "flex",
-          gap: 20,
-          flexWrap: "wrap",
-          alignItems: "flex-start",
-        }}
-      >
-        <StatCard value={data?.total ?? 0} label={t("staffdeck.attribution.total", "归因提案总数")} />
-        <StatCard value={hottestLabel} label={t("staffdeck.attribution.hottest", "最热归因桶")} />
-        <StatCard
-          value={data?.top_experts?.length ?? 0}
-          label={t("staffdeck.attribution.expertsCovered", "涉及员工数")}
-        />
-        <div style={{ marginLeft: "auto" }}>
+      {/* 统计区：区块 header 行（左标题 + 右时间窗）+ 三列等高 KPI 卡网格 */}
+      <section className={styles.statsSection}>
+        <div className={styles.statsHeader}>
+          <span className={styles.statsTitle}>
+            {t("staffdeck.attribution.overview", "概览")}
+          </span>
           <Segmented
             value={days}
             onChange={(v) => setDays(Number(v))}
@@ -153,7 +146,46 @@ export default function AttributionPage() {
             ]}
           />
         </div>
-      </div>
+        <div className={styles.kpiGrid}>
+          <div className={styles.kpiCard}>
+            <div className={styles.kpiValue}>{data?.total ?? 0}</div>
+            <div className={styles.kpiLabel}>
+              {t("staffdeck.attribution.total", "归因提案总数")}
+            </div>
+          </div>
+          <div className={styles.kpiCard}>
+            <div className={styles.kpiBucketRow}>
+              {hottestName ? (
+                <>
+                  <span className={styles.kpiBucketName} title={hottestName}>
+                    {hottestName}
+                  </span>
+                  <span className="sd-pill sd-pill-gray sd-pill-nodot">
+                    {hottestCount}
+                  </span>
+                </>
+              ) : (
+                <span
+                  className={`${styles.kpiBucketName} ${styles.kpiBucketNameEmpty}`}
+                >
+                  —
+                </span>
+              )}
+            </div>
+            <div className={styles.kpiLabel}>
+              {t("staffdeck.attribution.hottest", "最热归因桶")}
+            </div>
+          </div>
+          <div className={styles.kpiCard}>
+            <div className={styles.kpiValue}>
+              {data?.top_experts?.length ?? 0}
+            </div>
+            <div className={styles.kpiLabel}>
+              {t("staffdeck.attribution.expertsCovered", "涉及员工数")}
+            </div>
+          </div>
+        </div>
+      </section>
 
       {/* 热力矩阵 */}
       <div

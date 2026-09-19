@@ -21,6 +21,15 @@ logger = logging.getLogger(__name__)
 #: Team name prefix reserved for department mirrors in ``rbac.json``.
 DEPT_TEAM_PREFIX = "dept:"
 
+#: Display name of the implicit ``default`` org. The org name is rendered
+#: as-is on the admin surface, so it must be Chinese like the departments
+#: underneath it (``技术部`` / ``Java研发``) instead of an English label.
+DEFAULT_ORG_NAME = "默认组织"
+
+#: Legacy English name seeded by earlier builds; renamed on startup so old
+#: deployments converge. Any other name is treated as user-set and kept.
+LEGACY_DEFAULT_ORG_NAME = "Default Org"
+
 _ORG_COLS = (
     "id, name, slug, plan, status, settings, created_at, updated_at"
 )
@@ -60,6 +69,10 @@ class OrgService:
         Runs during startup bootstrap before the schema-ready flag flips,
         so it must not go through ``require_enterprise_engine`` (which
         would 503 on the not-yet-ready state it is helping to establish).
+
+        Self-heals naming history as well: a row still carrying the legacy
+        English name is renamed to :data:`DEFAULT_ORG_NAME`, while a name
+        an admin edited manually is left untouched.
         """
         from ..enterprise import enterprise_engine
 
@@ -67,13 +80,27 @@ class OrgService:
         if engine is None:
             return
         async with engine.begin() as conn:
+            # 首次部署：以中文名落地默认组织
             await conn.execute(
                 text(
                     "INSERT INTO orgs (tenant_id, id, name, slug) "
-                    "VALUES (:tid, 'default', 'Default Org', 'default') "
+                    "VALUES (:tid, 'default', :name, 'default') "
                     "ON CONFLICT (tenant_id, id) DO NOTHING"
                 ),
-                {"tid": "default"},
+                {"tid": "default", "name": DEFAULT_ORG_NAME},
+            )
+            # 存量库自愈：只把历史英文默认名改为中文名，用户自定义名不动
+            await conn.execute(
+                text(
+                    "UPDATE orgs SET name = :name, updated_at = now() "
+                    "WHERE tenant_id = :tid AND id = 'default' "
+                    "AND name = :legacy"
+                ),
+                {
+                    "tid": "default",
+                    "name": DEFAULT_ORG_NAME,
+                    "legacy": LEGACY_DEFAULT_ORG_NAME,
+                },
             )
 
     # ------------------------------------------------------------------
@@ -408,6 +435,45 @@ class OrgService:
                 {"tid": tid, "did": dept_id},
             )
             return [r.username for r in result]
+
+    async def member_usernames(self, dept_id: str) -> set:
+        """Return the set of usernames directly assigned to one department
+        (non-recursive；用于部门员工列表按部门筛选)."""
+        return set(await self.department_members(dept_id))
+
+    async def department_names_by_users(
+        self,
+        usernames: List[str],
+    ) -> dict:
+        """Batch map ``username -> [department_name, ...]`` with a single
+        JOIN query（五步范式：一次查、内存分组，禁止逐条查）.
+
+        Returns an empty dict when PG is unavailable (file-backend
+        deployments have no department plane at all).
+        """
+        if not usernames:
+            return {}
+        tid = current_tenant_id()
+        engine = require_enterprise_engine()
+        async with engine.connect() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT m.username, d.name FROM department_members m "
+                    "JOIN departments d "
+                    "ON d.tenant_id = m.tenant_id "
+                    "AND d.id = m.department_id "
+                    "WHERE m.tenant_id = :tid "
+                    "AND m.username = ANY(:users) "
+                    "ORDER BY d.path"
+                ),
+                {"tid": tid, "users": list(usernames)},
+            )
+            grouped: dict = {}
+            for row in result:
+                grouped.setdefault(str(row.username), []).append(
+                    str(row.name),
+                )
+            return grouped
 
     async def resolve_user_scope(
         self,

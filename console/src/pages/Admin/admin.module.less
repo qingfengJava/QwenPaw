@@ -16,3 +16,268 @@
   color: var(--qwenpaw-text-tertiary, #999);
   font-size: 12px;
 }
+
+/* ==========================================================================
+   企业级 RBAC 工作台共用样式（部门员工 / 角色管理）
+   统一基于 page-tokens.css 的 --pg-* token，暗色模式自动适配。
+   ========================================================================== */
+
+/* 左右分栏工作台骨架 */
+.workspaceLayout {
+  display: flex;
+  gap: var(--pg-gutter, 16px);
+  align-items: stretch;
+}
+
+/* 通用 surface 卡片 */
+.panel {
+  background: var(--pg-surface, #fff);
+  border: 1px solid var(--pg-line, #e6eaf3);
+  border-radius: var(--pg-radius-surface, 14px);
+  box-shadow: var(--pg-shadow-sm, 0 1px 2px rgba(16, 22, 35, 0.05));
+  padding: var(--pg-gutter, 16px);
+}
+
+/* 左侧面板（部门树 / 角色列表）：固定宽 + 独立滚动 */
+.sidePanel {
+  composes: panel;
+  width: 280px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sidePanelBody {
+  overflow: auto;
+  max-height: calc(100vh - 220px);
+}
+
+/* 右侧主面板 */
+.mainPanel {
+  composes: panel;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.mainTitle {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--pg-ink, #101623);
+  margin: 0;
+}
+
+.breadcrumb {
+  font-size: 13px;
+  color: var(--pg-ink-2, #4c5670);
+}
+
+/* 筛选工具行：左按钮组 / 右筛选器，两端对齐 */
+.filterBar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.filterBarGroup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+/* 树节点悬停浮现操作图标组 */
+.treeNode {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 8px;
+}
+
+.treeNodeTitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.treeNodeCount {
+  color: var(--pg-ink-3, #828ca6);
+  font-size: 12px;
+  margin-left: 4px;
+}
+
+.treeNodeActions {
+  display: none;
+  gap: 2px;
+}
+
+.treeNode:hover .treeNodeActions {
+  display: inline-flex;
+}
+
+.treeNodeActions :global(.ant-btn) {
+  color: var(--pg-ink-2, #4c5670);
+}
+
+.treeNodeActions :global(.ant-btn:hover) {
+  background: var(--pg-brand-wash, rgba(26, 113, 255, 0.04));
+  color: var(--pg-brand, #1a71ff);
+}
+
+/* 角色列表自绘行 */
+.roleList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.roleListItem {
+  position: relative;
+  padding: 10px 12px;
+  border-radius: var(--pg-radius-tile, 12px);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.roleListItem:hover {
+  background: var(--pg-surface-muted, #f6f8fd);
+}
+
+.roleListItemActive {
+  background: var(--pg-brand-wash, rgba(26, 113, 255, 0.06));
+}
+
+.roleListItemActive::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--pg-brand-rule, linear-gradient(180deg, #1a71ff, #7c5cd6));
+}
+
+.roleItemName {
+  font-weight: 500;
+  color: var(--pg-ink, #101623);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.roleItemMeta {
+  font-size: 12px;
+  color: var(--pg-ink-3, #828ca6);
+  margin-top: 2px;
+}
+
+.sidePanelFooter {
+  font-size: 12px;
+  color: var(--pg-ink-3, #828ca6);
+  text-align: center;
+  padding-top: 8px;
+  border-top: 1px solid var(--pg-line, #e6eaf3);
+}
+
+/* tone 标签体系（状态/角色/超管徽章），非 antd 默认蓝 */
+.toneTag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 10px;
+  border-radius: var(--pg-radius-pill, 999px);
+  font-size: 12px;
+  line-height: 20px;
+  font-weight: 500;
+}
+
+.toneGreen {
+  composes: toneTag;
+  background: var(--pg-tone-green-bg, #e5f6ec);
+  color: var(--pg-tone-green-ink, #1f9a53);
+}
+
+.toneGray {
+  composes: toneTag;
+  background: var(--pg-tone-gray-bg, #eff1f6);
+  color: var(--pg-tone-gray-ink, #78829a);
+}
+
+.toneRed {
+  composes: toneTag;
+  background: var(--pg-tone-red-bg, #fdeaea);
+  color: var(--pg-tone-red-ink, #c81e1e);
+}
+
+.toneViolet {
+  composes: toneTag;
+  background: var(--pg-tone-violet-bg, #f0ebfe);
+  color: var(--pg-tone-violet-ink, #6a45c9);
+}
+
+.toneBlue {
+  composes: toneTag;
+  background: var(--pg-tone-blue-bg, #e9f1ff);
+  color: var(--pg-tone-blue-ink, #1a5fd0);
+}
+
+.toneAmber {
+  composes: toneTag;
+  background: var(--pg-tone-amber-bg, #fdf1e0);
+  color: var(--pg-tone-amber-ink, #b26a09);
+}
+
+/* 功能权限 Tab 的模块卡片分组 */
+.permModuleCard {
+  background: var(--pg-surface-muted, #f6f8fd);
+  border: 1px solid var(--pg-line, #e6eaf3);
+  border-radius: var(--pg-radius-tile, 12px);
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+
+.permModuleTitle {
+  font-weight: 600;
+  color: var(--pg-ink, #101623);
+  margin-bottom: 8px;
+}
+
+.permRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 6px 0;
+}
+
+.permRowMenu {
+  min-width: 140px;
+  font-weight: 500;
+  color: var(--pg-ink, #101623);
+}
+
+.permRowButtons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  flex: 1;
+}
+
+/* 内容区切换淡入 */
+.fadeIn {
+  animation: panelFade 0.2s ease;
+}
+
+@keyframes panelFade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}

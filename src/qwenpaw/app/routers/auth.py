@@ -10,8 +10,10 @@ from pydantic import BaseModel
 from ...constant import EnvVarLoader
 from ..auth import (
     authenticate,
+    default_admin_password_is_default,
     has_registered_users,
     is_auth_enabled,
+    is_registration_enabled,
     register_user,
     revoke_all_tokens,
     revoke_token,
@@ -64,11 +66,20 @@ class RegisterRequest(BaseModel):
     expires_in: int | None = (
         None  # Token expiry in seconds, -1/0 for permanent
     )
+    # Phase 4: 可选归属组织（租户）。不传时：
+    # * 系统只有一个组织 → 自动关联
+    # * 否则 → fallback 到 "default"
+    org_id: str | None = None
 
 
 class AuthStatusResponse(BaseModel):
     enabled: bool
     has_users: bool
+    # Phase 4: 前端根据此字段控制注册入口显示。首用户 bootstrap
+    # （has_users=False）时无论开关如何都强制开放，避免死锁。
+    registration_enabled: bool = True
+    # 默认超管仍使用内置默认口令时为 True，登录页据此提示修改。
+    default_admin_hint: bool = False
 
 
 @router.post("/login")
@@ -128,7 +139,17 @@ async def login(request: Request, req: LoginRequest):
 
 @router.post("/register")
 async def register(req: RegisterRequest):
-    """Register the single user account (only allowed once).
+    """Register a new user account.
+
+    Phase 4 开放注册：
+
+    * 首用户 bootstrap：系统无任何账户时总是允许注册，并分配
+      ``platform_admin`` RBAC 角色 + ``admin`` flat role，无需受
+      ``QWENPAW_REGISTRATION_ENABLED`` 控制。
+    * 后续用户：需 ``QWENPAW_REGISTRATION_ENABLED`` 为真（默认 true），
+      分配 ``employee`` RBAC 角色 + ``employee`` flat role。
+    * 组织关联：请求体可传 ``org_id``；未传时如果只有一个组织则自动关联，
+      否则 fallback 到 ``"default"``。
 
     Optional `expires_in` field:
     - Positive integer: token expires in N seconds
@@ -142,10 +163,11 @@ async def register(req: RegisterRequest):
             detail="Authentication is not enabled",
         )
 
-    if has_registered_users():
+    is_first_user = not has_registered_users()
+    if not is_first_user and not is_registration_enabled():
         raise HTTPException(
             status_code=403,
-            detail="User already registered",
+            detail="Public registration is disabled",
         )
 
     if not req.username.strip() or not req.password.strip():
@@ -154,22 +176,113 @@ async def register(req: RegisterRequest):
             detail="Username and password are required",
         )
 
-    token = register_user(req.username.strip(), req.password, req.expires_in)
+    # 解析归属组织：未传 org_id 且只有一个组织时自动关联，否则 default。
+    org_id = await _resolve_registration_org(req.org_id)
+
+    token = register_user(
+        req.username.strip(),
+        req.password,
+        req.expires_in,
+        org_id=org_id,
+    )
     if token is None:
         raise HTTPException(
             status_code=409,
             detail="Registration failed",
         )
 
+    # RBAC 角色分配（PgRbacStore 不可用时降级：仅 qwenpaw_users.role
+    # 字段已设置，不阻断注册流程）。
+    _assign_default_rbac_role(
+        req.username.strip(),
+        "platform_admin" if is_first_user else "employee",
+    )
+
     return LoginResponse(token=token, username=req.username.strip())
+
+
+async def _resolve_registration_org(org_id: str | None) -> str:
+    """Resolve the effective org for a registration request.
+
+    * 显式传入 → 直接使用（去除空白；空字符串同于未传）。
+    * 未传：尝试列举组织，如果只有一个 → 自动关联。
+    * 其他情况（多组织 / orgs service 不可用）→ ``"default"``。
+    """
+    if org_id and org_id.strip():
+        return org_id.strip()
+    try:
+        from ..orgs.service import get_org_service
+
+        orgs = await get_org_service().list_orgs()
+    except Exception:  # pylint: disable=broad-except
+        logger.debug("registration: org list unavailable", exc_info=True)
+        return "default"
+    if len(orgs) == 1:
+        return orgs[0].id
+    return "default"
+
+
+def _assign_default_rbac_role(username: str, role_name: str) -> None:
+    """Best-effort RBAC role assignment for a freshly-registered user.
+
+    PgRbacStore 不可用（非 PG 部署 / seed 未完成）时静默降级：
+    flat role 已由 ``register_user`` 写入 ``qwenpaw_users.role``，
+    基本权限判断仍可工作，不阻断注册流程。
+    """
+    try:
+        from ..rbac.store_pg import get_pg_rbac_store
+
+        pg_store = get_pg_rbac_store()
+        if pg_store is None:
+            return
+        ok = pg_store.assign_user_role(username, role_name)
+        if not ok:
+            logger.warning(
+                "RBAC role '%s' assignment failed for '%s'",
+                role_name,
+                username,
+            )
+    except Exception:  # pylint: disable=broad-except
+        logger.debug(
+            "RBAC role assignment skipped for %s", username, exc_info=True,
+        )
+
+
+@router.get("/orgs")
+async def list_registration_orgs():
+    """Public list of organizations selectable at registration.
+
+    Phase 4: 注册页下拉需要匿名可查。仅暴露 ``id/name/slug`` 三个字段，
+    不包含任何敏感配置（settings / plan / status 等）。orgs service 不可用
+    （非企业部署）时返回空列表，前端据此隐藏组织选择项。
+    """
+    try:
+        from ..orgs.service import get_org_service
+
+        orgs = await get_org_service().list_orgs()
+    except Exception:  # pylint: disable=broad-except
+        logger.debug("list_registration_orgs: service unavailable", exc_info=True)
+        return []
+    return [
+        {"id": o.id, "name": o.name, "slug": o.slug}
+        for o in orgs
+    ]
 
 
 @router.get("/status")
 async def auth_status():
     """Check if authentication is enabled and whether a user exists."""
+    try:
+        default_hint = default_admin_password_is_default()
+    except Exception:  # pylint: disable=broad-except
+        logger.debug("auth_status: default-admin hint check failed",
+                     exc_info=True)
+        default_hint = False
     return AuthStatusResponse(
         enabled=is_auth_enabled(),
         has_users=has_registered_users(),
+        registration_enabled=is_registration_enabled(),
+        default_admin_hint=default_hint,
     )
 
 
@@ -387,3 +500,94 @@ async def revoke_all_sessions(request: Request):
         "message": "All tokens have been revoked. Please login again.",
         "revoked": True,
     }
+
+
+# ---------------------------------------------------------------------------
+# M5: 当前用户菜单 & 权限查询（Bearer token 认证）
+# ---------------------------------------------------------------------------
+
+
+def _require_bearer_user(request: Request) -> str:
+    """从 Bearer token 解析当前用户名，失败抛 401."""
+    if not is_auth_enabled():
+        # 认证关闭时视为 admin 单用户
+        return ""
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header[7:] if auth_header.startswith("Bearer ") else ""
+    if not token:
+        raise HTTPException(status_code=401, detail="No token provided")
+    username = verify_token(token)
+    if username is None:
+        raise HTTPException(
+            status_code=401, detail="Invalid or expired token",
+        )
+    return username
+
+
+@router.get("/menus")
+async def get_current_user_menus(request: Request):
+    """返回当前登录用户的可见菜单树."""
+    from dataclasses import asdict
+
+    username = _require_bearer_user(request)
+    if not username:
+        # 认证关闭（单机模式）：返回空菜单
+        return []
+
+    try:
+        from ..rbac.store_pg import get_pg_rbac_store
+
+        pg_store = get_pg_rbac_store()
+    except Exception:  # pylint: disable=broad-except
+        pg_store = None
+
+    if pg_store is not None:
+        menus = pg_store.get_user_menus(username)
+        return [asdict(m) for m in menus]
+
+    # fallback: PG 不可用时返回空数组
+    return []
+
+
+@router.get("/permissions")
+async def get_current_user_permissions(request: Request):
+    """返回当前登录用户的所有权限码列表."""
+    username = _require_bearer_user(request)
+    if not username:
+        # 认证关闭（单机模式）：返回全权限通配
+        return ["*"]
+
+    perms: list = []
+    try:
+        from ..rbac.store_pg import get_pg_rbac_store
+
+        pg_store = get_pg_rbac_store()
+    except Exception:  # pylint: disable=broad-except
+        pg_store = None
+
+    if pg_store is not None:
+        perms = list(pg_store.get_user_permissions(username))
+    else:
+        # fallback: 从文件 store 获取
+        try:
+            from ..rbac.store import get_rbac_store
+            from ..users.store import get_user_store
+
+            user = get_user_store().get_user(username)
+            flat_role = user.role if user is not None else ""
+            perms = list(get_rbac_store().permissions_for_user(username, flat_role))
+        except Exception:  # pylint: disable=broad-except
+            logger.debug("permissions fallback failed", exc_info=True)
+
+    # 扁平 admin 的 bootstrap 保证：与后端 require_perm 一致（扁平 admin
+    # 恒通过），前端权限模型必须同步拿到 "*"，否则 admin 看不到任何
+    # 写操作按钮（后端却放行），造成前后端不一致。
+    try:
+        from ..users.store import get_user_store
+
+        user = get_user_store().get_user(username)
+        if user is not None and user.role == "admin" and "*" not in perms:
+            perms = ["*", *perms]
+    except Exception:  # pylint: disable=broad-except
+        logger.debug("flat-admin bootstrap skipped", exc_info=True)
+    return perms

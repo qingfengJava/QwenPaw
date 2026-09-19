@@ -1405,19 +1405,19 @@ WHERE (e.visibility <> 'org' OR COALESCE(e.department, '') <> '')
 ON CONFLICT (tenant_id, agent_id) DO NOTHING;
 
 
--- [变更说明] 账号体系 M2：qwenpaw_users + user_identity_bindings �?PG + agent_runs 用户筛选索�?
+-- [变更说明] 账号体系 M2：qwenpaw_users + user_identity_bindings �?PG + agent_runs 用户筛选索�?
 -- [变更时间] 2026-09-16
 -- [变更人]   清风
 -- [适用环境] 测试环境（在已有库基础上增量执行）
--- [同步�?db/feature/agent_run_logs_20260908/test.sql] �?
--- [同步�?db/feature/agent_run_logs_20260908/prod.sql] �?
+-- [同步�?db/feature/agent_run_logs_20260908/test.sql] �?
+-- [同步�?db/feature/agent_run_logs_20260908/prod.sql] �?
 --
--- 背景：账号存储原�?users.json 文件（M1），项目已全�?PG 化后升级�?
--- PG 权威存储（接口不变，�?PG 部署继续走文件路径）。启动时对文�?
--- 存量账号做一次幂等导入�?
+-- 背景：账号存储原�?users.json 文件（M1），项目已全�?PG 化后升级�?
+-- PG 权威存储（接口不变，�?PG 部署继续走文件路径）。启动时对文�?
+-- 存量账号做一次幂等导入�?
 -- alembic twin: 0032_user_accounts_pg
 
--- 账号主表（username 不可变身份锚点：会话/记忆/运行日志按此归属�?
+-- 账号主表（username 不可变身份锚点：会话/记忆/运行日志按此归属�?
 CREATE TABLE IF NOT EXISTS qwenpaw_users (
     tenant_id     VARCHAR(64)  NOT NULL DEFAULT 'default',
     username      VARCHAR(64)  NOT NULL,
@@ -1435,16 +1435,16 @@ CREATE TABLE IF NOT EXISTS qwenpaw_users (
 );
 
 COMMENT ON TABLE qwenpaw_users IS
-'账号主表（M2 权威存储；users.json 保留为无 PG 部署回退�?;
+'账号主表（M2 权威存储；users.json 保留为无 PG 部署回退�?;
 COMMENT ON COLUMN qwenpaw_users.username IS
-'用户名（不可变身份锚点：会话/记忆/运行日志按此归属�?;
+'用户名（不可变身份锚点：会话/记忆/运行日志按此归属�?;
 COMMENT ON COLUMN qwenpaw_users.password_algo IS
-'密码散列算法: argon2, sha256（legacy，登录时透明升级�?;
+'密码散列算法: argon2, sha256（legacy，登录时透明升级�?;
 COMMENT ON COLUMN qwenpaw_users.role IS '角色: admin, employee';
 COMMENT ON COLUMN qwenpaw_users.org_id IS
-'归属组织（租户预留；部门成员关系�?department_members�?;
+'归属组织（租户预留；部门成员关系�?department_members�?;
 
--- 渠道外部身份 �?账号绑定（wechat:openid 等映射到注册用户名）
+-- 渠道外部身份 �?账号绑定（wechat:openid 等映射到注册用户名）
 CREATE TABLE IF NOT EXISTS user_identity_bindings (
     tenant_id        VARCHAR(64)  NOT NULL DEFAULT 'default',
     channel          VARCHAR(32)  NOT NULL,
@@ -1457,11 +1457,11 @@ CREATE TABLE IF NOT EXISTS user_identity_bindings (
 );
 
 COMMENT ON TABLE user_identity_bindings IS
-'渠道外部身份 �?账号绑定（wechat:openid 等映射到注册用户名）';
+'渠道外部身份 �?账号绑定（wechat:openid 等映射到注册用户名）';
 COMMENT ON COLUMN user_identity_bindings.external_user_id IS
-'渠道侧用户标识（openid/userid 等，渠道内唯一�?;
+'渠道侧用户标识（openid/userid 等，渠道内唯一�?;
 
--- 运行日志按发起用户筛�?权限过滤的高频路径（employee 仅看自己�?
+-- 运行日志按发起用户筛�?权限过滤的高频路径（employee 仅看自己�?
 CREATE INDEX IF NOT EXISTS ix_agent_runs_user
 ON agent_runs (tenant_id, agent_id, user_id, started_at)
 WHERE user_id IS NOT NULL;
@@ -2036,3 +2036,19 @@ COMMENT ON COLUMN cron_jobs.run_count IS '历史累计执行次数（append_hist
 
 DROP TABLE IF EXISTS expert_task_runs;
 DROP TABLE IF EXISTS expert_scheduled_tasks;
+
+-- [变更说明] 企业级 RBAC 组织权限升级 - qwenpaw_users 补员工档案字段
+-- [变更时间] 2026-09-19  [变更人] 清风  [等价 alembic] 0043_employee_profile
+-- 部门员工管理所需的姓名/手机号/性别/职位/超管标记；ADD COLUMN IF NOT
+-- EXISTS 幂等，登录身份锚点仍为 username。
+ALTER TABLE qwenpaw_users ADD COLUMN IF NOT EXISTS real_name     VARCHAR(128) NOT NULL DEFAULT '';
+ALTER TABLE qwenpaw_users ADD COLUMN IF NOT EXISTS phone         VARCHAR(32)  NOT NULL DEFAULT '';
+ALTER TABLE qwenpaw_users ADD COLUMN IF NOT EXISTS gender        SMALLINT     NOT NULL DEFAULT 0;
+ALTER TABLE qwenpaw_users ADD COLUMN IF NOT EXISTS position      VARCHAR(64)  NOT NULL DEFAULT '';
+ALTER TABLE qwenpaw_users ADD COLUMN IF NOT EXISTS is_superadmin BOOLEAN      NOT NULL DEFAULT FALSE;
+COMMENT ON COLUMN qwenpaw_users.real_name IS '员工姓名（部门员工列表主展示列，区别于登录显示名 display_name）';
+COMMENT ON COLUMN qwenpaw_users.phone IS '手机号（部门员工列表关键字搜索命中列）';
+COMMENT ON COLUMN qwenpaw_users.gender IS '性别: 0-未知, 1-男, 2-女（前端转描述文本展示）';
+COMMENT ON COLUMN qwenpaw_users.position IS '职位';
+COMMENT ON COLUMN qwenpaw_users.is_superadmin IS '超管标记: TRUE 时禁止被禁用/删除/降级，默认超级管理员账号置此标记';
+CREATE INDEX IF NOT EXISTS ix_qwenpaw_users_tenant_disabled ON qwenpaw_users (tenant_id, disabled);

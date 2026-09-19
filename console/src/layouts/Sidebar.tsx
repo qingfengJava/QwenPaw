@@ -2,49 +2,44 @@ import {
   Layout,
   Menu,
   Button,
-  Modal,
-  Input,
-  Form,
   Tooltip,
   Badge,
   Popover,
-  Popconfirm,
-  Divider,
 } from "antd";
 import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ShieldCheck, RotateCw } from "lucide-react";
-import { useAppMessage } from "../hooks/useAppMessage";
 import {
-  SparkExitFullscreenLine,
-  SparkSearchUserLine,
   SparkMenuExpandLine,
   SparkMenuFoldLine,
   SparkEmailLine,
   SparkSettingLine,
 } from "@agentscope-ai/icons";
 import SidebarSettingsPanel from "./SidebarSettingsPanel";
-import { clearAuthToken } from "../api/config";
-import { authApi } from "../api/modules/auth";
-import { userProfilesApi } from "../api/modules/userProfiles";
-import { hubApi } from "../api/modules/hub";
 import api from "../api";
-import { useAuthStore } from "../stores/authStore";
 import { useSidebarModeStore } from "../stores/sidebarModeStore";
 import { useInboxWobble } from "../hooks/useInboxWobble";
+import { useDynamicMenus } from "../hooks/useDynamicMenus";
 import styles from "./index.module.less";
 import { useTheme } from "../contexts/ThemeContext";
-import { useMenuItems, useRoutes } from "../plugins/registry/hooks";
+import {
+  useMenuItems,
+  useAllMenuItems,
+  useRoutes,
+} from "../plugins/registry/hooks";
 import { Slot } from "../plugins/registry/Slot";
 import {
   findMenuItem,
   findParentGroupId,
   flattenMenu,
   renderIcon,
-  routeIdToPath,
+  resolveItemPath,
   toAntdItems,
 } from "./registry/adapter";
+import {
+  rbacMenusToRegistryItems,
+  type DynamicMenuItem,
+} from "./registry/dynamicMenuAdapter";
 import type { MenuItem } from "../plugins/registry/types";
 import type { ReactNode } from "react";
 
@@ -102,30 +97,14 @@ function flattenMenuForSimpleMode(items: MenuItem[]): MenuItem[] {
 interface SidebarProps {
   /** Route id of the currently active page (e.g. "core.workspace"). */
   selectedKey: string;
-  /** True when the backend runs in self-hosted Hub mode (M6). */
-  hubMode?: boolean;
 }
 
 // ── Sidebar ───────────────────────────────────────────────────────────────
 
-export default function Sidebar({
-  selectedKey,
-  hubMode = false,
-}: SidebarProps) {
+export default function Sidebar({ selectedKey }: SidebarProps) {
   const navigate = useNavigate();
   const { t } = useTranslation();
-  const { message } = useAppMessage();
   const { isDark } = useTheme();
-  const [authEnabled, setAuthEnabled] = useState(false);
-  const [hubAdmin, setHubAdmin] = useState(false);
-  const [hubUsername, setHubUsername] = useState("");
-  const [accountModalOpen, setAccountModalOpen] = useState(false);
-  const [accountLoading, setAccountLoading] = useState(false);
-  const [runtimeRestarting, setRuntimeRestarting] = useState(false);
-  const [accountForm] = Form.useForm();
-  // 当前登录用户名（资料预填用）+ 打开弹窗时记录的原始昵称（变更判定用）。
-  const currentUsername = useAuthStore((s) => s.username);
-  const initialDisplayNameRef = useRef<string | null>(null);
   // Start collapsed on mobile so the first paint does not overlay/obscure
   // the main content on narrow viewports.
   const [collapsed, setCollapsed] = useState(isMobileSidebarViewport);
@@ -148,10 +127,17 @@ export default function Sidebar({
   // merge them under a trailing group so they remain reachable.
   const rawLegacyAgentMenu = useMenuItems("primary.agentScoped");
   const rawSettingsMenu = useMenuItems("primary.settings");
+  const allMenuItems = useAllMenuItems();
   const routes = useRoutes();
+  const location = useLocation();
+
+  // 动态菜单：后端 rbac_menus（/auth/menus）为唯一来源；后端未提供
+  // （认证关闭/未加载/空/失败）时 source==="builtin"，回退静态注册表。
+  const { menus: dynamicMenuTree, source: menuSource } = useDynamicMenus();
+  const isDynamic = menuSource === "backend";
 
   // Platform menu; simple mode flattens groups via the whitelist.
-  const agentMenu = useMemo(() => {
+  const builtinAgentMenu = useMemo(() => {
     const platformMenu =
       sidebarMode === "simple"
         ? flattenMenuForSimpleMode(rawPlatformMenu)
@@ -170,13 +156,55 @@ export default function Sidebar({
     } as MenuItem;
     return [...platformMenu, pluginGroup];
   }, [rawPlatformMenu, rawLegacyAgentMenu, sidebarMode, t]);
-  const settingsMenu = useMemo(
+  const builtinSettingsMenu = useMemo(
     () =>
       sidebarMode === "simple"
         ? flattenMenuForSimpleMode(rawSettingsMenu)
         : rawSettingsMenu,
     [rawSettingsMenu, sidebarMode],
   );
+
+  // 动态模式：后端树 → 中性 MenuItem，并合并第三方插件注册的非 core 菜单。
+  const dynamicPrimaryMenu = useMemo<DynamicMenuItem[]>(() => {
+    if (!isDynamic) return [];
+    const items = rbacMenusToRegistryItems(dynamicMenuTree);
+    const pluginItems = allMenuItems.filter(
+      (i) =>
+        !i.id.startsWith("core.") && !i.isGroup && i.visible?.() !== false,
+    );
+    return [...items, ...(pluginItems as DynamicMenuItem[])];
+  }, [isDynamic, dynamicMenuTree, allMenuItems]);
+
+  // 统一渲染入口：动态模式用后端树（单个 <Menu>），否则用静态平台+系统两段。
+  const agentMenu: MenuItem[] = isDynamic
+    ? dynamicPrimaryMenu
+    : builtinAgentMenu;
+  const settingsMenu: MenuItem[] = isDynamic ? [] : builtinSettingsMenu;
+
+  // 当前高亮项 id：动态模式按 location.pathname 匹配叶子 path；静态沿用
+  // MainLayout 传入的 route id（selectedKey）。
+  const activeId = useMemo<string | undefined>(() => {
+    if (!isDynamic) return selectedKey;
+    const pathname = location.pathname;
+    let best: string | undefined;
+    let bestLen = -1;
+    const walk = (nodes: DynamicMenuItem[]) => {
+      for (const it of nodes) {
+        const p = resolveItemPath(it.route, routes);
+        if (
+          p &&
+          (pathname === p || pathname.startsWith(`${p}/`)) &&
+          p.length > bestLen
+        ) {
+          best = it.id;
+          bestLen = p.length;
+        }
+        if (it.__children) walk(it.__children);
+      }
+    };
+    walk(dynamicPrimaryMenu);
+    return best;
+  }, [isDynamic, selectedKey, location.pathname, dynamicPrimaryMenu, routes]);
 
   // Accordion groups: at most one group stays open. On startup only the
   // group holding the active item expands (fully collapsed when the active
@@ -196,11 +224,11 @@ export default function Sidebar({
   useEffect(() => {
     const group = findParentGroupId(
       [...agentMenu, ...settingsMenu],
-      selectedKey,
+      activeId ?? "",
     );
     if (!group) return;
     setOpenKeys((prev) => (prev.includes(group) ? prev : [group]));
-  }, [agentMenu, settingsMenu, selectedKey]);
+  }, [agentMenu, settingsMenu, activeId]);
 
   // Accordion behavior: opening a group collapses the previously open one;
   // clicking the open group's title collapses everything.
@@ -221,20 +249,6 @@ export default function Sidebar({
   }, [agentMenu, settingsMenu, routes, sidebarMode]);
 
   // ── Effects ──────────────────────────────────────────────────────────────
-
-  useEffect(() => {
-    authApi
-      .getStatus()
-      .then(async (res) => {
-        setAuthEnabled(res.enabled);
-        if (res.mode === "hub") {
-          const user = await hubApi.me();
-          setHubAdmin(user.role === "admin");
-          setHubUsername(user.username);
-        }
-      })
-      .catch(() => {});
-  }, []);
 
   useEffect(() => {
     if (
@@ -402,138 +416,8 @@ export default function Sidebar({
       window.open(item.href, "_blank", "noopener,noreferrer");
       return;
     }
-    const path = routeIdToPath(item?.route, routes);
+    const path = resolveItemPath(item?.route, routes);
     if (path) navigate(path);
-  };
-
-  /**
-   * Session click: navigate directly without relying on ChatSessionInitializer.
-   * Resolve realId (backend UUID) to avoid exposing local timestamp in URL.
-   */
-
-  const handleUpdateProfile = async (values: {
-    currentPassword: string;
-    newUsername?: string;
-    newPassword?: string;
-    displayName?: string;
-  }) => {
-    const trimmedUsername = values.newUsername?.trim() || undefined;
-    const trimmedPassword = values.newPassword?.trim() || undefined;
-    // 昵称仅在发生变化时才下发（未变则 undefined，后端不动该字段）。
-    const nextDisplayName = values.displayName?.trim() ?? "";
-    const displayNameChanged =
-      initialDisplayNameRef.current !== null &&
-      nextDisplayName !== initialDisplayNameRef.current;
-    const trimmedDisplayName = displayNameChanged
-      ? nextDisplayName
-      : undefined;
-
-    if (values.newPassword && !trimmedPassword) {
-      message.error(t("account.passwordEmpty"));
-      return;
-    }
-
-    if (values.newUsername && !trimmedUsername) {
-      message.error(t("account.usernameEmpty"));
-      return;
-    }
-
-    if (
-      !hubMode &&
-      !trimmedUsername &&
-      !trimmedPassword &&
-      trimmedDisplayName === undefined
-    ) {
-      message.warning(t("account.nothingToUpdate"));
-      return;
-    }
-
-    if (hubMode && !trimmedPassword) {
-      message.warning(t("account.passwordRequired"));
-      return;
-    }
-
-    setAccountLoading(true);
-    try {
-      if (hubMode) {
-        // Hub mode: the hub account's username is immutable; only the
-        // password rotates (and stays logged in -- the hub JWT remains
-        // valid across password changes).
-        await hubApi.changePassword(trimmedPassword as string);
-        message.success(t("account.updateSuccess"));
-        setAccountModalOpen(false);
-        accountForm.resetFields();
-      } else {
-        const res = await authApi.updateProfile(
-          values.currentPassword,
-          trimmedUsername,
-          trimmedPassword,
-          trimmedDisplayName,
-        );
-        message.success(t("account.updateSuccess"));
-        setAccountModalOpen(false);
-        accountForm.resetFields();
-        // 仅改昵称（token 为空）保持登录态；改了用户名/密码才重新登录。
-        if (res.token) {
-          clearAuthToken();
-          window.location.href = "/login";
-        }
-      }
-    } catch (err: unknown) {
-      const raw = err instanceof Error ? err.message : "";
-      let msg = t("account.updateFailed");
-      if (raw.includes("password is incorrect")) {
-        msg = t("account.wrongPassword");
-      } else if (raw.includes("Nothing to update")) {
-        msg = t("account.nothingToUpdate");
-      } else if (raw.includes("cannot be empty")) {
-        msg = t("account.nothingToUpdate");
-      } else if (raw) {
-        msg = raw;
-      }
-      message.error(msg);
-    } finally {
-      setAccountLoading(false);
-    }
-  };
-
-  /**
-   * Open the account modal and prefill the current display name so the
-   * nickname field reflects the saved value (change detection baseline).
-   */
-  const openAccountModal = async () => {
-    accountForm.resetFields();
-    initialDisplayNameRef.current = null;
-    setAccountModalOpen(true);
-    if (hubMode || !currentUsername) {
-      return;
-    }
-    try {
-      const profiles = await userProfilesApi.getProfiles([currentUsername]);
-      const name = profiles.get(currentUsername)?.display_name || "";
-      initialDisplayNameRef.current = name;
-      accountForm.setFieldsValue({ displayName: name });
-    } catch {
-      // 预填失败不阻断弹窗（昵称留空，用户可手动输入）。
-      initialDisplayNameRef.current = null;
-    }
-  };
-
-  const handleRestartRuntime = async () => {
-    setRuntimeRestarting(true);
-    try {
-      await hubApi.restartOwnRuntime();
-      message.success(t("account.runtimeRestartSuccess"));
-      window.location.reload();
-    } catch (error: unknown) {
-      message.error(
-        error instanceof Error
-          ? error.message
-          : t("account.runtimeRestartFailed"),
-      );
-    } finally {
-      setRuntimeRestarting(false);
-    }
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -555,10 +439,14 @@ export default function Sidebar({
         isSimpleExpanded ? ` ${styles.siderSimple}` : ""
       }`}
     >
+      {/* 菜单内容滚动区：所有导航模式（折叠/简洁/展开）的菜单主体都装在这
+          个独立滚动容器里，使下方的 authActions + collapseToggleContainer
+          页脚脱离滚动流、固定吸底（见 index.module.less .siderScroll）。 */}
+      <div className={styles.siderScroll}>
       {collapsed ? (
         <nav className={styles.collapsedNav}>
           {collapsedNavItems.items.map((item, index) => {
-            const isActive = selectedKey === item.key;
+            const isActive = activeId === item.key;
             return (
               <Fragment key={item.key}>
                 {/* 平台段 / 系统段之间的分隔线，只在两侧都有条目时出现 */}
@@ -613,7 +501,7 @@ export default function Sidebar({
             <div className={styles.simpleNavItems}>
               {simpleFlatNav.map((entry) => {
                 const isInbox = entry.key === "core.inbox";
-                const isActive = selectedKey === entry.key;
+                const isActive = activeId === entry.key;
                 return (
                   <button
                     key={entry.key}
@@ -674,7 +562,7 @@ export default function Sidebar({
             <Slot name="sider.top" kind="fill" />
             <Menu
               mode="inline"
-              selectedKeys={[selectedKey]}
+              selectedKeys={activeId ? [activeId] : []}
               openKeys={openKeys}
               onOpenChange={handleOpenChange}
               onClick={({ key }) => handleMenuClick(String(key), agentMenu)}
@@ -687,7 +575,7 @@ export default function Sidebar({
           {/* Global settings section */}
           <Menu
             mode="inline"
-            selectedKeys={[selectedKey]}
+            selectedKeys={activeId ? [activeId] : []}
             openKeys={openKeys}
             onOpenChange={handleOpenChange}
             onClick={({ key }) => handleMenuClick(String(key), settingsMenu)}
@@ -698,49 +586,7 @@ export default function Sidebar({
           <Slot name="sider.bottom" kind="fill" />
         </>
       )}
-
-      {authEnabled && !collapsed && (
-        <div className={styles.authActions}>
-          {hubAdmin && (
-            <Button
-              type="text"
-              icon={<ShieldCheck size={16} />}
-              onClick={() => navigate("/hub/admin")}
-              block
-              className={styles.authBtn}
-            >
-              {t("hub.brand.title")}
-            </Button>
-          )}
-          <Button
-            type="text"
-            icon={<SparkSearchUserLine size={16} />}
-            onClick={() => {
-              void openAccountModal();
-            }}
-            block
-            className={`${styles.authBtn} ${
-              collapsed ? styles.authBtnCollapsed : ""
-            }`}
-          >
-            {!collapsed && t("account.title")}
-          </Button>
-          <Button
-            type="text"
-            icon={<SparkExitFullscreenLine size={16} />}
-            onClick={() => {
-              clearAuthToken();
-              window.location.href = "/login";
-            }}
-            block
-            className={`${styles.authBtn} ${
-              collapsed ? styles.authBtnCollapsed : ""
-            }`}
-          >
-            {!collapsed && t("login.logout")}
-          </Button>
-        </div>
-      )}
+      </div>
 
       <div className={styles.collapseToggleContainer}>
         {/* Gear stays visible in collapsed state too — otherwise users
@@ -788,127 +634,6 @@ export default function Sidebar({
         />
       </div>
 
-      <Modal
-        open={accountModalOpen}
-        onCancel={() => setAccountModalOpen(false)}
-        title={t("account.title")}
-        footer={null}
-        destroyOnHidden
-        centered
-      >
-        <Form
-          form={accountForm}
-          layout="vertical"
-          onFinish={handleUpdateProfile}
-        >
-          {hubMode ? (
-            <div className={styles.accountIdentity}>
-              <span>{t("account.username")}</span>
-              <strong>{hubUsername}</strong>
-            </div>
-          ) : (
-            <>
-              <Form.Item
-                name="currentPassword"
-                label={t("account.currentPassword")}
-                rules={[
-                  {
-                    required: true,
-                    message: t("account.currentPasswordRequired"),
-                  },
-                ]}
-              >
-                <Input.Password />
-              </Form.Item>
-              <Form.Item name="newUsername" label={t("account.newUsername")}>
-                <Input placeholder={t("account.newUsernamePlaceholder")} />
-              </Form.Item>
-              <Form.Item name="displayName" label={t("account.displayName")}>
-                <Input placeholder={t("account.displayNamePlaceholder")} />
-              </Form.Item>
-            </>
-          )}
-          <Form.Item
-            name="newPassword"
-            label={t("account.newPassword")}
-            rules={
-              hubMode
-                ? [
-                    {
-                      required: true,
-                      message: t("account.passwordRequired"),
-                    },
-                    { min: 8, message: t("hub.validation.passwordMin") },
-                  ]
-                : undefined
-            }
-          >
-            <Input.Password
-              placeholder={t(
-                hubMode
-                  ? "account.hubPasswordPlaceholder"
-                  : "account.newPasswordPlaceholder",
-              )}
-            />
-          </Form.Item>
-          <Form.Item
-            name="confirmPassword"
-            label={t("account.confirmPassword")}
-            dependencies={["newPassword"]}
-            rules={[
-              ({ getFieldValue }) => ({
-                validator(_, value) {
-                  if (!value && !getFieldValue("newPassword")) {
-                    return Promise.resolve();
-                  }
-                  if (value === getFieldValue("newPassword")) {
-                    return Promise.resolve();
-                  }
-                  return Promise.reject(
-                    new Error(t("account.passwordMismatch")),
-                  );
-                },
-              }),
-            ]}
-          >
-            <Input.Password
-              placeholder={t("account.confirmPasswordPlaceholder")}
-            />
-          </Form.Item>
-          <Form.Item>
-            <Button
-              type="primary"
-              htmlType="submit"
-              loading={accountLoading}
-              block
-            >
-              {t("account.save")}
-            </Button>
-          </Form.Item>
-          {hubMode && (
-            <div className={styles.runtimeRecovery}>
-              <Divider />
-              <strong>{t("account.runtimeTitle")}</strong>
-              <p>{t("account.runtimeDescription")}</p>
-              <Popconfirm
-                title={t("account.runtimeRestartConfirmTitle")}
-                description={t("account.runtimeRestartConfirmDescription")}
-                onConfirm={handleRestartRuntime}
-                okText={t("account.runtimeRestart")}
-                cancelText={t("common.cancel")}
-              >
-                <Button
-                  icon={<RotateCw size={16} />}
-                  loading={runtimeRestarting}
-                  block
-                >
-                  {t("account.runtimeRestart")}
-                </Button>
-              </Popconfirm>
-            </div>
-          )}
-        </Form>
-      </Modal>
     </Sider>
   );
 }

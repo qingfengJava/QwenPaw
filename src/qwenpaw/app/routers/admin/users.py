@@ -32,13 +32,20 @@ class UserView(BaseModel):
     username: str
     role: str
     display_name: str = ""
-    # 头像 URL（空 = 前端 DiceBear 兑底）。
+    # 头像 URL（空 = 前端 DiceBear 兜底）。
     avatar: str = ""
     disabled: bool = False
     created_at: str = ""
     org_id: str = "default"
     rbac_roles: List[str] = Field(default_factory=list)
     teams: List[str] = Field(default_factory=list)
+    # 员工档案（部门员工列表展示与筛选）。
+    real_name: str = ""
+    phone: str = ""
+    gender: int = 0
+    position: str = ""
+    is_superadmin: bool = False
+    department_names: List[str] = Field(default_factory=list)
 
 
 class CreateUserBody(BaseModel):
@@ -47,6 +54,12 @@ class CreateUserBody(BaseModel):
     role: str = "employee"
     display_name: str = ""
     org_id: str = "default"
+    real_name: str = ""
+    phone: str = ""
+    gender: int = 0
+    position: str = ""
+    # 创建时直接归属的部门（可选，需 PG 部门平面）。
+    department_ids: List[str] = Field(default_factory=list)
 
 
 class UpdateUserBody(BaseModel):
@@ -54,6 +67,10 @@ class UpdateUserBody(BaseModel):
     role: Optional[str] = None
     display_name: Optional[str] = None
     org_id: Optional[str] = None
+    real_name: Optional[str] = None
+    phone: Optional[str] = None
+    gender: Optional[int] = None
+    position: Optional[str] = None
 
 
 class PasswordBody(BaseModel):
@@ -82,13 +99,82 @@ def _view(username: str) -> UserView:
         org_id=user.org_id,
         rbac_roles=rbac.roles_for_user(user.username, user.role),
         teams=rbac.teams_for_user(user.username),
+        real_name=user.real_name,
+        phone=user.phone,
+        gender=user.gender,
+        position=user.position,
+        is_superadmin=user.is_superadmin,
     )
 
 
+async def _attach_departments(views: List[UserView]) -> None:
+    """Batch-fill ``department_names`` for a page of views (single JOIN;
+    no-op when the PG department plane is unavailable)."""
+    if not views:
+        return
+    try:
+        from ...orgs.service import get_org_service
+
+        grouped = await get_org_service().department_names_by_users(
+            [v.username for v in views],
+        )
+    except Exception:  # pylint: disable=broad-except
+        logger.debug(
+            "admin users: department names unavailable", exc_info=True
+        )
+        return
+    for view in views:
+        view.department_names = grouped.get(view.username, [])
+
+
 @router.get("", response_model=List[UserView])
-async def list_users() -> List[UserView]:
-    """List all accounts (redacted)."""
-    return [_view(u.username) for u in get_user_store().list_users()]
+async def list_users(
+    department_id: Optional[str] = None,
+    disabled: Optional[bool] = None,
+    keyword: Optional[str] = None,
+) -> List[UserView]:
+    """List accounts (redacted) with optional department / status /
+    keyword filtering for the 部门员工 workspace.
+
+    ``department_id`` filters to members of that department (PG plane);
+    ``keyword`` matches real_name / phone / username / display_name.
+    """
+    users = get_user_store().list_users()
+
+    # 按部门筛选：取该部门直属成员集合后内存过滤（PG 不可用时不过滤）。
+    if department_id:
+        try:
+            from ...orgs.service import get_org_service
+
+            members = await get_org_service().member_usernames(
+                department_id,
+            )
+        except Exception:  # pylint: disable=broad-except
+            logger.debug(
+                "admin users: department filter unavailable",
+                exc_info=True,
+            )
+            members = None
+        if members is not None:
+            users = [u for u in users if u.username in members]
+
+    if disabled is not None:
+        users = [u for u in users if bool(u.disabled) == disabled]
+
+    if keyword and keyword.strip():
+        needle = keyword.strip().lower()
+        users = [
+            u
+            for u in users
+            if needle
+            in " ".join(
+                (u.real_name, u.phone, u.username, u.display_name),
+            ).lower()
+        ]
+
+    views = [_view(u.username) for u in users]
+    await _attach_departments(views)
+    return views
 
 
 @router.post("", status_code=201, response_model=UserView)
@@ -106,13 +192,33 @@ async def create_user(body: CreateUserBody) -> UserView:
         role=body.role,
         display_name=body.display_name,
         org_id=body.org_id,
+        real_name=body.real_name,
+        phone=body.phone,
+        gender=body.gender,
+        position=body.position,
     )
     if record is None:
         raise HTTPException(
             status_code=409,
             detail="User exists or invalid payload",
         )
-    return _view(record.username)
+    # 创建时归属部门（PG 部门平面；失败不回滚建号，仅告警）。
+    if body.department_ids:
+        try:
+            from ...orgs.service import get_org_service
+
+            org_service = get_org_service()
+            for dept_id in body.department_ids:
+                await org_service.assign_member(dept_id, record.username)
+        except Exception:  # pylint: disable=broad-except
+            logger.warning(
+                "admin users: department assign failed for %s",
+                record.username,
+                exc_info=True,
+            )
+    view = _view(record.username)
+    await _attach_departments([view])
+    return view
 
 
 def _guard_self_lockout(
@@ -143,11 +249,24 @@ async def update_user(
     body: UpdateUserBody,
     request: Request,
 ) -> UserView:
-    """Update disabled/role/display_name flags of one account."""
+    """Update disabled/role/display_name/profile flags of one account."""
     store = get_user_store()
-    if store.get_user(username) is None:
+    target = store.get_user(username)
+    if target is None:
         raise HTTPException(status_code=404, detail="User not found")
     _guard_self_lockout(request, username, body)
+    # 超管保护：is_superadmin 账号禁止被禁用/降级（保障部署永远可登录）。
+    if target.is_superadmin:
+        if body.disabled is True:
+            raise HTTPException(
+                status_code=400,
+                detail="Refusing to disable a super-admin account",
+            )
+        if body.role is not None and body.role != ROLE_ADMIN:
+            raise HTTPException(
+                status_code=400,
+                detail="Refusing to demote a super-admin account",
+            )
     if body.role is not None:
         if body.role not in VALID_ROLES:
             raise HTTPException(
@@ -159,11 +278,19 @@ async def update_user(
     if body.disabled is not None:
         if not store.set_disabled(username, body.disabled):
             raise HTTPException(status_code=400, detail="disable failed")
-    if body.display_name is not None:
-        if not store.set_display_name(username, body.display_name):
+    # 档案/显示名部分更新（None 字段保持不变）。
+    profile_fields = {
+        "display_name": body.display_name,
+        "real_name": body.real_name,
+        "phone": body.phone,
+        "gender": body.gender,
+        "position": body.position,
+    }
+    if any(value is not None for value in profile_fields.values()):
+        if not store.set_profile(username, **profile_fields):
             raise HTTPException(
                 status_code=400,
-                detail="display_name update failed",
+                detail="profile update failed",
             )
     if body.org_id is not None:
         if not store.set_org_id(username, body.org_id):
@@ -171,7 +298,9 @@ async def update_user(
                 status_code=400,
                 detail="org_id update failed",
             )
-    return _view(username)
+    view = _view(username)
+    await _attach_departments([view])
+    return view
 
 
 # ── Channel identity bindings（渠道外部身份 → 账号绑定管理）──
@@ -252,7 +381,9 @@ async def reset_password(username: str, body: PasswordBody) -> None:
 @router.get("/{username}", response_model=UserView)
 async def get_user(username: str) -> UserView:
     """One account with its resolved RBAC roles and teams."""
-    return _view(username)
+    view = _view(username)
+    await _attach_departments([view])
+    return view
 
 
 @router.post("/{username}/roles", status_code=204)

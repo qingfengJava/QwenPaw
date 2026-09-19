@@ -225,6 +225,11 @@ class UserStore:
         role: str = ROLE_EMPLOYEE,
         display_name: str = "",
         org_id: str = "default",
+        real_name: str = "",
+        phone: str = "",
+        gender: int = 0,
+        position: str = "",
+        is_superadmin: bool = False,
     ) -> Optional[UserRecord]:
         """Create a user. The very first account is always an admin."""
         username = username.strip()
@@ -249,6 +254,11 @@ class UserStore:
                 role=effective_role,
                 display_name=display_name.strip(),
                 org_id=org_id.strip() or "default",
+                real_name=real_name.strip(),
+                phone=phone.strip(),
+                gender=gender,
+                position=position.strip(),
+                is_superadmin=is_superadmin,
             )
             data.users.append(record)
             self._save(data)
@@ -421,6 +431,10 @@ class UserStore:
         *,
         display_name: str | None = None,
         avatar: str | None = None,
+        real_name: str | None = None,
+        phone: str | None = None,
+        gender: int | None = None,
+        position: str | None = None,
     ) -> bool:
         """Partial profile update（None 字段保持不变，两后端同契约）."""
         with self._lock:
@@ -437,6 +451,14 @@ class UserStore:
                 user.display_name = display_name.strip()
             if avatar is not None:
                 user.avatar = avatar.strip()
+            if real_name is not None:
+                user.real_name = real_name.strip()
+            if phone is not None:
+                user.phone = phone.strip()
+            if gender is not None:
+                user.gender = int(gender)
+            if position is not None:
+                user.position = position.strip()
             self._save(data)
         return True
 

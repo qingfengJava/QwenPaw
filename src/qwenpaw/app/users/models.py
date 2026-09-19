@@ -35,6 +35,14 @@ class UserRecord(BaseModel):
     # 头像 URL（为空时前端按 username 作 DiceBear 种子生成，零存储成本）。
     avatar: str = ""
     disabled: bool = False
+    # 员工档案（企业后台"部门员工"管理，仅用于展示与筛选，登录锚点仍为
+    # username）：real_name 姓名、phone 手机号、gender 性别(0未知/1男/2女)、
+    # position 职位、is_superadmin 超管标记（禁止被禁用/删除/降级）。
+    real_name: str = ""
+    phone: str = ""
+    gender: int = 0
+    position: str = ""
+    is_superadmin: bool = False
     # XianWork enterprise: tenant (organization) this account belongs to.
     # Department membership lives in the PG ``department_members`` table;
     # users.json stays a flat, fast account store for the auth path.

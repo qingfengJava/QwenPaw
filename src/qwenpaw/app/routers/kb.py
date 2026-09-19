@@ -94,7 +94,47 @@ async def list_accessible(request: Request) -> List[KbView]:
     username = _caller(request)
     service = get_kb_service()
     kbs = service.accessible_kbs(username, **_access_kwargs(username))
-    return [_view(kb) for kb in kbs]
+    views = [_view(kb) for kb in kbs]
+    return _apply_kb_data_scope(views, username)
+
+
+def _apply_kb_data_scope(
+    views: List[KbView],
+    username: str,
+) -> List[KbView]:
+    """在既有 ACL 之上叠加 RBAC 数据范围过滤（resource=``kb``）。
+
+    ``accessible_kbs`` 已按 scope（personal/team/enterprise）+ grants 做了
+    严格的可见性收敛；本层只在其上补一道数据范围。KB 模型（``kb_spaces``
+    / ``KnowledgeBase``）**无 department 维度**，故 ``dept`` /
+    ``dept_and_child`` / ``custom`` 范围在此不适用（交由既有 ACL 承载），
+    仅 ``self`` 范围按 ``owner_id`` 收敛为「只看本人拥有的库」。
+
+    ``all`` 范围 / PG 不可用 / 任何异常都回落到未过滤列表（优雅降级）。
+
+    TODO(rbac-data-scope): 若后续 ``kb_spaces`` 增加 ``department_id`` 列，
+    在此接入 ``dept`` / ``dept_and_child`` 维度过滤。
+    """
+    if not username:
+        return views
+    try:
+        from ..rbac.data_scope import SCOPE_SELF, DataScopeFilter
+
+        scope = DataScopeFilter.resolve_scope(username, "kb")
+        if getattr(scope, "scope_type", "") != SCOPE_SELF:
+            # 非 self 范围：KB 无部门维度，既有 ACL 已足够，不再二次过滤
+            return views
+        return DataScopeFilter.apply_to_list(
+            views,
+            scope,
+            username,
+            user_dept_id=None,
+            dept_id_field="owner_id",
+            owner_field="owner_id",
+        )
+    except Exception:  # pylint: disable=broad-except
+        logger.debug("kb data-scope filter skipped", exc_info=True)
+        return views
 
 
 @router.post("", status_code=201, response_model=KbView)

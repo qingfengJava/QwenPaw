@@ -13,7 +13,8 @@ can later slide behind the same store interface.
 """
 from __future__ import annotations
 
-from typing import Dict, List
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -90,6 +91,12 @@ class RoleRecord(BaseModel):
     permissions: List[str] = Field(default_factory=list)
     builtin: bool = False
     description: str = ""
+    # 角色工作台展示字段（PG rbac_roles 列；文件后端仅持久化 display_name，
+    # 其余字段有默认值，不影响旧 rbac.json）。
+    display_name: str = ""
+    data_scope: str = "self"
+    sort_order: int = 0
+    is_enabled: bool = True
 
 
 class TeamRecord(BaseModel):
@@ -137,3 +144,52 @@ class RbacFile(BaseModel):
     agent_grants: Dict[str, GrantRecord] = Field(default_factory=dict)
     model_grants: Dict[str, GrantRecord] = Field(default_factory=dict)
     agent_manage_grants: Dict[str, GrantRecord] = Field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# PG-backed RBAC models（M5+，配合 store_pg.PgRbacStore 使用）
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class PermissionRecord:
+    """权限条目（rbac_permissions 表映射）."""
+
+    id: str
+    code: str
+    name: str = ""
+    resource: str = ""
+    action: str = ""
+    perm_type: str = "api"  # menu / button / api
+    description: str = ""
+
+
+@dataclass
+class MenuRecord:
+    """菜单条目（rbac_menus 表映射，支持树形结构）."""
+
+    id: str
+    parent_id: Optional[str] = None
+    name: str = ""
+    menu_type: str = "menu"  # directory / menu / button
+    path: str = ""
+    component: str = ""
+    icon: str = ""
+    perm_code: str = ""
+    sort_order: int = 0
+    is_visible: bool = True
+    is_enabled: bool = True
+    is_external: bool = False
+    redirect: str = ""
+    children: List["MenuRecord"] = field(default_factory=list)
+
+
+@dataclass
+class DataScopeRecord:
+    """数据范围规则（rbac_data_scopes 表映射）."""
+
+    id: str
+    role_id: str
+    resource: str = ""
+    scope_type: str = "self"  # all / dept_and_child / dept / self / custom
+    custom_dept_ids: List[str] = field(default_factory=list)

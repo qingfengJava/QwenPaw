@@ -19,6 +19,7 @@ import {
 } from "antd";
 import { useTranslation } from "react-i18next";
 import { PageHeader } from "@/components/PageHeader";
+import { HasPerm } from "@/components/HasPerm";
 import { useAppMessage } from "../../hooks/useAppMessage";
 import { adminUsersApi, adminRolesApi } from "../../api/modules/admin";
 import type {
@@ -168,9 +169,11 @@ function UsersPage() {
         parent={t("nav.admin", "Administration")}
         current={t("nav.adminUsers", "Users")}
         extra={
-          <Button type="primary" onClick={() => setCreateOpen(true)}>
-            {t("admin.users.create", "New user")}
-          </Button>
+          <HasPerm code="admin:usersCreate">
+            <Button type="primary" onClick={() => setCreateOpen(true)}>
+              {t("admin.users.create", "New user")}
+            </Button>
+          </HasPerm>
         }
       />
       <Table<AdminUserView>
@@ -259,17 +262,19 @@ function UsersPage() {
             key: "actions",
             width: 150,
             render: (_, user) => (
-              <Popconfirm
-                title={t(
-                  "admin.users.resetPasswordConfirm",
-                  "Reset this user's password?",
-                )}
-                onConfirm={() => setPasswordTarget(user.username)}
-              >
-                <Button size="small">
-                  {t("admin.users.resetPassword", "Reset password")}
-                </Button>
-              </Popconfirm>
+              <HasPerm code="admin:usersResetPwd">
+                <Popconfirm
+                  title={t(
+                    "admin.users.resetPasswordConfirm",
+                    "Reset this user's password?",
+                  )}
+                  onConfirm={() => setPasswordTarget(user.username)}
+                >
+                  <Button size="small">
+                    {t("admin.users.resetPassword", "Reset password")}
+                  </Button>
+                </Popconfirm>
+              </HasPerm>
             ),
           },
         ]}

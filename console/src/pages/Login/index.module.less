@@ -1,3 +1,329 @@
+/* ==========================================================================
+   登录页分屏品牌改版：左栏品牌展示 + 右栏表单。
+   亮暗主题一律走 :global(html.dark-mode) 覆盖（与项目暗色约定一致），
+   响应式一律用 grid 单列降级（规避 flex 主轴翻转导致的列宽塌缩类缺陷）。
+   ========================================================================== */
+
+.page {
+  display: grid;
+  grid-template-columns: minmax(0, 11fr) minmax(0, 9fr);
+  min-height: 100vh;
+  background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+}
+
+/* ---------- 左栏：品牌展示区 ---------- */
+
+.brandPanel {
+  position: relative;
+  overflow: hidden;
+  /* 品牌渐变色语与 BrandMark 徽章同源（蓝→紫→青绿） */
+  background: linear-gradient(140deg, #1a71ff 0%, #6f4fe0 58%, #0f9d8f 130%);
+  color: #fff;
+}
+
+/* 深色遮罩：保证白字在渐变底上的对比度 */
+.brandPanel::before {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(160deg,
+      rgba(8, 12, 34, 0.3) 0%,
+      rgba(8, 12, 34, 0.52) 100%);
+  content: "";
+}
+
+/* 细网格纹理：OS 科技感底纹 */
+.brandPanel::after {
+  position: absolute;
+  inset: 0;
+  background:
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.05) 0 1px, transparent 1px 44px),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.05) 0 1px, transparent 1px 44px);
+  content: "";
+}
+
+/* 径向光斑装饰（额外一层，不与 ::before/::after 冲突） */
+.brandGlow {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(520px 380px at 82% 12%, rgba(255, 255, 255, 0.18), transparent 62%),
+    radial-gradient(640px 460px at 8% 92%, rgba(15, 157, 143, 0.35), transparent 60%);
+  pointer-events: none;
+}
+
+.brandInner {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  box-sizing: border-box;
+  padding: 56px 52px;
+  gap: 18px;
+}
+
+.brandHead {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.brandName {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.slogan {
+  margin: 26px 0 0;
+  max-width: 560px;
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 1.28;
+  letter-spacing: -0.015em;
+}
+
+.subSlogan {
+  margin: 0;
+  max-width: 520px;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+.featureGrid {
+  display: grid;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.featureCard {
+  display: flex;
+  align-items: flex-start;
+  padding: 16px 18px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.08);
+  gap: 14px;
+}
+
+.featureIcon {
+  display: inline-grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  background: linear-gradient(140deg, rgba(255, 255, 255, 0.26), rgba(255, 255, 255, 0.1));
+  color: #fff;
+}
+
+.featureText {
+  min-width: 0;
+}
+
+.featureTitle {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.featureDesc {
+  margin-top: 3px;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.brandFoot {
+  display: flex;
+  align-items: center;
+  margin-top: auto;
+  padding-top: 26px;
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 12.5px;
+  gap: 8px;
+}
+
+/* ---------- 右栏：表单区 ---------- */
+
+.formPanel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-height: 100vh;
+  padding: 40px 24px;
+  background: #fff;
+}
+
+/* flex item 的百分比宽度对容器内容盒解析，窄屏可正确收缩；
+   若用 grid + width:420px 会撑出固定轨道导致 max-width:100% 失效溢出。 */
+.formInner {
+  width: 100%;
+  max-width: 420px;
+}
+
+/* 窄屏品牌头：宽屏隐藏，单栏时补足品牌识别 */
+.mobileBrand {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 22px;
+  gap: 10px;
+}
+
+.mobileBrandName {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: #101623;
+}
+
+.formHeader {
+  margin-bottom: 26px;
+}
+
+.formTitle {
+  margin: 0;
+  color: #101623;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.formHint {
+  margin: 8px 0 0;
+  color: #667085;
+  font-size: 13px;
+}
+
+/* 默认超管口令提示条（登录页） */
+.defaultAdminHint {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(26, 113, 255, 0.08);
+  color: #1a5fd0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+:global(html.dark-mode) .defaultAdminHint {
+  background: rgba(26, 113, 255, 0.16);
+  color: #8ab4ff;
+}
+
+/* 输入框前缀图标颜色（替代旧 isDark 内联判断） */
+.inputIcon {
+  color: #98a2b3;
+}
+
+/* ---------- 暗色主题覆盖 ---------- */
+
+:global(html.dark-mode) .page {
+  background: #0b0d13;
+}
+
+:global(html.dark-mode) .brandPanel {
+  background: linear-gradient(140deg, #12386f 0%, #3a2a72 58%, #0d5a52 130%);
+}
+
+:global(html.dark-mode) .brandPanel::before {
+  background: linear-gradient(160deg,
+      rgba(4, 6, 18, 0.42) 0%,
+      rgba(4, 6, 18, 0.62) 100%);
+}
+
+:global(html.dark-mode) .featureCard {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+:global(html.dark-mode) .formPanel {
+  background: #14161c;
+}
+
+:global(html.dark-mode) .mobileBrandName,
+:global(html.dark-mode) .formTitle {
+  color: rgba(255, 255, 255, 0.92);
+}
+
+:global(html.dark-mode) .formHint {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+:global(html.dark-mode) .inputIcon {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+/* ---------- 响应式：单栏堆叠 ---------- */
+
+@media (max-width: 1023px) {
+  .page {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .brandPanel {
+    display: none;
+  }
+
+  .mobileBrand {
+    display: flex;
+  }
+
+  .formPanel {
+    min-height: 100vh;
+    padding: 32px 18px;
+  }
+}
+
+/* ---------- 入场动效 ---------- */
+
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.slogan,
+.subSlogan,
+.featureCard {
+  animation: fadeUp 520ms ease both;
+}
+
+.subSlogan {
+  animation-delay: 90ms;
+}
+
+.featureCard:nth-child(1) {
+  animation-delay: 150ms;
+}
+
+.featureCard:nth-child(2) {
+  animation-delay: 240ms;
+}
+
+.featureCard:nth-child(3) {
+  animation-delay: 330ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+  .slogan,
+  .subSlogan,
+  .featureCard {
+    animation: none;
+  }
+}
+
 .hubDisclaimer {
   margin: 2px 0 16px;
   padding: 13px 14px;

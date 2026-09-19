@@ -200,6 +200,7 @@ class RbacStore:
         name: str,
         permissions: List[str],
         description: str = "",
+        display_name: str | None = None,
     ) -> Optional[RoleRecord]:
         """Create or replace a custom role. Built-in roles are immutable."""
         name = name.strip()
@@ -218,6 +219,11 @@ class RbacStore:
                 permissions=list(dict.fromkeys(permissions)),
                 builtin=False,
                 description=description.strip(),
+                display_name=(
+                    existing.display_name
+                    if (display_name is None and existing is not None)
+                    else (display_name or "").strip()
+                ),
             )
             data.roles[name] = record
             self._save(data)

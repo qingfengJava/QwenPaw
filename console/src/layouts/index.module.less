@@ -180,34 +180,45 @@
   padding: 10px 16px 0;
 
   // antd wraps Sider children in .qwenpaw-layout-sider-children (block by
-  // default); every sidebar mode needs it as a flex column. It is the
-  // whole-column scroll container: menu sections stack contiguously from
-  // the top, and the footer (margin-top:auto + sticky bottom) pins to the
-  // bottom when content is short and sticks while scrolling when tall.
+  // default); every sidebar mode needs it as a flex column. It is NOT the
+  // scroll container: scrolling is delegated to the inner .siderScroll menu
+  // wrapper below, so the footer (authActions + collapse toggle) sits outside
+  // the scroll flow and pins to the bottom naturally via flex. (Previous
+  // margin-top:auto / sticky approach failed while the whole column scrolled.)
   :global {
     .qwenpaw-layout-sider-children {
       flex: 1;
       display: flex;
       flex-direction: column;
       min-height: 0;
-      overflow-y: auto;
-      // 导航溢出时要给出可发现的滚动线索（原来完全隐藏），细窄 + 中性色不抢注意力
-      scrollbar-width: thin;
-      scrollbar-color: rgba(16, 22, 35, 0.16) transparent;
+      overflow: hidden;
+    }
+  }
 
-      &::-webkit-scrollbar {
-        display: block;
-        width: 5px;
-      }
+  // 菜单内容滚动区：占据剩余高度并独立滚动，细窄 + 中性色滚动条给出溢出线索。
+  // 页脚（authActions / collapseToggleContainer）是本容器的兄弟节点而非子节点，
+  // 因此不随菜单滚动，天然吸底。
+  .siderScroll {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(16, 22, 35, 0.16) transparent;
 
-      &::-webkit-scrollbar-track {
-        background: transparent;
-      }
+    &::-webkit-scrollbar {
+      display: block;
+      width: 5px;
+    }
 
-      &::-webkit-scrollbar-thumb {
-        border-radius: 999px;
-        background: rgba(16, 22, 35, 0.16);
-      }
+    &::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    &::-webkit-scrollbar-thumb {
+      border-radius: 999px;
+      background: rgba(16, 22, 35, 0.16);
     }
   }
 
@@ -752,41 +763,25 @@
   color: #18181a;
 }
 
-// ─── Auth actions (account + logout) ──────────────────────────────────────────
-.authActions {
-  flex-shrink: 0;
-  padding: 6px 12px 2px;
-}
-
-.authBtn {
-  display: flex;
+// ─── Header user account menu (avatar trigger) ──────────────────────────────
+// 右上角当前登录用户头像下拉的触发区：hover 时给一圈淡光提示可点击。
+// （账户管理/退出登录已从侧栏底部迁出至此，见 UserAccountMenu.tsx）
+.userMenuTrigger {
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  height: 32px;
-  justify-content: flex-start;
-  border-radius: 9px;
-  font-size: 13px;
-  color: var(--sh-ink-2);
-  transition-property: background-color, color;
-  transition-duration: 160ms;
+  cursor: pointer;
+  border-radius: 50%;
+  line-height: 0;
+  transition: box-shadow 160ms ease;
 
   &:hover {
-    color: var(--sh-ink) !important;
-    background: var(--sh-hover) !important;
+    box-shadow: 0 0 0 3px var(--sh-hover, rgba(26, 113, 255, 0.12));
   }
 
   &:focus-visible {
     outline: 2px solid color-mix(in srgb, var(--sh-brand) 55%, transparent);
-    outline-offset: -2px;
+    outline-offset: 2px;
   }
-}
-
-.authBtnCollapsed {
-  justify-content: center;
-}
-
-.authBtn + .authBtn {
-  margin-top: 4px;
 }
 
 .accountIdentity {
@@ -889,11 +884,8 @@
    否则两个小图标像浮在空白里，没有归属 */
 .collapseToggleContainer {
   flex-shrink: 0;
-  position: sticky;
-  bottom: 0;
-  z-index: 10;
   width: calc(100% + 32px);
-  margin: auto -16px 0; // auto top: pin to bottom when content is short
+  margin: 0 -16px; // 横向负边距抵消 sider 左右 padding，铺满整行；不再需要 auto/sticky 吸底
   padding: 10px 16px;
   display: flex;
   align-items: center;

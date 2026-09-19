@@ -57,6 +57,7 @@ import {
   useAuthStore,
   AUTH_DISABLED_IDENTITY,
 } from "./stores/authStore";
+import { usePermissionStore } from "./stores/permissionStore";
 import { getApiToken } from "./api/config";
 import CloseWindowPrompt from "./tauri/CloseWindowPrompt";
 import GlobalManageDeniedToast from "./components/GlobalManageDeniedToast";
@@ -137,6 +138,8 @@ function AuthGuard({
                   role: r.role ?? "",
                   roles: Array.isArray(r.roles) ? r.roles : [],
                 });
+                // M7: Load RBAC permissions & dynamic menus after identity.
+                usePermissionStore.getState().loadAll();
               }
             } catch {
               // Identity lookup failed: degrade to non-admin, do not block.
@@ -144,9 +147,12 @@ function AuthGuard({
           }
         } else if (nextStatus === "auth-required") {
           useAuthStore.getState().clear();
+          usePermissionStore.getState().reset();
         } else if (!authStatus.enabled) {
           // Single-user deployment: keep every menu visible.
           useAuthStore.getState().setIdentity(AUTH_DISABLED_IDENTITY);
+          // M7: Auth-disabled → auto-grant all permissions.
+          usePermissionStore.getState().loadAll();
         }
         if (!cancelled) setStatus(nextStatus);
       })
@@ -433,13 +439,15 @@ function AppInner({ backendInfo }: { backendInfo: BackendInfo }) {
             : antdTheme.defaultAlgorithm,
           token: {
             // StaffDeck 设计语言（docs/design/2026-08-30-…md §七）：
-            // 墨色主按钮 + 链接蓝 + 冷白布局底 + 控件圆角 10。
-            // 底色与主色必须随主题切换：此前无条件写死 #ffffff/#fcfcfc，
-            // 暗色下 antd cssVar 会把 --qwenpaw-color-bg-container 定为纯白，
-            // 导致所有消费该变量的组件（模型选择器面板、弹窗、下拉、卡片）
-            // 在暗色下变白底，叠加近白文字后完全不可读；墨色主按钮在暗色
-            // 画布上也会“隐形”。暗色值与 page-tokens.css 的 --pg-* 同源。
-            colorPrimary: isDark ? "#2f6fd8" : "#18181a",
+            // 主按钮 / 链接 / 选中态统一走品牌蓝，冷白布局底 + 控件圆角 10。
+            // 此前亮色主按钮用墨色 #18181a，与周围彩色（蓝链接 / 蓝菜单选中 /
+            // 紫罗兰标签 / 紫蓝渐变 logo）脱节显闷，且暗色主按钮本就是蓝
+            // （#2f6fd8），亮/暗不一致。改亮色为品牌蓝 #1a71ff 后全站主按钮
+            // 与链接、暗色主按钮三者统一，白字对比度达标。底色随主题切换：
+            // 此前无条件写死 #ffffff/#fcfcfc，暗色下 antd cssVar 会把
+            // --qwenpaw-color-bg-container 定为纯白，导致消费该变量的组件
+            // （模型选择器面板、弹窗、下拉、卡片）在暗色下变白底不可读。
+            colorPrimary: isDark ? "#2f6fd8" : "#1a71ff",
             colorLink: "#1a71ff",
             colorInfo: "#1a71ff",
             colorBgLayout: isDark ? "#131419" : "#fcfcfc",

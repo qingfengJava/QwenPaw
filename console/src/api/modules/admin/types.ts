@@ -18,6 +18,18 @@ export interface AdminUserView {
   /** M4 RBAC roles resolved for this user (flat mapping + explicit grants). */
   rbac_roles: string[];
   teams: string[];
+  /** 员工档案：真实姓名。 */
+  real_name: string;
+  /** 员工档案：手机号。 */
+  phone: string;
+  /** 员工档案：性别 0未知/1男/2女。 */
+  gender: number;
+  /** 员工档案：职位。 */
+  position: string;
+  /** 超管标记：true 时禁止被禁用/删除/降级。 */
+  is_superadmin: boolean;
+  /** 归属部门名称列表（后端批量组装）。 */
+  department_names: string[];
 }
 
 /** One channel-identity → account binding (admin identity-bindings page). */
@@ -32,6 +44,22 @@ export interface RoleRecord {
   permissions: string[];
   builtin: boolean;
   description: string;
+  /** 角色显示名（角色工作台列表主展示）。 */
+  display_name?: string;
+  /** 默认数据范围。 */
+  data_scope?: string;
+  sort_order?: number;
+  is_enabled?: boolean;
+}
+
+/** 角色-员工列表 tab 的一行成员。 */
+export interface RoleMemberView {
+  username: string;
+  real_name: string;
+  phone: string;
+  display_name: string;
+  disabled: boolean;
+  department_names: string[];
 }
 
 export interface TeamRecord {
@@ -98,4 +126,26 @@ export interface KbDocumentView {
   source: string;
   chunk_count: number;
   created_at: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M7 PG-RBAC: Menu, Permission, DataScope records
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Menu record as returned by the M7 backend (`GET /admin/menus`). */
+export interface MenuRecord {
+  id: string;
+  parent_id: string | null;
+  name: string;
+  menu_type: "directory" | "menu" | "button";
+  path: string;
+  component: string;
+  icon: string;
+  perm_code: string;
+  sort_order: number;
+  is_visible: boolean;
+  is_enabled: boolean;
+  is_external: boolean;
+  redirect: string;
+  children?: MenuRecord[];
 }

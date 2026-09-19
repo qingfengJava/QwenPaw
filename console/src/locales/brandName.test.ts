@@ -31,7 +31,7 @@ function brandPlaceholders(value: string): string[] {
 }
 
 /** 所有含产品名的用户可见文案，都必须走 {{brand}} 插值 */
-const BRAND_COPY_PATHS = ["login.title", "os.qwenpawMenu"];
+const BRAND_COPY_PATHS = ["login.title", "login.brandSlogan", "os.qwenpawMenu"];
 
 function copyOf(locale: unknown, path: string): string {
   const value = path.split(".").reduce<unknown>((current, key) => {

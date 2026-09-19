@@ -7,8 +7,10 @@ carries ``require_perm("admin:orgs")`` — inert until enforcement is on.
 from __future__ import annotations
 
 import logging
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 
 from ..rbac import PERM_ADMIN_ORGS, require_perm
 from .models import (
@@ -121,3 +123,61 @@ async def assign_member(dept_id: str, body: dict) -> None:
 async def remove_member(dept_id: str, username: str) -> None:
     """Remove a user from a department."""
     await get_org_service().remove_member(dept_id, username)
+
+
+class MemberBatchBody(BaseModel):
+    """Batch member payload for the 部门员工 workspace."""
+
+    usernames: List[str] = Field(default_factory=list)
+
+
+class MoveMembersBody(BaseModel):
+    """Move members into ``target_dept_id`` (optionally out of
+    ``source_dept_id``)."""
+
+    usernames: List[str] = Field(default_factory=list)
+    target_dept_id: str
+    source_dept_id: Optional[str] = None
+
+
+@router.post("/departments/{dept_id}/members/batch", status_code=204)
+async def assign_members_batch(
+    dept_id: str,
+    body: MemberBatchBody,
+) -> None:
+    """Assign multiple users to one department (idempotent)."""
+    org_service = get_org_service()
+    for username in body.usernames:
+        name = (username or "").strip()
+        if name:
+            await org_service.assign_member(dept_id, name)
+
+
+@router.post("/departments/{dept_id}/members/batch-remove", status_code=204)
+async def remove_members_batch(
+    dept_id: str,
+    body: MemberBatchBody,
+) -> None:
+    """Remove multiple users from one department (移出部门，非删号)."""
+    org_service = get_org_service()
+    for username in body.usernames:
+        name = (username or "").strip()
+        if name:
+            await org_service.remove_member(dept_id, name)
+
+
+@router.post("/departments/move-members", status_code=200)
+async def move_members(body: MoveMembersBody) -> dict:
+    """Batch-adjust department: assign to ``target_dept_id`` and, when a
+    ``source_dept_id`` is given, remove from it."""
+    org_service = get_org_service()
+    moved = 0
+    for username in body.usernames:
+        name = (username or "").strip()
+        if not name:
+            continue
+        if body.source_dept_id:
+            await org_service.remove_member(body.source_dept_id, name)
+        if await org_service.assign_member(body.target_dept_id, name):
+            moved += 1
+    return {"moved": moved}

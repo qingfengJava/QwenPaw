@@ -368,6 +368,7 @@ async def build_registry(
         for agent_id in _ordered_agent_ids(sources)
     ]
     scoped = _apply_viewer_scope(request, rows)
+    scoped = _apply_data_scope(request, scoped)
     return apply_filters(
         scoped,
         kind=kind,
@@ -382,6 +383,47 @@ async def build_registry(
 def _viewer_of(request: Any) -> str:
     """当前请求身份（AuthMiddleware 注入，未认证部署回落 ``local``）。"""
     return getattr(getattr(request, "state", None), "user", None) or "local"
+
+
+def _apply_data_scope(
+    request: Any,
+    rows: List[DigitalEmployeeVO],
+) -> List[DigitalEmployeeVO]:
+    """在可见性收敛之上叠加 RBAC 数据范围过滤（resource=``agent``）。
+
+    与既有 ``_apply_viewer_scope``（基于 visibility / grant 的 ACL）**协调
+    而非冲突**：ACL 已决定「可见即可用」的基础集合，本层再按角色的数据
+    范围（本部门 / 部门及子部门 / 仅本人）做进一步收敛。部门维度取
+    ``department_id``，owner 维度取 ``owner_id``。
+
+    特权视角（平台管理员 / 单机免认证部署）不施加数据范围收敛，保持看全量；
+    ``all`` 范围或 PG 不可用时同样不过滤；任何异常优雅降级回未过滤列表。
+    """
+    viewer = _viewer_of(request)
+    if not viewer or viewer == "local":
+        return rows
+    flat_role = _resolve_flat_role(viewer) if viewer else ""
+    if _is_privileged(viewer, flat_role):
+        # 管理员 / 免认证部署：保持全量视角，不叠加数据范围
+        return rows
+    try:
+        from ..rbac.data_scope import DataScopeFilter
+        from ..rbac.scope_helpers import get_user_scope_context
+
+        scope = DataScopeFilter.resolve_scope(viewer, "agent")
+        ctx = get_user_scope_context(viewer)
+        return DataScopeFilter.apply_to_list(
+            rows,
+            scope,
+            viewer,
+            user_dept_id=ctx["dept_id"],
+            dept_id_field="department_id",
+            owner_field="owner_id",
+            all_child_dept_ids=ctx["dept_and_child_ids"],
+        )
+    except Exception:  # pylint: disable=broad-except
+        logger.debug("registry data-scope filter skipped", exc_info=True)
+        return rows
 
 
 def _is_privileged(viewer: str, flat_role: str) -> bool:

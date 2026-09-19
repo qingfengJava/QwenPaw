@@ -79,3 +79,13 @@ export type {
   AttributionHeatmap,
   OpenApiAuditRow,
 } from "./expertCapability";
+export { adminMenusApi } from "./menus";
+export type { MenuCreateBody, MenuUpdateBody } from "./menus";
+export { adminPermissionsApi } from "./permissions";
+export type {
+  PermissionRecord,
+  PermissionCreateBody,
+  PermissionUpdateBody,
+} from "./permissions";
+export { adminDataScopesApi } from "./dataScopes";
+export type { DataScopeRecord, DataScopeBody } from "./dataScopes";

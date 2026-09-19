@@ -64,6 +64,22 @@ export function routeIdToPath(
   return r?.path;
 }
 
+/**
+ * Resolve a menu item's navigation path. Dynamic-menu items store a literal
+ * path in `route` (e.g. "/workbench") instead of a route id, so when the id
+ * lookup misses but the value already looks like a path, use it verbatim.
+ * Keeps core items (route-id based) working unchanged.
+ */
+export function resolveItemPath(
+  route: string | undefined,
+  routes: RouteRef[],
+): string | undefined {
+  const byId = routeIdToPath(route, routes);
+  if (byId) return byId;
+  if (route && route.startsWith("/")) return route;
+  return undefined;
+}
+
 interface ToAntdOpts {
   collapsed: boolean;
   iconSize?: number;
@@ -127,7 +143,7 @@ export function flattenMenu(
         walk(i.__children ?? []);
         continue;
       }
-      const path = routeIdToPath(i.route, routes);
+      const path = resolveItemPath(i.route, routes);
       if (!path && !i.href) continue;
       out.push({
         key: i.id,

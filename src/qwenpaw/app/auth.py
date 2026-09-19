@@ -65,6 +65,9 @@ _PUBLIC_PATHS: frozenset[str] = frozenset(
         "/api/auth/login",
         "/api/auth/status",
         "/api/auth/register",
+        # Phase 4: 组织列表在注册页需匿名可查（仅暴露 id/name/slug，
+        # 用于选择归属组织；未开启注册时后端会返回 403）。
+        "/api/auth/orgs",
         "/api/desktop/shutdown",
         "/api/version",
         "/api/settings/language",
@@ -379,6 +382,22 @@ def is_auth_enabled() -> bool:
         return False
 
 
+def is_registration_enabled() -> bool:
+    """Return whether public self-registration is enabled.
+
+    Phase 4 开放注册：由环境变量 ``QWENPAW_REGISTRATION_ENABLED`` 控制，
+    未设置时默认为 ``True``（向后兼容旧部署 —— 原本首用户注册本就允许，
+    现在只是把"任意用户注册"也放开）。首用户 bootstrap 无论该开关如何
+    都允许（避免死锁：没有任何账户时管理员无法登录去打开开关）。
+    """
+    env_flag = EnvVarLoader.get_str(
+        "QWENPAW_REGISTRATION_ENABLED", "",
+    ).strip().lower()
+    if not env_flag:
+        return True
+    return env_flag in ("true", "1", "yes")
+
+
 # ---------------------------------------------------------------------------
 # Multi-user store bridge (M1)
 # ---------------------------------------------------------------------------
@@ -428,30 +447,48 @@ def register_user(
     username: str,
     password: str,
     expiry_seconds: Optional[int] = None,
+    org_id: Optional[str] = None,
 ) -> Optional[str]:
-    """Register the FIRST user account (the bootstrap admin).
+    """Register a new user account.
+
+    Phase 4 开放注册：不再限制"仅首用户"。角色按注册顺序自动分配：
+
+    * 首用户 → ``ROLE_ADMIN``（bootstrap 管理员，flat role）
+    * 后续用户 → ``ROLE_EMPLOYEE``（flat role；RBAC 层 platform_admin /
+      employee 角色由调用方通过 ``PgRbacStore.assign_user_role`` 分配）
 
     Args:
         username: The username to register.
         password: The password to register.
         expiry_seconds: Custom token expiry time in seconds.
+        org_id: Optional organization (tenant) to attach the account to.
+            默认 ``"default"``。
 
-    Returns a token on success, ``None`` if any user already exists.
-    Additional accounts are created by admins — never through the public
-    registration endpoint.
+    Returns a token on success, ``None`` if the user store rejected the
+    account (e.g. duplicate username, disabled store).
     """
     _ensure_users_migrated()
     store = _get_user_store()
-    if store.has_users():
-        return None
 
-    from .users.models import ROLE_ADMIN
+    from .users.models import ROLE_ADMIN, ROLE_EMPLOYEE
 
-    record = store.create_user(username, password, role=ROLE_ADMIN)
+    is_first = not store.has_users()
+    flat_role = ROLE_ADMIN if is_first else ROLE_EMPLOYEE
+    record = store.create_user(
+        username,
+        password,
+        role=flat_role,
+        org_id=(org_id or "default").strip() or "default",
+    )
     if record is None:
         return None
 
-    logger.info("First user '%s' registered as admin", record.username)
+    logger.info(
+        "User '%s' registered as %s (org=%s)",
+        record.username,
+        flat_role,
+        record.org_id,
+    )
     return create_token(record.username, expiry_seconds)
 
 
@@ -485,6 +522,106 @@ def auto_register_from_env() -> None:
             "Auto-registered user '%s' from environment variables",
             username,
         )
+
+
+# ---------------------------------------------------------------------------
+# Default super-admin seed (企业部署开箱可用)
+# ---------------------------------------------------------------------------
+
+#: 内置默认超级管理员账号（仅当部署尚无任何账号时创建）。
+DEFAULT_ADMIN_USERNAME = "admin"
+DEFAULT_ADMIN_PASSWORD = "admin123"
+
+
+def _default_admin_credentials() -> tuple:
+    """Resolve the default admin username/password.
+
+    Env vars ``QWENPAW_DEFAULT_ADMIN_USERNAME`` /
+    ``QWENPAW_DEFAULT_ADMIN_PASSWORD`` override the built-in defaults; the
+    second element of the return flags whether the built-in default
+    password is still in use (drives the login-page hint).
+    """
+    username = EnvVarLoader.get_str(
+        "QWENPAW_DEFAULT_ADMIN_USERNAME", "",
+    ).strip() or DEFAULT_ADMIN_USERNAME
+    password = EnvVarLoader.get_str(
+        "QWENPAW_DEFAULT_ADMIN_PASSWORD", "",
+    ).strip()
+    using_default = not password
+    return username, (password or DEFAULT_ADMIN_PASSWORD), using_default
+
+
+def seed_default_admin() -> bool:
+    """Ensure a default super-admin account exists (idempotent).
+
+    Called once during startup after :func:`auto_register_from_env`.  When
+    the deployment already has any account this is a no-op (never
+    overwrites existing operators).  Otherwise it creates an ``admin``
+    account flagged ``is_superadmin`` (protected: cannot be disabled /
+    deleted / demoted), bound to the ``platform_admin`` RBAC role when the
+    PG plane is available.  Returns ``True`` when an account was created.
+    """
+    _ensure_users_migrated()
+    store = _get_user_store()
+    if store.has_users():
+        return False
+
+    username, password, using_default = _default_admin_credentials()
+    from .users.models import ROLE_ADMIN
+
+    record = store.create_user(
+        username,
+        password,
+        role=ROLE_ADMIN,
+        display_name="超级管理员",
+        real_name="超级管理员",
+        is_superadmin=True,
+    )
+    if record is None:
+        logger.warning("Default admin seed failed (create_user rejected)")
+        return False
+
+    # 权威平面：绑定 platform_admin RBAC 角色（PG 可用时；文件后端由
+    # FLAT_ROLE_TO_RBAC 自动映射 admin→platform_admin，无需显式授权）。
+    try:
+        from .rbac.store_pg import get_pg_rbac_store
+        from .rbac.models import ROLE_PLATFORM_ADMIN
+
+        pg_store = get_pg_rbac_store()
+        if pg_store is not None:
+            pg_store.assign_user_role(record.username, ROLE_PLATFORM_ADMIN)
+    except Exception:  # pylint: disable=broad-except
+        logger.debug("default admin platform_admin binding skipped",
+                     exc_info=True)
+
+    if using_default:
+        logger.warning(
+            "Seeded default super-admin '%s' with the BUILT-IN default "
+            "password. Log in and change it immediately, or set "
+            "QWENPAW_DEFAULT_ADMIN_PASSWORD before first start.",
+            username,
+        )
+    else:
+        logger.info(
+            "Seeded default super-admin '%s' from environment password",
+            username,
+        )
+    return True
+
+
+def default_admin_password_is_default() -> bool:
+    """True when the default admin account still uses the built-in default
+    password (drives the login-page 'change me now' hint).  Stateless:
+    verifies the known default against the account; never exposes it when
+    a custom env password was configured."""
+    username, password, using_default = _default_admin_credentials()
+    if not using_default:
+        return False
+    store = _get_user_store()
+    user = store.get_user(username)
+    if user is None or not user.is_superadmin:
+        return False
+    return store.verify_password(username, password) is not None
 
 
 def update_credentials(
@@ -754,6 +891,15 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         if self._should_skip_auth(request):
+            # 受信主机 / 认证可选：不强制登录，但若请求携带有效 Bearer
+            # token 仍解析并绑定身份，否则 RBAC（require_perm）在
+            # “本机 + 已开启认证”场景下会因无身份而全量 403。纯附加：
+            # 无 token / token 无效时行为与以往一致（不拒绝、不绑定）。
+            token = self._extract_token(request)
+            if token:
+                user = verify_token(token)
+                if user is not None:
+                    self._bind_identity(request, user)
             return await call_next(request)
 
         token = self._extract_token(request)
@@ -772,9 +918,17 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 media_type="application/json",
             )
 
-        # Expose the authenticated identity on both the request state (the
-        # authoritative channel for HTTP handlers) and the request-scoped
-        # context var (for downstream code without request access).
+        self._bind_identity(request, user)
+        return await call_next(request)
+
+    @staticmethod
+    def _bind_identity(request: Request, user: str) -> None:
+        """Expose the authenticated identity on request state + context var.
+
+        Authoritative channel for HTTP handlers (``require_perm`` reads
+        ``request.state.user``) and the org/tenant resolution for the PG
+        enterprise plane.
+        """
         request.state.user = user
         from .agent_context import set_current_user_id
 
@@ -792,7 +946,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
             set_current_org_id(request.state.org_id)
         except Exception:  # pylint: disable=broad-except
             logger.debug("org resolution failed for %s", user, exc_info=True)
-        return await call_next(request)
 
     @staticmethod
     def _should_skip_auth(  # pylint: disable=too-many-return-statements

@@ -7,6 +7,8 @@ import Header from "../Header";
 import ConsolePollService from "../../components/ConsolePollService";
 import { AgentStatusPollingController } from "../../components/AgentStatusPollingController";
 import { ChunkErrorBoundary } from "../../components/ChunkErrorBoundary";
+import { usePermissionStore } from "../../stores/permissionStore";
+import { buildDynamicRoutes } from "../registry/dynamicRoutes";
 import { useSyncCodingMode } from "../../stores/useSyncCodingMode";
 import styles from "../index.module.less";
 import { useRoutes } from "../../plugins/registry/hooks";
@@ -56,11 +58,24 @@ export default function MainLayout({ hubMode = false }: { hubMode?: boolean }) {
     [routes],
   );
 
+  // 动态路由：菜单 component → 懒加载页面，与内置路由按 path 去重，
+  // 内置优先（不覆盖 chat/agent-detail/redirect 等功能路由）。
+  const menus = usePermissionStore((s) => s.menus);
+  const allRoutes = useMemo(() => {
+    const existingPaths = new Set(
+      renderableRoutes.map((r) => r.path),
+    );
+    const dynamic = buildDynamicRoutes(menus).filter(
+      (r) => !existingPaths.has(r.path),
+    );
+    return [...renderableRoutes, ...dynamic];
+  }, [renderableRoutes, menus]);
+
   return (
     <Layout className={styles.mainLayout}>
-      <Header />
+      <Header hubMode={hubMode} />
       <Layout>
-        <Sidebar selectedKey={selectedKey} hubMode={hubMode} />
+        <Sidebar selectedKey={selectedKey} />
         <Content className="page-container">
           <ConsolePollService />
           <AgentStatusPollingController />
@@ -79,7 +94,7 @@ export default function MainLayout({ hubMode = false }: { hubMode?: boolean }) {
                 }
               >
                 <Routes>
-                  {renderableRoutes.map((r) => (
+                  {allRoutes.map((r) => (
                     <Route key={r.id} path={r.path} element={<r.Component />} />
                   ))}
                 </Routes>

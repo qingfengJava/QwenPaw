@@ -423,6 +423,35 @@ async def lifespan(  # pylint: disable=too-many-statements,too-many-branches
                     exc_info=True,
                 )
 
+            # ---- RBAC PG seed (M5+) ----
+            # 幂等写入：权限注册表 + 内置角色 + 角色权限绑定 +
+            # 初始菜单 + 角色菜单绑定。enterprise schema 就绪后执行；
+            # 无 PG 静默跳过，单机/文件后端部署零影响。
+            try:
+                from .rbac.seed import seed_rbac_pg
+
+                seed_rbac_pg()
+            except Exception:
+                logger.warning(
+                    "RBAC PG seed did not complete; permission/menu "
+                    "data may be missing this run.",
+                    exc_info=True,
+                )
+
+            # ---- 默认超级管理员 seed ----
+            # 必须晚于 enterprise bootstrap（alembic 0043 已建员工档案列）。
+            # 放到工作线程执行：PgUserStore 的同步 API 以“无运行事件循环的
+            # 线程”为设计前提（同请求处理线程），避免在主循环上跨循环复用
+            # 共享 async 引擎。best-effort：失败仅告警，不阻断启动。
+            try:
+                from .auth import seed_default_admin
+
+                await asyncio.to_thread(seed_default_admin)
+            except Exception:  # pylint: disable=broad-except
+                logger.warning(
+                    "default admin seed skipped", exc_info=True
+                )
+
             # ---- Expert 身份列对账（T14） ----
             # experts 权威（name/description）vs 工作区 agent.json 漂移：
             # WARN + 以 experts 为准修复（发布物化链的启动兜底）。依赖

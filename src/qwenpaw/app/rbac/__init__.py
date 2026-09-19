@@ -11,11 +11,13 @@ Public surface:
 """
 from .deps import (
     RBAC_ENFORCE_ENV,
+    get_user_menus_dep,
     is_platform_admin,
     manage_allowed,
     rbac_enforcement_enabled,
     require_agent_manage,
     require_agent_manage_audited,
+    require_data_scope,
     require_perm,
 )
 from .models import (
@@ -39,12 +41,26 @@ from .models import (
     ROLE_EMPLOYEE,
     ROLE_PLATFORM_ADMIN,
     ROLE_TEAM_LEAD,
+    DataScopeRecord,
+    MenuRecord,
+    PermissionRecord,
     RbacFile,
     RoleRecord,
     TeamRecord,
 )
 from .permissions import has_permission, permission_matches
 from .store import RbacStore, get_rbac_store, reset_rbac_store
+
+try:  # PG store 依赖 SQLAlchemy；未安装时静默跳过。
+    from .store_pg import (
+        PgRbacStore,
+        get_pg_rbac_store,
+        reset_pg_rbac_store,
+    )
+except ImportError:  # pragma: no cover
+    PgRbacStore = None  # type: ignore[assignment,misc]
+    get_pg_rbac_store = None  # type: ignore[assignment]
+    reset_pg_rbac_store = None  # type: ignore[assignment]
 
 __all__ = [
     "RBAC_ENFORCE_ENV",
@@ -68,11 +84,17 @@ __all__ = [
     "ROLE_EMPLOYEE",
     "ROLE_PLATFORM_ADMIN",
     "ROLE_TEAM_LEAD",
+    "DataScopeRecord",
+    "MenuRecord",
+    "PermissionRecord",
+    "PgRbacStore",
     "RbacFile",
     "RbacStore",
     "RoleRecord",
     "TeamRecord",
+    "get_pg_rbac_store",
     "get_rbac_store",
+    "get_user_menus_dep",
     "has_permission",
     "is_platform_admin",
     "manage_allowed",
@@ -80,6 +102,8 @@ __all__ = [
     "rbac_enforcement_enabled",
     "require_agent_manage",
     "require_agent_manage_audited",
+    "require_data_scope",
     "require_perm",
+    "reset_pg_rbac_store",
     "reset_rbac_store",
 ]

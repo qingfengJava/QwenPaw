@@ -121,7 +121,9 @@ class PgUserStore:
 
     def _get_engine(self):
         if self._engine is None:
-            self._engine = create_pg_engine()
+            # 专属引擎：本 store 的连接只在其后台桥接循环上创建/复用，
+            # 避免与主循环（迁移 / orgs）共享引擎导致跨循环污染。
+            self._engine = create_pg_engine(dedicated=True)
         return self._engine
 
     # ------------------------------------------------------------------
@@ -146,7 +148,8 @@ class PgUserStore:
                     text(
                         "SELECT username, password_hash, password_salt, "
                         "password_algo, role, display_name, avatar, "
-                        "disabled, org_id, created_at "
+                        "disabled, org_id, created_at, real_name, phone, "
+                        "gender, position, is_superadmin "
                         "FROM qwenpaw_users WHERE tenant_id = 'default'",
                     ),
                 )
@@ -166,6 +169,11 @@ class PgUserStore:
                 created_at=(
                     row[9] if isinstance(row[9], datetime) else _utcnow()
                 ),
+                real_name=str(row[10] or ""),
+                phone=str(row[11] or ""),
+                gender=int(row[12] or 0),
+                position=str(row[13] or ""),
+                is_superadmin=bool(row[14]),
             )
             users[record.username] = record
         return users
@@ -297,10 +305,13 @@ class PgUserStore:
                     text(
                         "INSERT INTO qwenpaw_users (username, password_hash, "
                         "password_salt, password_algo, role, display_name, "
-                        "avatar, disabled, org_id) "
+                        "avatar, disabled, org_id, real_name, phone, gender, "
+                        "position, is_superadmin) "
                         "VALUES (:username, :password_hash, :password_salt, "
                         ":password_algo, :role, :display_name, :avatar, "
-                        ":disabled, :org_id) ON CONFLICT DO NOTHING",
+                        ":disabled, :org_id, :real_name, :phone, :gender, "
+                        ":position, :is_superadmin) "
+                        "ON CONFLICT DO NOTHING",
                     ),
                     {
                         "username": user.get("username") or "",
@@ -313,6 +324,11 @@ class PgUserStore:
                         "avatar": user.get("avatar") or "",
                         "disabled": bool(user.get("disabled")),
                         "org_id": user.get("org_id") or "default",
+                        "real_name": user.get("real_name") or "",
+                        "phone": user.get("phone") or "",
+                        "gender": int(user.get("gender") or 0),
+                        "position": user.get("position") or "",
+                        "is_superadmin": bool(user.get("is_superadmin")),
                     },
                 )
             for key, username in bindings.items():
@@ -377,6 +393,11 @@ class PgUserStore:
         role: str = ROLE_EMPLOYEE,
         display_name: str = "",
         org_id: str = "default",
+        real_name: str = "",
+        phone: str = "",
+        gender: int = 0,
+        position: str = "",
+        is_superadmin: bool = False,
     ) -> Optional[UserRecord]:
         """Create a user；首个账号强制 admin（与文件版语义一致）."""
         username = username.strip()
@@ -398,6 +419,11 @@ class PgUserStore:
             role=effective_role,
             display_name=display_name.strip(),
             org_id=org_id.strip() or "default",
+            real_name=real_name.strip(),
+            phone=phone.strip(),
+            gender=gender,
+            position=position.strip(),
+            is_superadmin=is_superadmin,
         )
         try:
             self._run(self._insert_user_async(record))
@@ -420,9 +446,11 @@ class PgUserStore:
                 text(
                     "INSERT INTO qwenpaw_users (username, password_hash, "
                     "password_salt, password_algo, role, display_name, "
-                    "avatar, disabled, org_id) "
+                    "avatar, disabled, org_id, real_name, phone, gender, "
+                    "position, is_superadmin) "
                     "VALUES (:username, :password_hash, '', :password_algo, "
-                    ":role, :display_name, :avatar, :disabled, :org_id)",
+                    ":role, :display_name, :avatar, :disabled, :org_id, "
+                    ":real_name, :phone, :gender, :position, :is_superadmin)",
                 ),
                 {
                     "username": record.username,
@@ -433,6 +461,11 @@ class PgUserStore:
                     "avatar": record.avatar,
                     "disabled": record.disabled,
                     "org_id": record.org_id,
+                    "real_name": record.real_name,
+                    "phone": record.phone,
+                    "gender": record.gender,
+                    "position": record.position,
+                    "is_superadmin": record.is_superadmin,
                 },
             )
 
@@ -522,6 +555,10 @@ class PgUserStore:
         *,
         display_name: str | None = None,
         avatar: str | None = None,
+        real_name: str | None = None,
+        phone: str | None = None,
+        gender: int | None = None,
+        position: str | None = None,
     ) -> bool:
         """Partial profile update（None 字段保持不变）."""
         fields: dict = {}
@@ -529,6 +566,14 @@ class PgUserStore:
             fields["display_name"] = display_name.strip()
         if avatar is not None:
             fields["avatar"] = avatar.strip()
+        if real_name is not None:
+            fields["real_name"] = real_name.strip()
+        if phone is not None:
+            fields["phone"] = phone.strip()
+        if gender is not None:
+            fields["gender"] = int(gender)
+        if position is not None:
+            fields["position"] = position.strip()
         if not fields:
             return True
         return self._update_fields(username, fields)

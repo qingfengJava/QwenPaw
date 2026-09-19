@@ -18,9 +18,9 @@ always passes, so RBAC can never lock operators out.
 from __future__ import annotations
 
 import logging
-from typing import Callable
+from typing import Any, Callable, List, Optional
 
-from fastapi import HTTPException, Request
+from fastapi import Depends, HTTPException, Request
 
 from ...constant import EnvVarLoader
 from .store import get_rbac_store
@@ -28,6 +28,33 @@ from .store import get_rbac_store
 logger = logging.getLogger(__name__)
 
 RBAC_ENFORCE_ENV = "QWENPAW_RBAC_ENFORCE"
+
+
+def _get_pg_store() -> Optional[Any]:
+    """延迟导入 PG store 单例（PG 不可用/未安装时返回 ``None``）。
+
+    ``require_perm`` / ``require_data_scope`` / ``get_user_menus_dep``
+    统一走此入口，避免顶层导入在 SQLAlchemy 缺失时炸掉整个 rbac 包。
+    """
+    try:
+        from .store_pg import get_pg_rbac_store
+
+        return get_pg_rbac_store()
+    except Exception:  # pylint: disable=broad-except
+        return None
+
+
+def _resolve_username(request: Request) -> str:
+    """统一解析当前请求的身份名。
+
+    兼容两种中间件约定：``request.state.user``（现有 AuthMiddleware）
+    与 ``request.state.username``（部分企业平面路由）。两者均空时返回
+    空串，由调用方决定 fail-closed 行为。
+    """
+    username = getattr(request.state, "user", None)
+    if not username:
+        username = getattr(request.state, "username", None)
+    return str(username or "")
 
 
 def rbac_enforcement_enabled() -> bool:
@@ -100,12 +127,21 @@ def require_perm(permission: str) -> Callable:
 
         @router.get("/admin/users",
                     dependencies=[Depends(require_perm("admin:users"))])
+
+    判定顺序（M5+ PG 优先）：
+
+    1. RBAC 关闭（单机免认证部署）→ 直通，零行为变化；
+    2. 无身份 → 403（fail-closed）；
+    3. **PG store 可用** → ``pg_store.has_permission(username, permission)``
+       决定放行/拒绝（PG 为权威源，拒绝时不再 fallback 文件后端）；
+    4. PG store 不可用（``None`` 或抛异常）→ fallback 到现有文件 store
+       逻辑（``get_rbac_store().user_has_permission``），保持原有代码路径不变。
     """
 
     async def _dependency(request: Request) -> None:
         if not rbac_enforcement_enabled():
             return
-        username = getattr(request.state, "user", None) or ""
+        username = _resolve_username(request)
         if not username:
             # AuthMiddleware normally guarantees an identity; without one
             # (e.g. loopback whitelist bypass) fail closed under enforce.
@@ -113,6 +149,35 @@ def require_perm(permission: str) -> Callable:
                 status_code=403,
                 detail="RBAC: no authenticated identity",
             )
+
+        # ---- PG-first path (M5+) ----
+        pg_store = _get_pg_store()
+        if pg_store is not None:
+            try:
+                if pg_store.has_permission(username, permission):
+                    return
+                logger.warning(
+                    "rbac deny (pg): user=%r permission=%r path=%s",
+                    username,
+                    permission,
+                    request.url.path,
+                )
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Missing permission: {permission}",
+                )
+            except HTTPException:
+                raise
+            except Exception:  # pylint: disable=broad-except
+                # PG 路径异常（连接抖动 / SQL 错误）→ fallback 文件后端，
+                # 避免因 PG 临时故障导致全站 403。
+                logger.debug(
+                    "rbac: PG has_permission failed, falling back "
+                    "to file store",
+                    exc_info=True,
+                )
+
+        # ---- File store fallback (原有代码路径，不改动) ----
         flat_role = _resolve_flat_role(username)
         if get_rbac_store().user_has_permission(
             username,
@@ -404,3 +469,73 @@ def _record_gate_audit(request: Request, audit_action: str) -> None:
             request.url.path,
             exc_info=True,
         )
+
+
+# ---------------------------------------------------------------------------
+# 数据范围与菜单依赖（M5+ PG 平面）
+# ---------------------------------------------------------------------------
+
+
+def require_data_scope(resource: str):
+    """FastAPI 依赖工厂：注入当前用户对指定资源的数据范围。
+
+    Usage::
+
+        @router.get("/projects")
+        async def list_projects(
+            scope: DataScopeRecord = Depends(require_data_scope("project")),
+        ):
+            ...
+
+    PG 可用时委托 ``PgRbacStore.resolve_user_scope``；PG 不可用时
+    fallback 到最宽松的 ``all`` 范围（单机/文件后端部署零阻断）。
+    """
+    from .models import DataScopeRecord
+
+    async def _dep(request: Request) -> DataScopeRecord:
+        username = _resolve_username(request)
+        pg_store = _get_pg_store()
+        if pg_store is not None and username:
+            try:
+                return pg_store.resolve_user_scope(username, resource)
+            except Exception:  # pylint: disable=broad-except
+                logger.debug(
+                    "rbac: resolve_user_scope failed for %r/%s",
+                    username, resource, exc_info=True,
+                )
+        # fallback: 返回最宽松的 all 范围
+        return DataScopeRecord(
+            id="", role_id="", resource=resource,
+            scope_type="all", custom_dept_ids=[],
+        )
+
+    return _dep
+
+
+async def get_user_menus_dep(request: Request) -> List[Any]:
+    """FastAPI 依赖：获取当前用户可见菜单树。
+
+    Usage::
+
+        @router.get("/menus")
+        async def my_menus(
+            menus: list = Depends(get_user_menus_dep),
+        ):
+            return menus
+
+    PG 可用时委托 ``PgRbacStore.get_user_menus``（已含角色聚合 +
+    树形构造）；PG 不可用或无身份时返回空列表。
+    """
+    username = _resolve_username(request)
+    if not username:
+        return []
+    pg_store = _get_pg_store()
+    if pg_store is None:
+        return []
+    try:
+        return pg_store.get_user_menus(username)
+    except Exception:  # pylint: disable=broad-except
+        logger.debug(
+            "rbac: get_user_menus failed for %r", username, exc_info=True,
+        )
+        return []
