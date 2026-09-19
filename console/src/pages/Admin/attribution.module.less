@@ -1,0 +1,97 @@
+/**
+ * attribution.module.less — 差评归因分析页顶部统计区排版。
+ *
+ * 结构：区块 header 行（左标题 + 右时间窗 Segmented）+ 三列等高 KPI 卡网格。
+ * 色/形全部取 staffdeck tokens（暗色由 page-tokens.css 统一翻转），不写死颜色。
+ */
+
+.statsSection {
+  min-width: 0;
+}
+
+/* 区块头行：标题与时间窗切换器垂直居中、两端对齐 */
+.statsHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.statsTitle {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 24px;
+  color: var(--sd-ink);
+}
+
+/* KPI 卡网格：三列等宽，stretch 保证同行等高 */
+.kpiGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+  align-items: stretch;
+}
+
+/* 单卡：固定最小高度 + 统一内边距，内容上下分布（value 上 / label 下） */
+.kpiCard {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  min-height: 112px;
+  padding: 18px 20px;
+  box-sizing: border-box;
+  background: var(--sd-card);
+  border: 0.5px solid var(--sd-line);
+  border-radius: var(--sd-radius-xl);
+}
+
+/* 数字 KPI：30px/600 + 等宽数字，避免位数变化时抖动 */
+.kpiValue {
+  font-size: 30px;
+  font-weight: 600;
+  line-height: 38px;
+  color: var(--sd-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.kpiLabel {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--sd-text-2);
+}
+
+/* 最热归因桶：值行与数字行同高（38px），保证三卡 label 基线对齐 */
+.kpiBucketRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  min-width: 0;
+}
+
+/* 桶名降字号 + 单行省略，完整名走 title 属性 */
+.kpiBucketName {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 24px;
+  color: var(--sd-ink);
+}
+
+.kpiBucketNameEmpty {
+  color: var(--sd-text-3);
+}
+
+/* 窄屏折为单列，仍保持等高且不出水平滚动 */
+@media (max-width: 991px) {
+  .kpiGrid {
+    grid-template-columns: 1fr;
+  }
+}
