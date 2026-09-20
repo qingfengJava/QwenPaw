@@ -231,7 +231,6 @@ function PermissionsPage() {
   return (
     <div className={styles.page}>
       <PageHeader
-        parent={t("nav.admin", "Administration")}
         current={t("nav.adminPermissions", "Permissions")}
         extra={
           <HasPerm code="admin:permissions">

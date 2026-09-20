@@ -22,7 +22,6 @@ function AgentGrantsPage() {
   return (
     <div className={styles.page}>
       <PageHeader
-        parent={t("nav.admin", "Administration")}
         current={t("nav.adminAgentGrants", "Agent Access")}
       />
       <GrantPanel kind="agent" resourceOptions={agentIds} />

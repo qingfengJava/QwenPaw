@@ -166,7 +166,6 @@ function UsersPage() {
   return (
     <div className={styles.page}>
       <PageHeader
-        parent={t("nav.admin", "Administration")}
         current={t("nav.adminUsers", "Users")}
         extra={
           <HasPerm code="admin:usersCreate">

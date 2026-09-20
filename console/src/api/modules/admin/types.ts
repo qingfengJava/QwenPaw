@@ -125,6 +125,10 @@ export interface KbDocumentView {
   title: string;
   source: string;
   chunk_count: number;
+  /** 知识生命周期状态（0046；T3 起携带，缺省回退 published）。 */
+  knowledge_status?: string;
+  valid_from?: string | null;
+  valid_to?: string | null;
   created_at: string;
 }
 

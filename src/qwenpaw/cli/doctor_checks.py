@@ -42,6 +42,8 @@ from ..config.utils import (
     get_jobs_path,
 )
 from ..constant import (
+    DEFAULT_API_HOST,
+    DEFAULT_API_PORT,
     HEARTBEAT_FILE,
     JOBS_FILE,
     MEMORY_DIR,
@@ -1298,8 +1300,8 @@ def api_target_mismatch_note(cfg: Config, cli_base: str) -> str | None:
     port = cfg.last_api.port
     if host is None and port is None:
         return None
-    eff_host = host or "127.0.0.1"
-    eff_port = 8088 if port is None else port
+    eff_host = host or DEFAULT_API_HOST
+    eff_port = DEFAULT_API_PORT if port is None else port
     expected = f"http://{eff_host}:{eff_port}".rstrip("/")
     got = cli_base.rstrip("/")
     if got == expected:

@@ -34,6 +34,7 @@ import { authApi } from "../api/modules/auth";
 import { userProfilesApi } from "../api/modules/userProfiles";
 import { hubApi } from "../api/modules/hub";
 import { useAuthStore } from "../stores/authStore";
+import { usePageNavStore } from "../stores/pageNavStore";
 import styles from "./index.module.less";
 
 interface UserAccountMenuProps {
@@ -146,6 +147,8 @@ export default function UserAccountMenu({
         accountForm.resetFields();
         // 仅改昵称（token 为空）保持登录态；改了用户名/密码才重新登录。
         if (res.token) {
+          // 重新登录意味着新身份：立刻丢弃当前标签会话，不等下次启动校验归属。
+          usePageNavStore.getState().reset();
           clearAuthToken();
           window.location.href = "/login";
         }
@@ -236,6 +239,8 @@ export default function UserAccountMenu({
       icon: <SparkExitFullscreenLine size={16} />,
       label: t("login.logout"),
       onClick: () => {
+        // 登出后不得把上一位用户的标签列表留在本机 localStorage 里。
+        usePageNavStore.getState().reset();
         clearAuthToken();
         window.location.href = "/login";
       },

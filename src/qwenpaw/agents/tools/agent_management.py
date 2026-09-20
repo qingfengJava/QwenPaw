@@ -17,6 +17,8 @@ from agentscope.message import ToolResultState
 from ...config.config import load_agent_config
 from ...config.utils import read_last_api
 from ...constant import (
+    DEFAULT_API_HOST,
+    DEFAULT_API_PORT,
     DEFAULT_SPAWN_FOREGROUND_TIMEOUT_SECONDS,
     DEFAULT_STREAM_TASK_TIMEOUT_SECONDS,
 )
@@ -28,7 +30,7 @@ from ...utils.timeout import (
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_AGENT_API_BASE_URL = "http://127.0.0.1:8088"
+DEFAULT_AGENT_API_BASE_URL = f"http://{DEFAULT_API_HOST}:{DEFAULT_API_PORT}"
 DEFAULT_AGENT_API_TIMEOUT = 30.0
 AGENT_CHAT_STOP_TIMEOUT = 3.0
 MAX_SPAWN_BATCH_SIZE = 10

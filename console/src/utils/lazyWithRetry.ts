@@ -56,6 +56,31 @@ function toGlobKey(path: string): string {
   return `../${afterPages}`;
 }
 
+/**
+ * 给懒加载组件挂一个 preload 钩子，供顶部标签栏 hover 时提前拉取分包。
+ * 浏览器对同一 dynamic import 只会真正拉一次，重复调用返回同一 promise。
+ */
+export interface PreloadableComponent {
+  preload?: () => void;
+}
+
+function withPreload<T>(component: T, factory: () => unknown): T {
+  Object.defineProperty(component as object, "preload", {
+    value: () => {
+      try {
+        (factory() as Promise<unknown> | undefined)?.catch?.(() => {
+          // 预加载失败静默忽略：真正导航时 React.lazy 会走原有的重试与错误边界。
+        });
+      } catch {
+        // 同上，预加载绝不允许影响交互。
+      }
+    },
+    configurable: true,
+    enumerable: false,
+  });
+  return component;
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -150,7 +175,7 @@ export function lazyImportWithRetry(
     );
   }
   const key = pathToModuleKey(path);
-  return lazy(() =>
+  const component = lazy(() =>
     retryImport(
       () => factory().then((comp) => ({ default: comp })),
       MAX_RETRIES,
@@ -160,4 +185,6 @@ export function lazyImportWithRetry(
       return mod;
     }),
   );
+  // 标签栏 hover 预加载用（见 NavTabsBar）。
+  return withPreload(component, () => factory());
 }

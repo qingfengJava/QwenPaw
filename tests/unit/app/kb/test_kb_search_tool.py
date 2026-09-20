@@ -505,7 +505,7 @@ async def test_expand_invalid_value_errors(
     service: KbService,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """P2-6：expand 非法值（含尚未实装的 graph）→ 显式报错，不静默降级。"""
+    """P2-6：expand 非法值（T5 起 graph 已实装，用未支持值 deep）→ 显式报错。"""
     from qwenpaw.app.kb.tool import make_kb_search_tool
 
     a = service.create_kb("甲库", scope=SCOPE_ENTERPRISE)
@@ -513,7 +513,7 @@ async def test_expand_invalid_value_errors(
     _bind(monkeypatch, [a.id])
 
     tool = make_kb_search_tool(service, "agent_x")
-    text = _hit_text(await tool("deployment", expand="graph"))
+    text = _hit_text(await tool("deployment", expand="deep"))
     assert "expand must be one of" in text
 
 
@@ -765,3 +765,95 @@ async def test_rerank_before_section_expand(
     assert "A节内容" not in text
     # 精排 top_n=1 → 只一条结果
     assert text.count("[score=") == 1
+
+
+# ---------------------------------------------------------------------------
+# T5 expand=graph（wikilink 出边图 ≤3 跳）
+# ---------------------------------------------------------------------------
+
+
+async def test_expand_graph_appends_related_chain(
+    service: KbService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """expand=graph：命中后追加相关文档链（缩进表深度，doc_id 可追溯）。"""
+    from qwenpaw.app.kb.tool import make_kb_search_tool
+
+    a = service.create_kb("甲库", scope=SCOPE_ENTERPRISE)
+    _bind(monkeypatch, [a.id])
+    hit = _mk_chunk("d1", 0, "命中块正文", "", kb_id=a.id)
+    monkeypatch.setattr(
+        service, "search", lambda kb_id, query, **kw: [(hit, 0.9)]
+    )
+    monkeypatch.setattr(
+        service,
+        "document_graph",
+        lambda kb_id, doc_id, depth=3: [
+            ("d2", "/指南.md", 1),
+            ("d3", "/附录.md", 2),
+        ],
+        raising=False,
+    )
+
+    tool = make_kb_search_tool(service, "agent_x")
+    text = _hit_text(await tool("命中", expand="graph"))
+
+    assert "命中块正文" in text
+    assert "相关文档链" in text
+    assert "/指南.md" in text and "depth=1" in text
+    assert "/附录.md" in text and "depth=2" in text
+
+
+async def test_expand_graph_each_doc_queried_once(
+    service: KbService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """防 N+1：多命中同 doc → document_graph 每 doc 只调一次。"""
+    from qwenpaw.app.kb.tool import make_kb_search_tool
+
+    a = service.create_kb("甲库", scope=SCOPE_ENTERPRISE)
+    _bind(monkeypatch, [a.id])
+    h1 = _mk_chunk("d1", 0, "命中一", "", kb_id=a.id)
+    h2 = _mk_chunk("d1", 3, "命中二", "", kb_id=a.id)
+    monkeypatch.setattr(
+        service,
+        "search",
+        lambda kb_id, query, **kw: [(h1, 0.9), (h2, 0.8)],
+    )
+    calls: list = []
+
+    def _dg(kb_id, doc_id, depth=3):
+        calls.append(doc_id)
+        return []
+
+    monkeypatch.setattr(service, "document_graph", _dg, raising=False)
+
+    tool = make_kb_search_tool(service, "agent_x")
+    await tool("命中", expand="graph")
+    assert calls == ["d1"]
+
+
+async def test_expand_graph_failure_degrades_to_snippets(
+    service: KbService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """图扩展异常整体隔离 → 降级为纯命中块（检索永不报错）。"""
+    from qwenpaw.app.kb.tool import make_kb_search_tool
+
+    a = service.create_kb("甲库", scope=SCOPE_ENTERPRISE)
+    _bind(monkeypatch, [a.id])
+    hit = _mk_chunk("d1", 0, "命中块正文", "", kb_id=a.id)
+    monkeypatch.setattr(
+        service, "search", lambda kb_id, query, **kw: [(hit, 0.9)]
+    )
+
+    def _boom(kb_id, doc_id, depth=3):
+        raise RuntimeError("graph boom")
+
+    monkeypatch.setattr(service, "document_graph", _boom, raising=False)
+
+    tool = make_kb_search_tool(service, "agent_x")
+    text = _hit_text(await tool("命中", expand="graph"))
+
+    assert "命中块正文" in text
+    assert "相关文档链" not in text

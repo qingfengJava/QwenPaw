@@ -29,25 +29,30 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ...constant import SECRET_DIR
 from ...db import write_gateway
-from .chunker import ChunkSpec
+from .chunker import embed_input, split_markdown
+from .embedding import embed_query_cached, embed_texts
 from .file_engine import DEFAULT_KB_DATA_DIR, FileKbEngine
 from .hits import KbSearchHit
 from .ingest import IngestResult, ingest_space_document
 from .models import (
     INGEST_READY,
     SCOPE_ENTERPRISE,
+    SCOPE_ORG,
     SCOPE_PERSONAL,
     SCOPE_TEAM,
     SOURCE_MANUAL,
     VALID_SCOPES,
     VALID_SOURCES,
     KbChunk,
+    KbConflict,
     KbDocument,
     KbDocumentMeta,
     KbRegistry,
+    KbReview,
     KbSpace,
     KnowledgeBase,
 )
+from .wiki import detect_conflicts, is_effective, review_document
 
 logger = logging.getLogger(__name__)
 
@@ -260,6 +265,7 @@ class KbService:
             scope=kb.scope,
             owner_id=kb.owner_id,
             team_id=kb.team_id,
+            org_id=kb.org_id or "default",
             grants={
                 "roles": list(kb.grants_roles),
                 "users": list(kb.grants_users),
@@ -277,6 +283,7 @@ class KbService:
             scope=space.scope,
             owner_id=space.owner_id,
             team_id=space.team_id,
+            org_id=space.org_id or "default",
             description=space.description,
             grants_roles=list(grants.get("roles", [])),
             grants_users=list(grants.get("users", [])),
@@ -293,6 +300,9 @@ class KbService:
             title=doc.title,
             source=str(meta.get("source", doc.source)),
             chunk_count=int(meta.get("chunk_count", 0)),
+            knowledge_status=doc.knowledge_status,
+            valid_from=doc.valid_from,
+            valid_to=doc.valid_to,
             created_at=doc.created_at,
         )
 
@@ -376,16 +386,23 @@ class KbService:
         embeddings: Optional[List[List[float]]],
         doc_id: Optional[str] = None,
     ) -> Optional[KbDocumentMeta]:
-        """摄入：切片 → upsert 文档行 → 引擎写索引 → 推进 ready → 回 meta。"""
+        """摄入：结构化切片 → 向量 → upsert 文档行 → 索引 → ready → 回 meta。
+
+        与权威摄入 :func:`ingest_space_document` 同一切片器
+        （``split_markdown``：heading_path/parent_seq 随行，S2 结构扩展
+        可用）与同一向量管线（``embed_texts(embed_input(spec))``，缺失
+        降级 BM25-only），消除「文本/admin 摄入双标」的存量偏差。
+        """
         store = self._pg_store()
-        if store is None or await store.get_space(kb_id) is None:
+        space = await store.get_space(kb_id) if store is not None else None
+        if store is None or space is None:
             return None
-        pieces = chunk_text(text)
-        if not pieces:
+        specs = split_markdown(text)
+        if not specs:
             return None
         # dual 影子写复用 json 主写的 doc_id（否则影子删除按 json doc_id 在 pg 找不到行）
         doc_id = doc_id or f"doc_{uuid.uuid4().hex[:12]}"
-        doc_title = title or pieces[0][:40]
+        doc_title = title or specs[0].text[:40]
         pg_source = source if source in VALID_SOURCES else SOURCE_MANUAL
         document = KbDocument(
             id=doc_id,
@@ -396,23 +413,22 @@ class KbService:
             source=pg_source,
             source_meta={
                 "source": source,
-                "chunk_count": len(pieces),
+                "chunk_count": len(specs),
                 "via": "facade_ingest_text",
             },
             ingest_status=INGEST_READY,
         )
         await store.upsert_document(document)
-        specs = [
-            ChunkSpec(
-                seq=index,
-                heading_path="",
-                text=piece,
-                parent_seq=None,
-                token_count=len(piece),
+        # 显式传入优先（向后兼容既有调用方）；缺省按库模型生成向量，
+        # embedding 不可用返回 None → 全空走 BM25-only，摄入不失败
+        if embeddings is None:
+            embeddings = await embed_texts(
+                [embed_input(spec) for spec in specs],
+                model=str(getattr(space, "embedding_model", "") or ""),
             )
-            for index, piece in enumerate(pieces)
-        ]
-        await self._engine().index_document(
+        from .engine import resolve_engine_for
+
+        await resolve_engine_for(space).index_document(
             kb_id,
             doc_id,
             specs,
@@ -427,7 +443,7 @@ class KbService:
             kb_id=kb_id,
             title=doc_title,
             source=source,
-            chunk_count=len(pieces),
+            chunk_count=len(specs),
         )
 
     # ------------------------------------------------------------------
@@ -709,6 +725,164 @@ class KbService:
             )
             return None
 
+    # ------------------------------------------------------------------
+    # T3 wiki 面 pg 权威门面（生命周期/冲突/分类；供同步 def 路由复用，
+    # 桥接模式与 T11 文档面一致；写失败返 None/False，值级拒绝透传）
+    # ------------------------------------------------------------------
+
+    def pg_review_document(
+        self,
+        kb_id: str,
+        doc_id: str,
+        action: str,
+        reviewer: str,
+        comment: str = "",
+    ) -> Optional[KbDocument]:
+        """生命周期流转（submit/approve/reject/archive）+ 流水追加。"""
+        try:
+            return self._run_async(
+                review_document(
+                    self._pg_store(),
+                    kb_id,
+                    doc_id,
+                    action,
+                    reviewer,
+                    comment,
+                ),
+                write=True,
+            )
+        except ValueError:
+            # 非法 action：值级拒绝，路由映射 400
+            raise
+        except Exception:  # pylint: disable=broad-except
+            logger.warning(
+                "[kb] pg review failed; kb=%s doc=%s action=%s",
+                kb_id,
+                doc_id,
+                action,
+                exc_info=True,
+            )
+            return None
+
+    def pg_list_reviews(
+        self,
+        kb_id: str,
+        doc_id: str,
+        *,
+        limit: int = 50,
+    ) -> List[KbReview]:
+        """一份文档的审核流水（新→旧；pg 不可用返回空列表）。"""
+        try:
+            store = self._pg_store()
+            if store is None:
+                return []
+            return list(
+                self._run_async(store.list_reviews(kb_id, doc_id, limit=limit))
+                or [],
+            )
+        except Exception:  # pylint: disable=broad-except
+            logger.warning(
+                "[kb] pg list reviews failed; kb=%s doc=%s",
+                kb_id,
+                doc_id,
+                exc_info=True,
+            )
+            return []
+
+    def pg_update_knowledge_meta(
+        self,
+        doc_id: str,
+        **fields: Any,
+    ) -> bool:
+        """分类/有效期编辑（domain/doc_type/confidence/valid_*；白名单内）。"""
+        try:
+            store = self._pg_store()
+            if store is None:
+                return False
+            return bool(
+                self._run_async(
+                    store.update_document_meta(doc_id, **fields),
+                    write=True,
+                ),
+            )
+        except ValueError:
+            # 白名单外的键：值级拒绝，路由映射 400
+            raise
+        except Exception:  # pylint: disable=broad-except
+            logger.warning(
+                "[kb] pg update knowledge meta failed; doc=%s",
+                doc_id,
+                exc_info=True,
+            )
+            return False
+
+    def pg_detect_conflicts(self, kb_id: str, doc_id: str) -> List[KbConflict]:
+        """规则冲突检测，返回本次新建的冲突候选（幂等查重）。"""
+        try:
+            store = self._pg_store()
+            if store is None:
+                return []
+            return list(
+                self._run_async(
+                    detect_conflicts(store, kb_id, doc_id),
+                    write=True,
+                )
+                or [],
+            )
+        except Exception:  # pylint: disable=broad-except
+            logger.warning(
+                "[kb] pg detect conflicts failed; kb=%s doc=%s",
+                kb_id,
+                doc_id,
+                exc_info=True,
+            )
+            return []
+
+    def pg_list_conflicts(
+        self,
+        kb_id: str,
+        *,
+        status: str = "",
+    ) -> List[KbConflict]:
+        """库内冲突清单（status 空串 = 全态）。"""
+        try:
+            store = self._pg_store()
+            if store is None:
+                return []
+            return list(
+                self._run_async(
+                    store.list_conflicts(kb_id, status=status),
+                )
+                or [],
+            )
+        except Exception:  # pylint: disable=broad-except
+            logger.warning(
+                "[kb] pg list conflicts failed; kb=%s",
+                kb_id,
+                exc_info=True,
+            )
+            return []
+
+    def pg_resolve_conflict(self, conflict_id: str, resolved_by: str) -> bool:
+        """解决一个 open 冲突（已解决行返回 False）。"""
+        try:
+            store = self._pg_store()
+            if store is None:
+                return False
+            return bool(
+                self._run_async(
+                    store.resolve_conflict(conflict_id, resolved_by),
+                    write=True,
+                ),
+            )
+        except Exception:  # pylint: disable=broad-except
+            logger.warning(
+                "[kb] pg resolve conflict failed; id=%s",
+                conflict_id,
+                exc_info=True,
+            )
+            return False
+
     def _pg_search(
         self,
         kb_id: str,
@@ -716,9 +890,34 @@ class KbService:
         query_embedding: Optional[List[float]],
         top_k: int,
     ) -> Optional[List[KbSearchHit]]:
+        """pg 面检索：库级引擎路由 + 查询向量按需解析（S1 混检激活点）。
+
+        space 就绪时按 ``kb_spaces.engine`` 路由引擎（与摄入同一解析函数，
+        milvus 库检索不再错落默认引擎）；``query_embedding`` 缺省时按库的
+        ``embedding_model`` 经缓存调用 ``embed_query_cached`` 生成——失败
+        返 ``None`` 自然降级 BM25-only。space 不可达时保留旧行为（默认
+        引擎 + 不解析向量），保证 pg 抖动不新增故障面。
+        """
         try:
-            return self._run_async(
-                self._engine().search([kb_id], query, query_embedding, top_k)
+            engine = self._engine()
+            space = self._pg_get_space(kb_id)
+            if space is not None:
+                from .engine import resolve_engine_for
+
+                engine = resolve_engine_for(space)
+                if query_embedding is None and (query or "").strip():
+                    query_embedding = self._run_async(
+                        embed_query_cached(
+                            query,
+                            model=str(
+                                getattr(space, "embedding_model", "") or ""
+                            ),
+                        ),
+                    )
+            return list(
+                self._run_async(
+                    engine.search([kb_id], query, query_embedding, top_k),
+                ),
             )
         except Exception:  # pylint: disable=broad-except
             logger.warning(
@@ -737,6 +936,7 @@ class KbService:
         scope: str = SCOPE_PERSONAL,
         owner_id: str = "",
         team_id: str = "",
+        org_id: str = "default",
         description: str = "",
     ) -> Optional[KnowledgeBase]:
         name = name.strip()
@@ -752,6 +952,7 @@ class KbService:
             scope=scope,
             owner_id=owner_id,
             team_id=team_id,
+            org_id=(org_id or "default").strip() or "default",
             description=description.strip(),
         )
         backend = self._backend()
@@ -854,8 +1055,14 @@ class KbService:
         flat_role: str = "",
         user_roles: Optional[List[str]] = None,
         user_teams: Optional[List[str]] = None,
+        user_org: str = "",
     ) -> bool:
-        """Whether *username* may read *kb*."""
+        """Whether *username* may read *kb*.
+
+        判定顺序：admin → grants(users/roles/teams) → scope 语义。
+        ``user_org`` 为调用者所属组织 id（org 即租户边界；空串按
+        default 租户收敛，单租户部署与 enterprise 等价）。
+        """
         if flat_role == "admin":
             return True
         if username and username in kb.grants_users:
@@ -870,6 +1077,9 @@ class KbService:
             return bool(username) and username == kb.owner_id
         if kb.scope == SCOPE_TEAM:
             return bool(kb.team_id) and kb.team_id in teams
+        if kb.scope == SCOPE_ORG:
+            caller_org = user_org or "default"
+            return bool(username) and caller_org == (kb.org_id or "default")
         if kb.scope == SCOPE_ENTERPRISE:
             return bool(username)
         return False
@@ -881,6 +1091,7 @@ class KbService:
         flat_role: str = "",
         user_roles: Optional[List[str]] = None,
         user_teams: Optional[List[str]] = None,
+        user_org: str = "",
     ) -> List[KnowledgeBase]:
         """All knowledge bases visible to *username*."""
         return [
@@ -892,6 +1103,7 @@ class KbService:
                 flat_role=flat_role,
                 user_roles=user_roles,
                 user_teams=user_teams,
+                user_org=user_org,
             )
         ]
 
@@ -1064,12 +1276,27 @@ class KbService:
             if hits is not None:
                 return [(self._hit_to_chunk(h), h.score) for h in hits]
             # pg 不可用 → fail-soft 回退文件面
-        return self._file_engine.search_sync(
+        results = self._file_engine.search_sync(
             [kb_id],
             query,
             query_embedding=query_embedding,
             top_k=top_k,
         )
+        # T3 知识生命周期过滤（文件面降级口径）：registry 无状态信息的
+        # 文档放行（宁误出不错杀），有状态的一律 published+有效期内才可检
+        documents = self._load().documents
+        return [
+            (chunk, score)
+            for chunk, score in results
+            if self._meta_retrievable(documents.get(chunk.doc_id))
+        ]
+
+    @staticmethod
+    def _meta_retrievable(meta: Optional[KbDocumentMeta]) -> bool:
+        """json 面 registry 条目是否可检索（缺条目/缺状态 = 放行降级）。"""
+        if meta is None:
+            return True
+        return is_effective(meta)
 
     def document_chunks(self, kb_id: str, doc_id: str) -> List[KbChunk]:
         """一份文档的全部切片（seq 升序，带 heading_path/parent_seq）。
@@ -1096,6 +1323,36 @@ class KbService:
         chunks.sort(key=lambda c: c.seq)
         return chunks
 
+    def document_graph(
+        self,
+        kb_id: str,
+        doc_id: str,
+        depth: int = 3,
+    ) -> List[tuple]:
+        """Wikilink 出边图 ≤depth 跳（T5 ``expand=graph`` 底座）。
+
+        pg 权威面：``kb_links`` WITH RECURSIVE CTE 单次往返；json/L0
+        面无 links 存储 → 诚实降级空列表（工具层标注「无相关链」，
+        不伪装）。fail-soft：任何异常返回空列表，绝不抛给检索面。
+        """
+        try:
+            rows = self._run_async(
+                self._pg_store().list_document_graph(
+                    doc_id,
+                    space_id=kb_id,
+                    max_depth=depth,
+                ),
+            )
+            return list(rows or [])
+        except Exception:  # pylint: disable=broad-except
+            logger.warning(
+                "[kb] document_graph failed; kb=%s doc=%s",
+                kb_id,
+                doc_id,
+                exc_info=True,
+            )
+            return []
+
     def _pg_list_document_chunks(
         self,
         kb_id: str,
@@ -1116,6 +1373,13 @@ class KbService:
         """
         try:
             engine = self._engine()
+            # 库级路由与 _pg_search 同源：milvus 库的 S2 兄弟块取数/T11
+            # 预览不再错落默认引擎（引擎未实现该能力时仍按 None 回退文件面）
+            space = self._pg_get_space(kb_id)
+            if space is not None:
+                from .engine import resolve_engine_for
+
+                engine = resolve_engine_for(space)
             lister = getattr(engine, "list_document_chunks", None)
             if lister is None:
                 return None

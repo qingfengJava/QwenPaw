@@ -11,6 +11,7 @@ from typing import Optional
 
 import click
 
+from ..constant import DEFAULT_API_PORT
 from .process_utils import (
     _is_qwenpaw_wrapper_process,
     _process_table,
@@ -28,7 +29,7 @@ def _backend_port(ctx: click.Context, port: Optional[int]) -> int:
     """Resolve backend port from explicit option or global CLI context."""
     if port is not None:
         return port
-    return int((ctx.obj or {}).get("port", 8088))
+    return int((ctx.obj or {}).get("port", DEFAULT_API_PORT))
 
 
 def _listening_pids_for_port(port: int) -> set[int]:

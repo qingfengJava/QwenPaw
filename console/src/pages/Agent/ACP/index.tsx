@@ -397,7 +397,7 @@ function ACPPage() {
     <div className={styles.channelsPage}>
       <PageHeader
         className={stylesACP.pageHeader}
-        items={[{ title: t("nav.agent") }, { title: t("acp.title") }]}
+        current={t("acp.title")}
         center={
           <div className={styles.filterTabs}>
             {FILTER_TABS.map(({ key, label }) => (

@@ -7,7 +7,7 @@ import {
   Popover,
 } from "antd";
 import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
   SparkMenuExpandLine,
@@ -19,14 +19,9 @@ import SidebarSettingsPanel from "./SidebarSettingsPanel";
 import api from "../api";
 import { useSidebarModeStore } from "../stores/sidebarModeStore";
 import { useInboxWobble } from "../hooks/useInboxWobble";
-import { useDynamicMenus } from "../hooks/useDynamicMenus";
+import { useNavModel } from "../hooks/useNavModel";
 import styles from "./index.module.less";
 import { useTheme } from "../contexts/ThemeContext";
-import {
-  useMenuItems,
-  useAllMenuItems,
-  useRoutes,
-} from "../plugins/registry/hooks";
 import { Slot } from "../plugins/registry/Slot";
 import {
   findMenuItem,
@@ -36,10 +31,6 @@ import {
   resolveItemPath,
   toAntdItems,
 } from "./registry/adapter";
-import {
-  rbacMenusToRegistryItems,
-  type DynamicMenuItem,
-} from "./registry/dynamicMenuAdapter";
 import type { MenuItem } from "../plugins/registry/types";
 import type { ReactNode } from "react";
 
@@ -47,6 +38,10 @@ import type { ReactNode } from "react";
 
 const { Sider } = Layout;
 const MOBILE_SIDEBAR_QUERY = "(max-width: 768px)";
+
+// settingsMenu 在动态模式下恒为空数组——该常量现由 useNavModel 持有，且必须是
+// 模块级共享引用而非每次渲染新建的 `[]`：openKeys 自动展开 effect 依赖它的引用，
+// 引用每帧变化会把展开组强制重置回“当前激活项所在组”（表现为分组刚展开即回弹）。
 
 function isMobileSidebarViewport() {
   return (
@@ -59,49 +54,21 @@ const INBOX_BADGE_POLLING_MS = 6000;
 
 // ── Simple mode whitelist ─────────────────────────────────────────────────
 
-/** Menu item IDs that remain visible in simple sidebar mode (no groups). */
-const SIMPLE_MODE_WHITELIST = new Set([
-  "core.workbench",
-  "core.agents",
-  "core.channels",
-  "core.inbox",
-  "core.marketplace",
-  "core.models",
-  "core.skill-pool",
-]);
-
-/**
- * Flatten a MenuItem tree into a leaf-only list for simple sidebar mode.
- * Groups are eliminated entirely — only whitelisted children survive
- * as top-level items.
- */
-function flattenMenuForSimpleMode(items: MenuItem[]): MenuItem[] {
-  const result: MenuItem[] = [];
-  for (const rawItem of items) {
-    const item = rawItem as MenuItem & { __children?: MenuItem[] };
-    if (item.__children && item.__children.length > 0) {
-      for (const child of item.__children) {
-        if (SIMPLE_MODE_WHITELIST.has(child.id)) {
-          result.push(child);
-        }
-      }
-    } else if (SIMPLE_MODE_WHITELIST.has(item.id)) {
-      result.push(item);
-    }
-  }
-  return result;
-}
+/** 简洁模式白名单与拍平逻辑已上收到 hooks/useNavModel，与面包屑共用一份菜单裁剪。 */
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
 interface SidebarProps {
-  /** Route id of the currently active page (e.g. "core.workspace"). */
-  selectedKey: string;
+  /**
+   * 当前高亮菜单项 id。省略时由 useNavModel 按 pathname 解析——顶部导航条上线后，
+   * 侧栏高亮与面包屑/标签必须同源，故默认走 hook 解析，仅测试可显式注入。
+   */
+  selectedKey?: string;
 }
 
 // ── Sidebar ───────────────────────────────────────────────────────────────
 
-export default function Sidebar({ selectedKey }: SidebarProps) {
+export default function Sidebar({ selectedKey }: SidebarProps = {}) {
   const navigate = useNavigate();
   const { t } = useTranslation();
   const { isDark } = useTheme();
@@ -121,99 +88,19 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
   // Sidebar mode: "simple" (only core items) or "full" (everything)
   const { mode: sidebarMode } = useSidebarModeStore();
 
-  // Menu + route snapshots from registry (builtin + plugin registrations merged).
-  const rawPlatformMenu = useMenuItems("primary.platform");
-  // Third-party plugins may still register into the legacy agentScoped bucket;
-  // merge them under a trailing group so they remain reachable.
-  const rawLegacyAgentMenu = useMenuItems("primary.agentScoped");
-  const rawSettingsMenu = useMenuItems("primary.settings");
-  const allMenuItems = useAllMenuItems();
-  const routes = useRoutes();
-  const location = useLocation();
-
-  // 动态菜单：后端 rbac_menus（/auth/menus）为唯一来源；后端未提供
-  // （认证关闭/未加载/空/失败）时 source==="builtin"，回退静态注册表。
-  const { menus: dynamicMenuTree, source: menuSource } = useDynamicMenus();
-  const isDynamic = menuSource === "backend";
-
-  // Platform menu; simple mode flattens groups via the whitelist.
-  const builtinAgentMenu = useMemo(() => {
-    const platformMenu =
-      sidebarMode === "simple"
-        ? flattenMenuForSimpleMode(rawPlatformMenu)
-        : rawPlatformMenu;
-    const legacy = rawLegacyAgentMenu.filter((item) => !item.isGroup);
-    if (legacy.length === 0) return platformMenu;
-    const pluginGroup = {
-      id: "platform.plugins-group",
-      label: () => t("nav.plugins", "Plugins"),
-      isGroup: true,
-      order: 900,
-      __children: legacy.map((item) => ({
-        ...item,
-        parentId: "platform.plugins-group",
-      })),
-    } as MenuItem;
-    return [...platformMenu, pluginGroup];
-  }, [rawPlatformMenu, rawLegacyAgentMenu, sidebarMode, t]);
-  const builtinSettingsMenu = useMemo(
-    () =>
-      sidebarMode === "simple"
-        ? flattenMenuForSimpleMode(rawSettingsMenu)
-        : rawSettingsMenu,
-    [rawSettingsMenu, sidebarMode],
-  );
-
-  // 动态模式：后端树 → 中性 MenuItem，并合并第三方插件注册的非 core 菜单。
-  const dynamicPrimaryMenu = useMemo<DynamicMenuItem[]>(() => {
-    if (!isDynamic) return [];
-    const items = rbacMenusToRegistryItems(dynamicMenuTree);
-    const pluginItems = allMenuItems.filter(
-      (i) =>
-        !i.id.startsWith("core.") && !i.isGroup && i.visible?.() !== false,
-    );
-    return [...items, ...(pluginItems as DynamicMenuItem[])];
-  }, [isDynamic, dynamicMenuTree, allMenuItems]);
-
-  // 统一渲染入口：动态模式用后端树（单个 <Menu>），否则用静态平台+系统两段。
-  const agentMenu: MenuItem[] = isDynamic
-    ? dynamicPrimaryMenu
-    : builtinAgentMenu;
-  const settingsMenu: MenuItem[] = isDynamic ? [] : builtinSettingsMenu;
-
-  // 当前高亮项 id：动态模式按 location.pathname 匹配叶子 path；静态沿用
-  // MainLayout 传入的 route id（selectedKey）。
-  const activeId = useMemo<string | undefined>(() => {
-    if (!isDynamic) return selectedKey;
-    const pathname = location.pathname;
-    let best: string | undefined;
-    let bestLen = -1;
-    const walk = (nodes: DynamicMenuItem[]) => {
-      for (const it of nodes) {
-        const p = resolveItemPath(it.route, routes);
-        if (
-          p &&
-          (pathname === p || pathname.startsWith(`${p}/`)) &&
-          p.length > bestLen
-        ) {
-          best = it.id;
-          bestLen = p.length;
-        }
-        if (it.__children) walk(it.__children);
-      }
-    };
-    walk(dynamicPrimaryMenu);
-    return best;
-  }, [isDynamic, selectedKey, location.pathname, dynamicPrimaryMenu, routes]);
+  /* 菜单树、路由快照与当前高亮项统一由 useNavModel 提供：与顶部面包屑、标签页
+     共用同一份判定，不会出现「侧栏高亮 A、面包屑显示 B」的漂移。 */
+  const { routes, agentMenu, settingsMenu, activeId: resolvedActiveId } =
+    useNavModel();
+  const activeId = selectedKey ?? resolvedActiveId;
 
   // Accordion groups: at most one group stays open. On startup only the
   // group holding the active item expands (fully collapsed when the active
   // item is top-level, e.g. the workbench).
   const [openKeys, setOpenKeys] = useState<string[]>(() => {
-    const initialGroup = findParentGroupId(
-      [...rawPlatformMenu, ...rawSettingsMenu],
-      selectedKey,
-    );
+    const initialGroup = activeId
+      ? findParentGroupId([...agentMenu, ...settingsMenu], activeId)
+      : undefined;
     return initialGroup ? [initialGroup] : [];
   });
 

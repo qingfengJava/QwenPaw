@@ -310,6 +310,81 @@ class MilvusEngine:
             )
             return []
 
+    def _list_document_chunks_sync(
+        self,
+        space_id: str,
+        document_id: str,
+    ) -> List[KbSearchHit]:
+        """同步实现：按文档标量查询（expr 直查，非向量检索）。"""
+        client = self._get_client()
+        if client is None:
+            return []
+        self._ensure_collection(client)
+        # MilvusClient.query 返回 List[dict]（扁平，含主键 chunk_id 与
+        # output_fields）；document_id/space_id 均为系统生成 ID，与
+        # _search_sync 同风格拼接，无引号注入面
+        rows = client.query(
+            COLLECTION_NAME,
+            filter=(
+                f'document_id == "{document_id}" '
+                f'and space_id == "{space_id}"'
+            ),
+            output_fields=list(_OUTPUT_FIELDS),
+        )
+        hits: List[KbSearchHit] = []
+        for row in rows or []:
+            # 兼容两种行形态：query 扁平 dict / search 的 entity 包裹
+            entity = (
+                row if isinstance(row, dict) else (row.get("entity") or {})
+            )
+            parent_seq = entity.get("parent_seq", _NO_PARENT)
+            hits.append(
+                KbSearchHit(
+                    space_id=str(entity.get("space_id", "")),
+                    document_id=str(entity.get("document_id", "")),
+                    chunk_id=str(entity.get("chunk_id") or ""),
+                    seq=int(entity.get("seq") or 0),
+                    heading_path=str(entity.get("heading_path") or ""),
+                    text=str(entity.get("content_text") or ""),
+                    # 列表非排名：score 恒 0（与 pg 引擎同口径）
+                    score=0.0,
+                    parent_seq=(
+                        None if parent_seq == _NO_PARENT else int(parent_seq)
+                    ),
+                ),
+            )
+        hits.sort(key=lambda hit: hit.seq)
+        return hits
+
+    async def list_document_chunks(
+        self,
+        space_id: str,
+        document_id: str,
+    ) -> List[KbSearchHit]:
+        """按文档列出全部切片（seq 升序）；S2 expand=section 兄弟块来源。
+
+        与检索面同一 fail-soft 约定：任何失败返回空列表（调用方降级为
+        单块，不阻断检索）；``score`` 恒 0。补齐本方法后 milvus 面的
+        S2/T11 取数不再被上层按「未实现」回退文件面。
+        """
+        doc = str(document_id or "")
+        space = str(space_id or "")
+        if not doc or not space:
+            return []
+        try:
+            return await asyncio.to_thread(
+                self._list_document_chunks_sync,
+                space,
+                doc,
+            )
+        except Exception:  # pylint: disable=broad-except
+            logger.warning(
+                "[kb] milvus list_document_chunks failed; doc=%s",
+                doc,
+                exc_info=True,
+            )
+            return []
+
     # ------------------------------------------------------------------
     # 写入面（异常向调用方传播）
     # ------------------------------------------------------------------

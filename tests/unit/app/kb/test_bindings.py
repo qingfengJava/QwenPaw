@@ -116,6 +116,7 @@ class _FakePgStore:
         *,
         granted_by: str = "",
         remark: str = "",
+        principal_type: str = "agent",
     ) -> bool:
         # True = 绑定关系成立（新插入或已存在幂等），False = 平面不可用
         self.insert_calls.append(
@@ -124,16 +125,28 @@ class _FakePgStore:
                 "space_id": space_id,
                 "granted_by": granted_by,
                 "remark": remark,
+                "principal_type": principal_type,
             },
         )
         return True
 
-    async def delete_binding(self, agent_id: str, space_id: str) -> bool:
+    async def delete_binding_typed(
+        self,
+        agent_id: str,
+        space_id: str,
+        *,
+        principal_type: str = "agent",
+    ) -> bool:
         self.deleted.append((agent_id, space_id))
         return not self._exists
 
-    async def list_agent_bindings(self, agent_id: str) -> List[KbBinding]:
-        del agent_id
+    async def list_agent_bindings(
+        self,
+        agent_id: str,
+        *,
+        principal_type: str = "",
+    ) -> List[KbBinding]:
+        del agent_id, principal_type
         return list(self._rows)
 
 
@@ -501,6 +514,7 @@ async def test_pg_backend_routes_to_store(
             "space_id": "kb_a",
             "granted_by": "alice",
             "remark": "r",
+            "principal_type": "agent",
         },
     ]
     assert await bindings.unbind_agent_kb("analyst", "kb_a") is True

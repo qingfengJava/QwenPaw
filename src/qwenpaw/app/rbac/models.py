@@ -40,6 +40,10 @@ PERM_ADMIN_EXPERTS = "admin:experts"
 PERM_PROJECT_USE = "project:use"
 PERM_PROJECT_MANAGE = "project:manage"
 
+# Ontology plane (knowledge-ontology platform T4): object/relation/
+# transition/rule/action CRUD + kb_object_links management.
+PERM_ONTOLOGY_MANAGE = "admin:ontology"
+
 # Platform operations: global env vars / channel & app config / backups.
 # 全局配置面（含数据库 DSN、渠道 token 等跨租户敏感信息）的管理权限——
 # 仅 platform_admin（PERM_ALL 覆盖）可持有，普通员工与 team_lead 不可。

@@ -526,13 +526,15 @@ def _require_bearer_user(request: Request) -> str:
 
 @router.get("/menus")
 async def get_current_user_menus(request: Request):
-    """返回当前登录用户的可见菜单树."""
+    """返回当前登录用户的可见菜单树.
+
+    认证关闭（单机单用户）时返回全量菜单树——与 ``/auth/permissions``
+    返回 ``["*"]`` 对称，保证动态菜单在单机模式同样可用；
+    PG 不可用时返回空数组（前端回退内置菜单）。
+    """
     from dataclasses import asdict
 
     username = _require_bearer_user(request)
-    if not username:
-        # 认证关闭（单机模式）：返回空菜单
-        return []
 
     try:
         from ..rbac.store_pg import get_pg_rbac_store
@@ -540,6 +542,12 @@ async def get_current_user_menus(request: Request):
         pg_store = get_pg_rbac_store()
     except Exception:  # pylint: disable=broad-except
         pg_store = None
+
+    if not username:
+        # 认证关闭（单机模式）：返回全量菜单树（管理视角）
+        if pg_store is not None:
+            return [asdict(m) for m in pg_store.get_menu_tree()]
+        return []
 
     if pg_store is not None:
         menus = pg_store.get_user_menus(username)

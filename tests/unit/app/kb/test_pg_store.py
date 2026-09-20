@@ -269,6 +269,7 @@ def _space_db_row(**overrides: Any) -> dict:
         "scope": "enterprise",
         "owner_id": "u1",
         "team_id": "t1",
+        "org_id": "default",
         "grants": '{"roles": ["kb_admin"]}',
         "embedding_model": "text-embedding-v4",
         "engine": "pgvector",
@@ -294,6 +295,15 @@ def _doc_db_row(**overrides: Any) -> dict:
         "error": "",
         "is_delete": False,
         "updated_by": "u1",
+        # T3 wiki 化列（0046；与 alembic 默认值一致的存量行形态）
+        "knowledge_status": "published",
+        "domain": "",
+        "doc_type": "doc",
+        "confidence": 1.0,
+        "valid_from": None,
+        "valid_to": None,
+        "reviewed_by": "",
+        "review_note": "",
         "created_at": _STAMP_1,
         "updated_at": _STAMP_2,
     }
@@ -628,6 +638,7 @@ async def test_get_space_reads_back_every_column() -> None:
     assert space.scope == "enterprise"
     assert space.owner_id == "u1"
     assert space.team_id == "t1"
+    assert space.org_id == "default"
     assert space.engine == "pgvector"
     assert space.embedding_model == "text-embedding-v4"
     assert space.grants == {"roles": ["kb_admin"]}
@@ -981,6 +992,7 @@ def _binding_db_row(**overrides: Any) -> dict:
     row = {
         "agent_id": "analyst",
         "space_id": "kb_a",
+        "principal_type": "agent",
         "granted_by": "alice",
         "remark": "孕产授权说明",
         "created_at": _STAMP_1,

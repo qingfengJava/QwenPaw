@@ -100,7 +100,7 @@ async def send_message(
 
     Example:
         ```bash
-        curl -X POST "http://localhost:8088/api/messages/send" \\
+        curl -X POST "http://localhost:8188/api/messages/send" \\
           -H "Content-Type: application/json" \\
           -H "X-Agent-Id: my_bot" \\
           -d '{

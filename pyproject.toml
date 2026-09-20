@@ -219,6 +219,7 @@ markers = [
     "contract: marks tests as contract tests",
     "integration: marks tests as integration tests",
     "e2e: marks tests as end-to-end tests",
+    "eval: retrieval-quality evaluation (gated on PG); run via scripts/run_tests.py -e",
     "manual_real: opt-in acceptance against real paid provider APIs",
 ]
 testpaths = [

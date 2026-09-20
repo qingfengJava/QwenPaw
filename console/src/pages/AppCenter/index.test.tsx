@@ -45,6 +45,9 @@ vi.mock("@/api/modules/pawapp", () => ({
 
 vi.mock("@/plugins/registry/hooks", () => ({
   useRoutes: () => hoisted.routeSnapshot(),
+  // 页面经 usePageNavTitle → useNavModel 还会读菜单项（顶部标签文案单一来源）。
+  useMenuItems: () => [],
+  useAllMenuItems: () => [],
 }));
 
 vi.mock("@/plugins/usePluginLoader", () => ({

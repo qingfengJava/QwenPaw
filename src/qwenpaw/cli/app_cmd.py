@@ -10,7 +10,7 @@ import uvicorn
 from ..app.auth import is_auth_enabled
 from ..browser.control_link.chrome.protocol import NM_MAX_INBOUND_BYTES
 from ..config.utils import write_last_api
-from ..constant import LOG_LEVEL_ENV
+from ..constant import DEFAULT_API_HOST, DEFAULT_API_PORT, LOG_LEVEL_ENV
 from ..utils.http import is_loopback_host, probe_host_for_bind_host
 from ..utils.logging import SuppressPathAccessLogFilter, setup_logger
 from ..utils.platform import warn_unelevated_sandbox
@@ -81,13 +81,13 @@ def configure_server_process(
 @click.command("app")
 @click.option(
     "--host",
-    default="127.0.0.1",
+    default=DEFAULT_API_HOST,
     show_default=True,
     help="Bind host",
 )
 @click.option(
     "--port",
-    default=8088,
+    default=DEFAULT_API_PORT,
     type=int,
     show_default=True,
     help="Bind port",

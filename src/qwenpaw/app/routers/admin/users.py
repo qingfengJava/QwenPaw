@@ -386,21 +386,51 @@ async def get_user(username: str) -> UserView:
     return view
 
 
+def _grant_role_pg_first(username: str, role: str) -> bool:
+    """Grant *role* to *username* on the authoritative plane.
+
+    PG 优先（与 rbac/deps.py 判定链一致）：PG store 可用时写
+    ``rbac_user_roles``；否则回退文件后端 rbac.json（保持旧部署兼容）。
+    """
+    try:
+        from ...rbac.store_pg import get_pg_rbac_store
+
+        pg_store = get_pg_rbac_store()
+    except Exception:  # pylint: disable=broad-except
+        pg_store = None
+    if pg_store is not None:
+        return pg_store.assign_user_role(username, role)
+    from ...rbac.store import get_rbac_store
+
+    return get_rbac_store().grant_role(username, role)
+
+
+def _revoke_role_pg_first(username: str, role: str) -> bool:
+    """Revoke *role* from *username* on the authoritative plane (PG 优先)."""
+    try:
+        from ...rbac.store_pg import get_pg_rbac_store
+
+        pg_store = get_pg_rbac_store()
+    except Exception:  # pylint: disable=broad-except
+        pg_store = None
+    if pg_store is not None:
+        return pg_store.revoke_user_role(username, role)
+    from ...rbac.store import get_rbac_store
+
+    return get_rbac_store().revoke_role(username, role)
+
+
 @router.post("/{username}/roles", status_code=204)
 async def grant_role(username: str, body: RoleGrantBody) -> None:
     """Additively grant an RBAC role to the account."""
-    from ...rbac.store import get_rbac_store
-
     if get_user_store().get_user(username) is None:
         raise HTTPException(status_code=404, detail="User not found")
-    if not get_rbac_store().grant_role(username, body.role):
+    if not _grant_role_pg_first(username, body.role):
         raise HTTPException(status_code=400, detail="unknown role")
 
 
 @router.delete("/{username}/roles/{role}", status_code=204)
 async def revoke_role(username: str, role: str) -> None:
     """Revoke one explicit RBAC role grant."""
-    from ...rbac.store import get_rbac_store
-
-    if not get_rbac_store().revoke_role(username, role):
+    if not _revoke_role_pg_first(username, role):
         raise HTTPException(status_code=404, detail="grant not found")

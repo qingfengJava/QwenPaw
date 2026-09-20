@@ -2,8 +2,9 @@
 """RBAC 内置数据 Seed（M5+）。
 
 启动时幂等写入 PG：权限注册表 + 内置角色 + 角色权限绑定 +
-初始菜单 + 角色菜单绑定。所有写操作使用 ``INSERT ... ON CONFLICT``
-保证重复执行不报错、不产生重复数据。
+初始菜单 + 角色菜单绑定 + 用户角色绑定（flat role 映射补齐）。
+所有写操作使用 ``INSERT ... ON CONFLICT`` 保证重复执行不报错、
+不产生重复数据。
 
 挂载点：``qwenpaw.app._app.lifespan`` 的 ``_background_startup``，
 紧跟 ``bootstrap_enterprise()`` 之后（enterprise schema 就绪后）。
@@ -16,6 +17,7 @@ import logging
 from typing import List, Optional, Tuple
 
 from .models import (
+    FLAT_ROLE_TO_RBAC,
     PERM_ADMIN_AUDIT,
     PERM_ADMIN_EXPERTS,
     PERM_ADMIN_KB,
@@ -31,6 +33,7 @@ from .models import (
     PERM_KB_WRITE,
     PERM_MODEL_INVOKE,
     PERM_MODEL_MANAGE,
+    PERM_ONTOLOGY_MANAGE,
     PERM_PROJECT_MANAGE,
     PERM_PROJECT_USE,
     ROLE_EMPLOYEE,
@@ -119,6 +122,7 @@ _PERMISSION_SEED: List[Tuple[str, str, str, str, str]] = [
     (PERM_ADMIN_AUDIT, "审计日志", "admin", "audit", "menu"),
     (PERM_ADMIN_QUOTAS, "配额管理", "admin", "quotas", "menu"),
     (PERM_ADMIN_KB, "知识库管理", "admin", "kb", "menu"),
+    (PERM_ONTOLOGY_MANAGE, "本体管理", "admin", "ontology", "menu"),
     (PERM_ADMIN_ORGS, "组织管理", "admin", "orgs", "menu"),
     (PERM_ADMIN_EXPERTS, "数字员工管理", "admin", "experts", "menu"),
     (PERM_ADMIN_PLATFORM, "平台管理", "admin", "platform", "menu"),
@@ -272,6 +276,9 @@ _MENU_SEED: List[
     ("menu_admin_kb", "menu_admin", "知识库管理", "menu",
      "/admin/knowledge", "Admin/Knowledge", "BookOpen",
      PERM_ADMIN_KB, 980),
+    ("menu_admin_ontology", "menu_admin", "本体管理", "menu",
+     "/admin/ontology", "Admin/Ontology", "BookOpen",
+     PERM_ONTOLOGY_MANAGE, 985),
     ("menu_admin_orgs", "menu_admin", "组织管理", "menu",
      "/admin/organization", "Admin/Organization", "UsersRound",
      PERM_ADMIN_ORGS, 990),
@@ -362,6 +369,7 @@ def seed_rbac_pg() -> bool:
         _seed_builtin_roles(pg_store)
         _seed_menus(pg_store)
         _seed_role_menus(pg_store)
+        user_role_count = _seed_user_roles(pg_store)
         # 清缓存，让后续 has_permission / get_user_menus 立刻读到新数据
         try:
             pg_store._invalidate()  # noqa: SLF001 - same package
@@ -369,9 +377,9 @@ def seed_rbac_pg() -> bool:
             pass
         logger.info(
             "rbac seed completed: %d permissions, %d builtin roles, "
-            "%d menus",
+            "%d menus, %d user-role bindings",
             len(_PERMISSION_SEED), len(_BUILTIN_ROLES_SEED),
-            len(_MENU_SEED),
+            len(_MENU_SEED), user_role_count,
         )
         return True
     except Exception:  # pylint: disable=broad-except
@@ -618,6 +626,65 @@ def _write_role_menus(pg_store, force: bool) -> None:
 def _seed_role_menus(pg_store) -> None:
     """启动 seed：仅为未绑定菜单的角色写默认绑定（不覆盖自定义）。"""
     _write_role_menus(pg_store, force=False)
+
+
+def _seed_user_roles(pg_store) -> int:
+    """启动 seed：为“零绑定”用户按 flat role 映射补齐 RBAC 角色绑定。
+
+    仅补齐 ``rbac_user_roles`` 中零绑定的用户（不覆盖已有绑定，保护运营
+    的显式授权/降级）；映射表见 :data:`models.FLAT_ROLE_TO_RBAC`
+    （admin→platform_admin、employee→employee）。与 changelog 20260920/01
+    的回填 SQL 同构（``INSERT ... ON CONFLICT DO NOTHING``，幂等）。
+
+    Returns:
+        本次补齐到至少一个角色绑定的用户数。
+    """
+    from sqlalchemy import text
+
+    async def _run() -> int:
+        processed = 0
+        async with pg_store._get_engine().begin() as conn:  # noqa: SLF001
+            rows = (
+                await conn.execute(
+                    text(
+                        "SELECT u.username, u.role FROM qwenpaw_users u "
+                        "WHERE NOT EXISTS ("
+                        "  SELECT 1 FROM rbac_user_roles ur "
+                        "  WHERE ur.tenant_id = u.tenant_id "
+                        "    AND ur.username = u.username"
+                        ")",
+                    ),
+                )
+            ).fetchall()
+            for username, flat_role in rows:
+                role_names = FLAT_ROLE_TO_RBAC.get(str(flat_role), [])
+                ensured = False
+                for role_name in role_names:
+                    row = (
+                        await conn.execute(
+                            text(
+                                "SELECT id FROM rbac_roles "
+                                "WHERE tenant_id = :tid AND name = :n",
+                            ),
+                            {"tid": _TENANT, "n": role_name},
+                        )
+                    ).fetchone()
+                    if row is None:
+                        continue
+                    await conn.execute(
+                        text(
+                            "INSERT INTO rbac_user_roles "
+                            "(username, role_id) VALUES (:u, :rid) "
+                            "ON CONFLICT DO NOTHING",
+                        ),
+                        {"u": str(username), "rid": str(row[0])},
+                    )
+                    ensured = True
+                if ensured:
+                    processed += 1
+        return processed
+
+    return pg_store._run(_run())  # noqa: SLF001
 
 
 def _delete_menus_by_ids(pg_store, menu_ids: List[str]) -> None:

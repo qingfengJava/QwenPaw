@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useDeferredValue } from "react";
+import { useEffect, useState, useDeferredValue } from "react";
 import { useParams } from "react-router-dom";
 import { Card, Modal, Table, Button, Tabs } from "@agentscope-ai/design";
 import { Suspense } from "react";
@@ -37,6 +37,8 @@ function SessionsPage() {
     setActiveTab,
     archivedCount,
   } = useSessions(aid);
+  const [filteredSessions, setFilteredSessions] = useState<Session[]>([]);
+
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
 
   // Filter states
@@ -56,34 +58,6 @@ function SessionsPage() {
 
   const deferredTitle = useDeferredValue(filterTitle);
 
-  // 筛选结果用 useMemo 派生，禁止 state + useEffect（sessions 引用
-  // 每次 render 都会变化时会造成 setFilteredSessions 无限循环）。
-  const filteredSessions = useMemo(() => {
-    let result: Session[] = sessions;
-
-    if (filterUserId) {
-      result = result.filter(
-        (session: Session) =>
-          session.user_id?.toLowerCase().includes(filterUserId.toLowerCase()),
-      );
-    }
-
-    if (filterChannel) {
-      result = result.filter(
-        (session: Session) => session.channel === filterChannel,
-      );
-    }
-
-    if (deferredTitle) {
-      result = result.filter((session: Session) => {
-        const name = session.name || "";
-        return name.toLowerCase().includes(deferredTitle.toLowerCase());
-      });
-    }
-
-    return result;
-  }, [sessions, filterUserId, filterChannel, deferredTitle]);
-
   const { message } = useAppMessage();
 
   useEffect(() => {
@@ -97,6 +71,33 @@ function SessionsPage() {
     };
     fetchChannelTypes();
   }, []);
+
+  // Filter effect
+  useEffect(() => {
+    let filtered: Session[] = sessions;
+
+    if (filterUserId) {
+      filtered = filtered.filter(
+        (session: Session) =>
+          session.user_id?.toLowerCase().includes(filterUserId.toLowerCase()),
+      );
+    }
+
+    if (filterChannel) {
+      filtered = filtered.filter(
+        (session: Session) => session.channel === filterChannel,
+      );
+    }
+
+    if (deferredTitle) {
+      filtered = filtered.filter((session: Session) => {
+        const name = session.name || "";
+        return name.toLowerCase().includes(deferredTitle.toLowerCase());
+      });
+    }
+
+    setFilteredSessions(filtered);
+  }, [sessions, filterUserId, filterChannel, deferredTitle]);
 
   // Clear selection when switching tabs
   useEffect(() => {
@@ -169,7 +170,7 @@ function SessionsPage() {
   return (
     <div className={styles.sessionsPage}>
       <PageHeader
-        items={[{ title: t("nav.control") }, { title: t("sessions.title") }]}
+        current={t("sessions.title")}
         extra={
           activeTab === "archived" ? (
             <div className={styles.headerRight}>

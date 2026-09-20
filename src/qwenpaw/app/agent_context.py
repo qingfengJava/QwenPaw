@@ -154,7 +154,10 @@ def _enforce_expert_acl(request: Request, agent_id: str) -> None:
     ``expert_``/``team_`` prefix; everything else keeps the existing
     behavior. The check mirrors ``rbac.store.agent_allowed`` semantics
     (absent grant = unrestricted) and is a no-op while
-    ``QWENPAW_RBAC_ENFORCE`` is off (gray rollout).
+    ``QWENPAW_RBAC_ENFORCE`` is off (gray rollout). 扁平 admin（flat
+    role 为 admin）恒放行：bootstrap 不变量与 ``rbac.deps`` 的
+    ``manage_allowed`` / ``_agent_use_allowed`` 同规则——治理投影的
+    部门专属 grant 只应限制普通成员，不得把管理员挡在专家面之外。
     """
     if not agent_id.startswith(("expert_", "team_")):
         return
@@ -177,6 +180,12 @@ def _enforce_expert_acl(request: Request, agent_id: str) -> None:
 
         user = get_user_store().get_user(username)
         flat_role = user.role if user is not None else ""
+        # bootstrap 不变量：扁平 admin 恒放行（与 manage_allowed /
+        # _agent_use_allowed 同规则）。"部门专属"治理投影只应限制普通
+        # 成员；否则管理员按员工巡检/配置被治理员工时会被 403（渠道接入
+        # 页逐卡拉取 /api/config/channels 即为真实触发面）。
+        if flat_role == "admin":
+            return
         if not get_rbac_store().agent_allowed(
             username,
             flat_role=flat_role,

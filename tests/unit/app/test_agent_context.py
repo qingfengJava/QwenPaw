@@ -83,11 +83,13 @@ class TestRuntimeNormalize:
 
 
 class _StubUserStore:
-    """Minimal ``users.store`` stand-in: one known admin, no one else."""
+    """Minimal ``users.store`` stand-in: alice=admin, bob=employee."""
 
     def get_user(self, username: str):
         if username == "alice":
             return SimpleNamespace(role="admin")
+        if username == "bob":
+            return SimpleNamespace(role="employee")
         return None
 
 
@@ -133,6 +135,7 @@ class TestEnforceExpertAcl:
     def test_enforce_on_denied_agent_rejected(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # 非 admin 成员被 grant 排除 → 403（admin 由 bootstrap 兜底专项覆盖）
         monkeypatch.setattr(
             "qwenpaw.app.rbac.deps.rbac_enforcement_enabled",
             lambda: True,
@@ -151,9 +154,34 @@ class TestEnforceExpertAcl:
         )
         with pytest.raises(HTTPException) as exc_info:
             _enforce_expert_acl(
-                self._request("alice"), "expert_builtin_researcher"
+                self._request("bob"), "expert_builtin_researcher"
             )
         assert exc_info.value.status_code == 403
+
+    def test_enforce_on_flat_admin_bypasses_grant(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # bootstrap 不变量：治理投影"部门专属"grant 排除 admin 时，
+        # 扁平 admin 仍须放行（与 manage_allowed/_agent_use_allowed
+        # 同规则），否则渠道接入页等管理面会命中固定 403。
+        monkeypatch.setattr(
+            "qwenpaw.app.rbac.deps.rbac_enforcement_enabled",
+            lambda: True,
+        )
+        monkeypatch.setattr(
+            "qwenpaw.app.users.store.get_user_store",
+            lambda: _StubUserStore(),
+        )
+        monkeypatch.setattr(
+            "qwenpaw.app.rbac.store.get_rbac_store",
+            lambda: SimpleNamespace(
+                agent_allowed=lambda username, flat_role="", agent_id="": False
+            ),
+        )
+        # admin + 拒绝型 grant → 不抛（grant 不得锁出管理员）
+        _enforce_expert_acl(
+            self._request("alice"), "expert_builtin_consultant"
+        )
 
     def test_enforce_on_allowed_agent_passes(
         self, monkeypatch: pytest.MonkeyPatch
@@ -173,7 +201,7 @@ class TestEnforceExpertAcl:
             ),
         )
         # Must not raise: granted access resolves to a no-op.
-        _enforce_expert_acl(self._request("alice"), "expert_builtin_researcher")
+        _enforce_expert_acl(self._request("bob"), "expert_builtin_researcher")
 
     def test_acl_infrastructure_failure_fails_open_with_warning(
         self,
@@ -199,6 +227,6 @@ class TestEnforceExpertAcl:
         )
         with caplog.at_level("WARNING"):
             _enforce_expert_acl(
-                self._request("alice"), "expert_builtin_researcher"
+                self._request("bob"), "expert_builtin_researcher"
             )
         assert "expert ACL check errored" in caplog.text

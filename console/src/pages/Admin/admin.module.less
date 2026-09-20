@@ -281,3 +281,275 @@
     opacity: 1;
   }
 }
+
+/* ==========================================================================
+   知识库工作台（T12 Admin 知识页重构）
+   画布层由 .page-content 承担（--pg-canvas 渐变），以下均为面层（--pg-*）。
+   ========================================================================== */
+
+/* 页面纵向骨架：统计筛选行 + 卡片网格 */
+.kbLayout {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pg-gutter, 16px);
+}
+
+/* 统计卡 + 筛选面（UnderlineTabs + 搜索）同行排布 */
+.kbStatsRow {
+  display: flex;
+  gap: var(--pg-gutter, 16px);
+  align-items: stretch;
+}
+
+.kbFilterCard {
+  composes: panel;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 6px var(--pg-gutter, 16px);
+}
+
+/* 库卡片网格：auto-fill 自适应列宽 */
+.kbGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: var(--pg-gutter, 16px);
+}
+
+/* 单张库卡：标准面（发丝边 + 14px 圆角 + 克制阴影），悬停抬升 */
+.kbCard {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: var(--pg-gutter, 16px) 18px;
+  background: var(--pg-surface, #fff);
+  border: 1px solid var(--pg-line, #e6eaf3);
+  border-radius: var(--pg-radius-surface, 14px);
+  box-shadow: var(--pg-shadow-sm, 0 1px 2px rgba(16, 22, 35, 0.05));
+  cursor: pointer;
+  transition:
+    box-shadow 0.15s ease,
+    transform 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.kbCard:hover {
+  border-color: var(--pg-brand-rule, #7c5cd6);
+  box-shadow: var(--pg-shadow-pop, 0 6px 20px rgba(16, 22, 35, 0.1));
+  transform: translateY(-2px);
+}
+
+.kbCardHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.kbCardIcon {
+  color: var(--pg-brand, #1a71ff);
+  font-size: 16px;
+}
+
+.kbCardName {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--pg-ink, #101623);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kbCardHead .toneTag {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.kbCardDesc {
+  margin: 0;
+  font-size: 13px;
+  color: var(--pg-ink-2, #4c5670);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 36px;
+}
+
+.kbCardMeta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--pg-ink-3, #828ca6);
+}
+
+.kbCardGrants {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+}
+
+.kbCardGrants .toneBlue,
+.kbCardGrants .toneGreen,
+.kbCardGrants .toneAmber {
+  font-size: 11px;
+  padding: 0 8px;
+}
+
+.kbCardNoGrants {
+  font-size: 12px;
+  color: var(--pg-ink-3, #828ca6);
+}
+
+.kbCardActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 8px;
+  border-top: 1px solid var(--pg-line, #e6eaf3);
+}
+
+/* Drawer 内：左树右编辑分栏 */
+.kbDocSplit {
+  display: flex;
+  gap: var(--pg-gutter, 16px);
+  align-items: stretch;
+  min-height: 420px;
+}
+
+.kbTreePanel {
+  composes: panel;
+  width: 280px;
+  flex-shrink: 0;
+  overflow: auto;
+  max-height: calc(100vh - 260px);
+}
+
+.kbEditorPanel {
+  composes: panel;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: calc(100vh - 260px);
+  overflow: auto;
+}
+
+.kbPanelTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--pg-ink, #101623);
+  margin-bottom: 4px;
+}
+
+.kbHint {
+  font-size: 12px;
+  color: var(--pg-ink-3, #828ca6);
+}
+
+/* pg 不可用时的平铺文档回退列表 */
+.kbFlatList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.kbFlatList li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: var(--pg-radius-tile, 12px);
+  cursor: pointer;
+}
+
+.kbFlatList li:hover {
+  background: var(--pg-surface-muted, #f6f8fd);
+}
+
+.kbFlatItemActive {
+  background: var(--pg-brand-wash, rgba(26, 113, 255, 0.06)) !important;
+}
+
+.kbFlatCount {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--pg-ink-3, #828ca6);
+}
+
+.kbDocHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.kbDocTitle {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--pg-ink, #101623);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 320px;
+}
+
+.kbDocVersion {
+  font-size: 12px;
+  color: var(--pg-ink-3, #828ca6);
+}
+
+/* MD 编辑器：monospace + 面内自适应高度 */
+.mdEditor {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  min-height: 260px;
+}
+
+.kbChunksBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* 检索测试台 */
+.kbSearchBench {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pg-gutter, 16px);
+}
+
+.kbSearchBar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* 导入文本弹窗表单 */
+.kbIngestForm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.kbIngestLabel {
+  font-size: 13px;
+  color: var(--pg-ink-2, #4c5670);
+  margin-top: 6px;
+}
+
+.kbIngestLabel:first-child {
+  margin-top: 0;
+}

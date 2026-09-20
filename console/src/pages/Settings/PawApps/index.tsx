@@ -43,7 +43,6 @@ export default function PawAppsPage() {
   return (
     <div className={styles.page}>
       <PageHeader
-        parent={t("nav.settings")}
         current={t("nav.pawapps", "PawApps")}
         extra={
           <Button

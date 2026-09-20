@@ -46,7 +46,12 @@ from ..config.utils import (
     read_last_api,
     strict_validate_config_file,
 )
-from ..constant import JOBS_FILE, WORKING_DIR
+from ..constant import (
+    DEFAULT_API_HOST,
+    DEFAULT_API_PORT,
+    JOBS_FILE,
+    WORKING_DIR,
+)
 from ..utils.console_static import find_qwenpaw_source_repo_root
 from .doctor_checks import check_cron_jobs_files
 
@@ -205,7 +210,7 @@ def _effective_cli_api_host_port(
         if last:
             host = host or last[0]
             port = port or last[1]
-    return host or "127.0.0.1", port or 8088
+    return host or DEFAULT_API_HOST, port or DEFAULT_API_PORT
 
 
 def _write_meta(

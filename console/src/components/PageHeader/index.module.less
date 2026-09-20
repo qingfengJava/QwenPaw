@@ -7,8 +7,10 @@
   align-items: center;
   position: relative;
   /* 左右不再自行缩进：正文内缩由 .page-content 的 --pg-gutter 统一控制，
-     保证标题与下方白面左边缘对齐 */
-  padding: 18px 2px 14px;
+     保证标题与下方白面左边缘对齐。
+     上下内边距比旧版收紧一档：路径面包屑上移到顶部导航条后，页面多了两行
+     横向条带，此处补偿以保住正文可用高度。 */
+  padding: 12px 2px;
   background: transparent;
   border-bottom: 1px solid var(--pg-line);
   flex-shrink: 0;

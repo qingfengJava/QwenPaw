@@ -2052,3 +2052,524 @@ COMMENT ON COLUMN qwenpaw_users.gender IS '性别: 0-未知, 1-男, 2-女（前�
 COMMENT ON COLUMN qwenpaw_users.position IS '职位';
 COMMENT ON COLUMN qwenpaw_users.is_superadmin IS '超管标记: TRUE 时禁止被禁用/删除/降级，默认超级管理员账号置此标记';
 CREATE INDEX IF NOT EXISTS ix_qwenpaw_users_tenant_disabled ON qwenpaw_users (tenant_id, disabled);
+
+-- [补录说明] 本块为 20260919/01 RBAC schema 变更的补同步（原变更提交时漏同步
+--            快照），2026-09-20 随数据初始化变更一并补录。
+-- [变更说明] RBAC 权限管理体系 PG 化 - 新建 9 张核心表
+-- [变更时间] 2026-09-19
+-- [变更人]   清风
+-- [适用环境] 测试环境（在已有库基础上增量执行）
+--
+-- 背景：权限元数据原为 rbac.json 文件存储，升级为 PostgreSQL 权威存储
+-- （接口不变，无 PG 部署继续走文件路径）。新建 9 张核心表：角色、权限、
+-- 角色-权限关联、用户-角色关联、菜单、角色-菜单关联、数据范围规则、
+-- 团队、团队成员关联。
+-- 全部 CREATE TABLE / INDEX IF NOT EXISTS，幂等；ID 字段 VARCHAR(64)
+-- （应用侧 shortuuid 生成）；时间字段 TIMESTAMPTZ；tenant_id 默认 'default'。
+-- alembic twin: 0042_rbac_pg_schema
+
+-- 角色主表（多租户，name 租户内唯一）
+CREATE TABLE IF NOT EXISTS rbac_roles (
+    tenant_id   VARCHAR(64)  NOT NULL DEFAULT 'default',
+    id          VARCHAR(64)  NOT NULL,
+    name        VARCHAR(64)  NOT NULL,
+    display_name VARCHAR(128) NOT NULL DEFAULT '',
+    description TEXT         NOT NULL DEFAULT '',
+    is_builtin  BOOLEAN      NOT NULL DEFAULT FALSE,
+    is_enabled  BOOLEAN      NOT NULL DEFAULT TRUE,
+    data_scope  VARCHAR(32)  NOT NULL DEFAULT 'self',
+    sort_order  INTEGER      NOT NULL DEFAULT 0,
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, id),
+    UNIQUE (tenant_id, name)
+);
+
+-- 权限注册表（code 租户内唯一，resource/action 维度）
+CREATE TABLE IF NOT EXISTS rbac_permissions (
+    tenant_id   VARCHAR(64)  NOT NULL DEFAULT 'default',
+    id          VARCHAR(64)  NOT NULL,
+    code        VARCHAR(128) NOT NULL,
+    name        VARCHAR(128) NOT NULL DEFAULT '',
+    resource    VARCHAR(64)  NOT NULL,
+    action      VARCHAR(64)  NOT NULL,
+    perm_type   VARCHAR(16)  NOT NULL DEFAULT 'api',
+    description TEXT         NOT NULL DEFAULT '',
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, id),
+    UNIQUE (tenant_id, code)
+);
+
+-- 角色-权限关联
+CREATE TABLE IF NOT EXISTS rbac_role_permissions (
+    tenant_id   VARCHAR(64)  NOT NULL DEFAULT 'default',
+    role_id     VARCHAR(64)  NOT NULL,
+    permission_id VARCHAR(64) NOT NULL,
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, role_id, permission_id)
+);
+
+-- 用户-角色关联
+CREATE TABLE IF NOT EXISTS rbac_user_roles (
+    tenant_id   VARCHAR(64)  NOT NULL DEFAULT 'default',
+    username    VARCHAR(64)  NOT NULL,
+    role_id     VARCHAR(64)  NOT NULL,
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, username, role_id)
+);
+CREATE INDEX IF NOT EXISTS ix_rbac_user_roles_username ON rbac_user_roles(tenant_id, username);
+
+-- 菜单表（树形，parent_id 自关联）
+CREATE TABLE IF NOT EXISTS rbac_menus (
+    tenant_id    VARCHAR(64)  NOT NULL DEFAULT 'default',
+    id           VARCHAR(64)  NOT NULL,
+    parent_id    VARCHAR(64),
+    name         VARCHAR(128) NOT NULL,
+    menu_type    VARCHAR(16)  NOT NULL DEFAULT 'menu',
+    path         VARCHAR(256) NOT NULL DEFAULT '',
+    component    VARCHAR(256) NOT NULL DEFAULT '',
+    icon         VARCHAR(64)  NOT NULL DEFAULT '',
+    perm_code    VARCHAR(128) NOT NULL DEFAULT '',
+    sort_order   INTEGER      NOT NULL DEFAULT 0,
+    is_visible   BOOLEAN      NOT NULL DEFAULT TRUE,
+    is_enabled   BOOLEAN      NOT NULL DEFAULT TRUE,
+    is_external  BOOLEAN      NOT NULL DEFAULT FALSE,
+    redirect     VARCHAR(256) NOT NULL DEFAULT '',
+    created_at   TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at   TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, id)
+);
+CREATE INDEX IF NOT EXISTS ix_rbac_menus_parent ON rbac_menus(tenant_id, parent_id);
+
+-- 角色-菜单关联
+CREATE TABLE IF NOT EXISTS rbac_role_menus (
+    tenant_id   VARCHAR(64)  NOT NULL DEFAULT 'default',
+    role_id     VARCHAR(64)  NOT NULL,
+    menu_id     VARCHAR(64)  NOT NULL,
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, role_id, menu_id)
+);
+
+-- 数据范围规则表（role × resource 唯一）
+CREATE TABLE IF NOT EXISTS rbac_data_scopes (
+    tenant_id    VARCHAR(64)  NOT NULL DEFAULT 'default',
+    id           VARCHAR(64)  NOT NULL,
+    role_id      VARCHAR(64)  NOT NULL,
+    resource     VARCHAR(64)  NOT NULL,
+    scope_type   VARCHAR(32)  NOT NULL DEFAULT 'self',
+    custom_dept_ids JSONB     NOT NULL DEFAULT '[]',
+    created_at   TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at   TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, id),
+    UNIQUE (tenant_id, role_id, resource)
+);
+
+-- 用户组/团队表
+CREATE TABLE IF NOT EXISTS rbac_teams (
+    tenant_id    VARCHAR(64)  NOT NULL DEFAULT 'default',
+    id           VARCHAR(64)  NOT NULL,
+    name         VARCHAR(64)  NOT NULL,
+    display_name VARCHAR(128) NOT NULL DEFAULT '',
+    description  TEXT         NOT NULL DEFAULT '',
+    created_at   TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at   TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, id),
+    UNIQUE (tenant_id, name)
+);
+
+-- 团队成员关联
+CREATE TABLE IF NOT EXISTS rbac_team_members (
+    tenant_id   VARCHAR(64)  NOT NULL DEFAULT 'default',
+    team_id     VARCHAR(64)  NOT NULL,
+    username    VARCHAR(64)  NOT NULL,
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, team_id, username)
+);
+CREATE INDEX IF NOT EXISTS ix_rbac_team_members_user ON rbac_team_members(tenant_id, username);
+
+-- [变更说明] 企业级 RBAC 初始化 - 用户↔角色绑定回填 + 默认超管保护位置位
+-- [变更时间] 2026-09-20
+-- [变更人]   清风
+-- [适用环境] 测试环境（在已有库基础上增量执行）
+-- [同步至 db/feature/agent_run_logs_20260908/test.sql] 是
+-- [同步至 db/feature/agent_run_logs_20260908/prod.sql] 是
+--
+-- 背景：20260919 RBAC PG 化（changelog/20260919/01_rbac_pg_schema.sql）后，
+-- 启动 seed 契约仅覆盖权限/内置角色/菜单/角色-菜单四类元数据，未覆盖
+-- "用户↔角色绑定"（rbac_user_roles），导致存量账号与新建超管均无绑定行，
+-- /auth/menus、/auth/permissions 恒为空。本变更（全部幂等，可重复执行）：
+--   1) 为"零绑定"用户按 flat role 映射补齐 rbac_user_roles
+--      （admin→platform_admin、employee→employee）；已有绑定的用户不
+--      覆盖（保护运营的显式授权/降级）；
+--   2) 内置默认超管 admin 若存在则置 is_superadmin=TRUE（列已在 0043
+--      就绪；语义与 seed_default_admin 一致：禁止被禁用/降级）。
+-- 说明：admin 账号本体由管理接口 POST /api/admin/users 创建（口令需应用侧
+-- argon2id 散列，SQL 无法生成）；空库部署由应用启动 seed_default_admin
+-- 自动创建，不依赖本文件。
+-- 运行时防复发：应用侧 seed 同步增补 _seed_user_roles（第 5 步），
+-- 启动即自动补齐绑定（与下方 SQL 同构）。
+
+-- 1) 用户↔角色绑定回填（仅"零绑定"用户，按 flat role 映射）
+INSERT INTO rbac_user_roles (username, role_id)
+SELECT u.username, r.id
+FROM qwenpaw_users u
+JOIN rbac_roles r
+  ON r.tenant_id = u.tenant_id
+ AND r.name = CASE u.role
+        WHEN 'admin'    THEN 'platform_admin'
+        WHEN 'employee' THEN 'employee'
+   END
+WHERE NOT EXISTS (
+    SELECT 1 FROM rbac_user_roles ur
+    WHERE ur.tenant_id = u.tenant_id AND ur.username = u.username
+)
+ON CONFLICT DO NOTHING;
+
+-- 2) 默认超管保护位置位（幂等）
+UPDATE qwenpaw_users
+SET is_superadmin = TRUE
+WHERE tenant_id = 'default'
+  AND username = 'admin'
+  AND is_superadmin = FALSE;
+
+-- 验证（手工执行）：
+-- SELECT ur.username, r.name FROM rbac_user_roles ur
+-- JOIN rbac_roles r ON r.tenant_id = ur.tenant_id AND r.id = ur.role_id;
+-- SELECT username, is_superadmin FROM qwenpaw_users WHERE username = 'admin';
+
+
+-- [变更说明] 知识本体平台 T1 —— kb_spaces 增 org_id 列 + scope CHECK 枚举扩
+--            'org'（四级权限 personal/team/org/enterprise；org 即租户边界）：
+--            1) org_id：org scope 的归属组织（与 orgs.id 同域，单租户恒为 default）；
+--            2) ck_kb_spaces_scope 约束换血（幂等 DO 块）；
+--            3) ix_kb_spaces_org 覆盖索引。
+-- [变更时间] 2026-09-20
+-- [对应迁移] alembic 0044_kb_org_scope（Revises 0043_employee_profile）
+ALTER TABLE kb_spaces
+    ADD COLUMN IF NOT EXISTS org_id VARCHAR(64) NOT NULL DEFAULT 'default';
+
+DO $$
+BEGIN
+    ALTER TABLE kb_spaces
+        DROP CONSTRAINT IF EXISTS ck_kb_spaces_scope;
+    ALTER TABLE kb_spaces
+        ADD CONSTRAINT ck_kb_spaces_scope
+        CHECK (scope IN ('personal', 'team', 'org', 'enterprise'));
+END
+$$;
+
+CREATE INDEX IF NOT EXISTS ix_kb_spaces_org
+    ON kb_spaces (tenant_id, org_id);
+
+COMMENT ON COLUMN kb_spaces.org_id IS
+    'org scope 的归属组织 id（org 即租户边界，与 orgs.id 同域；'
+    '单租户部署恒为 default；org 库对组织内全部认证成员可读）';
+
+
+-- [变更说明] 知识本体平台 T2 —— kb_chunks 增本体挂接元数据 4 列
+--            （Evidence 层证据元数据预留，迁移先行、写入后接）：
+--            knowledge_id（本体知识节点，T4 回填）/ entity_ids（实体 id
+--            数组 JSONB）/ valid_from / valid_to（事实有效期）。
+--            全部 NULL-able 纯加列，存量行语义不变。
+-- [变更时间] 2026-09-20
+-- [对应迁移] alembic 0045_kb_chunk_meta（Revises 0044_kb_org_scope）
+ALTER TABLE kb_chunks ADD COLUMN IF NOT EXISTS knowledge_id VARCHAR(64);
+
+ALTER TABLE kb_chunks ADD COLUMN IF NOT EXISTS entity_ids JSONB;
+
+ALTER TABLE kb_chunks ADD COLUMN IF NOT EXISTS valid_from TIMESTAMPTZ;
+
+ALTER TABLE kb_chunks ADD COLUMN IF NOT EXISTS valid_to TIMESTAMPTZ;
+
+COMMENT ON COLUMN kb_chunks.knowledge_id IS
+    '切片归属的本体知识节点 id（T4 摄入回填；NULL=未挂接本体）';
+
+COMMENT ON COLUMN kb_chunks.entity_ids IS
+    '切片提及的实体 id 数组（JSONB；T4 抽取回填，编排器过滤/扩展用）';
+
+COMMENT ON COLUMN kb_chunks.valid_from IS
+    '事实有效期起（NULL=无时效约束；时效过滤与过期降权用）';
+
+COMMENT ON COLUMN kb_chunks.valid_to IS
+    '事实有效期止（NULL=无时效约束；时效过滤与过期降权用）';
+
+
+-- [变更说明] 知识本体平台 T3 —— LLM Wiki 知识层（治理闭环）：
+--            kb_documents wiki 化 8 列（knowledge_status/domain/doc_type/
+--            confidence/valid_from/valid_to/reviewed_by/review_note，
+--            存量回填 published 语义=现行即时生效）+ kb_reviews 审核流水
+--            + kb_conflicts 冲突候选 + ix_kb_documents_status 索引。
+--            检索默认只出 published 且在有效期内。
+-- [变更时间] 2026-09-20
+-- [对应迁移] alembic 0046_kb_wiki（Revises 0045_kb_chunk_meta）
+ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS knowledge_status
+    VARCHAR(20) NOT NULL DEFAULT 'published';
+
+ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS domain
+    VARCHAR(64) NOT NULL DEFAULT '';
+
+ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS doc_type
+    VARCHAR(32) NOT NULL DEFAULT 'doc';
+
+ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS confidence
+    REAL NOT NULL DEFAULT 1.0;
+
+ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS valid_from TIMESTAMPTZ;
+
+ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS valid_to TIMESTAMPTZ;
+
+ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS reviewed_by
+    VARCHAR(64) NOT NULL DEFAULT '';
+
+ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS review_note
+    TEXT NOT NULL DEFAULT '';
+
+CREATE TABLE IF NOT EXISTS kb_reviews (
+    tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
+    id VARCHAR(64) NOT NULL,
+    space_id VARCHAR(64) NOT NULL,
+    document_id VARCHAR(64) NOT NULL,
+    action VARCHAR(20) NOT NULL,
+    reviewer VARCHAR(64) NOT NULL DEFAULT '',
+    comment TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, id)
+);
+
+CREATE TABLE IF NOT EXISTS kb_conflicts (
+    tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
+    id VARCHAR(64) NOT NULL,
+    space_id VARCHAR(64) NOT NULL,
+    document_id_a VARCHAR(64) NOT NULL,
+    document_id_b VARCHAR(64) NOT NULL,
+    conflict_type VARCHAR(32) NOT NULL DEFAULT 'duplicate_title',
+    affected_scope VARCHAR(128) NOT NULL DEFAULT '',
+    priority INT NOT NULL DEFAULT 3,
+    resolution_status VARCHAR(20) NOT NULL DEFAULT 'open',
+    resolved_by VARCHAR(64) NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, id)
+);
+
+CREATE INDEX IF NOT EXISTS ix_kb_documents_status
+    ON kb_documents (tenant_id, space_id, knowledge_status);
+
+
+-- [变更说明] 知识本体平台 T4 —— Ontology 数据面：ontology_types（L0/L1 种子 22 条）+ objects + relations + state_transitions + rules + actions + kb_object_links 七表与七索引。
+-- [变更时间] 2026-09-20
+-- [对应迁移] alembic 0047_kb_ontology（Revises 0046_kb_wiki）
+CREATE TABLE IF NOT EXISTS ontology_types (
+    tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
+    id VARCHAR(64) NOT NULL,
+    name VARCHAR(128) NOT NULL,
+    layer VARCHAR(8) NOT NULL DEFAULT 'L1',
+    parent_id VARCHAR(64) NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    attributes_schema JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, id)
+);
+
+CREATE TABLE IF NOT EXISTS ontology_objects (
+    tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
+    id VARCHAR(64) NOT NULL,
+    type_id VARCHAR(64) NOT NULL,
+    name VARCHAR(256) NOT NULL,
+    aliases JSONB NOT NULL DEFAULT '[]'::jsonb,
+    attributes JSONB NOT NULL DEFAULT '{}'::jsonb,
+    state VARCHAR(64) NOT NULL DEFAULT '',
+    state_detail JSONB NOT NULL DEFAULT '{}'::jsonb,
+    owner_id VARCHAR(64) NOT NULL DEFAULT '',
+    org_id VARCHAR(64) NOT NULL DEFAULT '',
+    department_id VARCHAR(64) NOT NULL DEFAULT '',
+    status VARCHAR(20) NOT NULL DEFAULT 'active',
+    source VARCHAR(20) NOT NULL DEFAULT 'manual',
+    evidence_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
+    is_delete BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, id)
+);
+
+CREATE TABLE IF NOT EXISTS ontology_relations (
+    tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
+    id VARCHAR(64) NOT NULL,
+    type VARCHAR(64) NOT NULL,
+    from_type VARCHAR(64) NOT NULL,
+    from_id VARCHAR(64) NOT NULL,
+    to_type VARCHAR(64) NOT NULL,
+    to_id VARCHAR(64) NOT NULL,
+    valid_from TIMESTAMPTZ,
+    valid_to TIMESTAMPTZ,
+    confidence REAL NOT NULL DEFAULT 1.0,
+    source VARCHAR(20) NOT NULL DEFAULT 'manual',
+    evidence_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, id)
+);
+
+CREATE TABLE IF NOT EXISTS ontology_state_transitions (
+    tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
+    id VARCHAR(64) NOT NULL,
+    object_id VARCHAR(64) NOT NULL,
+    from_state VARCHAR(64) NOT NULL DEFAULT '',
+    to_state VARCHAR(64) NOT NULL DEFAULT '',
+    trigger_type VARCHAR(64) NOT NULL DEFAULT '',
+    preconditions JSONB NOT NULL DEFAULT '{}'::jsonb,
+    permission VARCHAR(128) NOT NULL DEFAULT '',
+    postconditions JSONB NOT NULL DEFAULT '{}'::jsonb,
+    audit_required BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, id)
+);
+
+CREATE TABLE IF NOT EXISTS ontology_rules (
+    tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
+    id VARCHAR(64) NOT NULL,
+    name VARCHAR(256) NOT NULL,
+    scope VARCHAR(64) NOT NULL DEFAULT '',
+    object_type VARCHAR(64) NOT NULL DEFAULT '',
+    priority INT NOT NULL DEFAULT 3,
+    conditions JSONB NOT NULL DEFAULT '{}'::jsonb,
+    then_actions JSONB NOT NULL DEFAULT '{}'::jsonb,
+    else_actions JSONB NOT NULL DEFAULT '{}'::jsonb,
+    effective_from TIMESTAMPTZ,
+    version INT NOT NULL DEFAULT 1,
+    evidence_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, id)
+);
+
+CREATE TABLE IF NOT EXISTS ontology_actions (
+    tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
+    id VARCHAR(64) NOT NULL,
+    name VARCHAR(256) NOT NULL,
+    object_type VARCHAR(64) NOT NULL DEFAULT '',
+    input_schema JSONB NOT NULL DEFAULT '{}'::jsonb,
+    preconditions JSONB NOT NULL DEFAULT '{}'::jsonb,
+    policy JSONB NOT NULL DEFAULT '{}'::jsonb,
+    approval JSONB NOT NULL DEFAULT '{}'::jsonb,
+    execution JSONB NOT NULL DEFAULT '{}'::jsonb,
+    postconditions JSONB NOT NULL DEFAULT '{}'::jsonb,
+    rollback JSONB NOT NULL DEFAULT '{}'::jsonb,
+    auditable BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, id)
+);
+
+CREATE TABLE IF NOT EXISTS kb_object_links (
+    tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
+    id VARCHAR(64) NOT NULL,
+    kb_space_id VARCHAR(64) NOT NULL,
+    kb_document_id VARCHAR(64) NOT NULL,
+    object_type VARCHAR(64) NOT NULL,
+    object_id VARCHAR(64) NOT NULL,
+    relation VARCHAR(48) NOT NULL DEFAULT 'knowledge_mentions',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, id)
+);
+
+CREATE INDEX IF NOT EXISTS ix_ontology_objects_type
+    ON ontology_objects (tenant_id, type_id);
+
+CREATE INDEX IF NOT EXISTS ix_ontology_objects_org
+    ON ontology_objects (tenant_id, org_id, department_id);
+
+CREATE INDEX IF NOT EXISTS ix_ontology_relations_from
+    ON ontology_relations (tenant_id, from_id);
+
+CREATE INDEX IF NOT EXISTS ix_ontology_relations_to
+    ON ontology_relations (tenant_id, to_id);
+
+CREATE INDEX IF NOT EXISTS ix_ontology_relations_type
+    ON ontology_relations (tenant_id, type);
+
+CREATE INDEX IF NOT EXISTS ix_kb_object_links_document
+    ON kb_object_links (tenant_id, kb_document_id);
+
+CREATE INDEX IF NOT EXISTS ix_kb_object_links_object
+    ON kb_object_links (tenant_id, object_id);
+
+-- L0 九类元模型 + L1 十三类业务核心类型种子
+-- （与 qwenpaw.app.ontology.models.SEED_TYPES 字面一致）
+INSERT INTO ontology_types
+    (tenant_id, id, name, layer, parent_id, description)
+VALUES
+    ('default', 'l0.object', '对象', 'L0', '',
+     '一切实体的元类型；L1 业务实体类型的父层'),
+    ('default', 'l0.relation', '关系', 'L0', '', '对象间有向关系的元类型'),
+    ('default', 'l0.state', '状态', 'L0', '', '对象生命周期阶段的元类型'),
+    ('default', 'l0.transition', '状态迁移', 'L0', '',
+     '状态间受控流转的元类型'),
+    ('default', 'l0.rule', '规则', 'L0', '',
+     '业务约束与自动行为的元类型（本期仅建模）'),
+    ('default', 'l0.action', '动作', 'L0', '',
+     '可执行操作的元类型（本期仅建模）'),
+    ('default', 'l0.event', '事件', 'L0', '', '状态迁移触发器的分类元类型'),
+    ('default', 'l0.knowledge', '知识', 'L0', '',
+     'LLM Wiki 层已审知识节点的元类型'),
+    ('default', 'l0.evidence', '证据', 'L0', '',
+     'RAG 层原始证据材料（文档/切片）的元类型'),
+    ('default', 'l1.person', '人员', 'L1', 'l0.object',
+     '员工/联系人等自然人对象'),
+    ('default', 'l1.org', '组织', 'L1', 'l0.object',
+     '公司/法人主体（org 即租户边界）'),
+    ('default', 'l1.department', '部门', 'L1', 'l0.object',
+     '组织内部门（物化路径层级）'),
+    ('default', 'l1.team', '团队', 'L1', 'l0.object',
+     '跨部门协作团队/专家组'),
+    ('default', 'l1.role', '角色', 'L1', 'l0.object', '岗位/职能角色'),
+    ('default', 'l1.customer', '客户', 'L1', 'l0.object', '外部客户主体'),
+    ('default', 'l1.supplier', '供应商', 'L1', 'l0.object',
+     '外部供应商主体'),
+    ('default', 'l1.product', '产品', 'L1', 'l0.object', '产品/服务线'),
+    ('default', 'l1.contract', '合同', 'L1', 'l0.object', '合同/协议对象'),
+    ('default', 'l1.project', '项目', 'L1', 'l0.object', '项目/工程对象'),
+    ('default', 'l1.task', '任务', 'L1', 'l0.object', '任务/工单对象'),
+    ('default', 'l1.document', '文档', 'L1', 'l0.evidence',
+     '知识库文档（kb_documents 互引侧）'),
+    ('default', 'l1.knowledge', '知识', 'L1', 'l0.knowledge',
+     '已审知识节点（知识层挂接点）')
+ON CONFLICT (tenant_id, id) DO NOTHING;
+
+COMMENT ON TABLE ontology_types IS
+    '本体类型（L0 元模型 + L1 业务核心种子；L2+ 企业自定义分层预留）';
+
+COMMENT ON TABLE ontology_objects IS
+    '本体对象实例（state 为业务状态机标签；迁移历史见 '
+    'ontology_state_transitions）';
+
+COMMENT ON TABLE ontology_relations IS
+    '本体有向关系边（valid_from/valid_to 表达关系时效）';
+
+COMMENT ON TABLE ontology_state_transitions IS
+    '状态迁移留档（trigger 字段因 PG 保留字更名 trigger_type；'
+    '仅建模无运行时）';
+
+COMMENT ON TABLE ontology_rules IS
+    '业务规则留档（条件 DSL 评估引擎为后续里程碑）';
+
+COMMENT ON TABLE ontology_actions IS
+    '动作定义留档（执行/审批链为后续里程碑，复用 app/approvals）';
+
+COMMENT ON TABLE kb_object_links IS
+    '知识与本体对象互引（relation: knowledge_mentions/'
+    'knowledge_supports_object/knowledge_defines_rule）';
+
+-- 验证：SELECT count(*) FROM ontology_types;  -- 期望 >= 22（种子幂等）
+
+
+
+-- [变更说明] 知识本体平台 T6 —— 绑定主体泛化：agent_kb_bindings 加 principal_type（agent|team，team 行 agent_id 列存 team_{team_id} 形态，列名不改保兼容）。
+-- [变更时间] 2026-09-20
+-- [对应迁移] alembic 0048_binding_principal（Revises 0047_kb_ontology）
+ALTER TABLE agent_kb_bindings ADD COLUMN IF NOT EXISTS principal_type
+    VARCHAR(16) NOT NULL DEFAULT 'agent';
+
+COMMENT ON COLUMN agent_kb_bindings.principal_type IS
+    '绑定主体类型: agent-数字员工直绑(存量语义), team-专家组绑'
+    '(agent_id 列存 team_{team_id} 运行态形态, 列名不改保兼容)';
+
+-- 验证：SELECT count(*) FROM information_schema.columns
+--       WHERE table_name='agent_kb_bindings' AND column_name='principal_type';
+

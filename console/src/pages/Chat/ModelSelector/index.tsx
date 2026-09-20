@@ -17,6 +17,7 @@ import {
   Eye,
   GitBranch,
   LoaderCircle,
+  Lock,
   Search,
   Settings,
   Settings2,
@@ -30,6 +31,7 @@ import { formatTokenCount } from "../../../utils/tokenFormat";
 import { useTheme } from "../../../contexts/ThemeContext";
 import { ModelConfigEditor } from "../../Settings/Models/components/modals/ModelConfigEditor";
 import { useAgentStore } from "../../../stores/agentStore";
+import { useManageable } from "../../../hooks/useManageable";
 import { confirmFreeModelSwitch } from "@/utils/freeModelSwitchWarning";
 import { ProviderIcon } from "../../Settings/Models/components/ProviderIconComponent";
 import { useTurnUsageStore } from "../turnUsageStore";
@@ -132,6 +134,12 @@ export default function ModelSelector({
   const location = useLocation();
   const navigate = useNavigate();
   const { selectedAgent } = useAgentStore();
+  // 后台配置域：无该员工管理授权时模型选择器只读（仅展示当前模型，不可切换）。
+  // 切模型属 S1 共享配置写，后端 require_agent_manage 已挂闸；前端只读化避免
+  // 无谓 403。manageable 来自后端注册表（禁前端复刻判定）；loading/未知时不禁用，
+  // 由后端闸门兜底（单机免认证部署 manageable=true，行为零变化）。
+  const { manageable } = useManageable(selectedAgent);
+  const modelReadOnly = manageable === false;
   const { isDark } = useTheme();
   // 当前正在配置的模型（使用现场模型能力配置弹层）
   const [configTarget, setConfigTarget] = useState<{
@@ -399,6 +407,10 @@ export default function ModelSelector({
 
   const handleOpenChange = useCallback(
     async (next: boolean) => {
+      // 只读态（无管理授权）：拦截展开，模型不可切换
+      if (modelReadOnly) {
+        return;
+      }
       setOpen(next);
       if (next) {
         try {
@@ -408,7 +420,7 @@ export default function ModelSelector({
         }
       }
     },
-    [refreshActiveModels],
+    [modelReadOnly, refreshActiveModels],
   );
 
   const activateModel = async (providerId: string, modelId: string) => {
@@ -1223,7 +1235,12 @@ export default function ModelSelector({
         <Tooltip
           mouseEnterDelay={0.5}
           title={
-            activeModel ? (
+            modelReadOnly ? (
+              t(
+                "modelSelector.readOnlyNoManage",
+                "无该员工配置权限，仅可查看当前模型",
+              )
+            ) : activeModel ? (
               <div className={styles.capabilityCard}>
                 <div className={styles.capabilityCardTitle}>
                   {activeModelName}
@@ -1287,11 +1304,17 @@ export default function ModelSelector({
             type="button"
             aria-expanded={open}
             aria-controls={panelId}
+            aria-disabled={modelReadOnly}
             aria-label={t("chat.modelSelectTooltip")}
-            className={[styles.trigger, open ? styles.triggerActive : ""].join(
-              " ",
-            )}
+            className={[
+              styles.trigger,
+              open ? styles.triggerActive : "",
+              modelReadOnly ? styles.triggerReadOnly : "",
+            ].join(" ")}
           >
+            {modelReadOnly && (
+              <Lock size={12} className={styles.readOnlyLock} />
+            )}
             {saving && <LoaderCircle size={12} className={styles.spinning} />}
             {showActiveProviderIcon && activeProviderId && (
               <ProviderIcon providerId={activeProviderId} size={16} />

@@ -1,61 +1,39 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Button, Checkbox, Form, Input, Modal, Select } from "antd";
+import { Button, Checkbox, Form, Input, Modal } from "antd";
 import { useAppMessage } from "../../hooks/useAppMessage";
-import type { LucideIcon } from "lucide-react";
 import {
-  Boxes,
   Github,
   Globe2,
   Languages,
   LockKeyhole,
   ShieldAlert,
-  ShieldCheck,
   UserRound,
-  Users,
-  Workflow,
 } from "lucide-react";
-import { authApi, type OrgInfo } from "../../api/modules/auth";
+import { authApi } from "../../api/modules/auth";
 import { setAuthToken } from "../../api/config";
-import BrandMark, { BRAND_NAME, OS_BRAND_NAME } from "../../components/BrandMark";
+import BrandMark, { BRAND_NAME } from "../../components/BrandMark";
+import { useTheme } from "../../contexts/ThemeContext";
 import { getPostLoginHref } from "../../utils/navigationMode";
 import styles from "./index.module.less";
-
-/**
- * 品牌展示区能力卡片元数据：图标 + 文案键。
- * 文案全部走 login.* i18n 键，此处只固定图标与键名，禁止出现任何硬编码业务文案。
- */
-const BRAND_FEATURES: {
-  key: string;
-  Icon: LucideIcon;
-}[] = [
-  { key: "Team", Icon: Users },
-  { key: "Orchestrate", Icon: Workflow },
-  { key: "Skills", Icon: Boxes },
-];
 
 export default function LoginPage() {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const { isDark } = useTheme();
   const [loading, setLoading] = useState(false);
   const [isRegister, setIsRegister] = useState(false);
   const [hasUsers, setHasUsers] = useState(true);
   const [registrationEnabled, setRegistrationEnabled] = useState(false);
-  // 默认超管仍用内置口令时展示提示条（引导首次登录后立即改密）。
-  const [defaultAdminHint, setDefaultAdminHint] = useState(false);
   const [isHub, setIsHub] = useState(false);
   const [disclaimerAccepted, setDisclaimerAccepted] = useState(false);
   const [termsOpen, setTermsOpen] = useState(false);
   const [termsRead, setTermsRead] = useState(false);
-  // Phase 4: 注册页组织下拉 + 登录页"记住我"。
-  const [organizations, setOrganizations] = useState<OrgInfo[]>([]);
-  const [rememberMe, setRememberMe] = useState(false);
   const [pendingCredentials, setPendingCredentials] = useState<{
     username: string;
     password: string;
-    orgId?: string;
   } | null>(null);
   const { message } = useAppMessage();
   const rawRedirect = searchParams.get("redirect") || "/chat";
@@ -86,7 +64,6 @@ export default function LoginPage() {
         }
         setHasUsers(res.has_users);
         setRegistrationEnabled(Boolean(res.registration_enabled));
-        setDefaultAdminHint(Boolean(res.default_admin_hint));
         setIsHub(res.mode === "hub");
         if (!res.has_users) {
           setIsRegister(true);
@@ -95,54 +72,21 @@ export default function LoginPage() {
       .catch(() => {});
   }, [finishNavigation, redirect]);
 
-  // Phase 4: 进入注册模式时拉取可选组织列表。
-  // 后端 orgs service 不可用时返回空列表，下拉自动隐藏（参见下方渲染）。
-  useEffect(() => {
-    if (!isRegister) {
-      return;
-    }
-    let cancelled = false;
-    authApi
-      .getOrgs()
-      .then((orgs) => {
-        if (!cancelled) {
-          setOrganizations(orgs);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setOrganizations([]);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [isRegister]);
-
   const submitCredentials = async (values: {
     username: string;
     password: string;
-    orgId?: string;
   }) => {
     setLoading(true);
     try {
       if (isRegister) {
-        const res = await authApi.register(
-          values.username,
-          values.password,
-          values.orgId,
-        );
+        const res = await authApi.register(values.username, values.password);
         if (res.token) {
           setAuthToken(res.token);
           message.success(t("login.registerSuccess"));
           finishNavigation(redirect);
         }
       } else {
-        const res = await authApi.login(
-          values.username,
-          values.password,
-          rememberMe,
-        );
+        const res = await authApi.login(values.username, values.password);
         if (res.token) {
           setAuthToken(res.token);
           finishNavigation(redirect);
@@ -168,22 +112,13 @@ export default function LoginPage() {
     }
   };
 
-  const onFinish = async (values: {
-    username: string;
-    password: string;
-    org_id?: string;
-  }) => {
-    const payload = {
-      username: values.username,
-      password: values.password,
-      orgId: values.org_id,
-    };
+  const onFinish = async (values: { username: string; password: string }) => {
     if (isHub && !disclaimerAccepted) {
-      setPendingCredentials(payload);
+      setPendingCredentials(values);
       openTerms();
       return;
     }
-    await submitCredentials(payload);
+    await submitCredentials(values);
   };
 
   const openTerms = () => {
@@ -220,71 +155,62 @@ export default function LoginPage() {
   };
 
   return (
-    <div className={styles.page}>
-      {/* 左栏品牌展示区：体现 SmartWork「数字员工 OS」核心定位，
-          文案全部来自 login.* i18n 键（品牌名走 {{brand}} 插值）。 */}
-      <section className={styles.brandPanel}>
-        <div className={styles.brandGlow} aria-hidden="true" />
-        <div className={styles.brandInner}>
-          <div className={styles.brandHead}>
-            <BrandMark size={52} />
-            <span className={styles.brandName}>{OS_BRAND_NAME}</span>
+    <div
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        overflowY: "auto",
+        padding: "24px 16px",
+        background: isDark
+          ? "linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%)"
+          : "linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%)",
+      }}
+    >
+      <div
+        style={{
+          width: 400,
+          maxWidth: "100%",
+          padding: 32,
+          borderRadius: 12,
+          background: isDark ? "#1f1f1f" : "#fff",
+          boxShadow: isDark
+            ? "0 4px 24px rgba(0,0,0,0.4)"
+            : "0 4px 24px rgba(0,0,0,0.1)",
+        }}
+      >
+        <div style={{ textAlign: "center", marginBottom: 32 }}>
+          <BrandMark size={52} />
+          <div
+            style={{
+              marginTop: 12,
+              marginBottom: 10,
+              fontSize: 19,
+              fontWeight: 700,
+              letterSpacing: "-0.011em",
+              color: isDark ? "rgba(255,255,255,0.92)" : "#101623",
+            }}
+          >
+            {BRAND_NAME}
           </div>
-          <h1 className={styles.slogan}>
-            {t("login.brandSlogan", { brand: BRAND_NAME })}
-          </h1>
-          <p className={styles.subSlogan}>{t("login.brandSubSlogan")}</p>
-          <div className={styles.featureGrid}>
-            {BRAND_FEATURES.map(({ key, Icon }) => (
-              <div className={styles.featureCard} key={key}>
-                <span className={styles.featureIcon}>
-                  <Icon size={18} />
-                </span>
-                <div className={styles.featureText}>
-                  <div className={styles.featureTitle}>
-                    {t(`login.feature${key}Title`)}
-                  </div>
-                  <div className={styles.featureDesc}>
-                    {t(`login.feature${key}Desc`)}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className={styles.brandFoot}>
-            <ShieldCheck size={14} aria-hidden="true" />
-            <span>{t("login.brandPrivacyNote")}</span>
-          </div>
-        </div>
-      </section>
-
-      {/* 右栏表单区：窄屏时顶部补精简品牌头，宽屏隐藏。 */}
-      <section className={styles.formPanel}>
-        <div className={styles.formInner}>
-          <div className={styles.mobileBrand}>
-            <BrandMark size={40} />
-            <span className={styles.mobileBrandName}>{BRAND_NAME}</span>
-          </div>
-          <div className={styles.formHeader}>
-            <h2 className={styles.formTitle}>
-              {isRegister
-                ? t("login.registerTitle")
-                : t("login.title", { brand: BRAND_NAME })}
-            </h2>
-            {!hasUsers && <p className={styles.formHint}>{t("login.firstUserHint")}</p>}
-          </div>
-
-          {defaultAdminHint && (
-            <div className={styles.defaultAdminHint}>
-              <ShieldAlert size={16} aria-hidden="true" />
-              <span>
-                {t(
-                  "login.defaultAdminHint",
-                  "默认管理员 admin / 密码 admin123，首次登录后请立即修改密码",
-                )}
-              </span>
-            </div>
+          <h2 style={{ margin: 0, fontWeight: 600, fontSize: 20 }}>
+            {isRegister
+              ? t("login.registerTitle")
+              : t("login.title", { brand: BRAND_NAME })}
+          </h2>
+          {!hasUsers && (
+            <p
+              style={{
+                margin: "8px 0 0",
+                color: isDark ? "rgba(255,255,255,0.45)" : "#666",
+                fontSize: 13,
+              }}
+            >
+              {t("login.firstUserHint")}
+            </p>
           )}
+        </div>
 
         <Form
           layout="vertical"
@@ -297,7 +223,14 @@ export default function LoginPage() {
             rules={[{ required: true, message: t("login.usernameRequired") }]}
           >
             <Input
-              prefix={<UserRound size={16} className={styles.inputIcon} />}
+              prefix={
+                <UserRound
+                  size={16}
+                  style={{
+                    color: isDark ? "rgba(255,255,255,0.45)" : undefined,
+                  }}
+                />
+              }
               placeholder={t("login.usernamePlaceholder")}
               autoFocus
             />
@@ -308,55 +241,17 @@ export default function LoginPage() {
             rules={[{ required: true, message: t("login.passwordRequired") }]}
           >
             <Input.Password
-              prefix={<LockKeyhole size={16} className={styles.inputIcon} />}
+              prefix={
+                <LockKeyhole
+                  size={16}
+                  style={{
+                    color: isDark ? "rgba(255,255,255,0.45)" : undefined,
+                  }}
+                />
+              }
               placeholder={t("login.passwordPlaceholder")}
             />
           </Form.Item>
-
-          {/* Phase 4: 注册模式下显示所属组织下拉（后端 orgs service
-              不可用时 organizations 为空，自动隐藏）。
-              只有一个组织时预选中，避免多余点击。 */}
-          {isRegister && organizations.length > 0 && (
-            <Form.Item
-              name="org_id"
-              label={t("login.organizationLabel")}
-              initialValue={
-                organizations.length === 1 ? organizations[0].id : undefined
-              }
-              rules={
-                organizations.length > 1
-                  ? [
-                      {
-                        required: true,
-                        message: t("login.organizationRequired"),
-                      },
-                    ]
-                  : []
-              }
-            >
-              <Select
-                placeholder={t("login.organizationPlaceholder")}
-                options={organizations.map((org) => ({
-                  value: org.id,
-                  label: org.name,
-                }))}
-                disabled={organizations.length === 1}
-              />
-            </Form.Item>
-          )}
-
-          {/* Phase 4: 登录模式下显示"记住我"。勾选后 token 永久有效，
-              否则默认 7 天（后端 LoginRequest.expires_in 控制）。 */}
-          {!isRegister && (
-            <Form.Item style={{ marginBottom: 8 }}>
-              <Checkbox
-                checked={rememberMe}
-                onChange={(event) => setRememberMe(event.target.checked)}
-              >
-                {t("login.rememberMe")}
-              </Checkbox>
-            </Form.Item>
-          )}
 
           {isHub && (
             <div className={styles.hubDisclaimer}>
@@ -441,8 +336,7 @@ export default function LoginPage() {
             </button>
           </nav>
         )}
-        </div>
-      </section>
+      </div>
       {isHub && (
         <Modal
           className={styles.termsModal}

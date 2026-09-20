@@ -19,7 +19,7 @@ import httpx
 from packaging.version import InvalidVersion, Version
 
 from ..__version__ import __version__
-from ..constant import WORKING_DIR
+from ..constant import DEFAULT_API_HOST, DEFAULT_API_PORT, WORKING_DIR
 from ..config.utils import read_last_api
 from .process_utils import (
     _base_url,
@@ -295,7 +295,7 @@ def _detect_running_service(
     last = read_last_api()
     if last:
         _add_candidate(last[0], last[1])
-    _add_candidate("127.0.0.1", 8088)
+    _add_candidate(DEFAULT_API_HOST, DEFAULT_API_PORT)
 
     for base_url in candidates:
         result = _probe_service(base_url)

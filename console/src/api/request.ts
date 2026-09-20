@@ -160,7 +160,12 @@ export async function request<T = unknown>(
           ? `${errorMessage} - ${text}`
           : `Request failed: ${response.status} ${response.statusText}`;
 
-        throw new Error(finalMessage);
+        // Attach the structured status code (non-breaking enhancement): the
+        // message text alone may not contain the digits (JSON detail bodies),
+        // so callers cannot map 503/403/404 to readable guidance from text.
+        const err = new Error(finalMessage);
+        (err as Error & { status?: number }).status = response.status;
+        throw err;
       }
 
       if (response.status === 204) {

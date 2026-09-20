@@ -62,7 +62,6 @@ function AuditPage() {
   return (
     <div className={styles.page}>
       <PageHeader
-        parent={t("nav.admin", "Administration")}
         current={t("nav.adminAudit", "Audit Log")}
       />
       <div className={styles.toolbar}>

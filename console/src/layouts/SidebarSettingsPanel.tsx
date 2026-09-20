@@ -1,7 +1,7 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
 
-import { Monitor, SunMoon } from "lucide-react";
+import { Monitor, Rows3, SunMoon } from "lucide-react";
 import { Select } from "antd";
 import {
   SparkSunLine,
@@ -17,6 +17,7 @@ import {
 import { languageApi } from "../api/modules/language";
 import { useTheme, type ThemeMode } from "../contexts/ThemeContext";
 import { useSidebarModeStore } from "../stores/sidebarModeStore";
+import { usePageNavStore } from "../stores/pageNavStore";
 import { isTauriRuntime } from "../tauri/backendRuntime";
 import {
   clearRememberedCloseAction,
@@ -53,6 +54,9 @@ export default function SidebarSettingsPanel({
   const { themeMode, setThemeMode } = useTheme();
   const { mode: sidebarMode, toggleMode: toggleSidebarMode } =
     useSidebarModeStore();
+  // 顶部多标签导航总开关（关闭即本次改造的运行时回退通道）。
+  const navTabsEnabled = usePageNavStore((s) => s.enabled);
+  const setNavTabsEnabled = usePageNavStore((s) => s.setEnabled);
   const [closeBehavior, setCloseBehavior] = React.useState<CloseBehavior>(() =>
     isTauriRuntime() ? getRememberedCloseAction() ?? "ask" : "ask",
   );
@@ -173,6 +177,29 @@ export default function SidebarSettingsPanel({
           />
         </div>
       ) : null}
+
+      {/* ── Tabbed navigation ──────────────────────────── */}
+      <div className={styles.row}>
+        <span className={styles.label}>
+          {t("sidebar.settings.navTabs", "Tabbed navigation")}
+        </span>
+        <div className={styles.options}>
+          <button
+            className={`${styles.optBtn} ${styles.optBtnBlock} ${
+              navTabsEnabled ? styles.optBtnActive : ""
+            }`}
+            aria-pressed={navTabsEnabled}
+            onClick={() => setNavTabsEnabled(!navTabsEnabled)}
+          >
+            <Rows3 size={14} />
+            <span className={styles.optLabel}>
+              {navTabsEnabled
+                ? t("common.enabled", "Enabled")
+                : t("common.disabled", "Disabled")}
+            </span>
+          </button>
+        </div>
+      </div>
 
       {/* ── Mode ─────────────────────────────────────────── */}
       <div className={styles.row}>

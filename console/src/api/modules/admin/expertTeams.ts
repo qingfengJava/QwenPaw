@@ -60,6 +60,18 @@ export interface ExpertTeamUpdateBody {
 
 const enc = encodeURIComponent;
 
+/** 一条专家组↔知识库绑定行（T6；principal_type 恒为 team）。 */
+export interface TeamKbBindingRow {
+  agent_id: string;
+  space_id: string;
+  principal_type: string;
+  space_name: string;
+  scope: string;
+  granted_by: string;
+  remark: string;
+  created_at: string;
+}
+
 export const adminExpertTeamsApi = {
   list: (status?: string) =>
     request<ExpertTeamRecord[]>(
@@ -93,6 +105,29 @@ export const adminExpertTeamsApi = {
     request<ExpertTeamRecord>(`/admin/expert-teams/${enc(teamId)}/archive`, {
       method: "POST",
     }),
+
+  /** GET /{team_id}/kb-bindings — 团队绑定行（名称/scope 已组装，T6）。 */
+  listKbBindings: (teamId: string) =>
+    request<TeamKbBindingRow[]>(
+      `/admin/expert-teams/${enc(teamId)}/kb-bindings`,
+    ),
+
+  /** PUT /{team_id}/kb-bindings — 绑定一个库到团队（201/200 幂等）。 */
+  bindKb: (teamId: string, spaceId: string, remark = "") =>
+    request<TeamKbBindingRow & { created: boolean }>(
+      `/admin/expert-teams/${enc(teamId)}/kb-bindings`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ space_id: spaceId, remark }),
+      },
+    ),
+
+  /** DELETE /{team_id}/kb-bindings/{spaceId} (204)。 */
+  unbindKb: (teamId: string, spaceId: string) =>
+    request<void>(
+      `/admin/expert-teams/${enc(teamId)}/kb-bindings/${enc(spaceId)}`,
+      { method: "DELETE" },
+    ),
 };
 
 export type { ExpertRecord };

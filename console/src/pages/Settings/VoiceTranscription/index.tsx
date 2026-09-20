@@ -43,10 +43,7 @@ function VoiceTranscriptionPage() {
   return (
     <div className={styles.voiceTranscriptionPage}>
       <PageHeader
-        items={[
-          { title: t("nav.settings") },
-          { title: t("voiceTranscription.title") },
-        ]}
+        current={t("voiceTranscription.title")}
       />
       <Alert
         type="info"

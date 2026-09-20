@@ -492,7 +492,8 @@ export default function DesktopOS() {
                 <Suspense
                   fallback={
                     <div className={styles.loading}>
-                      <Spin tip={t("common.loading")} />
+                      {/* antd Spin 的 tip 仅支持嵌套/全屏形态：自闭合用法下 tip 本就不渲染，省略以避免控制台告警 */}
+                      <Spin />
                     </div>
                   }
                 >

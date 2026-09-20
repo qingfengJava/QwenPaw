@@ -535,7 +535,6 @@ function OrganizationPage() {
   return (
     <div className={styles.page}>
       <PageHeader
-        parent={t("nav.admin", "管理")}
         current={t("nav.adminOrg", "部门员工")}
       />
       <div className={styles.workspaceLayout}>

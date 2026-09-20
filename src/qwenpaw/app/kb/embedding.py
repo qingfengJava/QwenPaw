@@ -20,9 +20,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import math
-from typing import Any, List, Optional, Sequence
+import threading
+import time
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from qwenpaw.agents.memory.embedding_model import create_embedding_model
 from qwenpaw.agents.memory.reme_config import is_embedding_enabled
@@ -33,6 +36,16 @@ logger = logging.getLogger(__name__)
 
 #: 向量列宽固定 1024（与 alembic 0034 的 ``vector(1024)`` 必须一致）
 EMBEDDING_DIM = 1024
+
+#: 查询向量缓存：TTL 与容量上限（高频短查询防重复计费/延迟）
+_QUERY_CACHE_TTL_SECONDS = 300.0
+_QUERY_CACHE_MAX_ENTRIES = 256
+
+_query_cache: Dict[
+    Tuple[str, str, str],
+    Tuple[float, Optional[List[float]]],
+] = {}
+_query_cache_lock = threading.Lock()
 
 
 def resolve_memory_config(agent_id: str = "") -> Any:
@@ -211,9 +224,75 @@ async def embed_query(
     return vectors[0]
 
 
+async def embed_query_cached(
+    query: str,
+    model: str = "",
+    agent_id: str = "",
+) -> Optional[List[float]]:
+    """带 TTL 缓存的查询向量化（检索入口唯一应使用的封装）。
+
+    检索查询高度重复（同一问题在会话/多 agent 间反复出现），TTL 内命中
+    缓存可省一次 provider 往返；键含 ``agent_id``（凭证归属）与 ``model``
+    （库级覆盖），保证不同配置不串缓存。缓存命中语义与 :func:`embed_query`
+    完全一致（``None`` = 不可用，调用方 BM25-only），失败结果同样按 TTL
+    缓存，避免对故障 provider 高频重试放大延迟。
+
+    @author qingfeng
+    """
+    text = (query or "").strip()
+    if not text:
+        return None
+    key = (
+        agent_id or "",
+        model or "",
+        hashlib.sha256(text.encode("utf-8")).hexdigest(),
+    )
+    now = time.monotonic()
+    with _query_cache_lock:
+        cached = _query_cache.get(key)
+        if cached is not None and now < cached[0]:
+            # 负缓存条目值为 None：不可用语义原样透传（非空列表）
+            return None if cached[1] is None else list(cached[1])
+    vector = await embed_query(text, model=model, agent_id=agent_id)
+    with _query_cache_lock:
+        # 容量兜底：超限先整体清一次（256 条的锁内遍历成本可忽略），
+        # 过期条目随下次访问自然淘汰，不做精细 LRU 链表
+        if len(_query_cache) >= _QUERY_CACHE_MAX_ENTRIES:
+            deadline = time.monotonic()
+            for stale in [
+                k
+                for k, v in _query_cache.items()
+                if v[0] <= deadline
+            ]:
+                del _query_cache[stale]
+            if len(_query_cache) >= _QUERY_CACHE_MAX_ENTRIES:
+                _query_cache.clear()
+        if vector is not None:
+            _query_cache[key] = (
+                time.monotonic() + _QUERY_CACHE_TTL_SECONDS,
+                list(vector),
+            )
+        else:
+            # 失败负缓存（半 TTL，条目值 None）：provider 故障时检索链路
+            # 不被拖垮，也不高频重试放大延迟
+            _query_cache[key] = (
+                time.monotonic() + _QUERY_CACHE_TTL_SECONDS / 2,
+                None,
+            )
+    return vector
+
+
+def clear_query_cache() -> None:
+    """清空查询向量缓存（测试隔离用；生产代码勿调）。"""
+    with _query_cache_lock:
+        _query_cache.clear()
+
+
 __all__ = [
     "EMBEDDING_DIM",
+    "clear_query_cache",
     "embed_query",
+    "embed_query_cached",
     "embed_texts",
     "resolve_memory_config",
 ]

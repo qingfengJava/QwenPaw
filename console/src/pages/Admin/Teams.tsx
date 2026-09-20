@@ -91,7 +91,6 @@ function TeamsPage() {
   return (
     <div className={styles.page}>
       <PageHeader
-        parent={t("nav.admin", "Administration")}
         current={t("nav.adminTeams", "Teams")}
         extra={
           <Button type="primary" onClick={() => openEditor("new")}>

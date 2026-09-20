@@ -15,6 +15,7 @@ from .expert_capability import router as xian_expert_capability_router
 from .experts import router as xian_experts_router
 from .feed import router as xian_feed_router
 from .files import router as xian_files_router
+from .knowledge import router as xian_knowledge_router
 from .projects import router as xian_projects_router
 from .resources import router as xian_resources_router
 from .shares import router as xian_shares_router
@@ -36,5 +37,6 @@ router.include_router(xian_workspaces_router)
 router.include_router(xian_files_router)
 router.include_router(xian_shares_router)
 router.include_router(xian_workforce_router)
+router.include_router(xian_knowledge_router)
 
 __all__ = ["router"]

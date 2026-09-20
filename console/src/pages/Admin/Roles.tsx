@@ -117,7 +117,6 @@ function RolesPage() {
   return (
     <div className={styles.page}>
       <PageHeader
-        parent={t("nav.admin", "管理")}
         current={t("nav.adminRoles", "角色管理")}
       />
       <div className={styles.workspaceLayout}>

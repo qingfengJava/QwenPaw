@@ -8,6 +8,7 @@ import time
 
 import click
 
+from ..constant import DEFAULT_API_HOST, DEFAULT_API_PORT
 from ..utils.stdio import ensure_standard_streams
 
 # On Windows, force UTF-8 for stdout/stderr so cron and other commands
@@ -203,8 +204,8 @@ def cli(ctx: click.Context, host: str | None, port: int | None) -> None:
             port = port or last[1]
 
     # final fallback
-    host = host or "127.0.0.1"
-    port = port or 8088
+    host = host or DEFAULT_API_HOST
+    port = port or DEFAULT_API_PORT
 
     ctx.ensure_object(dict)
     ctx.obj["host"] = host

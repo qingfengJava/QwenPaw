@@ -52,6 +52,7 @@ import {
 } from "@/utils/navigationMode";
 import { WorkbenchSandboxContext } from "@/utils/workbenchSandbox";
 import { useAgentStore } from "@/stores/agentStore";
+import { useManageable } from "@/hooks/useManageable";
 import { useAppMessage } from "../../../hooks/useAppMessage";
 import {
   adminExpertsApi,
@@ -95,6 +96,49 @@ const WorkbenchSopCanvasPage = lazyImportWithRetry(
 /** 顶层 Tab → 分组键映射（能力 / 运维各为一个二级分组 Tab）。 */
 const CAPABILITY_KEYS = ["files", "skills", "tools", "sop", "mcp", "acp", "cron-jobs"];
 const OPS_KEYS = ["channels", "config", "checkpoints", "stats", "heartbeat"];
+
+/**
+ * 管理型子 Tab（后台配置域 / S1 共享配置面）：无该员工管理授权时隐藏。
+ * 双平面 IA 分离——使用型子 Tab（sop 查看运行、stats 个人观测）始终保留，
+ * 管理型（文档/共享技能/工具/MCP/ACP/检查点/渠道/配置/心跳/共享定时任务）
+ * 仅可管理者可见。判定来源是后端注册表 manageable（禁前端复刻权限逻辑）。
+ */
+const MANAGEMENT_ONLY_KEYS = new Set([
+  "files",
+  "skills",
+  "tools",
+  "mcp",
+  "acp",
+  "cron-jobs",
+  "channels",
+  "config",
+  "checkpoints",
+  "heartbeat",
+]);
+
+/**
+ * 计算某分组在当前视角下可见的子 Tab 键。
+ *
+ * @param group     能力 / 运维分组
+ * @param isExpert  SOP 子页仅 expert 实例可见（非托管/原生 agent 不展示）
+ * @param canManage 是否对该员工有管理授权（无则隐藏管理型子 Tab）
+ */
+function visibleGroupKeys(
+  group: "capability" | "ops",
+  isExpert: boolean,
+  canManage: boolean,
+): string[] {
+  const keys = group === "capability" ? CAPABILITY_KEYS : OPS_KEYS;
+  return keys.filter((key) => {
+    if (key === "sop" && !isExpert) {
+      return false;
+    }
+    if (MANAGEMENT_ONLY_KEYS.has(key) && !canManage) {
+      return false;
+    }
+    return true;
+  });
+}
 
 /** 全部子页面组件索引（key 与 TABS 对齐）。 */
 const PAGE_COMPONENTS: Record<string, ComponentType> = {
@@ -194,6 +238,11 @@ function AgentWorkbenchShell({ chatRoute = false }: { chatRoute?: boolean }) {
     () => agents.find((agent) => agent.id === aid),
     [agents, aid],
   );
+
+  // 后台配置域判定：manageable 来自后端注册表（按 viewer 一次快照批量判定），
+  // 驱动管理型 Tab 过滤。加载中/失败按 fail-closed（canManage=false）处理，
+  // 与后端写闸门同源；使用型 Tab（档案/会话/动态）不受影响，工作台立即可用。
+  const { manageable } = useManageable(aid);
 
   // ── expert 托管探测（preview/status 404 = 原生 agent）──
   const [previewState, setPreviewState] = useState<
@@ -396,6 +445,10 @@ function AgentWorkbenchShell({ chatRoute = false }: { chatRoute?: boolean }) {
   if (!aid) return null;
 
   const isExpert = previewState === "expert";
+  // 双平面 IA 分离：无管理授权则隐藏管理型子 Tab 与版本发布面。
+  const canManage = manageable === true;
+  const capabilityKeys = visibleGroupKeys("capability", isExpert, canManage);
+  const opsKeys = visibleGroupKeys("ops", isExpert, canManage);
 
   // 顶部状态徽标：expert 语义（已发布版本/未发布变更/草稿），原生退回运行态。
   const statusPill = isExpert && preview ? (
@@ -499,10 +552,14 @@ function AgentWorkbenchShell({ chatRoute = false }: { chatRoute?: boolean }) {
                   key: "overview",
                   label: t("workbench.tabProfile", "档案"),
                 },
-                {
-                  key: "capability",
-                  label: t("workbench.tabCapability", "能力"),
-                },
+                ...(capabilityKeys.length
+                  ? [
+                      {
+                        key: "capability",
+                        label: t("workbench.tabCapability", "能力"),
+                      },
+                    ]
+                  : []),
                 {
                   key: "sessions",
                   label: t("workbench.tabSessions", "会话"),
@@ -511,8 +568,10 @@ function AgentWorkbenchShell({ chatRoute = false }: { chatRoute?: boolean }) {
                   key: "activity",
                   label: t("workbench.tabActivity", "动态"),
                 },
-                { key: "ops", label: t("workbench.tabOps", "运维") },
-                ...(isExpert
+                ...(opsKeys.length
+                  ? [{ key: "ops", label: t("workbench.tabOps", "运维") }]
+                  : []),
+                ...(isExpert && canManage
                   ? [
                       {
                         key: "versions",
@@ -549,10 +608,37 @@ function AgentWorkbenchShell({ chatRoute = false }: { chatRoute?: boolean }) {
             ) : top === "activity" ? (
               <AgentActivityTab aid={aid} />
             ) : top === "capability" ? (
-              <GroupPane group="capability" sub={sub} aid={aid} isExpert={isExpert} />
+              capabilityKeys.length ? (
+                <GroupPane
+                  group="capability"
+                  sub={sub}
+                  aid={aid}
+                  isExpert={isExpert}
+                  canManage={canManage}
+                />
+              ) : (
+                <AgentOverviewTab
+                  agent={currentAgent}
+                  aid={aid}
+                  onAiTune={handleAiTune}
+                />
+              )
             ) : top === "ops" ? (
-              <GroupPane group="ops" sub={sub} aid={aid} />
-            ) : top === "versions" && isExpert && expertId ? (
+              opsKeys.length ? (
+                <GroupPane
+                  group="ops"
+                  sub={sub}
+                  aid={aid}
+                  canManage={canManage}
+                />
+              ) : (
+                <AgentOverviewTab
+                  agent={currentAgent}
+                  aid={aid}
+                  onAiTune={handleAiTune}
+                />
+              )
+            ) : top === "versions" && isExpert && canManage && expertId ? (
               <WorkbenchVersionsTab
                 expertId={expertId}
                 preview={preview}
@@ -583,18 +669,19 @@ function GroupPane({
   sub,
   aid,
   isExpert = true,
+  canManage = true,
 }: {
   group: "capability" | "ops";
   sub: string | null;
   aid: string;
   /** SOP 子页仅 expert 实例可见（非管理员/原生 agent 不展示，避免 admin 接口 403） */
   isExpert?: boolean;
+  /** 无管理授权时隐藏管理型子 Tab（后台配置域 / S1 共享配置面）。 */
+  canManage?: boolean;
 }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const keys = (group === "capability" ? CAPABILITY_KEYS : OPS_KEYS).filter(
-    (key) => key !== "sop" || isExpert,
-  );
+  const keys = visibleGroupKeys(group, isExpert, canManage);
   const items = keys
     .map((key) => {
       const tab = TABS.find((item) => item.key === key);

@@ -1,24 +1,33 @@
 /**
- * Admin/Knowledge — knowledge base fleet management (M5, wraps M4-5/M4-6).
+ * Admin/Knowledge — knowledge base fleet management (KB phase 1, T12 rebuild).
  *
- * Covers every scope (personal/team/enterprise) plus explicit grants,
- * document ingestion, and document removal.
+ * Structure: stat row + scope UnderlineTabs (联动清空 search on switch) +
+ * keyword search → KB card grid (「画布+面」surface tiles: scope label via
+ * enum description text, grants tags, owner/team meta) → per-space
+ * management Drawer (KnowledgeDrawer: doc tree + MD editor + upload +
+ * chunk preview + search-test bench).
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Button,
-  Drawer,
+  Empty,
   Form,
   Input,
   Modal,
   Popconfirm,
   Select,
-  Table,
-  Tag,
 } from "antd";
+import {
+  DeleteOutlined,
+  FileTextOutlined,
+  FolderOpenOutlined,
+  PlusOutlined,
+} from "@ant-design/icons";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import dayjs from "dayjs";
 import { PageHeader } from "@/components/PageHeader";
+import { StatCard, UnderlineTabs } from "@/components/staffdeck";
 import { useAppMessage } from "../../hooks/useAppMessage";
 import {
   adminKbApi,
@@ -26,18 +35,35 @@ import {
   adminUsersApi,
 } from "../../api/modules/admin";
 import type {
-  KbDocumentView,
+  AdminUserView,
   KnowledgeBase,
   TeamRecord,
-  AdminUserView,
 } from "../../api/modules/admin";
+import KnowledgeDrawer from "./KnowledgeDrawer";
+import { kbRequestError } from "./kbErrors";
 import styles from "./admin.module.less";
 
-const SCOPE_COLORS: Record<string, string> = {
-  personal: "green",
-  team: "orange",
-  enterprise: "geekblue",
+type ScopeFilter = "all" | "personal" | "team" | "enterprise";
+
+const SCOPE_TONE_CLASS: Record<string, string> = {
+  personal: styles.toneGreen,
+  team: styles.toneAmber,
+  enterprise: styles.toneBlue,
 };
+
+const SCOPE_LABEL_KEY: Record<string, string> = {
+  personal: "knowledge.scopePersonal",
+  team: "knowledge.scopeTeam",
+  enterprise: "knowledge.scopeEnterprise",
+};
+
+function scopeText(kb: KnowledgeBase, t: TFunction): string {
+  return t(SCOPE_LABEL_KEY[kb.scope] ?? "", kb.scope);
+}
+
+function formatDate(value: string | undefined): string {
+  return value ? dayjs(value).format("YYYY-MM-DD") : "—";
+}
 
 function KnowledgePage() {
   const { t } = useTranslation();
@@ -46,13 +72,11 @@ function KnowledgePage() {
   const [users, setUsers] = useState<AdminUserView[]>([]);
   const [teams, setTeams] = useState<TeamRecord[]>([]);
   const [loading, setLoading] = useState(false);
+  const [scopeFilter, setScopeFilter] = useState<ScopeFilter>("all");
+  const [keyword, setKeyword] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
-  const [docsKb, setDocsKb] = useState<KnowledgeBase | null>(null);
-  const [docs, setDocs] = useState<KbDocumentView[]>([]);
-  const [docsLoading, setDocsLoading] = useState(false);
-  const [ingestOpen, setIngestOpen] = useState(false);
+  const [drawerKb, setDrawerKb] = useState<KnowledgeBase | null>(null);
   const [createForm] = Form.useForm();
-  const [ingestForm] = Form.useForm();
   const scopeValue = Form.useWatch("scope", createForm) ?? "personal";
 
   const load = useCallback(async () => {
@@ -61,7 +85,7 @@ function KnowledgePage() {
       setKbs(await adminKbApi.list());
     } catch (err) {
       console.error("Failed to load knowledge bases:", err);
-      message.error(t("admin.kb.loadFailed", "Failed to load knowledge bases"));
+      message.error(t("knowledge.loadFailed", "加载知识库失败"));
     } finally {
       setLoading(false);
     }
@@ -73,166 +97,212 @@ function KnowledgePage() {
     adminTeamsApi.list().then(setTeams).catch(() => setTeams([]));
   }, [load]);
 
-  const loadDocs = useCallback(
-    async (kb: KnowledgeBase) => {
-      setDocsLoading(true);
-      try {
-        setDocs(await adminKbApi.listDocuments(kb.id));
-      } catch (err) {
-        message.error(String(err));
-      } finally {
-        setDocsLoading(false);
-      }
-    },
-    [message],
-  );
-
-  const openDocs = (kb: KnowledgeBase) => {
-    setDocsKb(kb);
-    loadDocs(kb);
+  // scope 筛选 → 关键词联动清空（多级筛选联动清空规范）
+  const handleScopeChange = (key: string) => {
+    setScopeFilter(key as ScopeFilter);
+    setKeyword("");
   };
+
+  const filtered = useMemo(() => {
+    const kw = keyword.trim().toLowerCase();
+    return kbs.filter((kb) => {
+      if (scopeFilter !== "all" && kb.scope !== scopeFilter) return false;
+      if (!kw) return true;
+      return (
+        kb.name.toLowerCase().includes(kw) ||
+        kb.description.toLowerCase().includes(kw)
+      );
+    });
+  }, [kbs, scopeFilter, keyword]);
+
+  const counts = useMemo(
+    () => ({
+      all: kbs.length,
+      personal: kbs.filter((k) => k.scope === "personal").length,
+      team: kbs.filter((k) => k.scope === "team").length,
+      enterprise: kbs.filter((k) => k.scope === "enterprise").length,
+    }),
+    [kbs],
+  );
 
   const handleCreate = async () => {
     const values = await createForm.validateFields();
     try {
       await adminKbApi.create(values);
-      message.success(t("admin.kb.created", "Knowledge base created"));
+      message.success(t("knowledge.createKbSuccess", "知识库已创建"));
       setCreateOpen(false);
       createForm.resetFields();
       load();
     } catch (err) {
-      message.error(String(err));
+      message.error(kbRequestError(err, t));
     }
   };
 
   const handleDeleteKb = async (kb: KnowledgeBase) => {
     try {
       await adminKbApi.remove(kb.id);
-      message.success(t("admin.kb.deleted", "Knowledge base deleted"));
-      if (docsKb?.id === kb.id) setDocsKb(null);
+      message.success(t("knowledge.deleteKbSuccess", "知识库已删除"));
+      if (drawerKb?.id === kb.id) setDrawerKb(null);
       load();
     } catch (err) {
-      message.error(String(err));
+      message.error(kbRequestError(err, t));
     }
   };
 
-  const handleIngest = async () => {
-    const values = await ingestForm.validateFields();
-    if (!docsKb) return;
-    try {
-      const result = await adminKbApi.ingest(docsKb.id, values);
-      message.success(
-        t("admin.kb.ingested", "Ingested {count} chunk(s)").replace(
-          "{count}",
-          String(result.chunk_count),
-        ),
-      );
-      setIngestOpen(false);
-      ingestForm.resetFields();
-      loadDocs(docsKb);
-    } catch (err) {
-      message.error(String(err));
-    }
-  };
-
-  const handleDeleteDoc = async (doc: KbDocumentView) => {
-    if (!docsKb) return;
-    try {
-      await adminKbApi.removeDocument(docsKb.id, doc.doc_id);
-      loadDocs(docsKb);
-    } catch (err) {
-      message.error(String(err));
-    }
-  };
+  const tabItems = [
+    { key: "all", label: t("knowledge.filterAll", "全部"), count: counts.all },
+    {
+      key: "personal",
+      label: t("knowledge.filterPersonal", "个人"),
+      count: counts.personal,
+    },
+    { key: "team", label: t("knowledge.filterTeam", "团队"), count: counts.team },
+    {
+      key: "enterprise",
+      label: t("knowledge.filterEnterprise", "企业"),
+      count: counts.enterprise,
+    },
+  ];
 
   return (
     <div className={styles.page}>
       <PageHeader
-        parent={t("nav.admin", "Administration")}
         current={t("nav.adminKnowledge", "Knowledge Bases")}
         extra={
-          <Button type="primary" onClick={() => setCreateOpen(true)}>
-            {t("admin.kb.create", "New knowledge base")}
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => setCreateOpen(true)}
+          >
+            {t("knowledge.createKb", "新建知识库")}
           </Button>
         }
       />
-      <Table<KnowledgeBase>
-        rowKey="id"
-        loading={loading}
-        dataSource={kbs}
-        pagination={false}
-        columns={[
-          { title: t("admin.kb.name", "Name"), dataIndex: "name" },
-          {
-            title: t("admin.kb.scope", "Scope"),
-            dataIndex: "scope",
-            width: 120,
-            render: (scope: string) => (
-              <Tag color={SCOPE_COLORS[scope] ?? "default"}>{scope}</Tag>
-            ),
-          },
-          {
-            title: t("admin.kb.owner", "Owner / Team"),
-            key: "owner",
-            render: (_, kb) => kb.owner_id || kb.team_id || "—",
-          },
-          {
-            title: t("admin.kb.grants", "Grants"),
-            key: "grants",
-            render: (_, kb) => (
-              <>
-                {kb.grants_roles.map((role) => (
-                  <Tag key={`r-${role}`} color="geekblue">
-                    role:{role}
-                  </Tag>
-                ))}
-                {kb.grants_users.map((user) => (
-                  <Tag key={`u-${user}`} color="green">
-                    user:{user}
-                  </Tag>
-                ))}
-                {kb.grants_teams.map((team) => (
-                  <Tag key={`t-${team}`} color="orange">
-                    team:{team}
-                  </Tag>
-                ))}
-              </>
-            ),
-          },
-          {
-            title: t("admin.kb.createdAt", "Created"),
-            dataIndex: "created_at",
-            width: 150,
-            render: (v: string) => (v ? dayjs(v).format("YYYY-MM-DD") : "—"),
-          },
-          {
-            title: t("admin.kb.actions", "Actions"),
-            key: "actions",
-            width: 220,
-            render: (_, kb) => (
-              <>
-                <Button size="small" onClick={() => openDocs(kb)}>
-                  {t("admin.kb.documents", "Documents")}
-                </Button>
-                <Popconfirm
-                  title={t(
-                    "admin.kb.deleteConfirm",
-                    "Delete this knowledge base and all its chunks?",
-                  )}
-                  onConfirm={() => handleDeleteKb(kb)}
-                >
-                  <Button size="small" danger style={{ marginLeft: 8 }}>
-                    {t("common.delete", "Delete")}
-                  </Button>
-                </Popconfirm>
-              </>
-            ),
-          },
-        ]}
-      />
 
+      <div className={styles.kbLayout}>
+        {/* 统计 + 筛选 + 搜索行 */}
+        <div className={styles.kbStatsRow}>
+          <StatCard value={counts.all} label={t("knowledge.statTotal", "知识库")} />
+          <div className={styles.kbFilterCard}>
+            <UnderlineTabs
+              items={tabItems}
+              value={scopeFilter}
+              onChange={handleScopeChange}
+            />
+            <Input
+              allowClear
+              value={keyword}
+              onChange={(e) => setKeyword(e.target.value)}
+              placeholder={t("knowledge.searchPlaceholder", "搜索名称 / 描述")}
+              prefix={<FileTextOutlined style={{ color: "var(--pg-ink-3)" }} />}
+              style={{ width: 220 }}
+            />
+          </div>
+        </div>
+
+        {/* 库卡片网格 */}
+        {loading ? null : filtered.length === 0 ? (
+          <div className={styles.panel}>
+            <Empty
+              description={
+                kbs.length === 0
+                  ? t("knowledge.emptyAll", "还没有知识库，点击右上角新建")
+                  : t("knowledge.emptyFiltered", "当前筛选条件下暂无知识库")
+              }
+              style={{ padding: "40px 0" }}
+            />
+          </div>
+        ) : (
+          <div className={styles.kbGrid}>
+            {filtered.map((kb) => (
+              <article
+                key={kb.id}
+                className={styles.kbCard}
+                onClick={() => setDrawerKb(kb)}
+              >
+                <div className={styles.kbCardHead}>
+                  <FolderOpenOutlined className={styles.kbCardIcon} />
+                  <span className={styles.kbCardName} title={kb.name}>
+                    {kb.name}
+                  </span>
+                  <span
+                    className={`${styles.toneTag} ${
+                      SCOPE_TONE_CLASS[kb.scope] ?? styles.toneGray
+                    }`}
+                  >
+                    {scopeText(kb, t)}
+                  </span>
+                </div>
+                <p className={styles.kbCardDesc}>
+                  {kb.description || t("knowledge.cardNoDesc", "暂无描述")}
+                </p>
+                <div className={styles.kbCardMeta}>
+                  <span>
+                    {kb.owner_id
+                      ? `${t("knowledge.ownerUser", "归属用户")}：${kb.owner_id}`
+                      : kb.team_id
+                        ? `${t("knowledge.ownerTeam", "归属团队")}：${kb.team_id}`
+                        : "—"}
+                  </span>
+                  <span>
+                    {t("knowledge.createdAt", "创建于")} {formatDate(kb.created_at)}
+                  </span>
+                </div>
+                <div className={styles.kbCardGrants}>
+                  {kb.grants_roles.map((role) => (
+                    <span key={`r-${role}`} className={styles.toneBlue}>
+                      {t("knowledge.grantRole", "角色")}：{role}
+                    </span>
+                  ))}
+                  {kb.grants_users.map((user) => (
+                    <span key={`u-${user}`} className={styles.toneGreen}>
+                      {t("knowledge.grantUser", "用户")}：{user}
+                    </span>
+                  ))}
+                  {kb.grants_teams.map((team) => (
+                    <span key={`t-${team}`} className={styles.toneAmber}>
+                      {t("knowledge.grantTeam", "团队")}：{team}
+                    </span>
+                  ))}
+                  {!kb.grants_roles.length &&
+                  !kb.grants_users.length &&
+                  !kb.grants_teams.length ? (
+                    <span className={styles.kbCardNoGrants}>
+                      {t("knowledge.grantsEmpty", "未配置授权")}
+                    </span>
+                  ) : null}
+                </div>
+                <div
+                  className={styles.kbCardActions}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Button
+                    size="small"
+                    type="primary"
+                    ghost
+                    onClick={() => setDrawerKb(kb)}
+                  >
+                    {t("knowledge.manageDocs", "管理文档")}
+                  </Button>
+                  <Popconfirm
+                    title={t(
+                      "knowledge.deleteKbConfirm",
+                      "删除该知识库及其全部文档与切片？",
+                    )}
+                    onConfirm={() => handleDeleteKb(kb)}
+                  >
+                    <Button size="small" danger icon={<DeleteOutlined />} />
+                  </Popconfirm>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* 新建弹窗 */}
       <Modal
-        title={t("admin.kb.create", "New knowledge base")}
+        title={t("knowledge.createKb", "新建知识库")}
         open={createOpen}
         onOk={handleCreate}
         onCancel={() => setCreateOpen(false)}
@@ -246,28 +316,34 @@ function KnowledgePage() {
         >
           <Form.Item
             name="name"
-            label={t("admin.kb.name", "Name")}
+            label={t("knowledge.name", "名称")}
             rules={[{ required: true }]}
           >
             <Input />
           </Form.Item>
           <Form.Item
             name="scope"
-            label={t("admin.kb.scope", "Scope")}
+            label={t("knowledge.scopeLabel", "范围")}
             rules={[{ required: true }]}
           >
             <Select
               options={[
-                { value: "personal", label: "personal" },
-                { value: "team", label: "team" },
-                { value: "enterprise", label: "enterprise" },
+                {
+                  value: "personal",
+                  label: t("knowledge.scopePersonal", "个人库"),
+                },
+                { value: "team", label: t("knowledge.scopeTeam", "团队库") },
+                {
+                  value: "enterprise",
+                  label: t("knowledge.scopeEnterprise", "企业库"),
+                },
               ]}
             />
           </Form.Item>
           {scopeValue === "personal" ? (
             <Form.Item
               name="owner_id"
-              label={t("admin.kb.ownerUser", "Owner (user)")}
+              label={t("knowledge.ownerUser", "归属用户")}
               rules={[{ required: true }]}
             >
               <Select
@@ -282,7 +358,7 @@ function KnowledgePage() {
           {scopeValue === "team" ? (
             <Form.Item
               name="team_id"
-              label={t("admin.kb.ownerTeam", "Team")}
+              label={t("knowledge.ownerTeam", "归属团队")}
               rules={[{ required: true }]}
             >
               <Select
@@ -296,88 +372,21 @@ function KnowledgePage() {
           ) : null}
           <Form.Item
             name="description"
-            label={t("admin.kb.description", "Description")}
+            label={t("knowledge.description", "描述")}
           >
             <Input />
           </Form.Item>
         </Form>
       </Modal>
 
-      <Drawer
-        title={docsKb?.name ?? ""}
-        open={docsKb !== null}
-        onClose={() => setDocsKb(null)}
-        width={640}
-        extra={
-          <Button type="primary" onClick={() => setIngestOpen(true)}>
-            {t("admin.kb.ingest", "Ingest text")}
-          </Button>
-        }
-      >
-        <Table<KbDocumentView>
-          rowKey="doc_id"
-          loading={docsLoading}
-          dataSource={docs}
-          pagination={false}
-          columns={[
-            {
-              title: t("admin.kb.docTitle", "Title"),
-              dataIndex: "title",
-              render: (v: string) => v || "—",
-            },
-            {
-              title: t("admin.kb.docChunks", "Chunks"),
-              dataIndex: "chunk_count",
-              width: 90,
-            },
-            {
-              title: t("admin.kb.createdAt", "Created"),
-              dataIndex: "created_at",
-              width: 110,
-              render: (v: string) => (v ? dayjs(v).format("YYYY-MM-DD") : "—"),
-            },
-            {
-              title: "",
-              key: "actions",
-              width: 90,
-              render: (_, doc) => (
-                <Popconfirm
-                  title={t("admin.kb.deleteDocConfirm", "Remove this document?")}
-                  onConfirm={() => handleDeleteDoc(doc)}
-                >
-                  <Button size="small" danger>
-                    {t("common.delete", "Delete")}
-                  </Button>
-                </Popconfirm>
-              ),
-            },
-          ]}
+      {/* 库详情抽屉：key 绑定库 id，切换库时整体重挂载实现联动清空 */}
+      {drawerKb ? (
+        <KnowledgeDrawer
+          key={drawerKb.id}
+          kb={drawerKb}
+          onClose={() => setDrawerKb(null)}
         />
-      </Drawer>
-
-      <Modal
-        title={t("admin.kb.ingest", "Ingest text")}
-        open={ingestOpen}
-        onOk={handleIngest}
-        onCancel={() => setIngestOpen(false)}
-        destroyOnHidden
-      >
-        <Form form={ingestForm} layout="vertical" preserve={false}>
-          <Form.Item name="title" label={t("admin.kb.docTitle", "Title")}>
-            <Input />
-          </Form.Item>
-          <Form.Item name="source" label={t("admin.kb.docSource", "Source")}>
-            <Input placeholder="runbook / wiki / ..." />
-          </Form.Item>
-          <Form.Item
-            name="text"
-            label={t("admin.kb.docText", "Text")}
-            rules={[{ required: true }]}
-          >
-            <Input.TextArea rows={8} />
-          </Form.Item>
-        </Form>
-      </Modal>
+      ) : null}
     </div>
   );
 }

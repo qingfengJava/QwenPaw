@@ -7,6 +7,7 @@ from pathlib import Path
 
 import click
 
+from ..constant import DEFAULT_API_HOST, DEFAULT_API_PORT
 from ..utils.http import is_loopback_host
 from .app_cmd import configure_server_process
 
@@ -14,13 +15,13 @@ from .app_cmd import configure_server_process
 @click.command("hub")
 @click.option(
     "--host",
-    default="127.0.0.1",
+    default=DEFAULT_API_HOST,
     show_default=True,
     help="Bind host",
 )
 @click.option(
     "--port",
-    default=8088,
+    default=DEFAULT_API_PORT,
     type=int,
     show_default=True,
     help="Bind port",

@@ -122,9 +122,21 @@ export const usePermissionStore = create<PermissionState>((set, get) => ({
   },
 
   loadAll: async () => {
-    // Auth-disabled shortcut: grant everything without API calls.
+    // Auth-disabled shortcut: grant permissions locally, but still fetch the
+    // backend menu tree — /auth/menus returns the full tree when auth is
+    // disabled (symmetric with the ["*"] grant), so dynamic menus work in
+    // single-user deployments too. On failure keep [] so useDynamicMenus
+    // falls back to the builtin menu.
     if (isAuthDisabled()) {
       set({ permissions: ["*"], menus: [], loaded: true, loading: false });
+      try {
+        await get().fetchMenus();
+      } catch (error) {
+        console.warn(
+          "[permissionStore] Failed to fetch menus (auth disabled):",
+          error,
+        );
+      }
       return;
     }
 

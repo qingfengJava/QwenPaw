@@ -49,6 +49,7 @@ class KbView(BaseModel):
     scope: str
     owner_id: str = ""
     team_id: str = ""
+    org_id: str = "default"
     description: str = ""
 
 
@@ -88,6 +89,16 @@ def _caller(request: Request) -> str:
     return getattr(request.state, "user", None) or "local"
 
 
+def _caller_org() -> str:
+    """调用者所属组织 id（org 即租户边界：单租户部署恒为当前租户）。"""
+    try:
+        from ..enterprise import current_tenant_id
+
+        return current_tenant_id() or "default"
+    except Exception:  # pylint: disable=broad-except
+        return "default"
+
+
 def _access_kwargs(username: str) -> dict:
     from ..rbac.deps import _resolve_flat_role
     from ..rbac.store import get_rbac_store
@@ -98,6 +109,7 @@ def _access_kwargs(username: str) -> dict:
         "flat_role": flat_role,
         "user_roles": store.roles_for_user(username, flat_role),
         "user_teams": store.teams_for_user(username),
+        "user_org": _caller_org(),
     }
 
 
@@ -108,6 +120,7 @@ def _view(kb: KnowledgeBase) -> KbView:
         scope=kb.scope,
         owner_id=kb.owner_id,
         team_id=kb.team_id,
+        org_id=getattr(kb, "org_id", "") or "default",
         description=kb.description,
     )
 
@@ -544,3 +557,152 @@ def get_document_chunks(
         }
         for chunk in service.document_chunks(kb.id, doc_id)
     ]
+
+
+# ------------------------------------------------------------------
+# T3: LLM Wiki 知识层端点（生命周期 / 审核流水 / 冲突 / LLM 建议）。
+# 全部 pg 权威面（503 门控）；submit 仅需可读（owner/授权人），
+# approve/reject/archive/冲突管理走 _ensure_kb_manage 写权。
+# ------------------------------------------------------------------
+
+
+class ReviewBody(BaseModel):
+    action: str
+    comment: str = ""
+
+
+def _review_view(doc: KbDocument) -> dict:
+    """流转结果视图（状态/审核人/备注回显）。"""
+    return {
+        "doc_id": doc.id,
+        "kb_id": doc.space_id,
+        "knowledge_status": doc.knowledge_status,
+        "reviewed_by": doc.reviewed_by,
+        "review_note": doc.review_note,
+    }
+
+
+@router.post("/{kb_id}/documents/{doc_id}/review")
+def review_document(
+    kb_id: str,
+    doc_id: str,
+    body: ReviewBody,
+    request: Request,
+) -> dict:
+    """推进知识生命周期（submit/approve/reject/archive + 流水）。"""
+    username = _caller(request)
+    kb = _get_accessible_kb(kb_id, username)
+    if body.action != "submit":
+        # 审定类动作是管理行为：可读 ≠ 可批，走文档写权
+        _ensure_kb_manage(kb, username)
+    service = get_kb_service()
+    _ensure_pg_ready(service)
+    try:
+        doc = service.pg_review_document(
+            kb.id,
+            doc_id,
+            body.action,
+            username,
+            body.comment,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if doc is None:
+        raise HTTPException(status_code=404, detail="document not found")
+    return _review_view(doc)
+
+
+@router.get("/{kb_id}/documents/{doc_id}/reviews")
+def list_document_reviews(
+    kb_id: str,
+    doc_id: str,
+    request: Request,
+) -> List[dict]:
+    """一份文档的审核流水（新→旧；可读者可查，审计透明）。"""
+    username = _caller(request)
+    kb = _get_accessible_kb(kb_id, username)
+    service = get_kb_service()
+    _ensure_pg_ready(service)
+    return [
+        {
+            "id": review.id,
+            "action": review.action,
+            "reviewer": review.reviewer,
+            "comment": review.comment,
+            "created_at": review.created_at.isoformat(),
+        }
+        for review in service.pg_list_reviews(kb.id, doc_id)
+    ]
+
+
+@router.get("/{kb_id}/conflicts")
+def list_conflicts(
+    kb_id: str,
+    request: Request,
+    status: str = "",
+) -> List[dict]:
+    """库内知识冲突清单（status=open/resolved/空=全态；管理权）。"""
+    username = _caller(request)
+    kb = _get_accessible_kb(kb_id, username)
+    _ensure_kb_manage(kb, username)
+    service = get_kb_service()
+    _ensure_pg_ready(service)
+    return [
+        {
+            "id": conflict.id,
+            "document_id_a": conflict.document_id_a,
+            "document_id_b": conflict.document_id_b,
+            "conflict_type": conflict.conflict_type,
+            "priority": conflict.priority,
+            "resolution_status": conflict.resolution_status,
+            "resolved_by": conflict.resolved_by,
+            "created_at": conflict.created_at.isoformat(),
+        }
+        for conflict in service.pg_list_conflicts(kb.id, status=status)
+    ]
+
+
+@router.post("/{kb_id}/conflicts/{conflict_id}/resolve", status_code=200)
+def resolve_conflict(
+    kb_id: str,
+    conflict_id: str,
+    request: Request,
+) -> dict:
+    """解决一个 open 冲突（管理权；不存在/已解决合并 404 语义）。"""
+    username = _caller(request)
+    kb = _get_accessible_kb(kb_id, username)
+    _ensure_kb_manage(kb, username)
+    service = get_kb_service()
+    _ensure_pg_ready(service)
+    if not service.pg_resolve_conflict(conflict_id, username):
+        raise HTTPException(status_code=404, detail="open conflict not found")
+    return {"id": conflict_id, "resolution_status": "resolved"}
+
+
+@router.post("/{kb_id}/documents/{doc_id}/wiki-suggest")
+async def wiki_suggest(
+    kb_id: str,
+    doc_id: str,
+    request: Request,
+) -> dict:
+    """LLM 结构化建议（摘要/域/类型候选；只返回候选，不落库）。"""
+    from ..kb.wiki import suggest_wiki_meta
+
+    username = _caller(request)
+    kb = _get_accessible_kb(kb_id, username)
+    _ensure_kb_manage(kb, username)
+    service = get_kb_service()
+    _ensure_pg_ready(service)
+    doc, _ = service.pg_document_detail(kb.id, doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="document not found")
+    candidate = await suggest_wiki_meta(doc.content_md)
+    if candidate is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "wiki suggestion unavailable (no chat model configured "
+                "or model call failed)"
+            ),
+        )
+    return {"doc_id": doc.id, "candidate": candidate}

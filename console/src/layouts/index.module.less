@@ -1940,3 +1940,290 @@
     }
   }
 }
+
+// ─── NavTabsBar（顶部面包屑 + 多标签页）───────────────────────────────────────
+// 全部颜色只消费 --sh-* 壳层 token：暗色值已在上方 :global(.dark-mode) .mainLayout
+// 统一重赋，本段无需再写任何暗色分支（历史上成对写 [data-theme="dark"]/.dark 会让
+// 暗色静默失效）。容器查询按导航条自身宽度断点，不受视口与侧栏折叠互相影响。
+.navBar {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px var(--pg-gutter, 16px) 0;
+  container-type: inline-size;
+  container-name: nav-bar;
+  user-select: none;
+}
+
+/* 面包屑行：整行只做「我在哪」，字号与字重都弱于下方标签与页内标题 */
+.navBreadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 22px;
+  font-size: 13px;
+  color: var(--sh-ink-3);
+}
+
+.navHomeButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--sh-ink-3);
+  cursor: pointer;
+  transition-property: background-color, color, transform;
+  transition-duration: 160ms;
+  transition-timing-function: ease-out;
+
+  &:hover {
+    background: var(--sh-hover);
+    color: var(--sh-ink);
+  }
+
+  &:active {
+    background: var(--sh-active);
+    transform: scale(0.94);
+  }
+
+  &:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--sh-brand) 55%, transparent);
+    outline-offset: 2px;
+  }
+}
+
+.navCrumbParent {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--sh-ink-3);
+}
+
+.navCrumbSeparator {
+  margin: 0 2px;
+  color: var(--sh-line);
+}
+
+.navCrumbCurrent {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--sh-ink-2);
+  font-weight: 550;
+}
+
+.navTabsRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  height: 34px;
+}
+
+/* 标签滚动区：隐藏滚动条但保留滚动，溢出时由左右箭头给出线索 */
+.navTabsScroll {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+.navTabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+}
+
+/* 标签：胶囊芯片态，激活才转品牌色并压一条下沿，避免整排高权重块抢正文视线 */
+.navTab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 200px;
+  height: 28px;
+  padding: 0 8px 0 10px;
+  border: 1px solid var(--sh-line);
+  border-radius: 9px;
+  background: var(--sh-chip-bg);
+  color: var(--sh-ink-2);
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition-property: background-color, color, border-color, transform;
+  transition-duration: 160ms;
+  transition-timing-function: ease-out;
+
+  &:hover {
+    border-color: color-mix(in srgb, var(--sh-brand) 32%, var(--sh-line));
+    background: var(--sh-hover);
+    color: var(--sh-ink);
+  }
+
+  &:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--sh-brand) 55%, transparent);
+    outline-offset: 2px;
+  }
+}
+
+.navTabActive {
+  border-color: color-mix(in srgb, var(--sh-brand) 45%, transparent);
+  background: var(--sh-tint);
+  color: var(--sh-brand-ink);
+  box-shadow: inset 0 -2px 0 var(--sh-brand);
+
+  &:hover {
+    background: var(--sh-tint);
+    color: var(--sh-brand-ink);
+  }
+}
+
+.navTabPinned {
+  cursor: default;
+}
+
+.navTabDragging {
+  opacity: 0.55;
+  z-index: 1;
+}
+
+.navTabIcon {
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.85;
+}
+
+.navTabLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.navTabClose {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  opacity: 0.55;
+  cursor: pointer;
+  transition-property: background-color, opacity, transform;
+  transition-duration: 140ms;
+
+  &:hover {
+    background: var(--sh-active);
+    opacity: 1;
+  }
+
+  &:active {
+    transform: scale(0.9);
+  }
+
+  &:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--sh-brand) 55%, transparent);
+    outline-offset: 1px;
+    opacity: 1;
+  }
+}
+
+.navTabScrollBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--sh-line);
+  border-radius: 8px;
+  background: var(--sh-chip-bg);
+  color: var(--sh-ink-3);
+  cursor: pointer;
+
+  &:hover {
+    background: var(--sh-hover);
+    color: var(--sh-ink);
+  }
+}
+
+.navTabActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  padding: 2px;
+  border: 1px solid var(--sh-line);
+  border-radius: 10px;
+  background: var(--sh-chip-bg);
+}
+
+.navTabActionBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--sh-ink-3);
+  cursor: pointer;
+  transition-property: background-color, color, transform;
+  transition-duration: 160ms;
+
+  &:hover {
+    background: var(--sh-hover);
+    color: var(--sh-ink);
+  }
+
+  &:active {
+    background: var(--sh-active);
+    transform: scale(0.94);
+  }
+
+  &:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--sh-brand) 55%, transparent);
+    outline-offset: 2px;
+  }
+}
+
+/* 中等宽度：面包屑只留当前页，父级链交给侧栏高亮表达 */
+@container nav-bar (max-width: 900px) {
+  .navCrumbParent {
+    display: none;
+  }
+}
+
+/* 窄屏：标签收起图标，把宽度让给标题文本 */
+@container nav-bar (max-width: 640px) {
+  .navTabIcon {
+    display: none;
+  }
+
+  .navTab {
+    max-width: 132px;
+    padding-left: 8px;
+  }
+}
+

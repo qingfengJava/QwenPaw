@@ -288,7 +288,7 @@ def print_ready_banner(
         elapsed_seconds: Optional startup time in seconds to display.
 
     Example:
-        >>> print_ready_banner(("127.0.0.1", 8088), 2.345)
+        >>> print_ready_banner(("127.0.0.1", 8188), 2.345)
         # Displays a fancy panel with the server URL and startup time
         >>> print_ready_banner()
         # Displays a generic ready message

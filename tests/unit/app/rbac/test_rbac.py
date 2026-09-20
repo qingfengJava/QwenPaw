@@ -195,6 +195,8 @@ async def test_require_perm_enforced_allows_admin(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setenv("QWENPAW_RBAC_ENFORCE", "1")
+    # 锁定文件后端路径：屏蔽 PG store（权威平面另有专项用例）。
+    monkeypatch.setattr("qwenpaw.app.rbac.deps._get_pg_store", lambda: None)
     monkeypatch.setattr(
         "qwenpaw.app.rbac.deps.get_rbac_store",
         lambda: RbacStore(tmp_path / "rbac.json"),
@@ -211,6 +213,8 @@ async def test_require_perm_enforced_denies_employee(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setenv("QWENPAW_RBAC_ENFORCE", "1")
+    # 锁定文件后端路径：屏蔽 PG store（PG 路径由 pg_denial 专项用例覆盖）。
+    monkeypatch.setattr("qwenpaw.app.rbac.deps._get_pg_store", lambda: None)
     monkeypatch.setattr(
         "qwenpaw.app.rbac.deps.get_rbac_store",
         lambda: RbacStore(tmp_path / "rbac.json"),
@@ -238,3 +242,49 @@ async def test_require_perm_enforced_rejects_anonymous(
 def test_flat_role_mapping_covers_m1_roles() -> None:
     assert FLAT_ROLE_TO_RBAC["admin"] == [ROLE_PLATFORM_ADMIN]
     assert FLAT_ROLE_TO_RBAC["employee"] == [ROLE_EMPLOYEE]
+
+
+# ---------------------------------------------------------------------------
+# require_perm PG-first path (bootstrap invariants)
+# ---------------------------------------------------------------------------
+
+
+class _PgDenyingStore:
+    """PG store stub that always denies (simulates missing binding rows)."""
+
+    def has_permission(self, username: str, permission: str) -> bool:
+        return False
+
+
+async def test_require_perm_pg_denial_flat_admin_bypass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PG 拒绝但身份为扁平 admin → bootstrap 不变量放行（不 403）。"""
+    monkeypatch.setenv("QWENPAW_RBAC_ENFORCE", "1")
+    monkeypatch.setattr(
+        "qwenpaw.app.rbac.deps._get_pg_store",
+        lambda: _PgDenyingStore(),
+    )
+    monkeypatch.setattr(
+        "qwenpaw.app.rbac.deps._resolve_flat_role",
+        lambda _u: "admin",
+    )
+    await require_perm(PERM_ADMIN_USERS)(_request("root"))  # no raise
+
+
+async def test_require_perm_pg_denial_blocks_non_admin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PG 拒绝且非 admin → 403（兜底仅限 bootstrap 管理员，不放宽）。"""
+    monkeypatch.setenv("QWENPAW_RBAC_ENFORCE", "1")
+    monkeypatch.setattr(
+        "qwenpaw.app.rbac.deps._get_pg_store",
+        lambda: _PgDenyingStore(),
+    )
+    monkeypatch.setattr(
+        "qwenpaw.app.rbac.deps._resolve_flat_role",
+        lambda _u: "employee",
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        await require_perm(PERM_ADMIN_USERS)(_request("eve"))
+    assert exc_info.value.status_code == 403

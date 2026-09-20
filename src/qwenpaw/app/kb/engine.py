@@ -12,11 +12,14 @@
 **禁止 import 本模块**。实现类「仅 duck-type 协议」：不继承、不 import
 :class:`KbRetrievalEngine`——协议只服务静态检查与文档。
 
-路由语义（spec §5）：
+路由语义（spec §5 + 企业知识平台 T2 定稿）：
 
-- ``kb_spaces.engine``：``auto`` / ``pgvector`` → 默认引擎；``milvus`` →
-  Milvus，``pymilvus`` 驱动缺失时告警回退默认引擎（检索永不因引擎切换失败）；
-- 默认引擎工厂：json → File；pg/dual 且 ``kb_chunks`` 表就绪 → PgVector；
+- ``kb_spaces.engine``：``pgvector`` 显式钉住 pg 面；``auto`` / ``milvus``
+  → 在 ``pymilvus`` 已装**且服务可达**（TTL 缓存探测，失败负缓存 60s）时
+  落 Milvus（默认最优引擎语义：Milvus → pgvector → file 回退链），不可达
+  告警回退默认引擎（检索永不因引擎切换失败）；
+- 默认引擎工厂：``QWENPAW_KB_DEFAULT_ENGINE=pgvector`` 可显式禁用
+  Milvus 优先；json → File；pg/dual 且 ``kb_chunks`` 表就绪 → PgVector；
   否则 File。判定结果**随探测结果动态缓存实例**（同一种引擎跨调用保持
   identity 稳定——``hybrid_search_multi`` 按实例分组依赖这一点）。
 
@@ -34,15 +37,19 @@ import asyncio
 import concurrent.futures
 import importlib.util
 import logging
+import os
 import threading
+import time
 from typing import Any, Dict, List, Optional, Protocol, Sequence, Tuple
+
+# socket 延迟 import（探测路径内），保持模块导入零网络副作用
 
 from ...db import write_gateway
 from .chunker import ChunkSpec
 from .file_engine import FileKbEngine
 from .hits import KbSearchHit
 from .milvus_engine import MilvusEngine
-from .models import ENGINE_MILVUS, KbSpace
+from .models import ENGINE_AUTO, ENGINE_MILVUS, ENGINE_PGVECTOR, KbSpace
 from .pg_engine import PgVectorEngine
 from .search import RRF_K
 
@@ -50,6 +57,18 @@ logger = logging.getLogger(__name__)
 
 #: 表探测的同步等待上限（秒）：探测悬挂不得拖垮检索链路
 PROBE_TIMEOUT_SECONDS = 5
+
+#: 显式禁用 Milvus 优先的环境开关（值置 ``pgvector`` 即钉回 pg 面）
+ENV_DEFAULT_ENGINE = "QWENPAW_KB_DEFAULT_ENGINE"
+
+#: Milvus 可达性探测的 TTL（秒）：成功正缓存 / 失败负缓存。
+#: 「装了驱动没起服务」是常见部署态，必须靠可达性而非 import 判定
+_MILVUS_OK_TTL = 300.0
+_MILVUS_DEAD_TTL = 60.0
+
+_milvus_ok_until = 0.0
+_milvus_dead_until = 0.0
+_milvus_probe_lock = threading.Lock()
 
 
 class KbRetrievalEngine(Protocol):
@@ -137,6 +156,62 @@ def _pymilvus_available() -> bool:
     return importlib.util.find_spec("pymilvus") is not None
 
 
+def _milvus_preferred() -> bool:
+    """部署方是否允许 Milvus 作为最优引擎（驱动已装且未被 env 禁用）。"""
+    if not _pymilvus_available():
+        return False
+    return (
+        os.environ.get(ENV_DEFAULT_ENGINE, "").strip().lower()
+        != "pgvector"
+    )
+
+
+def _milvus_endpoint() -> Tuple[str, int]:
+    """解析 Milvus gRPC 地址（env 与引擎同一 URI 来源，默认本机 19530）。"""
+    from urllib.parse import urlparse
+
+    from .milvus_engine import DEFAULT_MILVUS_URI
+
+    raw = (
+        os.environ.get("QWENPAW_MILVUS_URI", "").strip() or DEFAULT_MILVUS_URI
+    )
+    parsed = urlparse(raw if "//" in raw else f"//{raw}")
+    return parsed.hostname or "127.0.0.1", parsed.port or 19530
+
+
+def _milvus_reachable() -> bool:
+    """Milvus 服务可达性（TTL 缓存探测；失败不拖垮检索链路）。
+
+    探测本体是 0.5s 超时的 TCP connect（gRPC 端口）：连接拒绝立即失败，
+    不可达地址最多拖 0.5s——绝不走 SDK 真连（MilvusClient 构造失败要
+    等 grpc channel ready 超时，秒级阻塞会拖慢首个检索/摄入请求）。
+    成功正缓存 300s、失败负缓存 60s，稳态零网络开销；任何异常都收敛
+    为 ``False`` 让路由落回 pg/file 面，绝不抛出（TCP 通而服务未就绪
+    的残窗由引擎自身 fail-soft 检索兜底）。
+    """
+    global _milvus_ok_until, _milvus_dead_until  # noqa: PLW0603
+    now = time.monotonic()
+    with _milvus_probe_lock:
+        if now < _milvus_ok_until:
+            return True
+        if now < _milvus_dead_until:
+            return False
+        reachable = False
+        try:
+            import socket
+
+            host, port = _milvus_endpoint()
+            with socket.create_connection((host, port), timeout=0.5):
+                reachable = True
+        except OSError:
+            reachable = False
+        if reachable:
+            _milvus_ok_until = now + _MILVUS_OK_TTL
+        else:
+            _milvus_dead_until = now + _MILVUS_DEAD_TTL
+        return reachable
+
+
 # ---------------------------------------------------------------------------
 # 默认引擎工厂与按库路由
 # ---------------------------------------------------------------------------
@@ -148,9 +223,19 @@ _default_engine_lock = threading.Lock()
 _milvus_engine: Optional[MilvusEngine] = None
 _milvus_engine_lock = threading.Lock()
 
+_pgvector_engine: Optional[PgVectorEngine] = None
+_pgvector_engine_lock = threading.Lock()
+
 
 def _desired_engine_kind() -> str:
-    """当前应使用的默认引擎类别：``"pg"`` 或 ``"file"``。"""
+    """当前应使用的默认引擎类别：``milvus`` / ``pg`` / ``file``。
+
+    Milvus 优先（企业知识平台 T2 定稿）：驱动已装、未被 env 禁用且服务
+    可达时默认引擎即 Milvus（auto 库自动受益）；任一条件不满足按存储
+    后端落 pg/file，行为与历史版本一致。
+    """
+    if _milvus_preferred() and _milvus_reachable():
+        return "milvus"
     backend = write_gateway.resolve_storage_backend()
     if (
         backend
@@ -165,7 +250,7 @@ def _desired_engine_kind() -> str:
 
 
 def get_kb_engine() -> Any:
-    """默认引擎工厂：json→File；pg/dual 且表就绪→PgVector；否则 File。
+    """默认引擎工厂：milvus 可用→Milvus；pg/dual 且表就绪→PgVector；否则 File。
 
     每次调用重算「应使用哪类引擎」（探测有缓存，成本为内存判定），类别
     变化时重建实例、不变时复用缓存实例——保证分组检索的实例 identity
@@ -175,11 +260,26 @@ def get_kb_engine() -> Any:
     kind = _desired_engine_kind()
     with _default_engine_lock:
         if _default_engine is None or _default_engine_kind != kind:
-            _default_engine = (
-                PgVectorEngine() if kind == "pg" else FileKbEngine()
-            )
+            if kind == "milvus":
+                # 单例获取在 default 锁内：锁序固定 default→milvus，无死锁面
+                _default_engine = _get_milvus_engine()
+            elif kind == "pg":
+                _default_engine = PgVectorEngine()
+            else:
+                _default_engine = FileKbEngine()
             _default_engine_kind = kind
         return _default_engine
+
+
+def _get_pgvector_engine() -> PgVectorEngine:
+    """pgvector 引擎单例：显式 ``engine='pgvector'`` 的库在默认引擎已
+    升级为 Milvus 的部署里仍可钉住 pg 面，且跨调用 identity 稳定。"""
+    global _pgvector_engine  # noqa: PLW0603
+    if _pgvector_engine is None:
+        with _pgvector_engine_lock:
+            if _pgvector_engine is None:
+                _pgvector_engine = PgVectorEngine()
+    return _pgvector_engine
 
 
 def _get_milvus_engine() -> MilvusEngine:
@@ -193,19 +293,28 @@ def _get_milvus_engine() -> MilvusEngine:
 
 
 def resolve_engine_for(space: KbSpace) -> Any:
-    """按库路由引擎：``auto``/``pgvector`` → 默认；``milvus`` → Milvus。
+    """按库路由引擎：显式 ``pgvector`` 钉 pg 面；``auto``/``milvus`` → 最优。"
 
-    库配了 milvus 但驱动未装时**告警回退默认引擎**——按库开关的失效
-    不得让该库检索中断。
+    - ``auto``：默认引擎（Milvus 可达时即 Milvus，回退链见模块 docstring）；
+    - ``milvus``：驱动缺失或服务不可达时告警回退默认引擎——按库开关的
+      失效不得让该库检索中断；
+    - ``pgvector``：显式钉住 pg 面（默认引擎升级 Milvus 后仍受尊重），
+      未装 pymilvus 的部署里默认引擎本就是 pg 面，直接复用默认实例保
+      identity 稳定。
     """
-    if getattr(space, "engine", "") == ENGINE_MILVUS:
-        if _pymilvus_available():
+    kind = getattr(space, "engine", "") or ENGINE_AUTO
+    if kind == ENGINE_MILVUS:
+        if _milvus_preferred() and _milvus_reachable():
             return _get_milvus_engine()
         logger.warning(
-            "[kb] pymilvus not installed; space=%s falls back to "
-            "the default engine",
+            "[kb] milvus unavailable (driver/service); space=%s falls "
+            "back to the default engine",
             getattr(space, "id", ""),
         )
+    elif kind == ENGINE_PGVECTOR:
+        if not _milvus_preferred():
+            return get_kb_engine()
+        return _get_pgvector_engine()
     return get_kb_engine()
 
 
@@ -274,6 +383,7 @@ async def hybrid_search_multi(
 
 
 __all__ = [
+    "ENV_DEFAULT_ENGINE",
     "FileKbEngine",
     "KbRetrievalEngine",
     "KbSearchHit",

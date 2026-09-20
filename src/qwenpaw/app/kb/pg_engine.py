@@ -42,6 +42,32 @@ logger = logging.getLogger(__name__)
 #: 各分支进入融合的候选池大小（spec §5：单分支 top50）
 _POOL_SIZE = 50
 
+#: T3 知识生命周期过滤（CTE 侧，候选池先收敛再融合）：检索默认只出
+#: published 且在有效期内、未逻辑删除的文档。draft/in_review/archived
+#: 与过期文档对检索不可见（admin/owner 可查全态走文档面而非检索面）。
+_EFFECTIVE_DOC_CTE_FILTER = """
+          AND EXISTS (
+              SELECT 1 FROM kb_documents d
+              WHERE d.tenant_id = kb_chunks.tenant_id
+                AND d.id = kb_chunks.document_id
+                AND d.is_delete = FALSE
+                AND d.knowledge_status = 'published'
+                AND (d.valid_from IS NULL OR d.valid_from <= now())
+                AND (d.valid_to IS NULL OR d.valid_to > now())
+          )"""
+
+#: 同上（列表侧别名形态：S2 兄弟块/T11 预览同样只出可检文档）
+_EFFECTIVE_DOC_LIST_FILTER = """
+      AND EXISTS (
+          SELECT 1 FROM kb_documents d
+          WHERE d.tenant_id = c.tenant_id
+            AND d.id = c.document_id
+            AND d.is_delete = FALSE
+            AND d.knowledge_status = 'published'
+            AND (d.valid_from IS NULL OR d.valid_from <= now())
+            AND (d.valid_to IS NULL OR d.valid_to > now())
+      )"""
+
 #: 向量分支 CTE：内层 top-k 扫描（HNSW 友好），外层对候选池编排名；
 #: 排名取 ``- 1``（0 基）与内存融合 ``weight / (k + rank)`` 的 rank 口径对齐
 _VEC_CTE = f"""
@@ -52,6 +78,7 @@ vec AS (
         FROM kb_chunks
         WHERE tenant_id = :tenant AND space_id = ANY(:space_ids)
           AND embedding IS NOT NULL
+          {_EFFECTIVE_DOC_CTE_FILTER}
         ORDER BY distance
         LIMIT {_POOL_SIZE}
     ) pool
@@ -67,6 +94,7 @@ kw AS (
         FROM kb_chunks
         WHERE tenant_id = :tenant AND space_id = ANY(:space_ids)
           AND tsv @@ to_tsquery('simple', :tsq)
+          {_EFFECTIVE_DOC_CTE_FILTER}
         ORDER BY score DESC
         LIMIT {_POOL_SIZE}
     ) pool
@@ -135,12 +163,13 @@ WHERE tenant_id = :tenant AND document_id = :document_id
 #: score 恒 0.0（列表非排名），走 ix_kb_chunks_document 索引。
 #: 带 space_id 谓词：与文件面（按 space 载入）语义一致，且为 T11 人侧
 #: chunk 预览（kb_id 来自 URL/ACL）提供库维度收敛，杜绝跨库越权读。
-_LIST_DOCUMENT_CHUNKS_SQL = """
+_LIST_DOCUMENT_CHUNKS_SQL = f"""
 SELECT c.id, c.space_id, c.document_id, c.seq, c.heading_path,
        c.content_text, c.parent_chunk_id, 0.0 AS score
 FROM kb_chunks c
 WHERE c.tenant_id = :tenant AND c.space_id = :space_id
       AND c.document_id = :document_id
+      {_EFFECTIVE_DOC_LIST_FILTER}
 ORDER BY c.seq, c.id
 """
 

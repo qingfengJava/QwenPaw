@@ -26,6 +26,7 @@ from typing import Any
 
 import click
 
+from ..constant import DEFAULT_API_HOST, DEFAULT_API_PORT
 from .http import client, print_json
 
 logger = logging.getLogger(__name__)
@@ -53,8 +54,8 @@ def _ensure_daemon_alive(base_url: str) -> None:
 def _base_url(ctx: click.Context, base_url: str | None) -> str:
     if base_url:
         return base_url.rstrip("/")
-    host = (ctx.obj or {}).get("host", "127.0.0.1")
-    port = (ctx.obj or {}).get("port", 8088)
+    host = (ctx.obj or {}).get("host", DEFAULT_API_HOST)
+    port = (ctx.obj or {}).get("port", DEFAULT_API_PORT)
     return f"http://{host}:{port}"
 
 

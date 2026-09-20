@@ -147,7 +147,7 @@ function SkillsPage() {
   return (
     <div className={styles.skillsPage}>
       <PageHeader
-        items={[{ title: t("nav.agent") }, { title: t("skills.title") }]}
+        current={t("skills.title")}
         extra={
           isPersonalScope ? (
             <Button

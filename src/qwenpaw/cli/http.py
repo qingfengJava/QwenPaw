@@ -7,10 +7,11 @@ from typing import Any, Optional
 import click
 import httpx
 
+from ..constant import DEFAULT_API_HOST, DEFAULT_API_PORT
 from ..utils.http import trust_env_for_url
 
 
-DEFAULT_BASE_URL = "http://127.0.0.1:8088"
+DEFAULT_BASE_URL = f"http://{DEFAULT_API_HOST}:{DEFAULT_API_PORT}"
 
 
 def client(base_url: str) -> httpx.Client:
@@ -44,6 +45,6 @@ def resolve_base_url(ctx: click.Context, base_url: Optional[str]) -> str:
     """
     if base_url:
         return base_url.rstrip("/")
-    host = (ctx.obj or {}).get("host", "127.0.0.1")
-    port = (ctx.obj or {}).get("port", 8088)
+    host = (ctx.obj or {}).get("host", DEFAULT_API_HOST)
+    port = (ctx.obj or {}).get("port", DEFAULT_API_PORT)
     return f"http://{host}:{port}"

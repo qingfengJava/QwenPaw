@@ -123,7 +123,6 @@ export default function AttributionPage() {
   return (
     <div className="sd-page">
       <PageHeader
-        parent={t("nav.admin", "Administration")}
         current={t(
           "staffdeck.attribution.title",
           "差评归因分析"

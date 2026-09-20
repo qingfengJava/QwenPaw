@@ -44,6 +44,7 @@ import {
 } from "../../plugins/pawapp-sdk/context";
 import { AppCard, pickAppDescription, type AppCardData } from "./AppCard";
 import { ChunkErrorBoundary } from "@/components/ChunkErrorBoundary";
+import { usePageNavTitle } from "@/hooks/usePageNavTitle";
 import {
   addRouterBasename,
   getOsPawAppIdFromHistoryState,
@@ -84,6 +85,9 @@ export default function AppCenterPage() {
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [activeApp, setActiveApp] = useState<AppCardData | null>(null);
   const [loadError, setLoadError] = useState(false);
+
+  // 内嵌应用详情（/apps/:appId）的标签名取应用名，菜单树里只有「应用中心」。
+  usePageNavTitle(activeApp?.name);
 
   // View state is URL-driven so refresh / back / forward keep working.
   // Unknown `view` values safely fall back to the installed-apps view.

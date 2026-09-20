@@ -262,7 +262,6 @@ function EnvironmentsPage() {
     <div className={styles.environmentsPage}>
       {/* ---- Page header ---- */}
       <PageHeader
-        parent={t("environments.parent")}
         current={t("environments.environments")}
         className={styles.pageHeader}
       />

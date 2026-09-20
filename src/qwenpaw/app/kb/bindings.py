@@ -35,7 +35,10 @@ from typing_extensions import NamedTuple
 from ...constant import SECRET_DIR
 from ...db import write_gateway
 from .models import (
+    PRINCIPAL_AGENT,
+    PRINCIPAL_TEAM,
     SCOPE_ENTERPRISE,
+    SCOPE_ORG,
     SCOPE_PERSONAL,
     SCOPE_TEAM,
     KbBinding,
@@ -59,7 +62,7 @@ def _chmod_best_effort(path: Path, mode: int) -> None:
 
 
 class SpaceShape(NamedTuple):
-    """管理权判定所需的空间投影（grants 两形态归一后的六元组）。"""
+    """管理权判定所需的空间投影（grants 两形态归一后的七元组）。"""
 
     scope: str
     owner_id: str
@@ -67,6 +70,7 @@ class SpaceShape(NamedTuple):
     grant_roles: Tuple[str, ...]
     grant_users: Tuple[str, ...]
     grant_teams: Tuple[str, ...]
+    org_id: str = "default"
 
 
 class _BindingManifest(BaseModel):
@@ -138,9 +142,17 @@ class JsonBindingStore:
         )
         _chmod_best_effort(self._path, 0o600)
 
-    def list_for_agent(self, agent_id: str) -> List[KbBinding]:
-        """该员工的全部绑定行（文件序）。"""
-        return [b for b in self._load().bindings if b.agent_id == agent_id]
+    def list_for_agent(
+        self,
+        agent_id: str,
+        *,
+        principal_type: str = "",
+    ) -> List[KbBinding]:
+        """该员工的绑定行（文件序；``principal_type`` 空串=全部）."""
+        rows = [b for b in self._load().bindings if b.agent_id == agent_id]
+        if principal_type:
+            rows = [b for b in rows if b.principal_type == principal_type]
+        return rows
 
     def list_all(self) -> List[KbBinding]:
         """全部绑定行（空间维维护用）。"""
@@ -153,8 +165,14 @@ class JsonBindingStore:
         *,
         granted_by: str = "",
         remark: str = "",
+        principal_type: str = PRINCIPAL_AGENT,
     ) -> bool:
         """插入一行；已存在时零写返回 ``False``（幂等判据）。"""
+        if principal_type not in (PRINCIPAL_AGENT, PRINCIPAL_TEAM):
+            raise ValueError(
+                f"principal_type must be '{PRINCIPAL_AGENT}' or "
+                f"'{PRINCIPAL_TEAM}', got {principal_type!r}",
+            )
         with self._lock:
             data = self._load()
             for binding in data.bindings:
@@ -167,6 +185,7 @@ class JsonBindingStore:
                 KbBinding(
                     agent_id=agent_id,
                     space_id=space_id,
+                    principal_type=principal_type,
                     granted_by=granted_by,
                     remark=remark,
                 ),
@@ -176,12 +195,26 @@ class JsonBindingStore:
 
     def delete(self, agent_id: str, space_id: str) -> bool:
         """删除一行；不存在返回 ``False``。"""
+        return self.delete_typed(agent_id, space_id)
+
+    def delete_typed(
+        self,
+        agent_id: str,
+        space_id: str,
+        *,
+        principal_type: str = PRINCIPAL_AGENT,
+    ) -> bool:
+        """删除指定主体类型的一行；不存在返回 ``False``。"""
         with self._lock:
             data = self._load()
             kept = [
                 b
                 for b in data.bindings
-                if not (b.agent_id == agent_id and b.space_id == space_id)
+                if not (
+                    b.agent_id == agent_id
+                    and b.space_id == space_id
+                    and b.principal_type == principal_type
+                )
             ]
             if len(kept) == len(data.bindings):
                 return False
@@ -247,6 +280,7 @@ def _shape_from_json(space_id: str) -> Optional[SpaceShape]:
         grant_roles=tuple(kb.grants_roles),
         grant_users=tuple(kb.grants_users),
         grant_teams=tuple(kb.grants_teams),
+        org_id=getattr(kb, "org_id", "") or "default",
     )
 
 
@@ -260,6 +294,7 @@ def _shape_from_space_model(space: Any) -> SpaceShape:
         grant_roles=tuple(grants.get("roles") or []),
         grant_users=tuple(grants.get("users") or []),
         grant_teams=tuple(grants.get("teams") or []),
+        org_id=getattr(space, "org_id", "") or "default",
     )
 
 
@@ -299,12 +334,14 @@ async def can_manage_space(
     flat_role: str = "",
     user_roles: Optional[List[str]] = None,
     user_teams: Optional[List[str]] = None,
+    user_org: str = "",
 ) -> Optional[bool]:
     """Whether *username* may grant/revoke bindings on *space_id*.
 
     Returns ``None`` when the space does not exist（路由层映射 404），
     otherwise the manage verdict. 判定顺序与 ``service.can_access`` 一致：
-    admin → grants（users/roles/teams）→ scope 语义。
+    admin → grants（users/roles/teams）→ scope 语义。org 库的管理权
+    对齐 enterprise 惯例 = 组织成员 + ``kb:write`` 权限（不另立规则）。
     """
     shape = await _load_space_shape(space_id)
     if shape is None:
@@ -323,6 +360,11 @@ async def can_manage_space(
         return bool(username) and username == shape.owner_id
     if shape.scope == SCOPE_TEAM:
         return bool(shape.team_id) and shape.team_id in teams
+    if shape.scope == SCOPE_ORG:
+        caller_org = user_org or "default"
+        if caller_org != (shape.org_id or "default"):
+            return False
+        return _has_kb_write_perm(username, flat_role)
     if shape.scope == SCOPE_ENTERPRISE:
         return _has_kb_write_perm(username, flat_role)
     return False
@@ -337,11 +379,14 @@ async def bind_agent_kb(
     flat_role: str = "",
     user_roles: Optional[List[str]] = None,
     user_teams: Optional[List[str]] = None,
+    principal_type: str = PRINCIPAL_AGENT,
 ) -> Optional[bool]:
-    """Bind one agent to a space behind the manage gate.
+    """Bind one principal to a space behind the manage gate.
 
     Returns ``None``（库不存在，404）/ ``False``（无管理权或写失败，
-    403）/ ``True``（绑定关系成立，含幂等重放）。
+    403）/ ``True``（绑定关系成立，含幂等重放）。``principal_type``
+    为 ``team`` 时 ``agent_id`` 参数存 ``team_{team_id}`` 运行态形态
+    （调用方已转换；本函数只透传存储）。
     """
     allowed = await can_manage_space(
         space_id,
@@ -360,6 +405,7 @@ async def bind_agent_kb(
             space_id,
             granted_by=granted_by,
             remark=remark,
+            principal_type=principal_type,
         )
     # 已存在时 insert 返回 False，但绑定关系同样成立 → 一律 True
     get_json_binding_store().insert(
@@ -367,21 +413,185 @@ async def bind_agent_kb(
         space_id,
         granted_by=granted_by,
         remark=remark,
+        principal_type=principal_type,
     )
     return True
 
 
-async def unbind_agent_kb(agent_id: str, space_id: str) -> bool:
-    """Remove one binding; ``False`` when it did not exist."""
+def team_principal_agent_id(team_id: str) -> str:
+    """Team principal 的 ``agent_id`` 列存储形态（单一来源桥接）。"""
+    from ..experts.models import expert_team_agent_id
+
+    return expert_team_agent_id(team_id)
+
+
+async def bind_principal(
+    *,
+    principal_type: str,
+    principal_id: str,
+    space_id: str,
+    granted_by: str,
+    remark: str = "",
+    flat_role: str = "",
+    user_roles: Optional[List[str]] = None,
+    user_teams: Optional[List[str]] = None,
+) -> Optional[bool]:
+    """Bind one principal（``agent`` | ``team``）to a space（T6 入口）。
+
+    ``principal_type='team'`` 时 ``principal_id`` 是 ``expert_teams.id``
+    裸 id（非运行态形态），存储行自动转换 ``team_{team_id}``；管理权
+    门与 agent 直绑同一 ``can_manage_space``（不另立规则）。
+    """
+    if principal_type not in (PRINCIPAL_AGENT, PRINCIPAL_TEAM):
+        raise ValueError(
+            f"principal_type must be '{PRINCIPAL_AGENT}' or "
+            f"'{PRINCIPAL_TEAM}', got {principal_type!r}",
+        )
+    stored_id = (
+        team_principal_agent_id(principal_id)
+        if principal_type == PRINCIPAL_TEAM
+        else principal_id
+    )
+    return await bind_agent_kb(
+        agent_id=stored_id,
+        space_id=space_id,
+        granted_by=granted_by,
+        remark=remark,
+        flat_role=flat_role,
+        user_roles=user_roles,
+        user_teams=user_teams,
+        principal_type=principal_type,
+    )
+
+
+async def unbind_agent_kb(
+    agent_id: str,
+    space_id: str,
+    *,
+    principal_type: str = PRINCIPAL_AGENT,
+) -> bool:
+    """Remove one binding; ``False`` when it did not exist.
+
+    仅删除该主体类型的行（supervisor 直绑行与团队行在
+    ``team_{tid}`` 同形 id 上共存时互不误伤）。
+    """
     if _use_pg():
-        return await _pg_store().delete_binding(agent_id, space_id)
-    return get_json_binding_store().delete(agent_id, space_id)
+        return await _pg_store().delete_binding_typed(
+            agent_id,
+            space_id,
+            principal_type=principal_type,
+        )
+    return get_json_binding_store().delete_typed(
+        agent_id,
+        space_id,
+        principal_type=principal_type,
+    )
 
 
 async def list_bound_space_ids(agent_id: str) -> List[str]:
-    """All space ids bound to one agent（Task 9 目录注入的收敛输入）。"""
-    rows = await _list_rows(agent_id)
-    return [row.space_id for row in rows]
+    """All space ids reachable by one agent（S0 收敛输入，T6 团队扩展）。
+
+    = agent 直绑行（``principal_type='agent'``）∪ 所在团队绑行：
+
+    - supervisor 归属：运行态 id ``team_{tid}`` 命中该团队自己的绑行；
+    - 成员归属：expert 成员（``expert_{eid}``）经专家团成员表反查归属
+      团队，取各团队 supervisor 形态的绑行。
+
+    团队解析结果进程内 60s TTL 缓存（成员/发布变更由
+    :func:`invalidate_principal_cache` 或自然过期收敛）；专家团存储
+    不可用（json 部署 / enterprise engine 未就绪）时 fail-soft 只取
+    直绑，绝不阻断检索主链。
+    """
+    agent_rows = await _list_rows(
+        agent_id,
+        principal_type=PRINCIPAL_AGENT,
+    )
+    space_ids = {row.space_id for row in agent_rows}
+    team_agent_ids = await _team_agent_ids_for_agent(agent_id)
+    for stored_id in team_agent_ids:
+        if stored_id == agent_id:
+            # supervisor 自己：其团队行已在下方按 team 形态读取
+            continue
+        team_rows = await _list_rows(
+            stored_id,
+            principal_type=PRINCIPAL_TEAM,
+        )
+        space_ids.update(row.space_id for row in team_rows)
+    if team_agent_ids:
+        team_rows = await _list_rows(
+            agent_id,
+            principal_type=PRINCIPAL_TEAM,
+        )
+        space_ids.update(row.space_id for row in team_rows)
+    return sorted(space_ids)
+
+
+#: 团队归属解析 TTL（秒）：成员/发布变更走显式失效或自然过期。
+_TEAM_TTL_SECONDS = 60
+
+_team_cache: Dict[str, Tuple[float, Tuple[str, ...]]] = {}
+_team_cache_lock = threading.Lock()
+
+
+def invalidate_principal_cache(agent_id: str = "") -> None:
+    """团队归属缓存失效（团队发布/成员变更时由管理端点调用）。
+
+    ``agent_id`` 空串 = 全量失效（成员表变更影响面跨团队，全清更安全）。
+    """
+    with _team_cache_lock:
+        if agent_id:
+            _team_cache.pop(agent_id, None)
+        else:
+            _team_cache.clear()
+
+
+async def _team_agent_ids_for_agent(agent_id: str) -> Tuple[str, ...]:
+    """Resolve the team-principal ids one agent belongs to（TTL 缓存）。
+
+    两条归属路径（与 ``expert_team_agent_id`` 惯例对齐）：
+
+    1. supervisor 归属：``agent_id == team_{tid}`` 反解析出该团队；
+    2. 成员归属：专家 ``expert_{eid}`` 剥前缀得 ``expert_id``，在
+       ``expert_team_members``（``ExpertStore.list_teams`` 一次批量
+       带成员）中命中即归属该团队。
+
+    任何异常（json 部署无专家团 / engine 未就绪 / 网络抖动）fail-soft
+    返空元组——团队绑行缺席只收敛可见域，不抛错阻断检索。
+    """
+    now = time.monotonic()
+    with _team_cache_lock:
+        cached = _team_cache.get(agent_id)
+        if cached is not None and now - cached[0] < _TEAM_TTL_SECONDS:
+            return cached[1]
+    resolved = await _resolve_team_agent_ids(agent_id)
+    with _team_cache_lock:
+        _team_cache[agent_id] = (now, resolved)
+    return resolved
+
+
+async def _resolve_team_agent_ids(agent_id: str) -> Tuple[str, ...]:
+    """Uncached team resolution（supervisor 归属 + 成员归属反查）。"""
+    # supervisor 归属：运行态形态 team_{tid} 直接反解析
+    team_ids: set = set()
+    if agent_id.startswith("team_") and len(agent_id) > len("team_"):
+        team_ids.add(agent_id[len("team_"):])
+    # 成员归属：expert_{eid} 剥前缀后查专家团成员表
+    expert_id = ""
+    if agent_id.startswith("expert_") and len(agent_id) > len("expert_"):
+        expert_id = agent_id[len("expert_"):]
+    if not expert_id:
+        return tuple(f"team_{tid}" for tid in sorted(team_ids))
+    try:
+        from ..experts.store import get_expert_store
+
+        teams = await get_expert_store().list_teams()
+    except Exception as exc:  # noqa: BLE001 - fail-soft 见函数 docstring
+        logger.debug("kb binding team resolve unavailable: %s", exc)
+        return tuple(f"team_{tid}" for tid in sorted(team_ids))
+    for team in teams:
+        if any(member.expert_id == expert_id for member in team.members):
+            team_ids.add(team.id)
+    return tuple(f"team_{tid}" for tid in sorted(team_ids))
 
 
 async def list_bindings(agent_id: str) -> List[Dict[str, Any]]:
@@ -399,6 +609,7 @@ async def list_bindings(agent_id: str) -> List[Dict[str, Any]]:
             {
                 "agent_id": row.agent_id,
                 "space_id": row.space_id,
+                "principal_type": row.principal_type,
                 "space_name": name,
                 "scope": scope,
                 "granted_by": row.granted_by,
@@ -416,11 +627,21 @@ async def delete_space_bindings(space_id: str) -> int:
     return get_json_binding_store().delete_space(space_id)
 
 
-async def _list_rows(agent_id: str) -> List[KbBinding]:
+async def _list_rows(
+    agent_id: str,
+    *,
+    principal_type: str = "",
+) -> List[KbBinding]:
     """绑定行读取的三态分流（json manifest / pg 表）。"""
     if _use_pg():
-        return await _pg_store().list_agent_bindings(agent_id)
-    return get_json_binding_store().list_for_agent(agent_id)
+        return await _pg_store().list_agent_bindings(
+            agent_id,
+            principal_type=principal_type,
+        )
+    return get_json_binding_store().list_for_agent(
+        agent_id,
+        principal_type=principal_type,
+    )
 
 
 async def _space_summaries() -> Dict[str, Tuple[str, str]]:

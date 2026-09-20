@@ -1102,6 +1102,7 @@ class AgentBuilder:
             from ..app.kb.catalog import render_kb_catalog
             from ..app.kb.service import get_kb_service
             from ..app.kb.tool import (
+                make_kb_objects_tool,
                 make_kb_read_tool,
                 make_kb_search_tool,
             )
@@ -1131,6 +1132,14 @@ class AgentBuilder:
                 ),
                 AgentBuilder._wrap_tool(
                     make_kb_read_tool(svc, agent_id),
+                    agent_id,
+                    request_context,
+                    governor,
+                ),
+                # T5 本体只读工具：对象卡内的知识引用同样经绑定集收敛
+                # （grounding 层），注册门控与 kb_search 同源（有绑定才注册）
+                AgentBuilder._wrap_tool(
+                    make_kb_objects_tool(svc, agent_id),
                     agent_id,
                     request_context,
                     governor,

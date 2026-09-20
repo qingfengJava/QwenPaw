@@ -477,7 +477,7 @@ def agents_group() -> None:
     "--base-url",
     default=None,
     help=(
-        "Override the API base URL (e.g. http://127.0.0.1:8088). "
+        "Override the API base URL (e.g. http://127.0.0.1:8188). "
         "If omitted, uses global --host and --port from config."
     ),
 )
@@ -491,7 +491,7 @@ def list_agents(ctx: click.Context, base_url: Optional[str]) -> None:
     \b
     Examples:
       qwenpaw agents list
-      qwenpaw agents list --base-url http://192.168.1.100:8088
+      qwenpaw agents list --base-url http://192.168.1.100:8188
 
     \b
     Output format:
@@ -659,7 +659,7 @@ def create_cmd(
     "--base-url",
     default=None,
     help=(
-        "Override the API base URL (e.g. http://127.0.0.1:8088). "
+        "Override the API base URL (e.g. http://127.0.0.1:8188). "
         "If omitted, uses global --host and --port from config."
     ),
 )

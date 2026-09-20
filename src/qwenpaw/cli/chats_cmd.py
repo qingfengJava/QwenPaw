@@ -40,7 +40,7 @@ def chats_group() -> None:
 @click.option(
     "--base-url",
     default=None,
-    help="Override API base URL, e.g. http://127.0.0.1:8088",
+    help="Override API base URL, e.g. http://127.0.0.1:8188",
 )
 @click.option(
     "--agent-id",

@@ -156,6 +156,17 @@ def require_perm(permission: str) -> Callable:
             try:
                 if pg_store.has_permission(username, permission):
                     return
+                # bootstrap 不变量：扁平 admin 恒通过（与文件后端
+                # user_has_permission(flat_role) 及 /auth/permissions
+                # 的 "*" 注入对称），避免 PG 绑定数据未就绪时锁死运维。
+                if _resolve_flat_role(username) == "admin":
+                    logger.debug(
+                        "rbac: flat-admin bootstrap bypass (pg denial "
+                        "ignored) user=%r permission=%r",
+                        username,
+                        permission,
+                    )
+                    return
                 logger.warning(
                     "rbac deny (pg): user=%r permission=%r path=%s",
                     username,

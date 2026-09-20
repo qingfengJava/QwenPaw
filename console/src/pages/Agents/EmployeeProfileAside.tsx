@@ -17,7 +17,6 @@ import {
 } from "lucide-react";
 import { StatusPill } from "@/components/staffdeck";
 import ExpertAvatar from "@/components/ExpertAvatar";
-import ModelSelector from "@/pages/Chat/ModelSelector";
 import { avatarGradient } from "@/utils/avatarGradient";
 import { isExpertAgentId } from "@/api/modules/xianFeedback";
 import { useExpertIcons } from "@/hooks/useExpertIcons";
@@ -76,6 +75,13 @@ export default function EmployeeProfileAside({
   // 数字员工形象：expert_ 前缀 agent 才有；普通 agent 回退渐变首字符
   const expertId = isExpertAgentId(aid);
   const expertIcon = useExpertIcons()[expertId];
+
+  const modelText = useMemo(() => {
+    if (agent?.active_model) {
+      return `${agent.active_model.provider_id} / ${agent.active_model.model}`;
+    }
+    return agent?.backend_model || "—";
+  }, [agent]);
 
   const backendBadge = useMemo(() => {
     if (!agent?.backend) return "—";
@@ -138,10 +144,7 @@ export default function EmployeeProfileAside({
             </div>
             <div className={styles.metaRow}>
               <dt>{t("agentDetail.model", "Model")}</dt>
-              <dd>
-                {/* 默认模型：复用聊天页 ModelSelector，数据域随 selectedAgent */}
-                <ModelSelector />
-              </dd>
+              <dd title={modelText}>{modelText}</dd>
             </div>
             {agent?.workspace_dir ? (
               <div className={styles.metaRow}>

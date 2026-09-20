@@ -30,8 +30,12 @@ _MAX_SECTION_CHARS = 2400
 #: 额度按命中数动态分配，总额不超此值）。
 _MAX_TOTAL_CHARS = 16000
 
-#: expand 合法取值（graph 留待后续切片；未支持值显式报错而非静默降级）
-_VALID_EXPAND = frozenset({"none", "section"})
+#: expand 合法取值（T5 起 graph 实装：wikilink 出边图 ≤3 跳；
+#: 未支持值显式报错而非静默降级）
+_VALID_EXPAND = frozenset({"none", "section", "graph"})
+
+#: expand=graph 相关文档链的行数上限（预算友好的延伸阅读）
+_MAX_GRAPH_LINES = 12
 
 #: S3 精排候选池大小（spec §6 L181：候选 20 → qwen3-rerank → top max_results）。
 #: per-kb 检索超量取回此数，融合后取前 20 交精排；缺凭证时精排原序截断。
@@ -194,10 +198,13 @@ def make_kb_search_tool(
             expand (`str`, optional):
                 ``"section"`` expands each hit to its full section (all
                 sibling chunks under the same heading), giving more context
-                than the matched snippet alone; ``"none"`` (default) returns
-                just the matched snippet. Section expansion needs a
-                structure-aware backend (pg/milvus); on the file backend it
-                gracefully degrades to the single snippet.
+                than the matched snippet alone; ``"graph"`` appends the
+                wiki-link related-document chain (up to 3 hops, pg plane
+                only — honestly degrades to no chain elsewhere); ``"none"``
+                (default) returns just the matched snippet. Section
+                expansion needs a structure-aware backend (pg/milvus); on
+                the file backend it gracefully degrades to the single
+                snippet.
 
         Returns:
             `ToolResponse`:
@@ -299,6 +306,39 @@ def make_kb_search_tool(
             min(_MAX_SECTION_CHARS, _MAX_TOTAL_CHARS // max(1, len(top))),
         )
 
+        # T5 expand=graph：命中 doc 的 wikilink 出边图 ≤3 跳。取数用 S0
+        # 校验过的 kb.id（不触碰未绑定库）；每 doc 只调一次防 N+1；
+        # pg 权威面 CTE 单次往返，json 面诚实降级空；异常整体隔离。
+        graph_lines: list[str] = []
+        if expand_mode == "graph":
+            try:
+                seen_docs: set[tuple[str, str]] = set()
+                for kb, chunk, _score in top:
+                    doc_key = (kb.id, chunk.doc_id)
+                    if doc_key in seen_docs:
+                        continue
+                    seen_docs.add(doc_key)
+                    for dst_id, dst_path, depth in svc.document_graph(
+                        kb.id,
+                        chunk.doc_id,
+                        depth=3,
+                    ):
+                        label = dst_path or dst_id
+                        indent = "  " * (depth - 1)
+                        graph_lines.append(
+                            f"{indent}- {label} (doc_id={dst_id}, "
+                            f"depth={depth})",
+                        )
+                        if len(graph_lines) >= _MAX_GRAPH_LINES:
+                            break
+                    if len(graph_lines) >= _MAX_GRAPH_LINES:
+                        break
+            except Exception:  # pylint: disable=broad-except
+                logger.warning(
+                    "[kb] graph expansion failed; degrade to snippets",
+                    exc_info=True,
+                )
+
         parts: list[str] = []
         rendered: set[tuple[str, str, int]] = set()
         for kb, chunk, score in top:
@@ -330,6 +370,11 @@ def make_kb_search_tool(
             parts.append(
                 f"===== [{kb.name}] {chunk.title or chunk.doc_id}{crumb} "
                 f"[score={score:.4f}] =====\n{body}",
+            )
+        if graph_lines:
+            parts.append(
+                "===== 相关文档链（wikilink ≤3 跳）=====\n"
+                + "\n".join(graph_lines),
             )
         return _tool_chunk("\n\n".join(parts))
 
@@ -398,3 +443,108 @@ def make_kb_read_tool(
         return _tool_chunk(f"===== [{kb_name}] {title} =====\n{content}")
 
     return kb_read
+
+
+def _format_object_card(card: dict) -> str:
+    """渲染一张本体对象卡（kb_objects 工具输出；供 Agent 阅读）。"""
+    lines = [f"[对象] {card['name']} ({card['type_id']}) id={card['id']}"]
+    if card.get("aliases"):
+        lines.append(f"别名: {', '.join(card['aliases'][:5])}")
+    if card.get("state"):
+        lines.append(f"状态: {card['state']}")
+    attrs = card.get("attributes") or {}
+    for key, value in list(attrs.items())[:6]:
+        lines.append(f"{key}: {value}")
+    rels = card.get("relations") or {}
+    for rel in (rels.get("outbound") or [])[:3]:
+        lines.append(f"—[{rel['type']}]→ {rel['to_id']} ({rel['to_type']})")
+    for rel in (rels.get("inbound") or [])[:3]:
+        lines.append(
+            f"←[{rel['type']}]— {rel['from_id']} ({rel['from_type']})",
+        )
+    docs = card.get("linked_docs") or []
+    if docs:
+        lines.append("关联知识（可用 kb_read 深读）:")
+        for doc in docs[:3]:
+            lines.append(f"- {doc['doc_id']} [{doc['relation']}]")
+    return "\n".join(lines)
+
+
+def make_kb_objects_tool(
+    service: Optional[KbService] = None,
+    agent_id: str = "",
+) -> Callable[..., Any]:
+    """Build the ``kb_objects`` tool: ontology object cards (T5).
+
+    绑定语义：对象本身是企业结构化资产（企业可见），但卡内的关联知识
+    doc 引用经 Agent 绑定集收敛（grounding.object_card 的
+    ``bound_space_ids``）——卡片可看，知识引用不越权（S0 同源收敛）。
+    数据面走 ontology.grounding（独立 PG 平面），不依赖 kb svc；
+    ``service`` 参数保留与 kb_search/kb_read 同构签名（测试注入用）。
+    """
+    del service
+
+    async def kb_objects(
+        name: str = "",
+        type: str = "",
+        object_id: str = "",
+    ) -> ToolChunk:
+        """Look up structured business objects (projects, contracts,
+        customers, ...) from the company ontology.
+
+        Use this when the question mentions a concrete entity name or
+        code (e.g. ``PROJECT-10001``) or asks about an object's current
+        state. Returns compact object cards with attributes, relations,
+        current state, and linked knowledge doc ids you can deep-read
+        with ``kb_read``.
+
+        Args:
+            name (`str`, optional):
+                Object name or alias to ground (fuzzy match).
+            type (`str`, optional):
+                Optional type filter, e.g. ``l1.project``.
+            object_id (`str`, optional):
+                Exact object id (takes precedence over name).
+
+        Returns:
+            `ToolResponse`:
+                Up to three object cards, or a no-match note.
+        """
+        from ..ontology.grounding import ground_objects, object_card
+
+        object_id = (object_id or "").strip()
+        name = (name or "").strip()
+        if not object_id and not name:
+            return _tool_chunk(
+                "Error: provide name or object_id",
+                ok=False,
+            )
+
+        from .bindings import list_bound_space_ids
+
+        bound_ids = await list_bound_space_ids(agent_id)
+
+        # 交互式工具查询 limit≤3：卡组装为 4 次小查询 × 3 对象，非
+        # 列表页场景（规范 §2.4 禁 N+1 指列表接口批量路径）。
+        cards: list[dict] = []
+        if object_id:
+            card = await object_card(
+                object_id,
+                bound_space_ids=list(bound_ids),
+            )
+            if card is not None:
+                cards.append(card)
+        else:
+            targets = await ground_objects(name, type_id=type, limit=3)
+            for obj in targets:
+                card = await object_card(
+                    obj.id,
+                    bound_space_ids=list(bound_ids),
+                )
+                if card is not None:
+                    cards.append(card)
+        if not cards:
+            return _tool_chunk("(no matching ontology objects)")
+        return _tool_chunk("\n\n".join(_format_object_card(c) for c in cards))
+
+    return kb_objects

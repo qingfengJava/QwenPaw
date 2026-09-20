@@ -12,6 +12,7 @@ import { useTranslation } from "react-i18next";
 import { Button, Descriptions, Drawer, Table, Tag, Typography } from "antd";
 import { ReloadOutlined } from "@ant-design/icons";
 import { PageHeader } from "@/components/PageHeader";
+import { usePageNavTitle } from "@/hooks/usePageNavTitle";
 import { StatusPill } from "@/components/staffdeck";
 import { useAppMessage } from "../../../hooks/useAppMessage";
 import {
@@ -130,6 +131,9 @@ function CronTaskRunsPage() {
     void load();
   }, [load]);
 
+  // 顶部标签与面包屑显示任务名（菜单里查不到，由页面回填）。
+  usePageNavTitle(task?.name ?? jobId);
+
   const triggerLabel = useCallback(
     (run: TaskRun) =>
       isManualTrigger(run)
@@ -147,7 +151,9 @@ function CronTaskRunsPage() {
   return (
     <div style={{ padding: "0 4px" }}>
       <PageHeader
-        parent={
+        current={`${task?.name ?? jobId} · ${t("staffdeck.sched.runs", "执行记录")}`}
+        afterBreadcrumb={
+          /* 面包屑已上移到顶部导航条，这里只保留「返回员工详情」这个动作入口。 */
           <Button
             type="link"
             size="small"
@@ -156,10 +162,9 @@ function CronTaskRunsPage() {
               navigate(`/agents/manage/${encodeURIComponent(expertId)}`)
             }
           >
-            {t("nav.employees", "数字员工")}
+            {t("staffdeck.detail.back", "返回列表")}
           </Button>
         }
-        current={`${task?.name ?? jobId} · ${t("staffdeck.sched.runs", "执行记录")}`}
         extra={
           <Button
             size="small"

@@ -42,15 +42,20 @@ import threading
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ...db import write_gateway
 from .models import (
     INGEST_PENDING,
     KbBinding,
+    KbConflict,
     KbDocument,
     KbDocumentVersion,
+    KbReview,
     KbSpace,
+    PRINCIPAL_AGENT,
+    PRINCIPAL_TEAM,
+    CONFLICT_OPEN,
 )
 
 logger = logging.getLogger(__name__)
@@ -65,7 +70,7 @@ VERSION_RETENTION = 20
 #: 进程仍一路在文件平面上写到重启
 NOT_READY_RETRY_SECONDS = 60.0
 
-#: 表就绪探测涉及的六张表（缺一不可走 PG 平面）
+#: 表就绪探测涉及的八张表（缺一不可走 PG 平面；0046 增审核/冲突表）
 _KB_TABLES = (
     "kb_spaces",
     "kb_documents",
@@ -73,29 +78,36 @@ _KB_TABLES = (
     "kb_chunks",
     "kb_links",
     "agent_kb_bindings",
+    "kb_reviews",
+    "kb_conflicts",
 )
 
 # 列清单常量化且前置，读写两侧共用同一份字面量，杜绝手写漂移
 _SPACE_COLUMNS = (
-    "SELECT id, name, description, scope, owner_id, team_id, grants, "
-    "embedding_model, engine, created_at, updated_at"
+    "SELECT id, name, description, scope, owner_id, team_id, org_id, "
+    "grants, embedding_model, engine, created_at, updated_at"
 )
 
 _DOCUMENT_COLUMNS = (
     "SELECT id, space_id, path, title, content_md, content_hash, "
     "source, source_meta, ingest_status, error, is_delete, updated_by, "
-    "created_at, updated_at"
+    "knowledge_status, domain, doc_type, confidence, valid_from, "
+    "valid_to, reviewed_by, review_note, created_at, updated_at"
 )
 
 #: 列表与路径定位场景不取 ``content_md``（长文本），其余字段同详情
 _DOCUMENT_LIST_COLUMNS = (
     "SELECT id, space_id, path, title, content_hash, "
     "source, source_meta, ingest_status, error, is_delete, updated_by, "
-    "created_at, updated_at"
+    "knowledge_status, domain, doc_type, confidence, valid_from, "
+    "valid_to, reviewed_by, review_note, created_at, updated_at"
 )
 
 #: 绑定行投影（T7：agent_kb_bindings 全列，读写共用同一份字面量）
-_BINDING_COLUMNS = "SELECT agent_id, space_id, granted_by, remark, created_at"
+_BINDING_COLUMNS = (
+    "SELECT agent_id, space_id, principal_type, granted_by, remark, "
+    "created_at"
+)
 
 #: 版本快照投影（T2 派生入口 list_document_versions 的读端）
 _VERSION_COLUMNS = (
@@ -103,7 +115,10 @@ _VERSION_COLUMNS = (
     "created_by, created_at"
 )
 
-#: 元数据写入白名单：列名 → SET 片段（仅键名可枚举，值一律走绑定参数）
+#: 元数据写入白名单：列名 → SET 片段（仅键名可枚举，值一律走绑定参数）。
+#: T3 起包含知识生命周期字段（0046）：review 流转与分类编辑都经由
+#: :meth:`update_document_meta` 走本白名单，摄入路径（upsert_document）
+#: 不写这些列——生命周期与内容摄入严格分离。
 _META_ASSIGNMENTS = {
     "space_id": "space_id = :space_id",
     "path": "path = :path",
@@ -112,6 +127,14 @@ _META_ASSIGNMENTS = {
     "source_meta": "source_meta = CAST(:source_meta AS JSONB)",
     "is_delete": "is_delete = :is_delete",
     "updated_by": "updated_by = :updated_by",
+    "knowledge_status": "knowledge_status = :knowledge_status",
+    "domain": "domain = :domain",
+    "doc_type": "doc_type = :doc_type",
+    "confidence": "confidence = :confidence",
+    "valid_from": "valid_from = :valid_from",
+    "valid_to": "valid_to = :valid_to",
+    "reviewed_by": "reviewed_by = :reviewed_by",
+    "review_note": "review_note = :review_note",
 }
 
 _store: Optional["KbPgStore"] = None
@@ -185,6 +208,7 @@ def space_from_row(row: Any) -> KbSpace:
         scope=str(_row_value(row, "scope") or "personal"),
         owner_id=str(_row_value(row, "owner_id") or ""),
         team_id=str(_row_value(row, "team_id") or ""),
+        org_id=str(_row_value(row, "org_id") or "default"),
         grants=_json_loads(_row_value(row, "grants"), {}),
         embedding_model=str(_row_value(row, "embedding_model") or ""),
         engine=str(_row_value(row, "engine") or "auto"),
@@ -197,7 +221,11 @@ def document_from_row(row: Any, *, with_content: bool = True) -> KbDocument:
     """Build a :class:`KbDocument` from one ``kb_documents`` mapping row.
 
     ``with_content=False`` 用于列表/路径定位场景（正文未查询）。
+    新列（0046）经 ``_row_value`` 容缺：老投影/未迁移库读到缺列时落
+    模型默认值（published/''/doc/1.0/None），不炸读链。
     """
+    raw_from = _row_value(row, "valid_from")
+    raw_to = _row_value(row, "valid_to")
     return KbDocument(
         id=str(_row_value(row, "id") or ""),
         space_id=str(_row_value(row, "space_id") or ""),
@@ -213,18 +241,68 @@ def document_from_row(row: Any, *, with_content: bool = True) -> KbDocument:
         error=str(_row_value(row, "error") or ""),
         is_delete=bool(_row_value(row, "is_delete")),
         updated_by=str(_row_value(row, "updated_by") or ""),
+        knowledge_status=str(
+            _row_value(row, "knowledge_status") or "published",
+        ),
+        domain=str(_row_value(row, "domain") or ""),
+        doc_type=str(_row_value(row, "doc_type") or "doc"),
+        confidence=float(_row_value(row, "confidence") or 1.0),
+        valid_from=raw_from if isinstance(raw_from, datetime) else None,
+        valid_to=raw_to if isinstance(raw_to, datetime) else None,
+        reviewed_by=str(_row_value(row, "reviewed_by") or ""),
+        review_note=str(_row_value(row, "review_note") or ""),
         **_stamp_kwargs(row, "created_at"),
         **_stamp_kwargs(row, "updated_at"),
     )
 
 
 def binding_from_row(row: Any) -> KbBinding:
-    """Build a :class:`KbBinding` from one ``agent_kb_bindings`` row."""
+    """Build a :class:`KbBinding` from one ``agent_kb_bindings`` row.
+
+    ``principal_type`` 旧部署列缺失时容缺回默认 ``agent``（0048 前的
+    平面探测窗口内不崩）。
+    """
+    principal = str(_row_value(row, "principal_type") or "").strip()
     return KbBinding(
         agent_id=str(_row_value(row, "agent_id") or ""),
         space_id=str(_row_value(row, "space_id") or ""),
+        principal_type=principal or PRINCIPAL_AGENT,
         granted_by=str(_row_value(row, "granted_by") or ""),
         remark=str(_row_value(row, "remark") or ""),
+        **_stamp_kwargs(row, "created_at"),
+    )
+
+
+def review_from_row(row: Any) -> KbReview:
+    """Build a :class:`KbReview` from one ``kb_reviews`` row."""
+    return KbReview(
+        id=str(_row_value(row, "id") or ""),
+        space_id=str(_row_value(row, "space_id") or ""),
+        document_id=str(_row_value(row, "document_id") or ""),
+        action=str(_row_value(row, "action") or "submit"),
+        reviewer=str(_row_value(row, "reviewer") or ""),
+        comment=str(_row_value(row, "comment") or ""),
+        **_stamp_kwargs(row, "created_at"),
+    )
+
+
+def conflict_from_row(row: Any) -> KbConflict:
+    """Build a :class:`KbConflict` from one ``kb_conflicts`` row."""
+    raw_priority = _row_value(row, "priority")
+    return KbConflict(
+        id=str(_row_value(row, "id") or ""),
+        space_id=str(_row_value(row, "space_id") or ""),
+        document_id_a=str(_row_value(row, "document_id_a") or ""),
+        document_id_b=str(_row_value(row, "document_id_b") or ""),
+        conflict_type=str(
+            _row_value(row, "conflict_type") or "duplicate_title",
+        ),
+        affected_scope=str(_row_value(row, "affected_scope") or ""),
+        priority=int(raw_priority) if isinstance(raw_priority, int) else 3,
+        resolution_status=str(
+            _row_value(row, "resolution_status") or "open",
+        ),
+        resolved_by=str(_row_value(row, "resolved_by") or ""),
         **_stamp_kwargs(row, "created_at"),
     )
 
@@ -345,10 +423,11 @@ class KbPgStore:
             result = await conn.execute(
                 text(
                     "INSERT INTO kb_spaces (tenant_id, id, name, "
-                    "description, scope, owner_id, team_id, grants, "
-                    "embedding_model, engine, created_at, updated_at) "
+                    "description, scope, owner_id, team_id, org_id, "
+                    "grants, embedding_model, engine, created_at, "
+                    "updated_at) "
                     "VALUES (:tid, :space_id, :name, :description, :scope, "
-                    ":owner_id, :team_id, CAST(:grants AS JSONB), "
+                    ":owner_id, :team_id, :org_id, CAST(:grants AS JSONB), "
                     ":embedding_model, :engine, :now, :now) "
                     "ON CONFLICT (tenant_id, id) DO UPDATE SET "
                     "name = EXCLUDED.name, "
@@ -356,6 +435,7 @@ class KbPgStore:
                     "scope = EXCLUDED.scope, "
                     "owner_id = EXCLUDED.owner_id, "
                     "team_id = EXCLUDED.team_id, "
+                    "org_id = EXCLUDED.org_id, "
                     "grants = EXCLUDED.grants, "
                     "embedding_model = EXCLUDED.embedding_model, "
                     "engine = EXCLUDED.engine, "
@@ -369,6 +449,7 @@ class KbPgStore:
                     "scope": space.scope,
                     "owner_id": space.owner_id,
                     "team_id": space.team_id,
+                    "org_id": space.org_id or "default",
                     "grants": _json_dumps(space.grants),
                     "embedding_model": space.embedding_model,
                     "engine": space.engine,
@@ -869,6 +950,200 @@ class KbPgStore:
             return bool(result.rowcount)
 
     # ------------------------------------------------------------------
+    # wiki ops（0046：生命周期审核流水与冲突候选）
+    # ------------------------------------------------------------------
+
+    async def create_review(self, review: KbReview) -> bool:
+        """Append one lifecycle review record（流水只增不改）。"""
+        if not await self.ensure_ready():
+            return False
+        from sqlalchemy import text
+
+        async with self._get_engine().begin() as conn:
+            result = await conn.execute(
+                text(
+                    "INSERT INTO kb_reviews (tenant_id, id, space_id, "
+                    "document_id, action, reviewer, comment) "
+                    "VALUES (:tid, :id, :space_id, :document_id, :action, "
+                    ":reviewer, :comment) "
+                    "ON CONFLICT (tenant_id, id) DO NOTHING",
+                ),
+                {
+                    "tid": self._tenant_id,
+                    "id": review.id,
+                    "space_id": review.space_id,
+                    "document_id": review.document_id,
+                    "action": review.action,
+                    "reviewer": review.reviewer,
+                    "comment": review.comment,
+                },
+            )
+            return bool(result.rowcount)
+
+    async def list_reviews(
+        self,
+        space_id: str,
+        document_id: str,
+        *,
+        limit: int = 50,
+    ) -> List[KbReview]:
+        """List one document's review history（新→旧，流水审计用）。"""
+        if not await self.ensure_ready():
+            return []
+        from sqlalchemy import text
+
+        async with self._get_engine().connect() as conn:
+            rows = (
+                await conn.execute(
+                    text(
+                        "SELECT id, space_id, document_id, action, "
+                        "reviewer, comment, created_at FROM kb_reviews "
+                        "WHERE tenant_id = :tid AND space_id = :space_id "
+                        "AND document_id = :document_id "
+                        "ORDER BY created_at DESC, id DESC LIMIT :limit",
+                    ),
+                    {
+                        "tid": self._tenant_id,
+                        "space_id": space_id,
+                        "document_id": document_id,
+                        "limit": max(1, int(limit)),
+                    },
+                )
+            ).mappings().all()
+        return [review_from_row(row) for row in rows]
+
+    async def upsert_conflict(self, conflict: KbConflict) -> bool:
+        """Insert one conflict candidate（id 主键幂等；查重在 wiki 层做）。"""
+        if not await self.ensure_ready():
+            return False
+        from sqlalchemy import text
+
+        async with self._get_engine().begin() as conn:
+            result = await conn.execute(
+                text(
+                    "INSERT INTO kb_conflicts (tenant_id, id, space_id, "
+                    "document_id_a, document_id_b, conflict_type, "
+                    "affected_scope, priority) "
+                    "VALUES (:tid, :id, :space_id, :doc_a, :doc_b, "
+                    ":conflict_type, :affected_scope, :priority) "
+                    "ON CONFLICT (tenant_id, id) DO NOTHING",
+                ),
+                {
+                    "tid": self._tenant_id,
+                    "id": conflict.id,
+                    "space_id": conflict.space_id,
+                    "doc_a": conflict.document_id_a,
+                    "doc_b": conflict.document_id_b,
+                    "conflict_type": conflict.conflict_type,
+                    "affected_scope": conflict.affected_scope,
+                    "priority": int(conflict.priority),
+                },
+            )
+            return bool(result.rowcount)
+
+    async def find_open_conflict(
+        self,
+        space_id: str,
+        document_id_a: str,
+        document_id_b: str,
+        *,
+        conflict_type: str = "duplicate_title",
+    ) -> Optional[KbConflict]:
+        """查重：同文档对（无序）的未解决冲突是否存在（防重复建候选）。"""
+        if not await self.ensure_ready():
+            return None
+        from sqlalchemy import text
+
+        async with self._get_engine().connect() as conn:
+            row = (
+                await conn.execute(
+                    text(
+                        "SELECT id, space_id, document_id_a, document_id_b, "
+                        "conflict_type, affected_scope, priority, "
+                        "resolution_status, resolved_by, created_at "
+                        "FROM kb_conflicts "
+                        "WHERE tenant_id = :tid AND space_id = :space_id "
+                        "AND conflict_type = :conflict_type "
+                        "AND resolution_status = :open "
+                        "AND ((document_id_a = :doc_a "
+                        "AND document_id_b = :doc_b) "
+                        "OR (document_id_a = :doc_b "
+                        "AND document_id_b = :doc_a)) "
+                        "LIMIT 1",
+                    ),
+                    {
+                        "tid": self._tenant_id,
+                        "space_id": space_id,
+                        "conflict_type": conflict_type,
+                        "open": CONFLICT_OPEN,
+                        "doc_a": document_id_a,
+                        "doc_b": document_id_b,
+                    },
+                )
+            ).mappings().first()
+        return conflict_from_row(row) if row is not None else None
+
+    async def list_conflicts(
+        self,
+        space_id: str,
+        *,
+        status: str = "",
+    ) -> List[KbConflict]:
+        """List a space's conflicts（status 空串 = 全态，audit 视角）。"""
+        if not await self.ensure_ready():
+            return []
+        from sqlalchemy import text
+
+        where = "WHERE tenant_id = :tid AND space_id = :space_id"
+        params: dict[str, Any] = {
+            "tid": self._tenant_id,
+            "space_id": space_id,
+        }
+        if status.strip():
+            where += " AND resolution_status = :status"
+            params["status"] = status.strip()
+        async with self._get_engine().connect() as conn:
+            rows = (
+                await conn.execute(
+                    text(
+                        "SELECT id, space_id, document_id_a, document_id_b, "
+                        "conflict_type, affected_scope, priority, "
+                        "resolution_status, resolved_by, created_at "
+                        "FROM kb_conflicts " + where
+                        + " ORDER BY priority DESC, created_at DESC",
+                    ),
+                    params,
+                )
+            ).mappings().all()
+        return [conflict_from_row(row) for row in rows]
+
+    async def resolve_conflict(
+        self,
+        conflict_id: str,
+        resolved_by: str,
+    ) -> bool:
+        """Mark one open conflict resolved（已解决行不可重复 resolve）。"""
+        if not await self.ensure_ready():
+            return False
+        from sqlalchemy import text
+
+        async with self._get_engine().begin() as conn:
+            result = await conn.execute(
+                text(
+                    "UPDATE kb_conflicts SET resolution_status = 'resolved', "
+                    "resolved_by = :resolved_by "
+                    "WHERE tenant_id = :tid AND id = :conflict_id "
+                    "AND resolution_status = 'open'",
+                ),
+                {
+                    "tid": self._tenant_id,
+                    "conflict_id": conflict_id,
+                    "resolved_by": resolved_by,
+                },
+            )
+            return bool(result.rowcount)
+
+    # ------------------------------------------------------------------
     # link ops（wikilink 出边：重建语义 = 删本源旧边 + 插新边）
     # ------------------------------------------------------------------
 
@@ -964,6 +1239,68 @@ class KbPgStore:
             for row in rows
         ]
 
+    async def list_document_graph(
+        self,
+        document_id: str,
+        space_id: str = "",
+        max_depth: int = 3,
+        limit: int = 50,
+    ) -> List[Tuple[str, str, int]]:
+        """Wikilink 出边图 ≤depth 跳（``WITH RECURSIVE`` 单次往返）。
+
+        T5 expand=graph 底座：一次 CTE 替代逐层 BFS N+1（规范 §2.4）。
+        返回 ``(dst_document_id, dst_path, depth)`` 元组列表，depth 从
+        1 起（种子直出边）；种子自身排除（防自环）。fail-soft：查询
+        异常返回空表（调用方降级为无相关链）。
+        """
+        if not await self.ensure_ready():
+            return []
+        from sqlalchemy import text
+
+        sql = """
+WITH RECURSIVE walk AS (
+    SELECT dst_document_id, dst_path, 1 AS depth
+    FROM kb_links
+    WHERE tenant_id = :tid AND space_id = :sid
+      AND src_document_id = :doc
+      AND dst_document_id <> '' AND dst_document_id <> :doc
+  UNION ALL
+    SELECT l.dst_document_id, l.dst_path, w.depth + 1
+    FROM kb_links l
+    JOIN walk w ON l.src_document_id = w.dst_document_id
+    WHERE l.tenant_id = :tid AND l.space_id = :sid
+      AND l.dst_document_id <> ''
+      AND l.dst_document_id <> :doc AND w.depth < :max_depth
+)
+SELECT DISTINCT dst_document_id, dst_path, depth
+FROM walk
+ORDER BY depth, dst_document_id
+LIMIT :lim"""
+        try:
+            async with self._get_engine().connect() as conn:
+                rows = (
+                    await conn.execute(
+                        text(sql),
+                        {
+                            "tid": self._tenant_id,
+                            "sid": space_id or "",
+                            "doc": document_id,
+                            "max_depth": max(1, int(max_depth)),
+                            "lim": max(1, int(limit)),
+                        },
+                    )
+                ).all()
+        except Exception:  # pylint: disable=broad-except
+            logger.warning(
+                "[kb] document graph query failed: doc=%s",
+                document_id,
+                exc_info=True,
+            )
+            return []
+        return [
+            (str(row[0]), str(row[1]), int(row[2])) for row in rows
+        ]
+
     # ------------------------------------------------------------------
     # binding ops（T7：授权关系是交互式强一致数据，不走影子写）
     # ------------------------------------------------------------------
@@ -975,13 +1312,20 @@ class KbPgStore:
         *,
         granted_by: str = "",
         remark: str = "",
+        principal_type: str = PRINCIPAL_AGENT,
     ) -> bool:
         """Bind one agent to a space; ``True`` when the relation holds.
 
         ``ON CONFLICT DO NOTHING``：重复绑定幂等成立（返回 ``True``），
         不产生重复行也不刷新既有行的授权人与备注；平面不可用返回
         ``False``。调用方须先经 ``can_manage_space`` 管理权校验。
+        ``principal_type`` 仅 ``agent``/``team`` 合法（其余 ``ValueError``）。
         """
+        if principal_type not in (PRINCIPAL_AGENT, PRINCIPAL_TEAM):
+            raise ValueError(
+                f"principal_type must be '{PRINCIPAL_AGENT}' or "
+                f"'{PRINCIPAL_TEAM}', got {principal_type!r}",
+            )
         if not agent_id.strip() or not space_id.strip():
             raise ValueError("kb binding requires non-empty agent/space id")
         if not await self.ensure_ready():
@@ -992,15 +1336,17 @@ class KbPgStore:
             await conn.execute(
                 text(
                     "INSERT INTO agent_kb_bindings "
-                    "(tenant_id, agent_id, space_id, granted_by, remark, "
-                    " created_at) VALUES (:tid, :agent_id, :space_id, "
-                    ":granted_by, :remark, :now) "
+                    "(tenant_id, agent_id, space_id, principal_type, "
+                    "granted_by, remark, created_at) VALUES (:tid, "
+                    ":agent_id, :space_id, :principal_type, :granted_by, "
+                    ":remark, :now) "
                     "ON CONFLICT (tenant_id, agent_id, space_id) DO NOTHING",
                 ),
                 {
                     "tid": self._tenant_id,
                     "agent_id": agent_id,
                     "space_id": space_id,
+                    "principal_type": principal_type,
                     "granted_by": granted_by,
                     "remark": remark,
                     "now": datetime.now(timezone.utc),
@@ -1029,21 +1375,83 @@ class KbPgStore:
             )
             return bool(result.rowcount)
 
-    async def list_agent_bindings(self, agent_id: str) -> List[KbBinding]:
-        """All spaces bound to one agent（确定性读序：绑定时间升序）。"""
+    async def delete_binding_typed(
+        self,
+        agent_id: str,
+        space_id: str,
+        *,
+        principal_type: str = PRINCIPAL_AGENT,
+    ) -> bool:
+        """Remove one binding of a principal type; ``True`` when deleted.
+
+        仅删除该主体类型的行（supervisor 直绑行与团队行在
+        ``team_{tid}`` 同形 id 上共存时互不误伤）。
+        """
+        if principal_type not in (PRINCIPAL_AGENT, PRINCIPAL_TEAM):
+            raise ValueError(
+                f"principal_type must be '{PRINCIPAL_AGENT}' or "
+                f"'{PRINCIPAL_TEAM}', got {principal_type!r}",
+            )
+        if not await self.ensure_ready():
+            return False
+        from sqlalchemy import text
+
+        async with self._get_engine().begin() as conn:
+            result = await conn.execute(
+                text(
+                    "DELETE FROM agent_kb_bindings "
+                    "WHERE tenant_id = :tid AND agent_id = :agent_id "
+                    "AND space_id = :space_id "
+                    "AND principal_type = :principal_type",
+                ),
+                {
+                    "tid": self._tenant_id,
+                    "agent_id": agent_id,
+                    "space_id": space_id,
+                    "principal_type": principal_type,
+                },
+            )
+            return bool(result.rowcount)
+
+    async def list_agent_bindings(
+        self,
+        agent_id: str,
+        *,
+        principal_type: str = "",
+    ) -> List[KbBinding]:
+        """All spaces bound to one agent（确定性读序：绑定时间升序）。
+
+        ``principal_type`` 空串 = 全部主体行（读端点展示用）；
+        ``agent``/``team`` = 仅该类主体行（绑定解析 S0 收敛用，避免
+        supervisor 直绑行与团队行在 ``team_{tid}`` 同形 id 上混读）。
+        """
         if not await self.ensure_ready():
             return []
         from sqlalchemy import text
 
+        clauses = ["tenant_id = :tid", "agent_id = :agent_id"]
+        params: Dict[str, Any] = {
+            "tid": self._tenant_id,
+            "agent_id": agent_id,
+        }
+        if principal_type:
+            if principal_type not in (PRINCIPAL_AGENT, PRINCIPAL_TEAM):
+                raise ValueError(
+                    f"principal_type must be '{PRINCIPAL_AGENT}' or "
+                    f"'{PRINCIPAL_TEAM}', got {principal_type!r}",
+                )
+            clauses.append("principal_type = :principal_type")
+            params["principal_type"] = principal_type
         async with self._get_engine().connect() as conn:
             result = await conn.execute(
                 text(
                     _BINDING_COLUMNS
                     + " FROM agent_kb_bindings "
-                    + "WHERE tenant_id = :tid AND agent_id = :agent_id "
-                    + "ORDER BY created_at ASC, space_id ASC",
+                    + "WHERE "
+                    + " AND ".join(clauses)
+                    + " ORDER BY created_at ASC, space_id ASC",
                 ),
-                {"tid": self._tenant_id, "agent_id": agent_id},
+                params,
             )
             rows = result.mappings().all()
         return [binding_from_row(row) for row in rows]

@@ -191,6 +191,93 @@ def _frontmatter_of(markdown: str) -> Dict[str, Any]:
     return loaded
 
 
+def _parse_object_refs(meta: Dict[str, Any]) -> List[Tuple[str, str]]:
+    """解析 frontmatter ``objects`` 键为 (object_type, object_id) 列表。
+
+    支持形态：``list["Project:PROJECT-10001", ...]``、
+    ``dict{"Project": ["PROJECT-10001"]}``、逗号分隔字符串。
+    无冒号或空段的项静默丢弃（容错不告警：frontmatter 是自由文本）。
+    """
+    raw = meta.get("objects")
+    if raw is None:
+        return []
+    refs: List[Tuple[str, str]] = []
+    if isinstance(raw, str):
+        raw = raw.split(",")
+    if isinstance(raw, dict):
+        for object_type, ids in raw.items():
+            id_list = ids if isinstance(ids, (list, tuple)) else [ids]
+            refs.extend(
+                (str(object_type).strip(), str(value).strip())
+                for value in id_list
+            )
+    elif isinstance(raw, (list, tuple)):
+        for item in raw:
+            text = str(item).strip()
+            if ":" not in text:
+                continue
+            object_type, _, object_id = text.partition(":")
+            refs.append((object_type.strip(), object_id.strip()))
+    return [(t, i) for t, i in refs if t and i]
+
+
+async def _sync_object_links(
+    store: Any,
+    space_id: str,
+    doc_id: str,
+    meta: Dict[str, Any],
+) -> None:
+    """frontmatter ``objects`` → ``kb_object_links``（T4 互引，fail-soft）。
+
+    本体平面不可用 / 对象不存在 / 任一写失败都只记日志，不阻断摄入
+    结果（本体互引是附加能力）；relation 默认 ``knowledge_mentions``，
+    frontmatter ``objects_relation`` 可覆盖（非法值回落默认）。
+    """
+    refs = _parse_object_refs(meta)
+    if not refs:
+        return
+    try:
+        from ..ontology.models import (
+            LINK_RELATION_MENTIONS,
+            VALID_LINK_RELATIONS,
+        )
+        from ..ontology.models import KbObjectLink
+        from ..ontology.store import get_ready_ontology_store
+
+        ont_store = await get_ready_ontology_store()
+        if ont_store is None:
+            logger.info("[kb] object links skipped: ontology plane off")
+            return
+        relation = str(
+            meta.get("objects_relation") or LINK_RELATION_MENTIONS,
+        )
+        if relation not in VALID_LINK_RELATIONS:
+            relation = LINK_RELATION_MENTIONS
+        for object_type, object_id in refs:
+            if await ont_store.get_object(object_id) is None:
+                logger.warning(
+                    "[kb] object link skipped (missing object): "
+                    "doc=%s object=%s:%s",
+                    doc_id,
+                    object_type,
+                    object_id,
+                )
+                continue
+            link = KbObjectLink(
+                id=f"lnk_{uuid.uuid4().hex[:12]}",
+                kb_space_id=space_id,
+                kb_document_id=doc_id,
+                object_type=object_type,
+                object_id=object_id,
+                relation=relation,
+            )
+            await ont_store.create_link(link)
+    except Exception:  # pylint: disable=broad-except
+        logger.warning(
+            "[kb] object links sync failed: doc=%s", doc_id, exc_info=True,
+        )
+
+
 def _archive_upload(
     space_id: str,
     doc_id: str,
@@ -425,6 +512,8 @@ async def ingest_space_document(
             chunk_count=0,
             status=INGEST_FAILED,
         )
+    # T4 知识 ↔ 本体互引（fail-soft：失败不影响摄入结果）
+    await _sync_object_links(store, space_id, doc_id, meta)
     return IngestResult(
         doc_id=doc_id,
         chunk_count=chunk_count,

@@ -8,7 +8,6 @@ export default function OffloadPolicyPage() {
   return (
     <div style={{ padding: "0 4px 24px" }}>
       <PageHeader
-        parent={t("nav.settings")}
         current={t("nav.offloadPolicy", "Tool Offload")}
       />
       <OffloadPolicyCard />

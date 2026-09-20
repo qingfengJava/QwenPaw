@@ -26,6 +26,7 @@ import {
 } from "antd";
 import { useTranslation } from "react-i18next";
 import { PageHeader } from "@/components/PageHeader";
+import { usePageNavTitle } from "@/hooks/usePageNavTitle";
 import { ExpertSopPanel } from "@/components/sop/ExpertSopPanel";
 import {
   ActivityTimeline,
@@ -98,6 +99,9 @@ export default function ExpertDetailPage() {
     if (expertId) void loadExpert();
   }, [expertId, loadExpert]);
 
+  // 顶部标签与面包屑显示员工名（菜单树里查不到，由页面回填）。
+  usePageNavTitle(expert?.name);
+
   const handlePublish = async () => {
     try {
       await adminExpertsApi.publish(expertId);
@@ -122,7 +126,6 @@ export default function ExpertDetailPage() {
     return (
       <div className="sd-page">
         <PageHeader
-          parent={t("nav.agentsManage", "Manage Employees")}
           current={t("staffdeck.detail.title", "员工详情")}
         />
         <Empty description={t("staffdeck.detail.loading", "加载中…")} />
@@ -133,7 +136,6 @@ export default function ExpertDetailPage() {
   return (
     <div className="sd-page">
       <PageHeader
-        parent={t("nav.agentsManage", "Manage Employees")}
         current={expert.name}
         extra={
           <Space>

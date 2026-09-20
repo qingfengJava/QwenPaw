@@ -383,7 +383,6 @@ function ExpertTeamsPage() {
   return (
     <div className={styles.page}>
       <PageHeader
-        parent={t("nav.employees", "Digital Employees")}
         current={t("nav.agentTeams", "Employee Teams")}
         extra={
           <Button type="primary" onClick={() => openEditor("new")}>

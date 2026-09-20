@@ -590,7 +590,7 @@ export default function InboxPage() {
   return (
     <div className={styles.inboxPage}>
       <PageHeader
-        items={[{ title: t("inbox.title") }]}
+        current={t("inbox.title")}
         extra={
           <Badge dot={pendingCount > 0} offset={[-4, 4]}>
             <Button

@@ -366,6 +366,16 @@ export const BUILTIN_MENU: MenuItem[] = [
     visible: adminOnly,
   },
   {
+    id: "core.admin-ontology",
+    location: "primary.settings",
+    parentId: "core.admin-group",
+    label: navLabel("nav.adminOntology", "Ontology"),
+    icon: BookOpen,
+    route: "core.admin-ontology",
+    order: 85,
+    visible: adminOnly,
+  },
+  {
     id: "core.admin-organization",
     location: "primary.settings",
     parentId: "core.admin-group",

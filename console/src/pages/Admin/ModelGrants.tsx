@@ -34,7 +34,6 @@ function ModelGrantsPage() {
   return (
     <div className={styles.page}>
       <PageHeader
-        parent={t("nav.admin", "Administration")}
         current={t("nav.adminModelGrants", "Model Access")}
       />
       <GrantPanel kind="model" resourceOptions={modelKeys} />

@@ -64,6 +64,9 @@ const AdminAuditPage = lazyImportWithRetry("../../pages/Admin/Audit.tsx");
 const AdminKnowledgePage = lazyImportWithRetry(
   "../../pages/Admin/Knowledge.tsx",
 );
+const AdminOntologyPage = lazyImportWithRetry(
+  "../../pages/Admin/Ontology.tsx",
+);
 const AdminOrganizationPage = lazyImportWithRetry(
   "../../pages/Admin/Organization.tsx",
 );
@@ -248,6 +251,11 @@ export const BUILTIN_ROUTES: Route[] = [
     id: "core.admin-knowledge",
     path: "/admin/knowledge",
     component: withRequireAdmin(AdminKnowledgePage),
+  },
+  {
+    id: "core.admin-ontology",
+    path: "/admin/ontology",
+    component: withRequireAdmin(AdminOntologyPage),
   },
   {
     id: "core.admin-organization",

@@ -7,6 +7,7 @@ import logging
 import secrets
 from typing import Any, Dict, Optional
 
+from ....constant import DEFAULT_API_PORT
 from ..renderer import ChannelDisplayConfig
 from ..base import BaseChannel, OnReplySent, ProcessHandler
 from .session import CallSessionManager
@@ -130,7 +131,7 @@ class VoiceChannel(BaseChannel):
 
         self.tunnel_mgr = CloudflareTunnelDriver()
         api_info = read_last_api()
-        local_port = api_info[1] if api_info else 8088
+        local_port = api_info[1] if api_info else DEFAULT_API_PORT
 
         try:
             tunnel_info = await self.tunnel_mgr.start(local_port)

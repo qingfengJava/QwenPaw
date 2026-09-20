@@ -5,6 +5,7 @@ Three scopes, per the plan:
 
 - ``personal``   — private to ``owner_id`` (one user's library)
 - ``team``       — shared with members of ``team_id``
+- ``org``        — shared across one org (the tenant boundary, 0044)
 - ``enterprise`` — shared with every authenticated user
 
 Explicit ``grants`` (roles/users/teams) extend the scope ACL, mirroring
@@ -24,8 +25,11 @@ from pydantic import BaseModel, Field, field_validator
 
 SCOPE_PERSONAL = "personal"
 SCOPE_TEAM = "team"
+SCOPE_ORG = "org"
 SCOPE_ENTERPRISE = "enterprise"
-VALID_SCOPES = frozenset({SCOPE_PERSONAL, SCOPE_TEAM, SCOPE_ENTERPRISE})
+VALID_SCOPES = frozenset(
+    {SCOPE_PERSONAL, SCOPE_TEAM, SCOPE_ORG, SCOPE_ENTERPRISE},
+)
 
 #: 检索引擎路由（``kb_spaces.engine``，spec §5；auto = 按库规模自动选）
 ENGINE_AUTO = "auto"
@@ -51,6 +55,57 @@ VALID_INGEST_STATUSES = frozenset(
         INGEST_READY,
         INGEST_FAILED,
     },
+)
+
+#: 知识生命周期（``kb_documents.knowledge_status``，0046；LLM Wiki 层）。
+#: 与 ingest_status 正交：ingest 面答「切片索引就绪吗」，knowledge 面答
+#: 「内容可信可检吗」——检索默认只出 published 且在有效期内的文档。
+KNOWLEDGE_DRAFT = "draft"
+KNOWLEDGE_IN_REVIEW = "in_review"
+KNOWLEDGE_PUBLISHED = "published"
+KNOWLEDGE_ARCHIVED = "archived"
+VALID_KNOWLEDGE_STATUSES = frozenset(
+    {
+        KNOWLEDGE_DRAFT,
+        KNOWLEDGE_IN_REVIEW,
+        KNOWLEDGE_PUBLISHED,
+        KNOWLEDGE_ARCHIVED,
+    },
+)
+
+#: 文档类型（``kb_documents.doc_type``，对齐方案 §5.2 域内标准结构）
+DOC_TYPE_DOC = "doc"
+DOC_TYPE_PROCESS = "process"
+DOC_TYPE_CASE = "case"
+DOC_TYPE_QA = "qa"
+DOC_TYPE_TERMINOLOGY = "terminology"
+DOC_TYPE_ENTITY = "entity"
+VALID_DOC_TYPES = frozenset(
+    {
+        DOC_TYPE_DOC,
+        DOC_TYPE_PROCESS,
+        DOC_TYPE_CASE,
+        DOC_TYPE_QA,
+        DOC_TYPE_TERMINOLOGY,
+        DOC_TYPE_ENTITY,
+    },
+)
+
+#: 审核动作（``kb_reviews.action``）：submit→in_review，approve→published，
+#: reject→draft，archive→archived（目标状态映射见 wiki.py）
+REVIEW_SUBMIT = "submit"
+REVIEW_APPROVE = "approve"
+REVIEW_REJECT = "reject"
+REVIEW_ARCHIVE = "archive"
+VALID_REVIEW_ACTIONS = frozenset(
+    {REVIEW_SUBMIT, REVIEW_APPROVE, REVIEW_REJECT, REVIEW_ARCHIVE},
+)
+
+#: 冲突解决状态（``kb_conflicts.resolution_status``）
+CONFLICT_OPEN = "open"
+CONFLICT_RESOLVED = "resolved"
+VALID_CONFLICT_STATUSES = frozenset(
+    {CONFLICT_OPEN, CONFLICT_RESOLVED},
 )
 
 
@@ -84,6 +139,7 @@ class KnowledgeBase(BaseModel):
     scope: str = SCOPE_PERSONAL
     owner_id: str = ""  # personal scope: the owning user
     team_id: str = ""  # team scope: the owning team
+    org_id: str = "default"  # org scope: the owning org（租户边界）
     description: str = ""
     # Explicit ACL extension beyond the scope (roles/users/teams).
     grants_roles: List[str] = Field(default_factory=list)
@@ -93,14 +149,32 @@ class KnowledgeBase(BaseModel):
 
 
 class KbDocumentMeta(BaseModel):
-    """One ingested document's registry entry."""
+    """One ingested document's registry entry.
+
+    json 面冗余知识生命周期字段（T3）：L0 文件面检索过滤需要状态与有效期，
+    而文件面只有 registry 可读——字段缺省 published/无界，存量 JSONL
+    反序列化后行为与升级前完全一致（json 面降级语义）。
+    """
 
     doc_id: str
     kb_id: str
     title: str = ""
     source: str = ""
     chunk_count: int = 0
+    knowledge_status: str = KNOWLEDGE_PUBLISHED
+    valid_from: Optional[datetime] = None
+    valid_to: Optional[datetime] = None
     created_at: datetime = Field(default_factory=_utcnow)
+
+    @field_validator("knowledge_status")
+    @classmethod
+    def _validate_knowledge_status(cls, value: str) -> str:
+        # 镜像 ck_kb_documents_knowledge_status（0046）
+        return _require_enum_value(
+            "knowledge_status",
+            VALID_KNOWLEDGE_STATUSES,
+            value,
+        )
 
 
 class KbChunk(BaseModel):
@@ -146,6 +220,8 @@ class KbSpace(BaseModel):
     scope: str = SCOPE_PERSONAL
     owner_id: str = ""
     team_id: str = ""
+    # org scope 的归属组织（0044：org 即租户边界，单租户恒为 default）
+    org_id: str = "default"
     # 超出 scope 的显式授权扩展：{"roles": [], "users": [], "teams": []}
     grants: Dict[str, Any] = Field(default_factory=dict)
     embedding_model: str = ""
@@ -167,7 +243,13 @@ class KbSpace(BaseModel):
 
 
 class KbDocument(BaseModel):
-    """One knowledge document（``kb_documents`` 行，知识内容的权威源）。"""
+    """One knowledge document（``kb_documents`` 行，知识内容的权威源）。
+
+    T3 wiki 化字段（0046）：``knowledge_status`` / ``doc_type`` 有 DB CHECK
+    镜像校验；``confidence`` ∈ [0,1]；``valid_from/valid_to`` 为事实有效期
+    （NULL=无界）；生命周期写入只走 wiki.py 的审核通道，摄入路径
+    （``upsert_document``）不重置这些列。
+    """
 
     id: str
     space_id: str
@@ -182,6 +264,15 @@ class KbDocument(BaseModel):
     error: str = ""
     is_delete: bool = False
     updated_by: str = ""
+    # --- T3 知识生命周期与分类（0046）---
+    knowledge_status: str = KNOWLEDGE_PUBLISHED
+    domain: str = ""
+    doc_type: str = DOC_TYPE_DOC
+    confidence: float = 1.0
+    valid_from: Optional[datetime] = None
+    valid_to: Optional[datetime] = None
+    reviewed_by: str = ""
+    review_note: str = ""
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
 
@@ -201,6 +292,37 @@ class KbDocument(BaseModel):
             value,
         )
 
+    @field_validator("knowledge_status")
+    @classmethod
+    def _validate_knowledge_status(cls, value: str) -> str:
+        # 镜像 ck_kb_documents_knowledge_status（0046）
+        return _require_enum_value(
+            "knowledge_status",
+            VALID_KNOWLEDGE_STATUSES,
+            value,
+        )
+
+    @field_validator("doc_type")
+    @classmethod
+    def _validate_doc_type(cls, value: str) -> str:
+        # 镜像 ck_kb_documents_doc_type（0046）
+        return _require_enum_value("doc_type", VALID_DOC_TYPES, value)
+
+    @field_validator("confidence")
+    @classmethod
+    def _validate_confidence(cls, value: float) -> float:
+        # 置信度是检索排序与冲突优先级的输入，出界的值会让下游比较失真
+        if not 0.0 <= value <= 1.0:
+            raise ValueError("confidence 取值须在 [0, 1] 之内")
+        return value
+
+
+#: 绑定主体类型常量（T6 泛化，0048 ``principal_type`` 列的合法取值）。
+#: team 行的 ``agent_id`` 列存 ``expert_teams.id`` 的运行态形态
+#: ``team_{team_id}``（``expert_team_agent_id`` 惯例），列名不改保兼容。
+PRINCIPAL_AGENT = "agent"
+PRINCIPAL_TEAM = "team"
+
 
 class KbBinding(BaseModel):
     """One agent↔space authorization binding（``agent_kb_bindings`` 行）。
@@ -211,6 +333,9 @@ class KbBinding(BaseModel):
 
     agent_id: str
     space_id: str
+    #: 绑定主体类型（T6 泛化）：agent-数字员工直绑（存量语义，默认）/
+    #: team-专家组绑（agent_id 列存 ``team_{team_id}`` 运行态形态）。
+    principal_type: str = PRINCIPAL_AGENT
     granted_by: str = ""
     remark: str = ""
     created_at: datetime = Field(default_factory=_utcnow)
@@ -225,3 +350,48 @@ class KbDocumentVersion(BaseModel):
     content_hash: str = ""
     created_by: str = ""
     created_at: datetime = Field(default_factory=_utcnow)
+
+
+class KbReview(BaseModel):
+    """One lifecycle review record（``kb_reviews`` 行，0046 审核流水）。"""
+
+    id: str
+    space_id: str
+    document_id: str
+    action: str = REVIEW_SUBMIT
+    reviewer: str = ""
+    comment: str = ""
+    created_at: datetime = Field(default_factory=_utcnow)
+
+    @field_validator("action")
+    @classmethod
+    def _validate_action(cls, value: str) -> str:
+        # 镜像 ck_kb_reviews_action（0046）
+        return _require_enum_value("action", VALID_REVIEW_ACTIONS, value)
+
+
+class KbConflict(BaseModel):
+    """One knowledge conflict candidate（``kb_conflicts`` 行，0046）。"""
+
+    id: str
+    space_id: str
+    document_id_a: str
+    document_id_b: str
+    # 规则判定产物：duplicate_title（同库同名）；LLM 辅助判定为后续增强
+    conflict_type: str = "duplicate_title"
+    affected_scope: str = ""
+    # 1~5，5 最高（当前按双文档 confidence 最低值归档，wiki.py）
+    priority: int = 3
+    resolution_status: str = CONFLICT_OPEN
+    resolved_by: str = ""
+    created_at: datetime = Field(default_factory=_utcnow)
+
+    @field_validator("resolution_status")
+    @classmethod
+    def _validate_resolution_status(cls, value: str) -> str:
+        # 镜像 ck_kb_conflicts_resolution_status（0046）
+        return _require_enum_value(
+            "resolution_status",
+            VALID_CONFLICT_STATUSES,
+            value,
+        )

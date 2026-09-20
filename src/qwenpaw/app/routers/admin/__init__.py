@@ -8,6 +8,7 @@ that is inert until ``QWENPAW_RBAC_ENFORCE`` is switched on.
 from fastapi import APIRouter
 
 from ...orgs.api import router as orgs_router
+from ...ontology.api import router as ontology_router
 from .audit import router as audit_router
 from .data_scopes import router as data_scopes_router
 from .expert_capability import router as expert_capability_router
@@ -32,6 +33,7 @@ router.include_router(audit_router)
 router.include_router(quotas_router)
 router.include_router(grants_router)
 router.include_router(kb_router)
+router.include_router(ontology_router)
 router.include_router(orgs_router)
 router.include_router(experts_router)
 router.include_router(expert_capability_router)

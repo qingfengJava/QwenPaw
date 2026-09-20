@@ -54,7 +54,6 @@ export default function PendingPage() {
   return (
     <div className="sd-page">
       <PageHeader
-        parent={t("nav.admin", "Administration")}
         current={t("staffdeck.pending.title", "待办收件箱")}
       />
 

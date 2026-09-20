@@ -89,7 +89,6 @@ function SecurityPage() {
   return (
     <div className={styles.securityPage}>
       <PageHeader
-        parent={t("security.parent")}
         current={t("security.security")}
       />
 

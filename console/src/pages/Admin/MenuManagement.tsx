@@ -565,7 +565,6 @@ function MenuManagementPage() {
   return (
     <div className={styles.page}>
       <PageHeader
-        parent={t("nav.admin", "Administration")}
         current={t("nav.adminMenus", "Menu Management")}
         extra={
           <HasPerm code="admin:menus">

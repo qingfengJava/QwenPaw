@@ -18,6 +18,7 @@ import { TABS } from "@/pages/Agents/detailTabs";
 import { stashAiTunePrompt } from "@/pages/Agents/aiTunePrefill";
 import { lazyImportWithRetry } from "@/utils/lazyWithRetry";
 import { useAgentStore } from "@/stores/agentStore";
+import { usePageNavTitle } from "@/hooks/usePageNavTitle";
 import {
   filterTabsForAgentCapabilities,
   type AgentMenuCapabilities,
@@ -74,6 +75,9 @@ export default function AgentDetailLayout() {
     () => agents.find((agent) => agent.id === aid),
     [agents, aid],
   );
+
+  // 员工内部子导航（/agents/:aid/*）共用一个标签，标签名取员工名。
+  usePageNavTitle(currentAgent?.name);
 
   // 与旧侧栏规则一致：非 qwenpaw 后端强制无工作区 UI，用于过滤工作区类 Tab。
   const backendCapabilities = useMemo<AgentMenuCapabilities | undefined>(() => {

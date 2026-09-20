@@ -298,7 +298,7 @@ export default function CheckpointsPage() {
       {modalContext}
       <PageHeader
         className={styles.pageHeader}
-        items={[{ title: t("nav.agent") }, { title: t("checkpoints.title") }]}
+        current={t("checkpoints.title")}
         afterBreadcrumb={
           status?.workspace_dir ? (
             <span className={styles.workspacePath}>{status.workspace_dir}</span>

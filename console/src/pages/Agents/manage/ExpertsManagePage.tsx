@@ -264,7 +264,6 @@ function ExpertsPage() {
   return (
     <div className="sd-page">
       <PageHeader
-        parent={t("nav.employees", "Digital Employees")}
         current={t("nav.agentsManage", "Manage Employees")}
       />
 

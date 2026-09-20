@@ -608,7 +608,7 @@ function CronJobsPage() {
   return (
     <div className={styles.cronJobsPage}>
       <PageHeader
-        items={[{ title: t("nav.control") }, { title: t("cronJobs.title") }]}
+        current={t("cronJobs.title")}
         extra={
           <div className={styles.headerActions}>
             {scopeEnabled && (

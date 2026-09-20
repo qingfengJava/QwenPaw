@@ -18,7 +18,28 @@ export type { QuotaRuleBody, QuotaKey } from "./quotas";
 export { adminAuditApi } from "./audit";
 export type { AuditQuery } from "./audit";
 export { adminKbApi } from "./kb";
-export type { KbBody, IngestBody, IngestResult } from "./kb";
+export type {
+  KbBody,
+  IngestBody,
+  IngestResult,
+  KbSearchTestBody,
+  KbSearchTestHit,
+  KbSearchTestResult,
+  KbReviewAction,
+  KbReviewResult,
+  KbReviewLogRow,
+  KbConflictRow,
+} from "./kb";
+export { adminOntologyApi } from "./ontology";
+export type {
+  OntologyTypeView,
+  OntologyObjectView,
+  OntologyObjectBody,
+  OntologyRelationView,
+  OntologyRelationBody,
+  KbObjectLinkView,
+  KbObjectLinkBody,
+} from "./ontology";
 export { adminOrgsApi } from "./orgs";
 export type { OrgRecord, DepartmentTree } from "./orgs";
 export { adminExpertsApi } from "./experts";

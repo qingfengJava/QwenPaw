@@ -149,7 +149,7 @@ function HeartbeatPage() {
     return (
       <div className={styles.heartbeatPage}>
         <PageHeader
-          items={[{ title: t("nav.control") }, { title: t("heartbeat.title") }]}
+          current={t("heartbeat.title")}
         />
         <span className={styles.description}>{t("common.loading")}</span>
       </div>
@@ -159,7 +159,7 @@ function HeartbeatPage() {
   return (
     <div className={styles.heartbeatPage}>
       <PageHeader
-        items={[{ title: t("nav.control") }, { title: t("heartbeat.title") }]}
+        current={t("heartbeat.title")}
       />
       <div className={styles.heartbeatContent}>
         <Card className={styles.card}>

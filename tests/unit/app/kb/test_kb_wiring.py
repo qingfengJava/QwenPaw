@@ -206,7 +206,8 @@ async def test_collect_kb_tools_bound_registers_and_renders(
     monkeypatch.setattr(AgentBuilder, "_wrap_tool", lambda fn, *a, **k: fn)
 
     tools, catalog = await AgentBuilder._collect_kb_tools("agent_x", {}, None)
-    assert len(tools) == 2
+    # T5 起注册三工具：kb_search + kb_read + kb_objects（本体对象卡）
+    assert len(tools) == 3
     assert "<knowledge-bases>" in catalog
     assert bound.id in catalog
     assert "孕产库" in catalog

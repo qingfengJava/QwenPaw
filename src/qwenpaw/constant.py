@@ -135,6 +135,19 @@ KEYRING_ACCOUNT_ENV = "QWENPAW_KEYRING_ACCOUNT"
 
 PROJECT_NAME = "QwenPaw"
 
+# Default local API address for the server and CLI fallbacks.
+# Single source of truth; the console dev proxy (console/vite.config.ts)
+# must keep pointing at this port. 8188 is chosen over the historical
+# 8088 to avoid conflicts with other commonly installed dev services.
+# Runtime override: QWENPAW_HOST / QWENPAW_PORT env vars.
+DEFAULT_API_HOST = EnvVarLoader.get_str("QWENPAW_HOST", "127.0.0.1")
+DEFAULT_API_PORT = EnvVarLoader.get_int(
+    "QWENPAW_PORT",
+    default=8188,
+    min_value=1,
+    max_value=65535,
+)
+
 # Message metadata tags shared across agent middleware and memory managers.
 QWENPAW_MESSAGE_TAG_KEY = "qwenpaw_tag"
 QWENPAW_CLIENT_MESSAGE_ID_KEY = "qwenpaw_client_message_id"

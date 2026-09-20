@@ -32,6 +32,13 @@ def admin_app(
         "qwenpaw.app.rbac.store._default_store",
         rbac_store,
     )
+    # RBAC 的 PG 优先路径同样必须隔离：宿主机若配置了 PG DSN，grant/revoke
+    # 与 require_perm 会命中真实库（污染环境数据，并绕过本 fixture 的文件
+    # 断言）。单元测试一律走文件回退平面。
+    monkeypatch.setattr(
+        "qwenpaw.app.rbac.store_pg.get_pg_rbac_store",
+        lambda: None,
+    )
     # Close any live singleton before rebinding: monkeypatching
     # ``_instance`` would resurrect the closed instance on undo (its
     # writer thread is dead, and a second close() then blocks forever

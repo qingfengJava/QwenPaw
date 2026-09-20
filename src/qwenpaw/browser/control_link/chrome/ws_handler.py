@@ -16,6 +16,7 @@ from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from starlette.responses import JSONResponse
 
+from ....constant import DEFAULT_API_HOST, DEFAULT_API_PORT
 from ....utils.logging import sanitize_log_value
 from ....utils.io_utils import write_json_atomic
 from .bridge import get_nm_bridge, shutdown_nm_bridge as shutdown_global_bridge
@@ -24,7 +25,7 @@ from .state import get_nm_bridge_route_state
 ws_router = APIRouter(prefix="/ws", tags=["browser"])
 
 DEFAULT_CONFIG_PATH = Path.home() / ".qwenpaw" / "nm-bridge.json"
-DEFAULT_WS_URL = "ws://127.0.0.1:8088/api/ws/chrome"
+DEFAULT_WS_URL = f"ws://{DEFAULT_API_HOST}:{DEFAULT_API_PORT}/api/ws/chrome"
 BRIDGE_DISCONNECTED = "bridge_disconnected"
 logger = logging.getLogger(__name__)
 

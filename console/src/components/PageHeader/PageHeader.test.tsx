@@ -8,20 +8,21 @@ describe("PageHeader", () => {
     expect(screen.getByText("Settings")).toBeInTheDocument();
   });
 
-  it("renders parent and current with separator", () => {
+  it("stops rendering the deprecated parent track", () => {
     render(<PageHeader parent="Home" current="Profile" />);
-    expect(screen.getByText("Home")).toBeInTheDocument();
     expect(screen.getByText("Profile")).toBeInTheDocument();
-    expect(screen.getByText("/")).toBeInTheDocument();
+    // 面包屑已上移到顶部导航条，页内不得出现第二份路径
+    expect(screen.queryByText("Home")).not.toBeInTheDocument();
+    expect(screen.queryByText("/")).not.toBeInTheDocument();
   });
 
-  it("renders items prop directly", () => {
+  it("uses the last items entry as title fallback", () => {
     render(
       <PageHeader items={[{ title: "A" }, { title: "B" }, { title: "C" }]} />,
     );
-    expect(screen.getByText("A")).toBeInTheDocument();
-    expect(screen.getByText("B")).toBeInTheDocument();
     expect(screen.getByText("C")).toBeInTheDocument();
+    expect(screen.queryByText("A")).not.toBeInTheDocument();
+    expect(screen.queryByText("B")).not.toBeInTheDocument();
   });
 
   it("renders center slot", () => {
@@ -54,8 +55,9 @@ describe("PageHeader", () => {
     expect(container.querySelector(".breadcrumbSeparator")).toBeNull();
   });
 
-  it("skips empty parent/current", () => {
-    render(<PageHeader parent="" current="" />);
+  it("renders no title element content when parent/current are empty", () => {
+    const { container } = render(<PageHeader parent="" current="" />);
+    expect(container.querySelector(".breadcrumbSeparator")).toBeNull();
     expect(screen.queryByText("/")).not.toBeInTheDocument();
   });
 });

@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 import pytest
 
+from qwenpaw.app.kb import engine as engine_mod
 from qwenpaw.app.kb import service as service_mod
 from qwenpaw.app.kb.chunker import ChunkSpec
 from qwenpaw.app.kb.hits import KbSearchHit
@@ -231,7 +232,9 @@ def svc(
         lambda self, coro, *, write=False: asyncio.run(coro),
         raising=False,
     )
-    # pg_store / engine seam 注入
+    # pg_store / engine seam 注入；T2 起 _pg_search/_pg_ingest_async/
+    # _pg_list_document_chunks 经模块函数 resolve_engine_for 库级路由，
+    # 一并打桩到 FakeEngine（否则真实现会触达 milvus 探测/默认引擎工厂）
     monkeypatch.setattr(
         service_mod.KbService,
         "_pg_store",
@@ -243,6 +246,11 @@ def svc(
         "_engine",
         lambda self: engine,
         raising=False,
+    )
+    monkeypatch.setattr(
+        engine_mod,
+        "resolve_engine_for",
+        lambda space: engine,
     )
     return service_mod.KbService(
         registry_path=tmp_path / "kb_registry.json",

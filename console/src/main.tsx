@@ -1,3 +1,6 @@
+// 控制台降噪钩子必须最先求值（第三方库在导入阶段就会输出告警），
+// 详见 devConsoleFilter.ts 的模块说明，勿调整其 import 顺序
+import "./devConsoleFilter";
 import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import "./i18n";
@@ -44,38 +47,6 @@ if (typeof window !== "undefined") {
   window.addEventListener("drop", (e) => {
     if (isFileDrag(e)) e.preventDefault();
   });
-
-  const originalError = console.error;
-  const originalWarn = console.warn;
-
-  console.error = function (...args: unknown[]) {
-    const msg = args[0]?.toString() || "";
-    if (
-      msg.includes(":first-child") ||
-      msg.includes("pseudo class") ||
-      // 已知第三方库噪音：antd 内部 findDOMNode 与 chat-anywhere 库的 flushSync；
-      // overlayClassName 弃用警告来自 @agentscope-ai/design 内部（项目侧 6 处
-      // 已全部迁移到 classNames={{ root }}，待组件库升级后可移除此过滤）
-      msg.includes("findDOMNode is deprecated") ||
-      msg.includes("flushSync was called from inside a lifecycle method") ||
-      msg.includes("overlayClassName` is deprecated")
-    ) {
-      return;
-    }
-    originalError.apply(console, args as []);
-  };
-
-  console.warn = function (...args: unknown[]) {
-    const msg = args[0]?.toString() || "";
-    if (
-      msg.includes(":first-child") ||
-      msg.includes("pseudo class") ||
-      msg.includes("potentially unsafe")
-    ) {
-      return;
-    }
-    originalWarn.apply(console, args as []);
-  };
 }
 
 createRoot(document.getElementById("root")!).render(<App />);

@@ -210,7 +210,7 @@ function TokenUsagePage() {
   const tablesEmpty = byModelData.length === 0 && byDateData.length === 0;
 
   const pageHeader = (
-    <PageHeader parent={t("nav.settings")} current={t("tokenUsage.title")} />
+    <PageHeader current={t("tokenUsage.title")} />
   );
 
   if (loading) {

@@ -64,6 +64,7 @@ from ..agent_docs.store import (
 from ..agent_startup import AgentStartupStatus
 from ..kb import bindings as kb_bindings
 from ..multi_agent_manager import MultiAgentManager
+from ..write_audit import record_write_audit
 from .kb import _access_kwargs
 from ...constant import WORKING_DIR
 from ...utils.io_utils import run_sync_io, write_json_atomic
@@ -75,10 +76,17 @@ router = APIRouter(prefix="/agents", tags=["agents"])
 
 
 class KbBindingBody(BaseModel):
-    """Body for binding a knowledge space to one agent（T7）。"""
+    """Body for binding a knowledge space to one agent（T7）。
+
+    ``principal_type`` T6 起入参形状保留但本端点仅接受 ``agent``
+    （默认，兼容存量客户端）；团队主体绑定走管理端
+    ``/admin/expert-teams/{team_id}/kb-bindings``，路径/主体不在此
+    错配。
+    """
 
     space_id: str
     remark: str = ""
+    principal_type: Literal["agent"] = "agent"
 
 
 async def _require_agent(agent_id: str) -> None:
@@ -770,6 +778,13 @@ async def bind_agent_kb_endpoint(
             status_code=409,
             detail="binding was concurrently removed; retry",
         )
+    # 审计留痕：绑定授权变更（谁把哪个库绑给了哪个员工）
+    record_write_audit(
+        tool_name="agent_kb.binding.bind",
+        target=f"{agentId}:{body.space_id}",
+        actor_id=username,
+        after={"granted_by": username, "remark": body.remark},
+    )
     return JSONResponse(status_code=201, content={**row, "created": True})
 
 
@@ -798,6 +813,12 @@ async def unbind_agent_kb_endpoint(
         )
     if not await kb_bindings.unbind_agent_kb(agentId, spaceId):
         raise HTTPException(status_code=404, detail="binding not found")
+    # 审计留痕：解绑（谁把哪个库从哪个员工上摘除）
+    record_write_audit(
+        tool_name="agent_kb.binding.unbind",
+        target=f"{agentId}:{spaceId}",
+        actor_id=username,
+    )
 
 
 @router.patch(
