@@ -105,7 +105,6 @@ include-package-data = true
     "agents/context/visual_compression/assets/UNIFONT_LICENSE.txt",
     "agents/context/visual_compression/assets/SPLEEN_LICENSE.txt",
     "agents/tools/deprecated_browser/skills/**",
-    "tokenizer/**",
     "security/tool_guard/rules/**",
     "security/skill_scanner/rules/**",
     "security/skill_scanner/data/**",
