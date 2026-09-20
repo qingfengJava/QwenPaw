@@ -169,3 +169,8 @@ docs/reviews/
 
 # StaffDeck 参考项目（仅本地设计参考，不入库）
 /StaffDeck/
+
+# 死代码清理（20260920）：本地临时调试目录/脚本与 review diff 永不入库
+/_tmp_*/
+/_tmp_*
+/review-task*.diff
