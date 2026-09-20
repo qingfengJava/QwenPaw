@@ -5,16 +5,38 @@ Employees list/search the bases they can access (ACL-filtered) and
 manage documents in their own personal bases.  Cross-scope
 administration lives under ``/api/admin/kb``.
 """
+
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
+from pathlib import Path
+from typing import Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import (
+    APIRouter,
+    File,
+    HTTPException,
+    Request,
+    UploadFile,
+)
 from pydantic import BaseModel, Field
 
-from ..kb.models import SCOPE_PERSONAL, KnowledgeBase
-from ..kb.service import get_kb_service
+from ..kb.ingest import (
+    ParserUnavailable,
+    UnsupportedFormat,
+    parse_upload,
+)
+from ..kb.models import (
+    INGEST_FAILED,
+    SCOPE_PERSONAL,
+    SOURCE_MANUAL,
+    SOURCE_UPLOAD,
+    KbDocument,
+    KnowledgeBase,
+)
+from ..kb.service import KbService, get_kb_service
+from ...db import write_gateway
+from ..utils import read_upload_bounded
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +83,9 @@ class SearchResponse(BaseModel):
 
 
 def _caller(request: Request) -> str:
-    return getattr(request.state, "user", None) or ""
+    # 无认证部署（QWENPAW_AUTH_ENABLED!=true）中间件不绑定身份：
+    # 回退 "local" 让个人库链路可用（xian/projects.py 同款先例）。
+    return getattr(request.state, "user", None) or "local"
 
 
 def _access_kwargs(username: str) -> dict:
@@ -215,9 +239,24 @@ async def delete_document(
     """Remove one document. Same permission rule as ingestion."""
     username = _caller(request)
     kb = _get_accessible_kb(kb_id, username)
-    if kb.scope == SCOPE_PERSONAL and kb.owner_id != username:
-        raise HTTPException(status_code=403, detail="owner only")
-    if not get_kb_service().delete_document(doc_id):
+    # 收敛复用 _ensure_kb_manage：docstring 声称与 ingest 同规则，
+    # 但旧实现漏了非 personal 的 kb:write 校验（team/enterprise 库
+    # 任何可读用户均可删文档）——补齐属修 bug，行为收紧。
+    _ensure_kb_manage(kb, username)
+    service = get_kb_service()
+    # 归属校验（P2-N1，对齐 detail/PUT/chunks 先判归属模式）：doc_id
+    # 全局唯一，跨库误删防线——doc 必须属于本库，否则 404 不落删
+    if write_gateway.resolve_storage_backend() == write_gateway.BACKEND_PG:
+        _ensure_pg_ready(service)
+        doc, _ = service.pg_document_detail(kb.id, doc_id)
+        if doc is None:
+            raise HTTPException(status_code=404, detail="document not found")
+    else:
+        # json/dual 读 json 主面：硬删后 registry 无此文档 → 404
+        meta = service.get_document_meta(doc_id)
+        if meta is None or meta.kb_id != kb.id:
+            raise HTTPException(status_code=404, detail="document not found")
+    if not service.delete_document(doc_id):
         raise HTTPException(status_code=404, detail="document not found")
 
 
@@ -249,3 +288,259 @@ async def search(body: SearchBody, request: Request) -> SearchResponse:
             )
     hits.sort(key=lambda hit: hit.score, reverse=True)
     return SearchResponse(hits=hits[: body.top_k])
+
+
+# ------------------------------------------------------------------
+# T11: 文档面端点（目录树 / 详情 / 编辑 / 上传 / 切片预览）
+# ------------------------------------------------------------------
+
+
+class UpdateDocBody(BaseModel):
+    """PUT 编辑请求体（content_md upsert，自动版本+1）。"""
+
+    content_md: str
+
+
+def _ensure_kb_manage(kb: KnowledgeBase, username: str) -> None:
+    """文档写权校验（与既有 ingest/delete 端点同规则，提取复用）。"""
+    if kb.scope == SCOPE_PERSONAL and kb.owner_id != username:
+        raise HTTPException(status_code=403, detail="owner only")
+    if kb.scope != SCOPE_PERSONAL:
+        from ..rbac import PERM_KB_WRITE
+        from ..rbac.deps import _resolve_flat_role
+        from ..rbac.store import get_rbac_store
+
+        flat_role = _resolve_flat_role(username) if username else ""
+        if not get_rbac_store().user_has_permission(
+            username,
+            PERM_KB_WRITE,
+            flat_role=flat_role,
+        ):
+            raise HTTPException(status_code=403, detail="kb:write required")
+
+
+def _ensure_pg_ready(service: KbService) -> None:
+    """pg 权威平面守门（T11 文档面）：不可用 → 503 显式提示，不静默降级。"""
+    if not service.pg_ready():
+        raise HTTPException(
+            status_code=503,
+            detail="knowledge base PG plane unavailable (pg backend required)",
+        )
+
+
+def _build_tree(docs: List[KbDocument]) -> List[dict]:
+    """按 ``path`` 聚合目录树（文档节点携带 doc_id/title/ingest_status）。
+
+    节点用 dict 按 path 前缀索引（O(n) 建树），避免逐层线性扫 children
+    的 O(n²)。
+    """
+    roots: List[dict] = []
+    index: Dict[str, dict] = {}
+    for doc in docs:
+        parts = [p for p in (doc.path or "").split("/") if p]
+        if not parts:
+            continue
+        children = roots
+        prefix = ""
+        for i, part in enumerate(parts):
+            prefix = f"{prefix}/{part}" if prefix else part
+            node = index.get(prefix)
+            if node is None:
+                node = {
+                    "name": part,
+                    "path": prefix,
+                    "doc_id": None,
+                    "title": "",
+                    "ingest_status": "",
+                    "children": [],
+                }
+                index[prefix] = node
+                children.append(node)
+            if i == len(parts) - 1:
+                node["doc_id"] = doc.id
+                node["title"] = doc.title
+                node["ingest_status"] = doc.ingest_status
+            children = node["children"]
+    return roots
+
+
+@router.get("/{kb_id}/tree")
+def get_document_tree(kb_id: str, request: Request) -> dict:
+    """Path 聚合目录树（pg 权威面；文档节点携带摄入状态）。"""
+    username = _caller(request)
+    kb = _get_accessible_kb(kb_id, username)
+    service = get_kb_service()
+    _ensure_pg_ready(service)
+    docs = service.pg_list_documents(kb.id)
+    return {"kb_id": kb.id, "nodes": _build_tree(docs)}
+
+
+@router.get("/{kb_id}/documents/{doc_id}")
+def get_document_detail(
+    kb_id: str,
+    doc_id: str,
+    request: Request,
+) -> dict:
+    """文档详情：content_md 权威全文 + 当前版本 + 摄入状态。"""
+    username = _caller(request)
+    kb = _get_accessible_kb(kb_id, username)
+    service = get_kb_service()
+    _ensure_pg_ready(service)
+    doc, version = service.pg_document_detail(kb.id, doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="document not found")
+    return {
+        "doc_id": doc.id,
+        "kb_id": doc.space_id,
+        "title": doc.title,
+        "path": doc.path,
+        "source": doc.source,
+        "ingest_status": doc.ingest_status,
+        "version": version,
+        "content_md": doc.content_md,
+        "updated_by": doc.updated_by,
+        "created_at": doc.created_at.isoformat(),
+        "updated_at": doc.updated_at.isoformat(),
+    }
+
+
+@router.put("/{kb_id}/documents/{doc_id}")
+def update_document(
+    kb_id: str,
+    doc_id: str,
+    body: UpdateDocBody,
+    request: Request,
+) -> dict:
+    """MD 编辑 = content_md upsert 自动版本+1 + 重切片重索引。
+
+    经 :meth:`KbService.pg_ingest_document` 复用 T6 版本化重摄入：hash
+    护栏变更时 ``MAX(version)+1`` 快照，状态机推进并重切片重索引
+    （同内容幂等短路）。
+    """
+    username = _caller(request)
+    kb = _get_accessible_kb(kb_id, username)
+    _ensure_kb_manage(kb, username)
+    service = get_kb_service()
+    _ensure_pg_ready(service)
+    doc, _ = service.pg_document_detail(kb.id, doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="document not found")
+    try:
+        result = service.pg_ingest_document(
+            space_id=kb.id,
+            title=doc.title,
+            path=doc.path,
+            content_md=body.content_md,
+            source=doc.source or SOURCE_MANUAL,
+        )
+    except ValueError as exc:
+        # 值级拒绝（如空白 content_md）：400，与基础设施故障 500 区分
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if result is None or result.status == INGEST_FAILED:
+        raise HTTPException(
+            status_code=500,
+            detail="document ingest failed (see server logs)",
+        )
+    _, version = service.pg_document_detail(kb.id, result.doc_id)
+    if version <= 0:
+        # 写入已提交但读回失败：显式报错，绝不假成功返回 version=0
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "document ingested but version readback failed "
+                "(pg plane unstable); retry shortly"
+            ),
+        )
+    return {
+        "doc_id": result.doc_id,
+        "version": version,
+        "ingest_status": result.status,
+        "chunk_count": result.chunk_count,
+    }
+
+
+@router.post("/{kb_id}/documents/upload", status_code=201)
+def upload_document(
+    kb_id: str,
+    request: Request,
+    file: UploadFile = File(...),
+) -> dict:
+    """multipart 上传：白名单解析 → T6 版本化摄入（同步推进状态机）。"""
+    username = _caller(request)
+    kb = _get_accessible_kb(kb_id, username)
+    _ensure_kb_manage(kb, username)
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="missing filename")
+    service = get_kb_service()
+    # fail fast：503 门控在读文件体之前，避免无谓 IO
+    _ensure_pg_ready(service)
+    # 分块限读（P2-2）：超限立即中止，不把大文件整体读进内存
+    data = read_upload_bounded(file.file)
+    if not data:
+        raise HTTPException(status_code=400, detail="empty upload")
+    try:
+        content_md = parse_upload(file.filename, data)
+    except UnsupportedFormat as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ParserUnavailable as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    stem = Path(file.filename).stem or "document"
+    path = f"{stem}.md"
+    try:
+        result = service.pg_ingest_document(
+            space_id=kb.id,
+            title=stem,
+            path=path,
+            content_md=content_md,
+            source=SOURCE_UPLOAD,
+            source_meta={"filename": file.filename},
+            uploaded_from=data,
+        )
+    except ValueError as exc:
+        # 值级拒绝：400，与基础设施故障 500 区分
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if result is None or result.status == INGEST_FAILED:
+        raise HTTPException(
+            status_code=500,
+            detail="document ingest failed (see server logs)",
+        )
+    return {
+        "doc_id": result.doc_id,
+        "path": path,
+        "ingest_status": result.status,
+        "chunk_count": result.chunk_count,
+    }
+
+
+@router.get("/{kb_id}/documents/{doc_id}/chunks")
+def get_document_chunks(
+    kb_id: str,
+    doc_id: str,
+    request: Request,
+) -> List[dict]:
+    """chunk 预览（数据源 ``svc.document_chunks``，seq 升序含 heading_path）。"""
+    username = _caller(request)
+    kb = _get_accessible_kb(kb_id, username)
+    service = get_kb_service()
+    if write_gateway.resolve_storage_backend() == write_gateway.BACKEND_PG:
+        # 与详情端点契约一致：pg 面软删（is_delete）文档 → 404，
+        # 而非返回遗留 chunks；pg 后端但平面不可达 → 503 显式
+        _ensure_pg_ready(service)
+        doc, _ = service.pg_document_detail(kb.id, doc_id)
+        if doc is None:
+            raise HTTPException(status_code=404, detail="document not found")
+    else:
+        # json/dual 读 json 主面：硬删后 registry 无此文档 → 404
+        meta = service.get_document_meta(doc_id)
+        if meta is None or meta.kb_id != kb.id:
+            raise HTTPException(status_code=404, detail="document not found")
+    return [
+        {
+            "chunk_id": chunk.chunk_id,
+            "seq": chunk.seq,
+            "text": chunk.text,
+            "heading_path": chunk.heading_path,
+            "parent_seq": chunk.parent_seq,
+        }
+        for chunk in service.document_chunks(kb.id, doc_id)
+    ]

@@ -25,13 +25,14 @@ import os
 import threading
 import uuid
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from ...constant import SECRET_DIR
 from ...db import write_gateway
 from .chunker import ChunkSpec
 from .file_engine import DEFAULT_KB_DATA_DIR, FileKbEngine
 from .hits import KbSearchHit
+from .ingest import IngestResult, ingest_space_document
 from .models import (
     INGEST_READY,
     SCOPE_ENTERPRISE,
@@ -584,6 +585,127 @@ class KbService:
         except Exception:  # pylint: disable=broad-except
             logger.warning(
                 "[kb] pg get_document failed; doc=%s", doc_id, exc_info=True
+            )
+            return None
+
+    # ------------------------------------------------------------------
+    # T11 文档面 pg 权威门面（供员工面同步 def 路由复用；与既有 admin
+    # 路由同模式：路由线程 → 桥接循环，保证 KB 面协程单循环收敛）
+    # ------------------------------------------------------------------
+
+    def pg_ready(self) -> bool:
+        """pg 权威面是否就绪（backend==pg 且 pg 可达；T11 文档面 503 门控）。
+
+        仅探测 pg 可达不够：dual 后端下 T11 写端点走 pg 权威面，而三态
+        读面（chunks/search）仍读 json 主面——读写分裂会让写入后的
+        chunk 预览 404、检索不命中。故 backend 非 pg 一律不就绪（路由
+        层 503 显式提示）：纯 json 部署无 pg 数据面，dual 部署请走既有
+        ``ingest_text`` 写路径（json 主写）+ 三态读面。
+        """
+        if self._backend() != write_gateway.BACKEND_PG:
+            return False
+        return self._pg_available()
+
+    def pg_list_documents(self, kb_id: str) -> List[KbDocument]:
+        """目录树数据源：pg 权威面文档清单（path 升序，不含正文）。
+
+        调用方先用 :meth:`pg_ready` 门控（503），本方法空列表即权威空。
+        """
+        try:
+            store = self._pg_store()
+            if store is None:
+                return []
+            return list(self._run_async(store.list_documents(kb_id)) or [])
+        except Exception:  # pylint: disable=broad-except
+            logger.warning(
+                "[kb] pg tree list failed; kb=%s", kb_id, exc_info=True
+            )
+            return []
+
+    async def _pg_document_detail_async(
+        self,
+        kb_id: str,
+        doc_id: str,
+    ) -> Tuple[Optional[KbDocument], int]:
+        """详情取数协程：文档 + 当前版本（未命中/异库/已删除 → (None, 0)）。"""
+        store = self._pg_store()
+        doc = await store.get_document(doc_id)
+        if doc is None or doc.space_id != kb_id or doc.is_delete:
+            return None, 0
+        versions = await store.list_document_versions(doc.id)
+        version = versions[0].version if versions else 1
+        return doc, version
+
+    def pg_document_detail(
+        self,
+        kb_id: str,
+        doc_id: str,
+    ) -> Tuple[Optional[KbDocument], int]:
+        """文档详情数据源：(doc, 当前版本)；未命中 → (None, 0)。
+
+        pg 不可用/异常同样收敛为 (None, 0)——调用方必须先经
+        :meth:`pg_ready` 门控（503），避免把基础设施故障误报为 404。
+        """
+        try:
+            store = self._pg_store()
+            if store is None:
+                return None, 0
+            return self._run_async(
+                self._pg_document_detail_async(kb_id, doc_id),
+            )
+        except Exception:  # pylint: disable=broad-except
+            logger.warning(
+                "[kb] pg document detail failed; kb=%s doc=%s",
+                kb_id,
+                doc_id,
+                exc_info=True,
+            )
+            return None, 0
+
+    def pg_ingest_document(
+        self,
+        *,
+        space_id: str,
+        title: str,
+        path: str,
+        content_md: str,
+        source: str,
+        source_meta: Optional[Dict[str, Any]] = None,
+        uploaded_from: Optional[bytes] = None,
+    ) -> Optional[IngestResult]:
+        """pg 权威面版本化摄入（T6 ``ingest_space_document`` 同步门面）。
+
+        PUT 编辑与 multipart 上传共用：hash 护栏变更自动 ``MAX(version)+1``
+        快照 + 重切片重索引；同 path 同内容幂等短路。
+
+        Returns:
+            :class:`IngestResult`（含 ``status=failed`` 的失败收敛）；
+            桥接异常返 None（调用方 500）。值级拒绝（如空白 content_md，
+            ``ingest_space_document`` 抛 ``ValueError``）原样重抛——调用方
+            映射 400，与基础设施故障（None → 500）区分。
+        """
+        try:
+            return self._run_async(
+                ingest_space_document(
+                    space_id=space_id,
+                    title=title,
+                    path=path,
+                    content_md=content_md,
+                    source=source,
+                    source_meta=source_meta,
+                    uploaded_from=uploaded_from,
+                    store=self._pg_store(),
+                ),
+                write=True,
+            )
+        except ValueError:
+            # 值级拒绝（空白 content_md 等）：非基础设施故障，不吞
+            raise
+        except Exception:  # pylint: disable=broad-except
+            logger.warning(
+                "[kb] pg ingest document failed; kb=%s",
+                space_id,
+                exc_info=True,
             )
             return None
 

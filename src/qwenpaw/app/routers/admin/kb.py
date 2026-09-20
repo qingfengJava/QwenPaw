@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import logging
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -136,3 +136,50 @@ async def delete_document(kb_id: str, doc_id: str) -> None:
     del kb_id  # doc_id is globally unique; kb_id is for the URL shape.
     if not get_kb_service().delete_document(doc_id):
         raise HTTPException(status_code=404, detail="document not found")
+
+
+class SearchTestBody(BaseModel):
+    """search-test 请求体（对齐员工面 SearchBody 风格，T11）。"""
+
+    query: str
+    kb_id: Optional[str] = None
+    top_k: int = Field(default=5, ge=1, le=50)
+
+
+@router.post("/search-test")
+def search_test(body: SearchTestBody) -> dict:
+    """检索调参透传：单库引擎 top-k + 得分明细（不叠加 ACL 收敛）。"""
+    if not body.kb_id:
+        raise HTTPException(status_code=400, detail="kb_id is required")
+    service = get_kb_service()
+    if service.get_kb(body.kb_id) is None:
+        raise HTTPException(status_code=404, detail="kb not found")
+    # P1-1 同一门控：dual 后端下三态 search 读 json 主面而 T11 写入走
+    # pg 权威面，命中缺失会误导调参结论；json 部署请用员工面
+    # /api/kb/search（json 引擎正常）。
+    if not service.pg_ready():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "search-test requires the pg backend (dual deployments "
+                "read the json plane; use /api/kb/search instead)"
+            ),
+        )
+    hits = [
+        {
+            "chunk_id": chunk.chunk_id,
+            "doc_id": chunk.doc_id,
+            "seq": chunk.seq,
+            "title": chunk.title,
+            "text": chunk.text,
+            "score": score,
+            "heading_path": chunk.heading_path,
+        }
+        for chunk, score in service.search(
+            body.kb_id,
+            body.query,
+            top_k=body.top_k,
+        )
+    ]
+    hits.sort(key=lambda hit: hit["score"], reverse=True)
+    return {"kb_id": body.kb_id, "hits": hits[: body.top_k]}

@@ -274,11 +274,17 @@ class KbPgStore:
     # ------------------------------------------------------------------
 
     def _get_engine(self) -> Any:
-        """Lazily materialize the shared pooled engine from the PG DSN."""
+        """Materialize a dedicated pooled engine from the PG DSN.
+
+        ``dedicated=True``：KB 面引擎不入 db 全局缓存——本 store 的协程
+        全部经 KbService 桥接循环执行（users/RBAC 后台 loop store 同款
+        约定），共享池跨主循环/桥接循环复用会触发 asyncpg "Future
+        attached to a different loop" 连接腐蚀。
+        """
         if self._engine is None:
             from ...db.engine import create_pg_engine
 
-            self._engine = create_pg_engine()
+            self._engine = create_pg_engine(dedicated=True)
         return self._engine
 
     async def _probe_tables_async(self) -> bool:

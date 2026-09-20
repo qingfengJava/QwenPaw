@@ -162,3 +162,39 @@ def check_upload_size(data: bytes) -> None:
                 f"Maximum is {UPLOAD_MAX_SIZE_MB} MB."
             ),
         )
+
+
+#: read_upload_bounded 的分块读取粒度（1 MB）
+_UPLOAD_READ_CHUNK = 1024 * 1024
+
+
+def read_upload_bounded(fh) -> bytes:
+    """Stream-read *fh* in chunks, aborting once over the size limit.
+
+    先全量 ``read()`` 再校验会把超大文件整个读进内存（击穿点，尤其
+    ``UPLOAD_MAX_SIZE_MB`` 默认 ``None`` 时全无上限）。本函数按 1 MB
+    块累积读取，累计字节数一超限立即中止；限制语义与
+    :func:`check_upload_size` 一致（``None`` = 不限制，读满为止）。
+    """
+    from ..constant import UPLOAD_MAX_SIZE_MB
+
+    max_bytes = (
+        None
+        if UPLOAD_MAX_SIZE_MB is None
+        else UPLOAD_MAX_SIZE_MB * 1024 * 1024
+    )
+    data = bytearray()
+    while True:
+        block = fh.read(_UPLOAD_READ_CHUNK)
+        if not block:
+            break
+        data.extend(block)
+        if max_bytes is not None and len(data) > max_bytes:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"File too large (>{UPLOAD_MAX_SIZE_MB} MB). "
+                    f"Maximum is {UPLOAD_MAX_SIZE_MB} MB."
+                ),
+            )
+    return bytes(data)

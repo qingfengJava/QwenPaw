@@ -181,11 +181,16 @@ class PgVectorEngine:
         self._engine = engine
 
     def _get_engine(self) -> Any:
-        """惰性取共享连接池（json-only 部署永不触达）。"""
+        """惰性取专属连接池（json-only 部署永不触达）。
+
+        ``dedicated=True``：检索引擎协程与 KbPgStore 同样全部经 KbService
+        桥接循环执行，不入 db 全局缓存（共享池跨主循环/桥接循环复用会
+        触发 asyncpg "Future attached to a different loop" 连接腐蚀）。
+        """
         if self._engine is None:
             from ...db.engine import create_pg_engine
 
-            self._engine = create_pg_engine()
+            self._engine = create_pg_engine(dedicated=True)
         return self._engine
 
     # ------------------------------------------------------------------
