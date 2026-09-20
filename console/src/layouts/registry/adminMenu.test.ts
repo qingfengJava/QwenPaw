@@ -40,6 +40,7 @@ describe("admin menu role filtering (M5)", () => {
       "core.admin-group",
       "core.admin-knowledge",
       "core.admin-model-grants",
+      "core.admin-ontology",
       "core.admin-organization",
       "core.admin-pending",
       "core.admin-quotas",

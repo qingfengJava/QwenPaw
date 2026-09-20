@@ -83,13 +83,20 @@ export default function MainLayout({ hubMode = false }: { hubMode?: boolean }) {
 
   // 方向二：标签 → URL。仅当激活标签与当前路径确实不是同一页时才导航，
   // 导航落地后两侧 key 相等，effect 自然停止，不会形成回环。
+  //
+  // 必须读取 store 的最新状态（getState）而不是本渲染快照：方向一在同一个
+  // commit 的 effect 阶段刚把 activeKey 同步到新 URL，快照里的旧 activeKey
+  // 会把这次导航误判成「标签漂移」并弹回旧标签；方向一再纠正回来，两个
+  // effect 互相追逐，URL 在 /A ↔ /B 之间无限交换（点击菜单后页面频闪）。
   useEffect(() => {
     if (!navEnabled) return;
-    const tab = tabs.find((item) => item.key === activeKey);
+    const { tabs: latestTabs, activeKey: latestActiveKey } =
+      usePageNavStore.getState();
+    const tab = latestTabs.find((item) => item.key === latestActiveKey);
     if (!tab) return;
     const currentKey =
       resolve(location.pathname)?.key ?? normalizeTabKey(location.pathname);
-    if (currentKey === activeKey) return;
+    if (currentKey === latestActiveKey) return;
     navigate(tab.path);
   }, [navEnabled, tabs, activeKey, location.pathname, navigate, resolve]);
 
