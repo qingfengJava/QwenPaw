@@ -31,6 +31,7 @@ def _load_runtime_module():
 
 def test_context_python_preserves_virtualenv_launcher_symlink(
     tmp_path: Path,
+    require_symlink: None,
 ) -> None:
     runtime = _load_runtime_module()
     base_python = tmp_path / "base-python"

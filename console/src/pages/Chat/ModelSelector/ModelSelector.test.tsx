@@ -82,6 +82,7 @@ vi.mock("react-i18next", () => ({
 
 vi.mock("lucide-react", () => ({
   AlertTriangle: () => "AlertTriangle",
+  Brain: () => "Brain",
   Check: () => "Check",
   ChevronDown: () => "ChevronDown",
   ChevronUp: () => "ChevronUp",
@@ -92,12 +93,15 @@ vi.mock("lucide-react", () => ({
   Link: () => "Link",
   Loader2: () => "Loader2",
   LoaderCircle: () => "LoaderCircle",
+  Lock: () => "Lock",
   Plus: () => "Plus",
+  RotateCcw: () => "RotateCcw",
   Search: () => "Search",
   Save: () => "Save",
   Settings: () => "Settings",
   Settings2: () => "Settings2",
   Trash2: () => "Trash2",
+  X: () => "X",
   XCircle: () => "XCircle",
 }));
 
@@ -1949,5 +1953,164 @@ describe("ModelSelector", () => {
         screen.getByRole("button", { name: "chat.modelSelectTooltip" }),
       ).toHaveTextContent("GPT-3.5 Turbo");
     });
+  });
+
+  // ---------------------------------------------------------------------------
+  // 员工域配置面板 — 调参 ≠ 选模型：每个模型编辑/展示自己的参数档案
+  // Bug（历史）：agentScope.overrides 恒传激活模型的 agent_overrides，且
+  // 保存复用"设置激活模型"端点 → 给非激活模型配参数会连带切换选中模型；
+  // 修复后：保存走 activate=false（仅写档案），展示走 per-model 档案映射。
+  // ---------------------------------------------------------------------------
+  const agentOverridesActiveModels: ActiveModelsInfo = {
+    active_llm: { provider_id: "openai", model: "gpt-4" },
+    agent_overrides: {
+      max_input_length: 409600,
+      thinking_enabled: true,
+      reasoning_effort: "high",
+    },
+    // per-model 档案映射：激活模型（GPT-4）与 agent_overrides 同源；
+    // GPT-3.5 无档案条目 = 跟随全局基线
+    agent_model_overrides: {
+      "openai/gpt-4": {
+        max_input_length: 409600,
+        thinking_enabled: true,
+        reasoning_effort: "high",
+      },
+    },
+  };
+
+  it("does not show active model's agent overrides in another model's config pane", async () => {
+    vi.mocked(providerApi.getActiveModels).mockResolvedValue(
+      agentOverridesActiveModels,
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<ModelSelector />);
+    await screen.findAllByText("GPT-4");
+
+    // 打开下拉，直接打开非激活模型（GPT-3.5 Turbo）的配置面板
+    await user.click(screen.getAllByText("GPT-4")[0]);
+    const configButtons = await screen.findAllByRole("button", {
+      name: "modelSelector.modelConfig",
+    });
+    await user.click(configButtons[1]);
+    await screen.findByText("modelSelector.modelConfigTitle");
+
+    // 员工专属覆盖（400K）只属于激活模型 GPT-4，不得出现在 GPT-3.5 面板
+    expect(screen.queryByText(/modelSelector\.agentOverrideTag/)).toBeNull();
+    // GPT-3.5 按自身全局基线（16384 → 16K）选中当前档位
+    // （列表行的 16K 是徽标文本；仅面板中选中的档位按钮含 Check 图标）
+    const baselinePreset = screen
+      .getAllByText("16K")
+      .map((el) => el.closest("button"))
+      .find((btn) => btn?.textContent?.includes("Check"));
+    expect(baselinePreset).toBeDefined();
+  });
+
+  it("does not carry previous model's overrides when switching config target", async () => {
+    vi.mocked(providerApi.getActiveModels).mockResolvedValue(
+      agentOverridesActiveModels,
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<ModelSelector />);
+    await screen.findAllByText("GPT-4");
+
+    await user.click(screen.getAllByText("GPT-4")[0]);
+    // 先打开激活模型（GPT-4）的配置面板：员工专属覆盖在此展示是正确的
+    const configButtons = await screen.findAllByRole("button", {
+      name: "modelSelector.modelConfig",
+    });
+    await user.click(configButtons[0]);
+    expect(
+      await screen.findByText(/modelSelector\.agentOverrideTag/),
+    ).toBeInTheDocument();
+
+    // 面板开着时切换到 GPT-3.5 Turbo 的配置面板
+    const nextButtons = screen.getAllByRole("button", {
+      name: "modelSelector.modelConfig",
+    });
+    await user.click(nextButtons[1]);
+
+    // 上一模型的员工专属覆盖不得残留
+    expect(screen.queryByText(/modelSelector\.agentOverrideTag/)).toBeNull();
+    // GPT-3.5 按自身全局基线（16384 → 16K）选中当前档位
+    const baselinePreset = screen
+      .getAllByText("16K")
+      .map((el) => el.closest("button"))
+      .find((btn) => btn?.textContent?.includes("Check"));
+    expect(baselinePreset).toBeDefined();
+
+    // 写路径：在新面板选择档位，写入 GPT-3.5 槽位的覆盖不得携带上一模型的值
+    // （128K 档位文本带「默认」后缀标注，用前缀匹配）
+    const activeCallsBefore = vi.mocked(providerApi.getActiveModels).mock.calls
+      .length;
+    const providerCallsBefore = vi.mocked(providerApi.listProviders).mock.calls
+      .length;
+    await user.click(screen.getByText(/^128K/));
+    await waitFor(() => {
+      expect(providerApi.setActiveLlm).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider_id: "openai",
+          model: "gpt-3.5-turbo",
+          scope: "agent",
+          // 调参 ≠ 选模型：保存参数不得切换员工默认模型
+          activate: false,
+          overrides: expect.objectContaining({
+            max_input_length: 131072,
+            thinking_enabled: null,
+            reasoning_effort: null,
+          }),
+        }),
+      );
+    });
+    // 保存后走静默轻量刷新（仅重拉 activeModels），不得触发全量 loading
+    // （列表被 Spin 替换会导致配置面板闪动）
+    await waitFor(() => {
+      expect(
+        vi.mocked(providerApi.getActiveModels).mock.calls.length,
+      ).toBeGreaterThan(activeCallsBefore);
+    });
+    expect(vi.mocked(providerApi.listProviders).mock.calls.length).toBe(
+      providerCallsBefore,
+    );
+    expect(screen.queryByText("modelSelector.loadingModels")).toBeNull();
+  });
+
+  it("reflects each model's own agent profile on the badge and pane", async () => {
+    // GPT-3.5（非激活）有自己的员工档案（200K）：列表徽标与配置面板都
+    // 应显示它自己的档案值，且激活模型保持 GPT-4（调参 ≠ 选模型）
+    vi.mocked(providerApi.getActiveModels).mockResolvedValue({
+      ...agentOverridesActiveModels,
+      agent_model_overrides: {
+        "openai/gpt-4": {
+          max_input_length: 409600,
+          thinking_enabled: true,
+          reasoning_effort: "high",
+        },
+        "openai/gpt-3.5-turbo": { max_input_length: 204800 },
+      },
+    });
+    const user = userEvent.setup();
+    renderWithProviders(<ModelSelector />);
+    await screen.findAllByText("GPT-4");
+
+    // 打开下拉后检查列表：GPT-3.5 行徽标按其自身档案显示 200K（激活与否
+    // 都跟随，右侧改了左侧同步变）；列表中 "200K" 唯一（GPT-4 行是 400K）
+    await user.click(screen.getAllByText("GPT-4")[0]);
+    expect(screen.getByText("200K")).toBeInTheDocument();
+
+    // 打开非激活模型（GPT-3.5）的配置面板：显示它自己的档案而非基线
+    const configButtons = await screen.findAllByRole("button", {
+      name: "modelSelector.modelConfig",
+    });
+    await user.click(configButtons[1]);
+    expect(
+      await screen.findByText(/modelSelector\.agentOverrideTag/),
+    ).toBeInTheDocument();
+    // 200K 档位为选中态（面板档位带 Check 图标）
+    const profilePreset = screen
+      .getAllByText(/^200K/)
+      .map((el) => el.closest("button"))
+      .find((btn) => btn?.textContent?.includes("Check"));
+    expect(profilePreset).toBeDefined();
   });
 });

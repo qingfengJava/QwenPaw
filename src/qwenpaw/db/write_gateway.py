@@ -8,8 +8,7 @@
   缓存 + DSN 可用性判定，此前在 provider/inbox/crons/skill 各域
   各自复制一份，现收敛为单一实现（历史实现保留为兼容门面）；
 - **调度策略**：``submit_shadow_write`` 提供 fire-and-forget 影子写
-  （事件循环内 create_task / 无循环时守护线程 ``asyncio.run``），
-  绝不阻塞业务路径；
+  （统一提交到进程级单例影子写守护 loop），绝不阻塞业务路径；
 - **失败语义与日志**：任何 PG 写失败仅告警、绝不向调用方抛异常。
   日志文案统一为 ``"<domain> PG <mode> write failed"``，可全局
   grep 定位故障域。
@@ -48,6 +47,10 @@ VALID_BACKENDS = frozenset(
 
 _backend_cache: str | None = None
 _backend_lock = threading.Lock()
+
+#: 进程级单例影子写守护 loop（所有影子写收敛于此；见 _get_shadow_loop）
+_shadow_loop: asyncio.AbstractEventLoop | None = None
+_shadow_loop_lock = threading.Lock()
 
 
 def _default_storage_backend() -> str:
@@ -101,6 +104,29 @@ def pg_write_available() -> bool:
     return bool(EnvVarLoader.get_str("QWENPAW_PG_DSN", "").strip())
 
 
+def _get_shadow_loop() -> asyncio.AbstractEventLoop:
+    """Return the process-wide shadow-write daemon loop（单例）。
+
+    历史实现（无 loop 时每笔影子写起一线程跑 ``asyncio.run``）会为每次
+    写创建一次性事件循环：operation 内部经共享工厂拿到的 asyncpg 池若
+    绑定在其他 loop（或更糟——被一次性 loop 创建后随即关闭），协程会
+    永久挂在 ``BEGIN`` 后，泄漏 ``idle in transaction`` 连接直至池耗尽。
+    收敛为单例守护 loop 后，配合 per-loop engine 缓存（engine.py）每
+    loop 一池，影子写稳定复用自己的连接。
+    """
+    global _shadow_loop  # pylint: disable=global-statement
+    with _shadow_loop_lock:
+        if _shadow_loop is None or _shadow_loop.is_closed():
+            loop = asyncio.new_event_loop()
+            threading.Thread(
+                target=loop.run_forever,
+                name="qwenpaw-pg-shadow",
+                daemon=True,
+            ).start()
+            _shadow_loop = loop
+        return _shadow_loop
+
+
 def submit_shadow_write(
     operation: Callable[[], Awaitable[Any]],
     *,
@@ -108,30 +134,17 @@ def submit_shadow_write(
 ) -> None:
     """Fire-and-forget a shadow PG write（绝不阻塞业务路径）。
 
-    - 事件循环内：``create_task`` 异步执行；
-    - 无事件循环（CLI / 启动同步路径）：独立守护线程中
-      ``asyncio.run``；
+    - 统一提交到进程级单例影子写守护 loop（``run_coroutine_threadsafe``）；
+      历史的两个分支（事件循环内 ``create_task`` / 无循环时线程
+      ``asyncio.run``）都会让 operation 脱离影子写自己的 loop 驱动，
+      跨 loop 复用 asyncpg 池会挂死连接（见 :func:`_get_shadow_loop`）；
     - 平面不可用（json 后端 / 无 DSN）直接短路，operation 永不执行；
     - 任何失败仅告警（``<domain> PG shadow write failed``）。
     """
     if not pg_write_available():
         return
 
-    def _guarded() -> None:
-        try:
-            asyncio.run(operation())
-        except Exception:  # noqa: BLE001 - shadow plane must never raise
-            logger.warning(
-                "%s PG shadow write failed",
-                domain,
-                exc_info=True,
-            )
-
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        threading.Thread(target=_guarded, daemon=True).start()
-        return
+    loop = _get_shadow_loop()
 
     async def _task() -> None:
         try:
@@ -143,7 +156,7 @@ def submit_shadow_write(
                 exc_info=True,
             )
 
-    asyncio.get_running_loop().create_task(_task())
+    asyncio.run_coroutine_threadsafe(_task(), loop)
 
 
 async def authoritative_write(

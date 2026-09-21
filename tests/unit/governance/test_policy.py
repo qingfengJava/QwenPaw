@@ -88,7 +88,11 @@ def test_audit_close_drains_queue_and_stops_writer(tmp_path):
     # 排空完成：写线程退出，事件已落盘
     assert not writer.is_alive()
     jsonl = tmp_path / "audit.jsonl"
-    rows = [json.loads(line) for line in jsonl.read_text(encoding="utf-8").splitlines() if line]
+    rows = [
+        json.loads(line)
+        for line in jsonl.read_text(encoding="utf-8").splitlines()
+        if line
+    ]
     assert rows and rows[0]["target"] == "git status"
 
     # 关闭后的 record 只静默入队（队列无消费者），绝不抛异常
@@ -979,6 +983,13 @@ class TestFileTargetResolution:
 
     def test_absolute_path_unchanged(self):
         import os
+        import sys
+
+        if sys.platform == "win32":
+            # POSIX 形式的绝对路径在 ntpath.isabs 下不算绝对路径——
+            # "绝对 target 原样保留"的语义由上一用例以各自平台的
+            # 绝对路径形态覆盖，此处平台形态断言仅 POSIX 有意义
+            pytest.skip("POSIX-style path semantics do not apply on Windows")
 
         target = "/etc/passwd"
         assert os.path.isabs(target)

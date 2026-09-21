@@ -138,6 +138,8 @@ export interface ActiveModelsInfo {
   effective_max_input_length?: number | null;
   /** 员工已设置的参数覆盖（仅员工域读取时下发；缺省=未覆盖） */
   agent_overrides?: AgentModelOverrides | null;
+  /** 员工 per-model 参数档案映射（key="provider_id/model"；含未激活模型档案，缺省=旧后端） */
+  agent_model_overrides?: Record<string, AgentModelOverrides> | null;
 }
 
 export type ActiveModelScope = "effective" | "global" | "agent";
@@ -154,6 +156,11 @@ export interface ModelSlotRequest {
   agent_id?: string;
   /** 员工域专属：不传=仅切模型保留既有覆盖；传=整体替换（字段 null=清除） */
   overrides?: AgentModelOverrides | null;
+  /**
+   * 员工域专属：false=仅保存参数到该模型自己的档案，不切换员工默认模型
+   * （调参 ≠ 选模型）；默认 true=激活该模型。缺省字段兼容旧后端。
+   */
+  activate?: boolean;
 }
 
 /* ---- Custom provider CRUD ---- */

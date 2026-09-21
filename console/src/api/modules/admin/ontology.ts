@@ -43,35 +43,54 @@ export interface OntologyObjectBody {
   description?: string;
 }
 
+/** Relation row — fields match `OntologyRelation` (models.py) verbatim. */
 export interface OntologyRelationView {
   id: string;
-  from_id: string;
-  to_id: string;
   type: string;
-  properties: Record<string, unknown>;
+  from_type: string;
+  from_id: string;
+  to_type: string;
+  to_id: string;
+  valid_from: string | null;
+  valid_to: string | null;
+  confidence: number;
+  source: string;
+  evidence_refs: string[];
   created_at: string | null;
 }
 
 export interface OntologyRelationBody {
+  from_type: string;
   from_id: string;
+  to_type: string;
   to_id: string;
   type: string;
-  properties?: Record<string, unknown>;
 }
 
-/** One object↔document link (`kb_object_links`, T4). */
+/** GET /objects/{id}/relations 双向列表返回（outbound + inbound）。 */
+export interface OntologyRelationsPairView {
+  outbound: OntologyRelationView[];
+  inbound: OntologyRelationView[];
+}
+
+/**
+ * One object↔document link (`kb_object_links`, T4) — fields match
+ * `KbObjectLink` (models.py) verbatim（kb_space_id / kb_document_id / object_type）.
+ */
 export interface KbObjectLinkView {
   id: string;
+  kb_space_id: string;
+  kb_document_id: string;
+  object_type: string;
   object_id: string;
-  kb_id: string;
-  document_id: string;
   relation: string;
   created_at: string | null;
 }
 
 export interface KbObjectLinkBody {
-  kb_id: string;
-  document_id: string;
+  kb_space_id: string;
+  kb_document_id: string;
+  object_type: string;
   relation?: string;
 }
 
@@ -110,8 +129,9 @@ export const adminOntologyApi = {
       method: "DELETE",
     }),
 
+  /** 返回 {outbound, inbound} 双向列表（后端 dict，非数组）。 */
   listObjectRelations: (objectId: string) =>
-    request<OntologyRelationView[]>(
+    request<OntologyRelationsPairView>(
       `/admin/ontology/objects/${enc(objectId)}/relations`,
     ),
 

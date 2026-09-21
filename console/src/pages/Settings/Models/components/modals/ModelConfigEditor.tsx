@@ -252,6 +252,8 @@ export function ModelConfigEditor({
         scope: "agent",
         agent_id: agentScope.agentId,
         overrides: next,
+        // 调参 ≠ 选模型：只把参数写入该模型自己的档案，绝不切换员工默认模型
+        activate: false,
       });
       // 选择即存：不打断操作，不弹成功提示（失败仍有错误提示）
       // 刷新员工生效模型元数据（上下文徽标/思考标记立即跟随）

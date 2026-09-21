@@ -43,10 +43,19 @@ def _default_storage_backend() -> str:
     让所有存储面（chats/session_states/history_entries）开始积累 PG 数据，
     为读切换（``pg``）做准备；未配置 DSN 的个人部署保持 ``json`` 不变。
     显式设置 ``QWENPAW_STORAGE_BACKEND`` 恒优先。
+
+    与 ``db.write_gateway._default_storage_backend`` 同语义：
+    ``get_pg_dsn`` 的契约是 fail-fast（未配置即抛 ConfigurationException，
+    永不返回空串），此处探测默认必须把异常收敛为 ``json``——否则默认
+    单机部署在首次 backend 解析时直接炸配置异常（scroll wiring 等所有
+    未显式设 env 的调用方全部殃及）。
     """
     from ...db.engine import get_pg_dsn
 
-    return STORAGE_BACKEND_DUAL if get_pg_dsn() else STORAGE_BACKEND_JSON
+    try:
+        return STORAGE_BACKEND_DUAL if get_pg_dsn() else STORAGE_BACKEND_JSON
+    except Exception:  # noqa: BLE001 - DSN 未配置/依赖缺失均视为 json
+        return STORAGE_BACKEND_JSON
 
 
 def get_storage_backend() -> str:

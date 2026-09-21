@@ -172,7 +172,7 @@ def test_linux_command_mounts_only_runtime_root_writable(
     assert "--unshare-pid" in args
     assert "--unshare-user" in args
     assert ["--cap-drop", "ALL"] == args[
-        args.index("--cap-drop") : args.index("--cap-drop") + 2
+        args.index("--cap-drop"): args.index("--cap-drop") + 2
     ]
 
 
@@ -200,6 +200,10 @@ def test_linux_command_mounts_resolver_at_standard_path(
     assert (str(resolver), str(resolver)) in read_only_mounts
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="bubblewrap (--ro-bind) command layout is Linux-only",
+)
 def test_linux_command_mounts_python_base_prefix(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -412,7 +416,7 @@ def test_windows_runtime_uses_outbound_reverse_tunnel(
     )
     assert command[command.index("--control-port") + 1] == "9100"
     assert command[command.index("--token") + 1] == "tunnel-token"
-    assert command[separator + 1 : separator + 4] == [
+    assert command[separator + 1:separator + 4] == [
         sys.executable,
         "-m",
         "qwenpaw",

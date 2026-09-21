@@ -342,7 +342,7 @@ def test_e2e_cli_no_guard_and_skills_dir(monkeypatch, tmp_path):
 # ── _isolated_skills_workspace ───────────────────────────────────────
 
 
-def test_isolated_workspace_creates_overlay(tmp_path):
+def test_isolated_workspace_creates_overlay(tmp_path, require_symlink):
     """Overlay workspace symlinks skills and pre-populates manifest."""
     from qwenpaw.cli.task_cmd import _isolated_skills_workspace
     from qwenpaw.agents.skill_system import resolve_effective_skills
@@ -396,7 +396,9 @@ def test_isolated_workspace_none_without_skills_dir(tmp_path):
         assert result == base_ws
 
 
-def test_isolated_workspace_does_not_pollute_real_workspace(tmp_path):
+def test_isolated_workspace_does_not_pollute_real_workspace(
+    tmp_path, require_symlink
+):
     """Real workspace must have zero new files after overlay teardown."""
     from qwenpaw.cli.task_cmd import _isolated_skills_workspace
 

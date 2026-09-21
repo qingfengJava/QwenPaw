@@ -514,7 +514,9 @@ def _purge_agent_profiles(agent_id: str) -> None:
     from qwenpaw.db.engine import create_pg_engine
 
     async def _run():
-        engine = create_pg_engine()
+        # dedicated=True：短命 asyncio.run 循环必须用独立引擎，避免复用
+        # 共享缓存池里绑定已关闭循环的 asyncpg 连接（跨 loop 损坏）
+        engine = create_pg_engine(dedicated=True)
         async with engine.begin() as conn:
             await conn.execute(
                 text(
@@ -525,3 +527,129 @@ def _purge_agent_profiles(agent_id: str) -> None:
             )
 
     asyncio.run(_run())
+
+
+@pytest.mark.integration
+@pytest.mark.p1
+def test_agent_model_override_without_activation(
+    app_server,
+    provider,  # pylint: disable=redefined-outer-name
+):
+    """Saving overrides for a NON-active model must not switch the active model.
+
+    Test purpose:
+      - 调参 ≠ 选模型：activate=False 时只把参数写入目标模型自己的
+        档案，员工默认模型（active_llm）保持不变；读取面下发
+        per-model 档案映射（agent_model_overrides），前端列表徽标
+        与配置面板按模型取各自的覆盖。
+
+    Test flow:
+      0. 创建一次性员工（隔离）。
+      1. 切到 base-model 并配参数（激活 base-model）。
+      2. 纯切换到 alt-model（激活槽位移走）。
+      3. activate=False 给 base-model 写新参数 → active_llm 仍为
+         alt-model；响应/GET 的档案映射都含 base-model 新参数。
+    """
+    created = app_server.api_request(
+        "POST",
+        "/api/agents",
+        json={
+            "name": "Integ No-Activation Override Agent",
+            "description": "throwaway agent for no-activation override",
+        },
+        timeout=_HTTP_TIMEOUT,
+    )
+    assert created.status_code in (200, 201), created.text
+    agent_id = created.json()["id"]
+
+    def _put(payload):
+        return app_server.api_request(
+            "PUT",
+            "/api/models/active",
+            json=payload,
+            timeout=_HTTP_TIMEOUT,
+        )
+
+    def _get_agent_active():
+        resp = app_server.api_request(
+            "GET",
+            f"/api/models/active?scope=agent&agent_id={agent_id}",
+            timeout=_HTTP_TIMEOUT,
+        )
+        assert resp.status_code == 200, resp.text
+        return resp.json()
+
+    base_profile_key = f"{provider}/base-model"
+    try:
+        # 1) 激活 base-model 并配参数
+        first = _put(
+            {
+                "provider_id": provider,
+                "model": "base-model",
+                "scope": "agent",
+                "agent_id": agent_id,
+                "overrides": {
+                    "max_input_length": 262144,
+                    "thinking_enabled": None,
+                    "thinking_budget": None,
+                    "reasoning_effort": "high",
+                },
+            },
+        )
+        assert first.status_code == 200, first.text
+
+        # 2) 纯切换到 alt-model（激活槽位移走）
+        away = _put(
+            {
+                "provider_id": provider,
+                "model": "alt-model",
+                "scope": "agent",
+                "agent_id": agent_id,
+            },
+        )
+        assert away.status_code == 200, away.text
+        assert away.json()["active_llm"]["model"] == "alt-model", away.text
+
+        # 3) activate=False 给 base-model 写新参数：不切换激活模型
+        override_resp = _put(
+            {
+                "provider_id": provider,
+                "model": "base-model",
+                "scope": "agent",
+                "agent_id": agent_id,
+                "activate": False,
+                "overrides": {
+                    "max_input_length": 131072,
+                    "thinking_enabled": True,
+                    "thinking_budget": None,
+                    "reasoning_effort": None,
+                },
+            },
+        )
+        assert override_resp.status_code == 200, override_resp.text
+        override_body = override_resp.json()
+        # 激活模型保持不变（调参 ≠ 选模型）
+        assert override_body["active_llm"]["model"] == "alt-model", (
+            override_body
+        )
+        # 档案映射即时回带 base-model 的新参数
+        assert override_body["agent_model_overrides"][base_profile_key] == {
+            "max_input_length": 131072,
+            "thinking_enabled": True,
+        }, override_body
+
+        # GET 回读一致：激活模型不变 + per-model 档案映射含新参数
+        body = _get_agent_active()
+        assert body["active_llm"]["model"] == "alt-model", body
+        assert body["agent_model_overrides"][base_profile_key] == {
+            "max_input_length": 131072,
+            "thinking_enabled": True,
+        }, body
+    finally:
+        # 清理：删除一次性员工 + 清空其全部档案行（不留测试残留）
+        app_server.api_request(
+            "DELETE",
+            f"/api/agents/{agent_id}",
+            timeout=_HTTP_TIMEOUT,
+        )
+        _purge_agent_profiles(agent_id)

@@ -98,8 +98,8 @@ class TestSubmitShadowWrite:
         write_gateway.submit_shadow_write(_operation, domain="t")
         assert executed["count"] == 0
 
-    def test_runs_in_thread_without_event_loop(self, monkeypatch):
-        """无事件循环（CLI/启动路径）：守护线程中执行并等待完成。"""
+    def test_runs_on_shadow_loop_without_event_loop(self, monkeypatch):
+        """无事件循环（CLI/启动路径）：提交到影子写守护 loop 执行。"""
         monkeypatch.setenv("QWENPAW_STORAGE_BACKEND", "dual")
         monkeypatch.setenv("QWENPAW_PG_DSN", "postgresql+asyncpg://x")
         write_gateway.reset_backend_cache()
@@ -110,10 +110,10 @@ class TestSubmitShadowWrite:
             ran_in["loop"] = asyncio.get_running_loop()
             done.set()
 
-        # 当前线程无事件循环（asyncio.run 尚未启动）→ 走守护线程分支
+        # 当前线程无事件循环（历史实现起一次性线程 loop；现行收敛到单例守护 loop）
         write_gateway.submit_shadow_write(_operation, domain="t")
         assert done.wait(timeout=5.0)
-        assert ran_in["loop"] is not None
+        assert ran_in["loop"] is write_gateway._get_shadow_loop()
 
     def test_swallows_operation_exceptions(self, monkeypatch, caplog):
         """operation 抛异常仅告警（统一域名日志），绝不向调用方传播。"""
@@ -138,25 +138,51 @@ class TestSubmitShadowWrite:
             expected in rec.getMessage() for rec in caplog.records
         )
 
-    def test_schedules_task_inside_running_loop(self, monkeypatch):
-        """事件循环内：create_task 调度，循环让出后执行。"""
+    def test_running_loop_submission_goes_to_shadow_loop(self, monkeypatch):
+        """事件循环内提交也收敛到影子写守护 loop（防跨 loop 池腐蚀）。"""
         monkeypatch.setenv("QWENPAW_STORAGE_BACKEND", "dual")
         monkeypatch.setenv("QWENPAW_PG_DSN", "postgresql+asyncpg://x")
         write_gateway.reset_backend_cache()
-        executed = {"count": 0}
+        executed = {"loop": None}
 
         async def _operation():
-            executed["count"] += 1
+            executed["loop"] = asyncio.get_running_loop()
 
         async def _driver():
             write_gateway.submit_shadow_write(_operation, domain="t")
-            # 尚未执行（仅调度）
-            assert executed["count"] == 0
-            await asyncio.sleep(0)
-            # create_task 已排程执行
-            assert executed["count"] == 1
+            # 跨线程调度不保证单次让出即执行，轮询等待完成（最长 5s）
+            for _ in range(500):
+                if executed["loop"] is not None:
+                    break
+                await asyncio.sleep(0.01)
+            assert executed["loop"] is not None
+            # 执行 loop 必须是影子写守护 loop，而非当前业务 loop
+            assert executed["loop"] is write_gateway._get_shadow_loop()
+            assert executed["loop"] is not asyncio.get_running_loop()
 
         asyncio.run(_driver())
+
+    def test_shadow_loop_is_singleton_across_calls(self, monkeypatch):
+        """多次提交复用同一守护 loop（不每笔一线程一 loop）。"""
+        monkeypatch.setenv("QWENPAW_STORAGE_BACKEND", "dual")
+        monkeypatch.setenv("QWENPAW_PG_DSN", "postgresql+asyncpg://x")
+        write_gateway.reset_backend_cache()
+        loops = []
+        done = threading.Event()
+
+        def _make_op():
+            async def _op():
+                loops.append(asyncio.get_running_loop())
+                if len(loops) == 2:
+                    done.set()
+
+            return _op
+
+        write_gateway.submit_shadow_write(_make_op(), domain="t")
+        write_gateway.submit_shadow_write(_make_op(), domain="t")
+        assert done.wait(timeout=5.0)
+        assert loops[0] is loops[1]
+        assert loops[0] is write_gateway._get_shadow_loop()
 
 
 # ---------------------------------------------------------------------------

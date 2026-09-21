@@ -84,7 +84,7 @@ class TestComputeSkillContentHash:
         assert isinstance(h, str)
         assert len(h) == 64
 
-    def test_skips_symlinks(self, tmp_path):
+    def test_skips_symlinks(self, tmp_path, require_symlink):
         """Symlinks should be skipped."""
         (tmp_path / "real.txt").write_text("content")
         link = tmp_path / "link.txt"

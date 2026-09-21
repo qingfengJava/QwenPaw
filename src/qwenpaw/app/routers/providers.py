@@ -48,8 +48,10 @@ from ...providers.provider_discovery_policy import (
 from ...config.config import ActiveModelsInfo
 from ...providers.agent_model_store import (
     get_agent_model_profile_pg,
+    list_agent_model_profiles_pg,
     persist_agent_model_slot,
     resolve_agent_active_model,
+    update_agent_model_profile_pg,
 )
 from ...providers import provider_store
 from ...providers.provider_manager import ProviderManager
@@ -125,6 +127,7 @@ def _active_models_info(
     manager: ProviderManager,
     active_llm: ModelSlotConfig | None,
     agent_overrides: Dict[str, object] | None = None,
+    agent_model_overrides: Dict[str, Dict[str, object]] | None = None,
 ) -> ActiveModelsInfo:
     """Build active-model metadata using the runtime context resolver."""
     effective_max_input_length = None
@@ -141,7 +144,47 @@ def _active_models_info(
         active_llm=active_llm,
         effective_max_input_length=effective_max_input_length,
         agent_overrides=agent_overrides,
+        agent_model_overrides=agent_model_overrides,
     )
+
+
+async def _agent_model_overrides_map(
+    agent_id: str,
+    active_llm: ModelSlotConfig | None,
+) -> Dict[str, Dict[str, object]]:
+    """Build the per-model override profile map for agent-scope reads.
+
+    pg 后端读全量档案表（含未激活模型，每个模型一条）；dual/json 的
+    读取权威在文件平面（无 per-model 存储），退化为仅激活槽位一条。
+    任何 PG 异常只告警兜底，绝不阻塞业务读路径。"""
+    mapping: Dict[str, Dict[str, object]] = {}
+    if (
+        provider_store.provider_storage_backend()
+        == provider_store._BACKEND_PG  # noqa: SLF001
+    ):
+        try:
+            profiles = await list_agent_model_profiles_pg(agent_id)
+        except Exception:  # noqa: BLE001 - PG 平面绝不阻塞业务
+            logger.warning(
+                "agent model profile map lookup failed for %s",
+                agent_id,
+                exc_info=True,
+            )
+            profiles = []
+        for item in profiles:
+            provider_id = item.get("provider_id") or ""
+            model = item.get("model") or ""
+            if provider_id and model:
+                mapping[f"{provider_id}/{model}"] = dict(
+                    item.get("overrides") or {},
+                )
+    # 兜底：激活槽位档案始终在映射中（PG 无行时兼容 agent.json 存量）
+    if active_llm is not None and active_llm.provider_id and active_llm.model:
+        mapping.setdefault(
+            f"{active_llm.provider_id}/{active_llm.model}",
+            dict(_slot_overrides(active_llm)),
+        )
+    return mapping
 
 
 def _audit_agent_model_change(
@@ -273,6 +316,16 @@ class ModelSlotRequest(BaseModel):
             "None = keep existing overrides (model switch only); "
             "provided = replace the whole override set "
             "(field-level None clears that override back to global)."
+        ),
+    )
+    activate: bool = Field(
+        default=True,
+        description=(
+            "Agent-scope only: whether to activate the target model "
+            "(switch the agent default). False = only save the parameter "
+            "overrides onto the target model's own profile WITHOUT "
+            "changing the active model (调参 ≠ 选模型; saving overrides "
+            "for a non-active model requires the PG storage backend)."
         ),
     )
 
@@ -951,10 +1004,12 @@ async def get_active_models(
                 detail="agent_id is required when scope is 'agent'",
             )
         agent_model = await _load_agent_model(request, agent_id)
+        profile_map = await _agent_model_overrides_map(agent_id, agent_model)
         return _active_models_info(
             manager,
             agent_model,
             _slot_overrides(agent_model),
+            profile_map,
         )
 
     try:
@@ -974,6 +1029,10 @@ async def get_active_models(
                 manager,
                 agent_model,
                 _slot_overrides(agent_model),
+                await _agent_model_overrides_map(
+                    target_agent_id,
+                    agent_model,
+                ),
             )
     except (
         HTTPException,
@@ -1073,11 +1132,79 @@ async def set_active_model(
             for field in _OVERRIDE_FIELDS
         }
 
+    # 激活语义判定：activate=False 且目标不是当前激活模型时，只把参数写入
+    # 该模型自己的档案（不切换员工默认模型）——调参 ≠ 选模型。判定提前于
+    # 事务 try，json/dual 后端（文件平面无 per-model 档案存储）直接 400
+    # 快速失败，避免静默丢失。
+    try:
+        current_model = await _load_agent_model(request, body.agent_id)
+    except Exception:  # noqa: BLE001 - 判定失败按"非同目标"保守处理
+        current_model = None
+    is_same_target = (
+        current_model is not None
+        and current_model.provider_id == body.provider_id
+        and current_model.model == body.model
+    )
+    profile_only = not body.activate and not is_same_target
+    if profile_only and (
+        provider_store.provider_storage_backend()
+        != provider_store._BACKEND_PG  # noqa: SLF001
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "为未激活模型保存参数需要 PostgreSQL 存储后端；"
+                "请先切换到该模型后再配置参数"
+            ),
+        )
+
     try:
         workspace = await get_agent_for_request(
             request,
             agent_id=body.agent_id,
         )
+
+        # —— 档案分支：仅写参数、不激活（调参 ≠ 选模型）——
+        if profile_only:
+            if new_overrides is not None:
+                before_profile = await get_agent_model_profile_pg(
+                    workspace.agent_id,
+                    body.provider_id,
+                    body.model,
+                )
+                await update_agent_model_profile_pg(
+                    workspace.agent_id,
+                    body.provider_id,
+                    body.model,
+                    overrides=new_overrides,
+                )
+                _audit_agent_model_change(
+                    workspace_dir=str(
+                        getattr(workspace, "workspace_dir", "") or ""
+                    ),
+                    agent_id=workspace.agent_id,
+                    actor_id=getattr(request.state, "user", "") or "",
+                    provider_id=body.provider_id,
+                    model=body.model,
+                    before=before_profile,
+                    after={
+                        k: v
+                        for k, v in new_overrides.items()
+                        if v is not None
+                    },
+                )
+            # 未触碰激活槽位：active_llm 维持原样，档案映射即时回带
+            profile_map = await _agent_model_overrides_map(
+                workspace.agent_id,
+                current_model,
+            )
+            return _active_models_info(
+                manager,
+                current_model,
+                _slot_overrides(current_model),
+                profile_map,
+            )
+
         before_overrides: Dict[str, object] = {}
 
         # 目标档案参数：带参数写新值；纯切换时优先取目标模型的历史
@@ -1174,7 +1301,17 @@ async def set_active_model(
         model=body.model,
         **effective_overrides,
     )
-    return _active_models_info(manager, final_slot, _slot_overrides(final_slot))
+    # per-model 档案映射随响应回带（前端徽标/面板按模型取各自的覆盖）
+    profile_map = await _agent_model_overrides_map(
+        workspace.agent_id,
+        final_slot,
+    )
+    return _active_models_info(
+        manager,
+        final_slot,
+        _slot_overrides(final_slot),
+        profile_map,
+    )
 
 
 # =============================================================================

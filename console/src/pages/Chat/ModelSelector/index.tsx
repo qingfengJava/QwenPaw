@@ -688,12 +688,18 @@ export default function ModelSelector({
             {visibleModels.map((model) => {
               const isActive =
                 provider.id === activeProviderId && model.id === activeModelId;
-              // 员工域：激活模型被员工覆盖上下文窗口时，徽标显示员工专属值
-              const agentOverrideLength =
-                isActive && selectedAgent
-                  ? (activeModels?.agent_overrides?.max_input_length ??
-                    null)
-                  : null;
+              // 员工域：徽标显示该模型自己的员工覆盖生效值（per-model 档案，
+              // 激活与否都跟随，右侧改了左侧同步变）；旧后端无映射时回退
+              // 激活槽位 agent_overrides
+              const agentOverrideLength = selectedAgent
+                ? (activeModels?.agent_model_overrides?.[
+                    `${provider.id}/${model.id}`
+                  ]?.max_input_length ??
+                  (isActive
+                    ? (activeModels?.agent_overrides?.max_input_length ??
+                      null)
+                    : null))
+                : null;
               const badge = agentOverrideLength
                 ? {
                     label: formatTokenCount(agentOverrideLength),
@@ -1162,16 +1168,28 @@ export default function ModelSelector({
         </div>
         <div className={styles.configPaneBody}>
           <ModelConfigEditor
+            // 目标模型切换时强制重挂载：编辑器内部 agentOverrides 惰性初始化
+            // 仅在挂载时执行，复用实例会把上一模型的覆盖残留到新面板
+            key={`${configTarget.provider.id}/${configTarget.model.id}`}
             providerId={configTarget.provider.id}
             model={configTarget.model}
             isDark={isDark}
             compact
-            // 员工域：有选中员工时编辑员工专属参数覆盖（不触全局基线）
+            // 员工域：每个模型的覆盖取自 per-model 参数档案映射（激活/未激活
+            // 统一来源，编辑的是该模型自己的档案）；旧后端无映射时回退——
+            // 激活模型用 agent_overrides，未激活模型以空覆盖出发（展示基线）
             agentScope={
               selectedAgent
                 ? {
                     agentId: selectedAgent,
-                    overrides: activeModels?.agent_overrides ?? null,
+                    overrides:
+                      activeModels?.agent_model_overrides?.[
+                        `${configTarget.provider.id}/${configTarget.model.id}`
+                      ] ??
+                      (configTarget.provider.id === activeProviderId &&
+                      configTarget.model.id === activeModelId
+                        ? (activeModels?.agent_overrides ?? null)
+                        : null),
                   }
                 : null
             }
@@ -1199,9 +1217,11 @@ export default function ModelSelector({
               );
             }}
             onSaved={async () => {
-              // 完整模式（非本场景）保存后重拉厂商/模型列表
+              // 员工域选择即存后的刷新走轻量路径：员工徽标/覆盖数据全部来自
+              // activeModels（providers 不受员工覆盖影响），且 refreshActiveModels
+              // 不触发 loading 态，避免模型列表被 Spin 替换导致面板闪动
               try {
-                await fetchData();
+                await refreshActiveModels();
               } catch {
                 // ignore
               }

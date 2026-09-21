@@ -236,6 +236,104 @@ async def upsert_agent_model_slot_pg(
             )
 
 
+async def update_agent_model_profile_pg(
+    agent_id: str,
+    provider_id: str,
+    model: str,
+    overrides: dict[str, Any],
+    engine: Any = None,
+) -> None:
+    """Update one model profile's parameters WITHOUT activating it.
+
+    档案语义补充（区别于 :func:`upsert_agent_model_slot_pg` 的
+    "写入即激活"）：为未激活模型保存参数时只更新该档案行的
+    ``config``，绝不触碰 ``is_active``（不切换员工默认模型）——
+    调参 ≠ 选模型。行不存在则新建一条非激活档案（参数落库，
+    等待下次切换到该模型时恢复）。"""
+    from sqlalchemy import text
+
+    from ..db.engine import create_pg_engine
+
+    engine = engine or create_pg_engine()
+    # config 载荷：全部覆盖字段为空时为 NULL（列语义=跟随全局基线）
+    config_payload = _config_to_json(
+        ModelSlotConfig(provider_id="", model="", **overrides),
+    )
+    base_params = {
+        "tenant_id": DEFAULT_TENANT_ID,
+        "agent_id": agent_id,
+        "slot_name": ACTIVE_SLOT_LLM,
+        "provider_id": provider_id or "",
+        "model": model or "",
+        "config": config_payload,
+    }
+    async with engine.begin() as conn:
+        # 先按精确档案键更新（不带 is_active 条件：与激活判定之间的
+        # 极小竞态下也收敛为"写入档案参数"的预期结果）
+        result = await conn.execute(
+            text(
+                "UPDATE agent_model_slots SET config = :config, "
+                "updated_at = now() "
+                "WHERE tenant_id = :tenant_id AND agent_id = :agent_id "
+                "AND slot_name = :slot_name "
+                "AND provider_id = :provider_id AND model = :model",
+            ),
+            base_params,
+        )
+        # 档案行不存在：新建非激活档案
+        if result.rowcount == 0:
+            await conn.execute(
+                text(
+                    "INSERT INTO agent_model_slots "
+                    "(tenant_id, agent_id, slot_name, provider_id, model, "
+                    "config, is_active) "
+                    "VALUES (:tenant_id, :agent_id, :slot_name, "
+                    ":provider_id, :model, :config, FALSE)",
+                ),
+                base_params,
+            )
+
+
+async def list_agent_model_profiles_pg(
+    agent_id: str,
+    engine: Any = None,
+) -> list[dict[str, Any]]:
+    """List every model profile row of one agent (active or not).
+
+    返回 ``[{"provider_id", "model", "overrides", "is_active"}, ...]``，
+    供读取面组装 per-model 参数档案映射（key="provider_id/model"），
+    让列表徽标与配置面板能取到未激活模型各自的参数档案。"""
+    from sqlalchemy import text
+
+    from ..db.engine import create_pg_engine
+
+    engine = engine or create_pg_engine()
+    async with engine.connect() as conn:
+        result = await conn.execute(
+            text(
+                "SELECT provider_id, model, config, is_active "
+                "FROM agent_model_slots "
+                "WHERE tenant_id = :tenant_id AND agent_id = :agent_id "
+                "AND slot_name = :slot_name",
+            ),
+            {
+                "tenant_id": DEFAULT_TENANT_ID,
+                "agent_id": agent_id,
+                "slot_name": ACTIVE_SLOT_LLM,
+            },
+        )
+        rows = result.all()
+    return [
+        {
+            "provider_id": row[0] or "",
+            "model": row[1] or "",
+            "overrides": _json_to_overrides(row[2]),
+            "is_active": bool(row[3]),
+        }
+        for row in rows
+    ]
+
+
 async def clear_agent_model_slot_pg(
     agent_id: str,
     engine: Any = None,

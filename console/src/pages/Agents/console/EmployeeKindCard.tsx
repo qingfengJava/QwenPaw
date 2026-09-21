@@ -1,7 +1,7 @@
 /**
  * Agents/console/EmployeeKindCard.tsx — 单体员工卡（原生智能体 / 数字员工）。
  *
- * 结构：形象 + 名称与形态徽标 + 归属副标 → 状态胶囊与操作 → 描述两行 →
+ * 结构：形象 + 名称与归属副标 → 状态胶囊与操作 → 描述两行 →
  * 部门/可见性徽标 → 脚注（模型 / 后端 / 进入箭头）。
  *
  * 头像口径交给 EmployeeKindAvatar，与工作台共用同一渲染实现。
@@ -10,7 +10,7 @@ import { useTranslation } from "react-i18next";
 import { ArrowRight, Cpu, Pin } from "lucide-react";
 import EmployeeKindAvatar from "@/components/EmployeeKindAvatar";
 import type { DigitalEmployee } from "@/api/modules/employeeRegistry";
-import { KindBadge, StatusBadge, VisibilityBadge } from "./employeeBadges";
+import { StatusBadge, VisibilityBadge } from "./employeeBadges";
 import styles from "./console.module.less";
 
 export interface EmployeeKindCardProps {
@@ -58,7 +58,6 @@ export function EmployeeKindCard({
               {employee.name}
             </span>
             {employee.pinned ? <Pin size={13} className={styles.pinIcon} /> : null}
-            <KindBadge kind={employee.entity_kind} />
           </div>
           <div className={styles.sub} title={employee.title || employee.entity_id}>
             {employee.title || employee.entity_id}

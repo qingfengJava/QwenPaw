@@ -619,7 +619,12 @@ def get_agent_docs_store() -> Optional[AgentDocsStore]:
         return _store
     from ...db.engine import get_pg_dsn
 
-    if not get_pg_dsn():
+    # ``get_pg_dsn`` 契约是 fail-fast（未配置即抛 ConfigurationException，
+    # 永不返回空串），此处只做"是否配置"探测：异常一律视为未配置，
+    # 调用方降级为无 PG 面（否则无 DSN 部署的 config 更新链直接 500）。
+    try:
+        get_pg_dsn()
+    except Exception:  # noqa: BLE001 - DSN 未配置/依赖缺失 → 无 PG 面
         return None
     _store = AgentDocsStore()
     return _store
@@ -709,6 +714,7 @@ def shadow_write_document(
             _shadow_futures.add(future)
             future.add_done_callback(_shadow_futures.discard)
         except Exception as exc:  # noqa: BLE001 - 影子写绝不影响主链路
+            global shadow_write_failures  # pylint: disable=global-statement
             shadow_write_failures += 1
             logger.warning(
                 "Agent docs shadow write sync-fallback failed (primary "

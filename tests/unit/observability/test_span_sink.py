@@ -124,6 +124,9 @@ def test_run_context_roundtrip():
 async def test_emit_and_flush_batches(recorder: _Recorder):
     set_run_context("run-1")
     sink = SpanSink()
+    # unit 层隔离清掉了宿主 PG DSN——预置引擎占位让 flush 直达被
+    # patch 的 store 函数（无 DSN 的 noop 降级由专属用例覆盖）
+    sink._engine = SimpleNamespace()
     span_id = sink.emit_span(
         kind="llm",
         name="qwen-max",

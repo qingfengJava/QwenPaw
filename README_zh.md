@@ -455,6 +455,7 @@ QwenPaw 内置五层核心安全防护：
 | **语音交互**             | 实时语音任务                              | 进行中 |
 | **上下文管理与记忆**     | 向量模型与存储热切换                      | 进行中 |
 |                          | 个人知识库                                | 进行中 |
+|                          | 企业知识本体平台（Evidence/Wiki/Ontology） | 进行中 |
 | **QwenPaw 应用**         | QwenPaw Insight                           | 进行中 |
 |                          | QwenPaw Mail                              | 进行中 |
 

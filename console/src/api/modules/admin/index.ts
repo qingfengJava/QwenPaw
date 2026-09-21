@@ -37,6 +37,7 @@ export type {
   OntologyObjectBody,
   OntologyRelationView,
   OntologyRelationBody,
+  OntologyRelationsPairView,
   KbObjectLinkView,
   KbObjectLinkBody,
 } from "./ontology";

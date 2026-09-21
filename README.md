@@ -455,6 +455,7 @@ For common questions, troubleshooting tips, and known issues, please visit the *
 | **Voice Interaction**           | Real-time voice tasks                                                   | In Progress          |
 | **Context Management & Memory** | Hot-swappable vector models and storage                                 | In Progress          |
 |                                 | Personal knowledge base                                                 | In Progress          |
+|                                 | Enterprise knowledge ontology plane (Evidence/Wiki/Ontology)           | In Progress          |
 | **QwenPaw Applications**        | QwenPaw Insight                                                        | In Progress          |
 |                                 | QwenPaw Mail                                                           | In Progress          |
 

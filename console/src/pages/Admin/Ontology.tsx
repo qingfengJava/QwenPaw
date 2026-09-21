@@ -29,6 +29,7 @@ import type {
   KbObjectLinkView,
   OntologyObjectView,
   OntologyRelationView,
+  OntologyRelationsPairView,
   OntologyTypeView,
 } from "../../api/modules/admin";
 import { kbRequestError } from "./kbErrors";
@@ -42,6 +43,19 @@ const OBJECT_STATUS_TONE: Record<string, string> = {
 interface RelationTarget {
   id: string;
   name: string;
+}
+
+/** 合并双向关系后的行（_direction 标记出/入向，供表格展示）。 */
+type RelationRow = OntologyRelationView & {
+  _direction: "outbound" | "inbound";
+};
+
+/** 后端返回 {outbound, inbound} 双向列表 → 合并为单表行（带方向标记）。 */
+function mergeRelationRows(pair: OntologyRelationsPairView): RelationRow[] {
+  return [
+    ...pair.outbound.map((r) => ({ ...r, _direction: "outbound" as const })),
+    ...pair.inbound.map((r) => ({ ...r, _direction: "inbound" as const })),
+  ];
 }
 
 /** 关系类型选项（默认 relation 词表 + 自由输入，允许业务自定义）。 */
@@ -69,9 +83,7 @@ function OntologyPage() {
   const [relationsFor, setRelationsFor] = useState<OntologyObjectView | null>(
     null,
   );
-  const [relations, setRelations] = useState<OntologyRelationView[] | null>(
-    null,
-  );
+  const [relations, setRelations] = useState<RelationRow[] | null>(null);
   const [links, setLinks] = useState<KbObjectLinkView[] | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -196,7 +208,8 @@ function OntologyPage() {
     relationForm.resetFields();
     linkForm.resetFields();
     try {
-      setRelations(await adminOntologyApi.listObjectRelations(obj.id));
+      const pair = await adminOntologyApi.listObjectRelations(obj.id);
+      setRelations(mergeRelationRows(pair));
       setLinks(await adminOntologyApi.listLinks(obj.id));
     } catch (err) {
       setRelations([]);
@@ -208,15 +221,23 @@ function OntologyPage() {
   const handleCreateRelation = async () => {
     if (!relationsFor) return;
     const values = await relationForm.validateFields();
+    // 后端 OntologyRelation 必填 from_type/to_type：终点类型从当前对象列表取
+    const toType =
+      (objects ?? []).find((o) => o.id === values.to_id)?.type_id ?? "";
     try {
       await adminOntologyApi.createRelation({
+        from_type: relationsFor.type_id,
         from_id: relationsFor.id,
+        to_type: toType,
         to_id: values.to_id,
         type: values.type,
       });
       message.success(t("ontology.createRelationSuccess", "关系已创建"));
       relationForm.resetFields();
-      setRelations(await adminOntologyApi.listObjectRelations(relationsFor.id));
+      const pair = await adminOntologyApi.listObjectRelations(
+        relationsFor.id,
+      );
+      setRelations(mergeRelationRows(pair));
     } catch (err) {
       message.error(kbRequestError(err, t));
     }
@@ -226,7 +247,10 @@ function OntologyPage() {
     if (!relationsFor) return;
     try {
       await adminOntologyApi.removeRelation(relationId);
-      setRelations(await adminOntologyApi.listObjectRelations(relationsFor.id));
+      const pair = await adminOntologyApi.listObjectRelations(
+        relationsFor.id,
+      );
+      setRelations(mergeRelationRows(pair));
     } catch (err) {
       message.error(kbRequestError(err, t));
     }
@@ -236,9 +260,11 @@ function OntologyPage() {
     if (!relationsFor) return;
     const values = await linkForm.validateFields();
     try {
+      // 字段对齐后端 KbObjectLink：kb_space_id/kb_document_id/object_type
       await adminOntologyApi.createLink(relationsFor.id, {
-        kb_id: values.kb_id,
-        document_id: values.document_id,
+        kb_space_id: values.kb_space_id,
+        kb_document_id: values.kb_document_id,
+        object_type: relationsFor.type_id,
         relation: values.relation || "knowledge_mentions",
       });
       message.success(t("ontology.createLinkSuccess", "关联已创建"));
@@ -483,7 +509,7 @@ function OntologyPage() {
         <div className={styles.kbPanelTitle}>
           {t("ontology.relations", "关系")}
         </div>
-        <Table<OntologyRelationView>
+        <Table<RelationRow>
           rowKey="id"
           size="small"
           loading={relations === null}
@@ -491,6 +517,16 @@ function OntologyPage() {
           pagination={false}
           locale={{ emptyText: t("ontology.relationsEmpty", "暂无关系") }}
           columns={[
+            {
+              title: t("ontology.relationDirection", "方向"),
+              dataIndex: "_direction",
+              width: 72,
+              align: "center" as const,
+              render: (v: string) =>
+                v === "outbound"
+                  ? t("ontology.directionOutbound", "出向")
+                  : t("ontology.directionInbound", "入向"),
+            },
             {
               title: t("ontology.relationFrom", "起点"),
               dataIndex: "from_id",
@@ -514,7 +550,7 @@ function OntologyPage() {
               key: "del",
               width: 80,
               align: "center" as const,
-              render: (_: unknown, row: OntologyRelationView) => (
+              render: (_: unknown, row: RelationRow) => (
                 <Popconfirm
                   title={t("ontology.removeRelationConfirm", "删除该关系？")}
                   onConfirm={() => handleRemoveRelation(row.id)}
@@ -573,13 +609,13 @@ function OntologyPage() {
           columns={[
             {
               title: t("ontology.linkKb", "知识库"),
-              dataIndex: "kb_id",
+              dataIndex: "kb_space_id",
               align: "center" as const,
               ellipsis: true,
             },
             {
               title: t("ontology.linkDoc", "文档"),
-              dataIndex: "document_id",
+              dataIndex: "kb_document_id",
               align: "center" as const,
               ellipsis: true,
             },
@@ -613,10 +649,10 @@ function OntologyPage() {
           style={{ marginTop: 12, rowGap: 8 }}
           onFinish={handleCreateLink}
         >
-          <Form.Item name="kb_id" rules={[{ required: true }]}>
+          <Form.Item name="kb_space_id" rules={[{ required: true }]}>
             <Input placeholder={t("ontology.linkKb", "知识库 ID")} style={{ width: 160 }} />
           </Form.Item>
-          <Form.Item name="document_id" rules={[{ required: true }]}>
+          <Form.Item name="kb_document_id" rules={[{ required: true }]}>
             <Input placeholder={t("ontology.linkDoc", "文档 ID")} style={{ width: 180 }} />
           </Form.Item>
           <Form.Item name="relation" initialValue="knowledge_mentions">

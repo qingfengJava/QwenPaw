@@ -191,7 +191,12 @@ export default defineConfig(({ command, mode }) => {
             ) {
               return "i18n-vendor";
             }
-            // Markdown rendering
+            // Markdown rendering — 并入 ui-vendor：@agentscope-ai/chat 的 Markdown
+            // 组件（→@ant-design/x-markdown）与 refractor（→hast）在 ui 侧静态引
+            // md 生态，而 md 生态叶子包（character-entities 等，规则无法枚举）
+            // 又被 Rollup 默认算法劈进 ui-vendor 形成反向边 → 独立分片必然成初始
+            // chunk 互引环（verify:initial-bundle 门禁拦截）。且 ui→md 静态边已把
+            // markdown-vendor 拖进初始加载链，独立分片无懒加载收益，合并后单向无环。
             if (
               id.includes("node_modules/react-markdown/") ||
               id.includes("node_modules/remark-gfm/") ||
@@ -202,7 +207,7 @@ export default defineConfig(({ command, mode }) => {
               id.includes("node_modules/hast") ||
               id.includes("node_modules/micromark")
             ) {
-              return "markdown-vendor";
+              return "ui-vendor";
             }
             // Drag and drop
             if (id.includes("node_modules/@dnd-kit/")) {

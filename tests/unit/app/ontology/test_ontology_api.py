@@ -34,10 +34,16 @@ _SVC = "qwenpaw.app.ontology.api.service"
 
 @pytest.fixture(autouse=True)
 def _rbac_off(monkeypatch: pytest.MonkeyPatch) -> None:
-    """钉死 RBAC 关闭态（直通 require_perm，测端点本身）。"""
-    from qwenpaw.app import rbac as rbac_pkg
+    """钉死 RBAC 关闭态（直通 require_perm，测端点本身）。
 
-    monkeypatch.setattr(rbac_pkg, "rbac_enforcement_enabled", lambda: False)
+    patch 必须打在 :mod:`qwenpaw.app.rbac.deps` 模块全局——
+    ``require_perm._dependency`` 闭包引用的是 deps 的全局名；包
+    ``__init__`` 的 re-export 只是别名，patch 包属性打不到实现
+    （宿主机多用户部署下默认 enforce → 无身份 403 的误报源）。
+    """
+    from qwenpaw.app.rbac import deps as rbac_deps
+
+    monkeypatch.setattr(rbac_deps, "rbac_enforcement_enabled", lambda: False)
 
 
 @pytest.fixture()

@@ -162,6 +162,9 @@ class ActiveModelsInfo(BaseModel):
     effective_max_input_length: int | None = None
     #: 员工级参数覆盖（仅员工域读取时填充；字段缺省=未覆盖，跟随全局基线）
     agent_overrides: Dict[str, Any] | None = None
+    #: 员工 per-model 参数档案映射（key="provider_id/model"；仅员工域读取时
+    #: 填充，含未激活模型档案，供列表徽标/配置面板按模型取各自的覆盖）
+    agent_model_overrides: Dict[str, Dict[str, Any]] | None = None
 
 
 class ACPAgentConfig(BaseModel):

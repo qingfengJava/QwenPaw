@@ -7,8 +7,9 @@ export type PageHeaderBreadcrumbItem = {
 
 export interface PageHeaderProps {
   /**
-   * @deprecated 路径面包屑已上移到顶部导航条（layouts/NavTabsBar），并由菜单数据
-   * 派生。这里仅保留类型兼容：未传 current 时取末项作为页面标题。
+   * @deprecated 页面路径层级已由侧栏高亮与顶部多标签页（layouts/NavTabsBar）
+   * 从菜单数据派生，不再渲染独立面包屑。这里仅保留类型兼容：未传 current
+   * 时取末项作为页面标题。
    */
   items?: PageHeaderBreadcrumbItem[];
   /**

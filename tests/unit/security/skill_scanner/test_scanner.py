@@ -215,7 +215,7 @@ class TestSkillScannerDiscoverFiles:
         assert len(files) == 1
         assert files[0].relative_path == "code.py"
 
-    def test_skips_symlinks(self, scanner, tmp_path):
+    def test_skips_symlinks(self, scanner, tmp_path, require_symlink):
         """Should skip symlinks to prevent path traversal."""
         target = tmp_path / "real.txt"
         target.write_text("content")

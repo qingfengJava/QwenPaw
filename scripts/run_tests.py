@@ -9,6 +9,7 @@ Usage:
 Options:
     -u, --unit [DIR]      Run unit tests (optionally specify subdirectory)
     -i, --integrated      Run integration tests (tests/integration)
+    -e, --eval            Run retrieval-quality evaluation tests (tests/eval)
     -a, --all             Run all tests (default)
     -c, --coverage        Generate coverage report
     -p, --parallel        Run tests in parallel
@@ -19,6 +20,7 @@ Examples:
     python scripts/run_tests.py -u                 # Run all unit tests
     python scripts/run_tests.py -u providers       # Run unit tests in providers
     python scripts/run_tests.py -i                 # Run integration tests
+    python scripts/run_tests.py -e                 # Run KB retrieval evaluation
     python scripts/run_tests.py -a -c              # Run all tests with coverage
     python scripts/run_tests.py -p                 # Run tests in parallel
 
@@ -26,6 +28,9 @@ Notes:
     * The default ``-a`` run executes the complete ``tests/unit`` tree
       (root-level files included), ``tests/contract`` and
       ``tests/integration`` — the same tiers GitHub Actions runs.
+    * ``-e`` runs ``tests/eval`` (retrieval-quality evaluation, T8).
+      The suite gates itself on ``QWENPAW_PG_DSN`` and skips entirely
+      when no PostgreSQL is configured.
     * A missing test suite directory is reported as an error with a
       nonzero exit status instead of being silently skipped.
     * Output is safe on terminals with limited encodings (for example
@@ -219,6 +224,31 @@ def run_integrated_tests(
     return return_code
 
 
+def run_eval_tests(
+    project_root: Path,
+    coverage: bool = False,
+    parallel: bool = False,
+) -> int:
+    """Run retrieval-quality evaluation tests (tests/eval, T8).
+
+    The suite is gated: without ``QWENPAW_PG_DSN`` pointing at a real
+    PostgreSQL it skips itself, so this stays safe on machines without
+    the eval database.  Evaluation is a quality gate rather than a CI
+    regression tier, hence it is opt-in via ``-e`` and not part of
+    ``-a``.
+    """
+    print_info("Running retrieval evaluation tests...")
+    eval_dir = project_root / "tests" / "eval"
+    if not eval_dir.is_dir():
+        print_error("Evaluation test directory not found: tests/eval")
+        return 1
+
+    return_code = run_pytest(project_root, eval_dir, coverage, parallel)
+    if return_code == 0:
+        print_success("Evaluation tests completed")
+    return return_code
+
+
 def main() -> int:
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -239,6 +269,12 @@ def main() -> int:
         "--integrated",
         action="store_true",
         help="Run integration tests (tests/integration)",
+    )
+    parser.add_argument(
+        "-e",
+        "--eval",
+        action="store_true",
+        help="Run retrieval-quality evaluation tests (tests/eval)",
     )
     parser.add_argument(
         "-a",
@@ -274,7 +310,11 @@ def main() -> int:
         return 1
 
     # Determine what to run
-    run_all = args.all or (args.unit is None and not args.integrated)
+    run_all = args.all or (
+        args.unit is None
+        and not args.integrated
+        and not args.eval
+    )
 
     print()
     print_info("QwenPaw Test Runner")
@@ -313,6 +353,12 @@ def main() -> int:
         )
     elif args.integrated:
         return_code = run_integrated_tests(
+            project_root,
+            coverage=args.coverage,
+            parallel=args.parallel,
+        )
+    elif args.eval:
+        return_code = run_eval_tests(
             project_root,
             coverage=args.coverage,
             parallel=args.parallel,

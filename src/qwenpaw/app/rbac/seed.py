@@ -561,15 +561,33 @@ def _seed_menus(pg_store) -> None:
 def _write_role_menus(pg_store, force: bool) -> None:
     """写入角色-菜单默认绑定。
 
-    force=False（启动 seed）：仅当某角色尚未绑定任何菜单时才写入默认
-    绑定（存在即跳过），避免重启抹掉管理员在角色工作台上自定义的
-    菜单授权。
+    force=False（启动 seed）：**差集增量补齐**——先查“已被任意角色绑定
+    过的菜单 id”，仅对从未分发过的内置菜单（版本升级新增场景，如本体
+    管理）按角色期望集补写绑定（INSERT ... ON CONFLICT DO NOTHING）。
+    运营已配置的绑定一律不碰：既不会重启抹掉自定义授权，也不会让新增
+    菜单因“角色已有历史绑定”而永远不可见。约定：永久隐藏菜单应使用
+    is_visible/is_enabled 开关，而非删除全部角色的绑定行——后者会让
+    该菜单被视为未分发新菜单而在下次启动时补回默认角色。
     force=True（显式 reseed）：先删后建，用 seed 声明重建绑定。
     """
     from sqlalchemy import text
 
     async def _run() -> None:
         async with pg_store._get_engine().begin() as conn:  # noqa: SLF001
+            # 差集基准：已被任意角色绑定过的菜单视为“存量已分发”，
+            # 启动路径一律不触碰（含运营的增删与隐藏配置）。
+            bound_ids: set = set()
+            if not force:
+                bound_rows = (
+                    await conn.execute(
+                        text(
+                            "SELECT DISTINCT menu_id FROM rbac_role_menus "
+                            "WHERE tenant_id = :tid",
+                        ),
+                        {"tid": _TENANT},
+                    )
+                ).fetchall()
+                bound_ids = {str(r[0]) for r in bound_rows}
             for role_name, menu_ids in _ROLE_MENU_BINDINGS.items():
                 row = (
                     await conn.execute(
@@ -587,21 +605,7 @@ def _write_role_menus(pg_store, force: bool) -> None:
                     )
                     continue
                 rid = str(row[0])
-                if not force:
-                    # 启动路径：已有任意绑定即视为运营已配置，跳过。
-                    existing = (
-                        await conn.execute(
-                            text(
-                                "SELECT 1 FROM rbac_role_menus "
-                                "WHERE tenant_id = :tid AND role_id = :rid "
-                                "LIMIT 1",
-                            ),
-                            {"tid": _TENANT, "rid": rid},
-                        )
-                    ).fetchone()
-                    if existing is not None:
-                        continue
-                else:
+                if force:
                     await conn.execute(
                         text(
                             "DELETE FROM rbac_role_menus "
@@ -610,6 +614,9 @@ def _write_role_menus(pg_store, force: bool) -> None:
                         {"tid": _TENANT, "rid": rid},
                     )
                 for mid in menu_ids:
+                    if not force and mid in bound_ids:
+                        # 存量菜单：绑定权已交给运营，启动时不复活。
+                        continue
                     await conn.execute(
                         text(
                             "INSERT INTO rbac_role_menus "

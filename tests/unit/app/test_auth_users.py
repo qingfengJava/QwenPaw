@@ -14,6 +14,7 @@ from qwenpaw.app.users.models import (
     PASSWORD_ALGO_ARGON2,
     PASSWORD_ALGO_SHA256,
     ROLE_ADMIN,
+    ROLE_EMPLOYEE,
 )
 from qwenpaw.app.users.store import UserStore
 
@@ -42,9 +43,16 @@ def test_register_first_user_returns_token_and_admin(
     assert record.role == ROLE_ADMIN
 
 
-def test_register_second_user_rejected(isolated_auth: UserStore) -> None:
+def test_register_second_user_becomes_employee(
+    isolated_auth: UserStore,
+) -> None:
+    """Phase 4 开放注册：后续用户不再拒绝，自动为 employee。"""
     assert auth.register_user("alice", "pw-1")
-    assert auth.register_user("bob", "pw-2") is None
+    token = auth.register_user("bob", "pw-2")
+    assert token
+    assert isolated_auth.get_user("bob").role == ROLE_EMPLOYEE
+    # 重名注册仍被用户库拒绝
+    assert auth.register_user("bob", "pw-3") is None
 
 
 def test_authenticate_success_and_failure(isolated_auth: UserStore) -> None:

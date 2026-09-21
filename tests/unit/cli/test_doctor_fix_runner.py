@@ -299,9 +299,11 @@ class TestEffectiveCliApiHostPort:
 
     def test_defaults_when_no_last_api(self, monkeypatch):
         monkeypatch.setattr(dfr, "read_last_api", lambda: None)
+        # 与实现同源取默认常量：QWENPAW_HOST/PORT env 覆盖与默认值
+        # 变更（8088→8188）都不应打破——锁定"无 last_api 落到默认"。
         assert dfr._effective_cli_api_host_port(None, None) == (
-            "127.0.0.1",
-            8088,
+            dfr.DEFAULT_API_HOST,
+            dfr.DEFAULT_API_PORT,
         )
 
 
@@ -1460,7 +1462,9 @@ class TestRunDoctorFix:
         assert any(line.startswith("Backup session:") for line in lines)
         backups = list((target / dfr.BACKUP_SUBDIR).iterdir())
         assert len(backups) == 1
-        meta = json.loads((backups[0] / "meta.json").read_text(encoding="utf-8"))
+        meta = json.loads(
+            (backups[0] / "meta.json").read_text(encoding="utf-8")
+        )
         assert meta["fix_ids"] == ["ensure-working-dir"]
 
     def test_no_backup_warning(self, wd, monkeypatch, no_config):
@@ -1688,7 +1692,9 @@ class TestRunDoctorFix:
         assert len(sessions) == 1
         backed = sessions[0] / "files" / "ws" / "agent.json"
         assert backed.read_text() == "{invalid"
-        meta = json.loads((sessions[0] / "meta.json").read_text(encoding="utf-8"))
+        meta = json.loads(
+            (sessions[0] / "meta.json").read_text(encoding="utf-8")
+        )
         # The runner records native separators (ws\\agent.json on Windows).
         assert [
             Path(rel).as_posix() for rel in meta["backed_up_files_relative"]

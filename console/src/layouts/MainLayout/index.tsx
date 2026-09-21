@@ -108,36 +108,42 @@ export default function MainLayout({ hubMode = false }: { hubMode?: boolean }) {
 
   return (
     <Layout className={styles.mainLayout}>
-      <Header hubMode={hubMode} />
-      <Layout>
+      {/* 竞品同款骨架：侧栏全高（logo 在侧栏顶部），顶栏只覆盖内容区，
+          使面包屑、标签行、正文三者左缘对齐同一条竖直线。 */}
+      <Layout className={styles.bodyRow}>
         <Sidebar />
-        <Content className="page-container">
-          <ConsolePollService />
-          <AgentStatusPollingController />
-          <Slot name="content.statusBar" kind="fill" />
-          <NavTabsBar />
-          <div className="page-content" id="page-content-region">
-            <ChunkErrorBoundary
-              resetKey={`${currentPath}#${refreshNonce}`}
-              canRestartRuntime={hubMode}
-            >
-              <Suspense
-                fallback={
-                  /* antd Spin 的 tip 仅支持嵌套/全屏形态：自闭合用法下 tip 本就不渲染，省略以避免控制台告警 */
-                  <Spin
-                    style={{ display: "block", margin: "20vh auto" }}
-                  />
-                }
+        <Layout className={styles.rightPane}>
+          <Header hubMode={hubMode} />
+          <Content className="page-container">
+            <ConsolePollService />
+            <AgentStatusPollingController />
+            <Slot name="content.statusBar" kind="fill" />
+            {/* 多标签页导航条：正文区顶部独立一行（侧栏右侧），
+                面包屑在顶栏（见 Header 内的 HeaderBreadcrumb）。 */}
+            <NavTabsBar />
+            <div className="page-content" id="page-content-region">
+              <ChunkErrorBoundary
+                resetKey={`${currentPath}#${refreshNonce}`}
+                canRestartRuntime={hubMode}
               >
-                <Routes>
-                  {allRoutes.map((r) => (
-                    <Route key={r.id} path={r.path} element={<r.Component />} />
-                  ))}
-                </Routes>
-              </Suspense>
-            </ChunkErrorBoundary>
-          </div>
-        </Content>
+                <Suspense
+                  fallback={
+                    /* antd Spin 的 tip 仅支持嵌套/全屏形态：自闭合用法下 tip 本就不渲染，省略以避免控制台告警 */
+                    <Spin
+                      style={{ display: "block", margin: "20vh auto" }}
+                    />
+                  }
+                >
+                  <Routes>
+                    {allRoutes.map((r) => (
+                      <Route key={r.id} path={r.path} element={<r.Component />} />
+                    ))}
+                  </Routes>
+                </Suspense>
+              </ChunkErrorBoundary>
+            </div>
+          </Content>
+        </Layout>
       </Layout>
       <Slot name="overlay.global" kind="fill" />
     </Layout>

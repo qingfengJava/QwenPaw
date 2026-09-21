@@ -20,6 +20,8 @@ import api from "../api";
 import { useSidebarModeStore } from "../stores/sidebarModeStore";
 import { useInboxWobble } from "../hooks/useInboxWobble";
 import { useNavModel } from "../hooks/useNavModel";
+import { useLogoDevtoolsGesture } from "../hooks/useLogoDevtoolsGesture";
+import BrandMark, { BRAND_NAME } from "../components/BrandMark";
 import styles from "./index.module.less";
 import { useTheme } from "../contexts/ThemeContext";
 import { Slot } from "../plugins/registry/Slot";
@@ -312,6 +314,8 @@ export default function Sidebar({ selectedKey }: SidebarProps = {}) {
   const siderWidth = collapsed ? (isMobile ? 56 : 72) : 240;
   // `renderIcon` retained for tree-shaking awareness.
   void renderIcon;
+  // 品牌标连击手势（桌面壳开 DevTools）随 logo 迁入侧栏顶部。
+  const handleLogoClick = useLogoDevtoolsGesture();
 
   // On mobile, the expanded sidebar shows sessions (like simple mode) instead
   // of the full menu — matching the desktop history panel UX.
@@ -326,6 +330,19 @@ export default function Sidebar({ selectedKey }: SidebarProps = {}) {
         isSimpleExpanded ? ` ${styles.siderSimple}` : ""
       }`}
     >
+      {/* 品牌区：logo 从顶栏迁入侧栏顶部（竞品同款全高侧栏），
+          顶栏因此只覆盖内容区，面包屑/标签行/正文左缘对齐同一条线。 */}
+      <div className={styles.siderBrand} onClick={handleLogoClick}>
+        <Slot name="header.logo" kind="replace">
+          <span className={styles.brandLockup}>
+            <BrandMark size={30} />
+            {!collapsed && (
+              <span className={styles.brandText}>{BRAND_NAME}</span>
+            )}
+          </span>
+        </Slot>
+      </div>
+
       {/* 菜单内容滚动区：所有导航模式（折叠/简洁/展开）的菜单主体都装在这
           个独立滚动容器里，使下方的 authActions + collapseToggleContainer
           页脚脱离滚动流、固定吸底（见 index.module.less .siderScroll）。 */}

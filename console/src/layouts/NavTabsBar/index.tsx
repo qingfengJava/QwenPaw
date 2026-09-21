@@ -1,10 +1,12 @@
 /**
- * NavTabsBar.tsx — 内容区顶部的「面包屑 + 多标签页」两行导航条。
+ * NavTabsBar.tsx — 正文区顶部的单行多标签页导航条（侧栏右侧第二行）。
  *
- * 位置：MainLayout 的 Content 内、.page-content 之前。这样它天然随侧栏偏移、
- * 吸在正文上方，且不会污染桌面壳窗口（窗口内不渲染 .page-container）。
+ * 位置：MainLayout 的 Content 内、.page-content 之前；面包屑另在顶栏
+ * （HeaderBreadcrumb）。样式对齐竞品：文本页签（无胶囊边框），激活项
+ * 品牌色文字 + 底部 2px 下划线，右端仅保留全部标签总览按钮
+ * （页面刷新收敛到右键菜单，不占栏内空间）。
  *
- * 单一来源：面包屑与标签文字全部由菜单索引（navIndex）解析，页面不再自报父级
+ * 单一来源：标签文字全部由菜单索引（navIndex）解析，页面不再自报父级
  * 文案；详情页的实体名通过 usePageNavTitle 回填到 pageTitleRegistry，本组件订阅
  * 其版本快照，回填后自动刷新。
  *
@@ -24,7 +26,7 @@ import {
   type HTMLAttributes,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
-import { Dropdown, Tooltip } from "antd";
+import { Dropdown } from "antd";
 import type { MenuProps } from "antd";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -45,9 +47,7 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   ChevronLeft,
   ChevronRight,
-  Home,
   LayoutList,
-  RotateCw,
   X,
 } from "lucide-react";
 import styles from "../index.module.less";
@@ -58,7 +58,7 @@ import {
   getPageTitleVersion,
   subscribePageTitle,
 } from "../registry/pageTitleRegistry";
-import { HOME_TAB_KEY, usePageNavStore } from "../../stores/pageNavStore";
+import { usePageNavStore } from "../../stores/pageNavStore";
 import { useTabbableResolver } from "../../hooks/useNavTab";
 import type { NavEntry } from "../registry/navModel";
 import type { NavTranslate } from "../registry/tabLabel";
@@ -213,7 +213,7 @@ export default function NavTabsBar() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
-  const { resolve, navIndex, routes, menusLoaded } = useTabbableResolver();
+  const { resolve, navIndex, routes } = useTabbableResolver();
 
   const enabled = usePageNavStore((s) => s.enabled);
   const tabs = usePageNavStore((s) => s.tabs);
@@ -263,17 +263,6 @@ export default function NavTabsBar() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [tabs, navIndex, resolve, translate, titleVersion],
   );
-
-  const currentCrumb = useMemo(
-    () => describeTab(resolve(location.pathname), navIndex, translate),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [location.pathname, navIndex, resolve, translate, titleVersion],
-  );
-
-  const currentLabel =
-    currentCrumb?.label ??
-    tabVMs.find((tab) => tab.key === activeKey)?.label ??
-    "";
 
   // ── 激活 / 关闭 ────────────────────────────────────────────────────────
   const handleSelect = useCallback(
@@ -466,31 +455,6 @@ export default function NavTabsBar() {
 
   return (
     <div className={styles.navBar}>
-      {/* ── 面包屑行：路径来自菜单树，页面不再自报父级文案 ── */}
-      <div className={styles.navBreadcrumb} aria-busy={!menusLoaded}>
-        <Tooltip title={t("navTabs.home", "Home")} mouseEnterDelay={0.4}>
-          <button
-            type="button"
-            className={styles.navHomeButton}
-            aria-label={t("navTabs.home", "Home")}
-            onClick={() => navigate(HOME_TAB_KEY)}
-          >
-            <Home size={14} />
-          </button>
-        </Tooltip>
-        {menusLoaded && currentCrumb?.trail.length
-          ? currentCrumb.trail.map((item, index) => (
-              <span key={`${item}-${index}`} className={styles.navCrumbParent}>
-                {item}
-                <span className={styles.navCrumbSeparator}>/</span>
-              </span>
-            ))
-          : null}
-        {menusLoaded && currentLabel ? (
-          <span className={styles.navCrumbCurrent}>{currentLabel}</span>
-        ) : null}
-      </div>
-
       {/* ── 标签行 ── */}
       <div className={styles.navTabsRow}>
         {overflow ? (
@@ -557,16 +521,6 @@ export default function NavTabsBar() {
         ) : null}
 
         <div className={styles.navTabActions}>
-          <Tooltip title={t("navTabs.refresh", "Refresh")} mouseEnterDelay={0.4}>
-            <button
-              type="button"
-              className={styles.navTabActionBtn}
-              aria-label={t("navTabs.refresh", "Refresh")}
-              onClick={requestRefresh}
-            >
-              <RotateCw size={14} />
-            </button>
-          </Tooltip>
           <Dropdown
             trigger={["click"]}
             menu={{

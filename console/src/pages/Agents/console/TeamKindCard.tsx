@@ -10,7 +10,7 @@ import ExpertAvatar from "@/components/ExpertAvatar";
 import EmployeeKindAvatar from "@/components/EmployeeKindAvatar";
 import { avatarGradient } from "@/utils/avatarGradient";
 import type { DigitalEmployee } from "@/api/modules/employeeRegistry";
-import { KindBadge, ModeBadge, StatusBadge, VisibilityBadge } from "./employeeBadges";
+import { ModeBadge, StatusBadge, VisibilityBadge } from "./employeeBadges";
 import styles from "./console.module.less";
 
 /** 堆叠展示的成员上限，超出折叠为 +N。 */
@@ -60,7 +60,6 @@ export function TeamKindCard({ employee, onOpen, actions }: TeamKindCardProps) {
               {employee.name}
             </span>
             {employee.pinned ? <Pin size={13} className={styles.pinIcon} /> : null}
-            <KindBadge kind="team" />
           </div>
           <div className={styles.sub} title={employee.entity_id}>
             {t("employee.team.memberCount", { count: employee.member_count })}

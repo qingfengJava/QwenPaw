@@ -91,7 +91,10 @@ class UserStore:
         # verification hit ``_load`` on hot paths, so re-parse the file
         # only when it actually changed on disk.
         self._cache_valid = False
-        self._cache_key: Optional[int] = None
+        # 缓存键 = (mtime_ns, size)：单独 mtime 在同 tick 连续写入时
+        # 可能不变（Windows 实测），外部改写坏文件会被旧缓存屏蔽，
+        # fail-closed 语义随之失效——size 维度让不同长度内容必失效。
+        self._cache_key: Optional[tuple[int, int]] = None
         self._cache_data: Optional[UsersFile] = None
 
     @property
@@ -111,7 +114,11 @@ class UserStore:
         refresh the cache in-place.
         """
         try:
-            cache_key: Optional[int] = self._path.stat().st_mtime_ns
+            stat = self._path.stat()
+            cache_key: Optional[tuple[int, int]] = (
+                stat.st_mtime_ns,
+                stat.st_size,
+            )
         except OSError:
             cache_key = None
         if self._cache_valid and cache_key == self._cache_key:
@@ -154,7 +161,8 @@ class UserStore:
         # process observe the write even when the filesystem timestamp
         # granularity would hide it.
         try:
-            self._cache_key = self._path.stat().st_mtime_ns
+            stat = self._path.stat()
+            self._cache_key = (stat.st_mtime_ns, stat.st_size)
         except OSError:
             self._cache_key = None
         self._cache_data = data

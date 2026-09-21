@@ -6,8 +6,17 @@
 
 隔离语义：统一指向同实例的 ``qwenpaw_eval_test`` 一次性库（幂等建库 +
 alembic 全量迁移），绝不读写开发者库（2026-09-10 provider 配置覆盖
-事故的隔离教训）。评测用独立 ``KbService`` 实例（不取模块级单例），
-夹具 teardown 还原全部环境变量并重置 pg store 单例缓存。
+事故的隔离教训）。评测用独立 ``KbService`` 实例（不取模块级单例）。
+
+环境切换三件套（2026-09-20 诊断定稿，缺一即静默错路由）：
+1. ``pg_store.reset_store_for_tests()``——store 单例绑定旧 DSN；
+2. ``write_gateway.reset_backend_cache()``——backend 双检锁缓存
+   （env 不可变假设），不清则 ``resolve_storage_backend`` 沿用宿主值；
+3. teardown 逐键还原 env 后再次双 reset，保证同进程后续测试干净。
+
+清理语义：``delete_space`` 拒删有活文档的库（软删守卫），teardown 的
+``delete_kb`` 链路（逐文档软删+引擎清片）脆弱；评测库本身一次性，
+清理统一走**直连 SQL 按库名幂等清除**，不依赖业务删除链路。
 
 @author qingfeng
 """
@@ -30,6 +39,9 @@ if not os.environ.get("QWENPAW_PG_DSN"):
 #: 评测专用库（与集成测试 qwenpaw_integration_test 平行，互不干扰）
 _EVAL_DB = "qwenpaw_eval_test"
 
+#: 评测语料库固定名（幂等清理的锚点）
+_EVAL_KB_NAME = "kb-eval-corpus"
+
 #: 夹具涉及、teardown 必须还原的环境变量
 _EVAL_ENV_KEYS = (
     "QWENPAW_PG_DSN",
@@ -38,8 +50,59 @@ _EVAL_ENV_KEYS = (
 )
 
 
-async def _ensure_database(maint_url, db_name: str) -> None:
-    """幂等建库：连维护库查 pg_database，缺则 CREATE DATABASE。"""
+def _apply_eval_env(eval_dsn: str) -> dict[str, str | None]:
+    """Switch env to the eval database; return saved values for restore."""
+    saved = {key: os.environ.get(key) for key in _EVAL_ENV_KEYS}
+    os.environ["QWENPAW_PG_DSN"] = eval_dsn
+    os.environ["QWENPAW_STORAGE_BACKEND"] = "pg"
+    os.environ["QWENPAW_KB_DEFAULT_ENGINE"] = "pgvector"
+
+    # 三件套之 store 单例（绑定旧 DSN 必须丢弃）
+    from qwenpaw.app.kb.pg_store import reset_store_for_tests
+
+    reset_store_for_tests()
+
+    # 三件套之 backend 双检锁缓存（env 切换不清则沿用宿主判定）
+    from qwenpaw.db import write_gateway
+
+    write_gateway.reset_backend_cache()
+    return saved
+
+
+def _restore_env(saved: dict[str, str | None]) -> None:
+    """逐键还原 env 并再次双 reset（保证后续测试干净）。"""
+    for key, value in saved.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+    from qwenpaw.app.kb.pg_store import reset_store_for_tests
+    from qwenpaw.db import write_gateway
+
+    reset_store_for_tests()
+    write_gateway.reset_backend_cache()
+
+
+async def _eval_db_connect(dsn: str):
+    """按 DSN 建立评测库 asyncpg 直连（测试专用，不入任何池）。"""
+    import asyncpg
+    from sqlalchemy.engine import make_url
+
+    url = make_url(dsn)
+    return (
+        await asyncpg.connect(
+            host=url.host,
+            port=url.port or 5432,
+            user=url.username,
+            password=url.password,
+            database=url.database,
+        ),
+        url,
+    )
+
+
+async def _ensure_database_exists(maint_url, db_name: str) -> None:
+    """幂等建库（连 postgres 目录库）。"""
     import asyncpg
 
     conn = await asyncpg.connect(
@@ -61,24 +124,63 @@ async def _ensure_database(maint_url, db_name: str) -> None:
         await conn.close()
 
 
-async def _pin_engine_pgvector(dsn: str, kb_id: str) -> None:
+async def _migrate_and_wipe(eval_dsn: str) -> None:
+    """迁移到 head + 幂等清理旧评测残留（同一 loop 内建迁移引擎并销毁）。"""
+    from qwenpaw.db.engine import create_pg_engine
+    from qwenpaw.db.migrate import run_migrations
+
+    # 迁移与 dispose 必须同一 asyncio.run：引擎池的 asyncpg 连接绑定
+    # 创建时的 loop，跨 loop dispose 会报 "attached to a different loop"
+    async def _run() -> None:
+        engine = create_pg_engine(eval_dsn, dedicated=True)
+        try:
+            await run_migrations(engine)
+        finally:
+            await engine.dispose()
+
+    await _run()
+
+    # 幂等清理旧残留（含幽灵孤儿：space 已删但 docs/chunks 未清）
+    await _wipe_eval_kb(eval_dsn)
+
+
+async def _pin_engine_pgvector(eval_dsn: str, kb_id: str) -> None:
     """把评测库钉到 pgvector 引擎（评测不依赖外部 Milvus 服务）。"""
-    import asyncpg
-
-    from sqlalchemy.engine import make_url
-
-    url = make_url(dsn)
-    conn = await asyncpg.connect(
-        host=url.host,
-        port=url.port or 5432,
-        user=url.username,
-        password=url.password,
-        database=url.database,
-    )
+    conn, _ = await _eval_db_connect(eval_dsn)
     try:
         await conn.execute(
             "UPDATE kb_spaces SET engine = 'pgvector' WHERE id = $1",
             kb_id,
+        )
+    finally:
+        await conn.close()
+
+
+async def _wipe_eval_kb(eval_dsn: str) -> None:
+    """teardown 直连清理（按库名 + 孤儿行双口径，幂等）。
+
+    孤儿口径：kb_documents/chunks/bindings 无外键（0034），space 行删除后
+    子行可残留为幽灵（space_id 指向已不存在的 space），按 name 锚点永远
+    匹配不到——评测库是一次性库，孤儿一并物理清除。孤儿必须走**反连接**
+    （``NOT IN``），``= ANY(空数组)`` 在 SQL 语义上恒 FALSE 删不到任何行。
+    """
+    conn, _ = await _eval_db_connect(eval_dsn)
+    try:
+        for table in ("kb_chunks", "kb_documents", "agent_kb_bindings"):
+            # 幽灵孤儿（space 行已删的残留子行；反连接口径）
+            await conn.execute(
+                f"DELETE FROM {table} WHERE space_id NOT IN "
+                "(SELECT id FROM kb_spaces)",
+            )
+            # 命名库的子行（space 行尚在，按库名锚定）
+            await conn.execute(
+                f"DELETE FROM {table} WHERE space_id IN "
+                "(SELECT id FROM kb_spaces WHERE name = $1)",
+                _EVAL_KB_NAME,
+            )
+        await conn.execute(
+            "DELETE FROM kb_spaces WHERE name = $1",
+            _EVAL_KB_NAME,
         )
     finally:
         await conn.close()
@@ -89,7 +191,6 @@ def eval_kb():
     """评测库 + 评测语料库的会话级夹具（teardown 全量还原）。"""
     from sqlalchemy.engine import make_url
 
-    from qwenpaw.app.kb.pg_store import reset_store_for_tests
     from qwenpaw.app.kb.service import KbService
     from qwenpaw.db.engine import create_pg_engine
     from qwenpaw.db.migrate import run_migrations
@@ -102,29 +203,27 @@ def eval_kb():
         eval_url = url.set(database=_EVAL_DB)
     eval_dsn = eval_url.render_as_string(hide_password=False)
 
-    # 一次性库：幂等建库 + 全量迁移（评测进程独占，不碰开发者库）
-    asyncio.run(_ensure_database(eval_url.set(database="postgres"), _EVAL_DB))
-    engine = create_pg_engine(eval_dsn, dedicated=True)
-    try:
-        asyncio.run(run_migrations(engine))
-    finally:
-        asyncio.run(engine.dispose())
+    # 一次性库：幂等建库 + 全量迁移 + 残留清理（绝不碰开发者库）
+    asyncio.run(
+        _ensure_database_exists(
+            eval_url.set(database="postgres"),
+            _EVAL_DB,
+        ),
+    )
+    asyncio.run(_migrate_and_wipe(eval_dsn))
 
-    # 环境切换：先记原值，评测结束后逐键还原 + 重置单例缓存
-    saved = {key: os.environ.get(key) for key in _EVAL_ENV_KEYS}
-    os.environ["QWENPAW_PG_DSN"] = eval_dsn
-    os.environ["QWENPAW_STORAGE_BACKEND"] = "pg"
-    os.environ["QWENPAW_KB_DEFAULT_ENGINE"] = "pgvector"
-    reset_store_for_tests()
+    # 环境切换（store 单例 + backend 缓存双 reset）
+    saved = _apply_eval_env(eval_dsn)
 
     svc = KbService()
     kb = svc.create_kb(
-        "kb-eval-corpus",
+        _EVAL_KB_NAME,
         scope="personal",
         owner_id="eval",
         description="T8 retrieval eval corpus",
     )
     if kb is None:
+        _restore_env(saved)
         raise RuntimeError("eval kb creation failed")
     asyncio.run(_pin_engine_pgvector(eval_dsn, kb.id))
 
@@ -138,18 +237,14 @@ def eval_kb():
             source="manual",
         )
         if result is None or result.status == "failed":
+            _restore_env(saved)
             raise RuntimeError(f"eval ingest failed: doc{index}")
     try:
-        yield SimpleNamespace(svc=svc, kb_id=kb.id)
+        yield SimpleNamespace(svc=svc, kb_id=kb.id, eval_dsn=eval_dsn)
     finally:
-        # 评测数据清理 + 环境还原（best-effort，库本身一次性）
+        # 直连 SQL 清理（不依赖 delete_kb 软删守卫链路）+ 环境还原
         try:
-            svc.delete_kb(kb.id)
+            asyncio.run(_wipe_eval_kb(eval_dsn))
         except Exception:  # noqa: BLE001 - teardown 不阻断
             pass
-        for key, value in saved.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
-        reset_store_for_tests()
+        _restore_env(saved)

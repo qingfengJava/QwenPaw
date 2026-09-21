@@ -310,7 +310,10 @@ class JsonlAuditStore:
 
     @staticmethod
     def _matches(row: dict, **kw) -> bool:
-        if kw.get("workspace_dir") and row.get("workspace_dir") != kw["workspace_dir"]:
+        if (
+            kw.get("workspace_dir")
+            and row.get("workspace_dir") != kw["workspace_dir"]
+        ):
             return False
         if kw.get("agent_id") and row.get("agent_id") != kw["agent_id"]:
             return False
@@ -331,7 +334,7 @@ class JsonlAuditStore:
         matched.sort(key=lambda r: int(r.get("ts") or 0), reverse=True)
         offset = int(kw.get("offset", 0))
         limit = int(kw.get("limit", 100))
-        return matched[offset : offset + limit], len(matched)
+        return matched[offset:offset + limit], len(matched)
 
     def count(self) -> int:
         with self._lock:
@@ -378,7 +381,12 @@ def create_audit_backend(governance_dir: Path) -> Any:
     """Pick the audit backend: PG when configured, JSONL otherwise."""
     from ..db.engine import get_pg_dsn
 
-    dsn = get_pg_dsn()
+    # ``get_pg_dsn`` 契约是 fail-fast（未配置即抛），此处探测式调用：
+    # 异常收敛为空串 → JSONL 后端（无 DSN 部署不得炸审计初始化）。
+    try:
+        dsn = get_pg_dsn()
+    except Exception:  # noqa: BLE001 - DSN 未配置/依赖缺失 → JSONL
+        dsn = ""
     if dsn:
         return PgAuditStore(dsn)
     return JsonlAuditStore(governance_dir / "audit.jsonl")

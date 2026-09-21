@@ -96,7 +96,7 @@ class TestResolvedPluginManifestPath:
         with pytest.raises(FileNotFoundError):
             pl.resolved_plugin_manifest_path(tmp_path)
 
-    def test_symlink_escape_rejected(self, tmp_path):
+    def test_symlink_escape_rejected(self, tmp_path, require_symlink):
         src = tmp_path / "src"
         src.mkdir()
         outside = tmp_path / "outside" / "plugin.json"

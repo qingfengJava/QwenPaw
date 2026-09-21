@@ -40,6 +40,19 @@
   }
 }
 
+/* 竞品同款骨架：侧栏全高（含品牌区），右列纵向排「顶栏 / 标签行 / 正文」。
+   颜色全透：渐变画布仍由 .mainLayout 一张连续下来。 */
+.bodyRow {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+.rightPane {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 @supports (height: 100dvh) {
   @media (max-width: 768px) {
     .mainLayout {
@@ -52,13 +65,15 @@
 // ─── Header ──────────────────────────────────────────────────────────────────
 .header {
   height: 64px;
-  padding: 0 20px 0 0;
+  /* 顶栏只覆盖内容区（侧栏全高）：左起即面包屑，padding-left 16 与下方
+     标签行（.navBar padding 16）对齐同一条左缘线 */
+  padding: 0 16px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  // 顶标不铺自己的底色，直接吃 .mainLayout 画布的最蓝一段
+  // 顶标不铺自己的底色，直接吃 .mainLayout 画布的最蓝一段；不铺底线，
+  // 标签行自身 border-bottom 作为它与正文的分界
   background: transparent;
-  border-bottom: 1px solid var(--sh-line);
 
   :global {
     .qwenpaw-space-item {
@@ -134,10 +149,8 @@
   .header {
     padding: 0 12px;
 
-    .logoWrapper {
-      width: auto;
-      border-right: none;
-      padding: 0 12px;
+    .headerCrumb {
+      display: none;
     }
 
     .headerDivider {
@@ -176,7 +189,8 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  height: calc(100vh - 64px) !important;
+  // 全高侧栏：拉伸填满 .bodyRow（顶栏已在右列内，不再扣 64px）
+  height: 100% !important;
   padding: 10px 16px 0;
 
   // antd wraps Sider children in .qwenpaw-layout-sider-children (block by
@@ -650,17 +664,21 @@
   }
 }
 
-.logoWrapper {
+/* 品牌区：logo 从顶栏迁入侧栏顶部（竞品同款），高度与右列顶栏同为 64px；
+   padding-left 28 与侧栏 icon 列共用同一条竖向网格线（折叠态亦然）。 */
+.siderBrand {
   display: flex;
   align-items: center;
-  gap: 10px;
-  height: 100%;
-  // 折叠态侧栏只有 72px，写死 240 会在顶标左侧留出一段空白；改为内容自适应，
-  // 用 padding-left 把品牌标压在 x=28，与侧栏 icon 列共用同一条竖向网格线。
+  flex: 0 0 auto;
+  height: 64px;
+  /* 抵消 .sider 的 10/16 内边距，让品牌标绝对位置 x=28：
+     与原顶栏 logoWrapper 的视觉位置一致，且不改变菜单滚动区的缩进 */
+  margin: 0 -16px;
   padding: 0 16px 0 28px;
   box-sizing: border-box;
-  flex-shrink: 0;
+  overflow: hidden;
   user-select: none;
+  cursor: pointer;
 }
 
 /* 品牌锁定：品牌徽章（components/BrandMark，自带渐变方底）+ 字标；
@@ -700,11 +718,73 @@
   width: auto;
 }
 
-.logoDivider {
-  width: 1px;
-  height: 18px;
+/* 顶栏面包屑：logo 右侧（竞品同款位置），home 图标 + 菜单树派生路径。
+   标签页另起一行（.navBar），两者分工：面包屑答「我在哪」，标签答「我去过哪」。 */
+.headerCrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 auto;
+  min-width: 0;
+  height: 100%;
+  /* 顶栏是 space-between 布局：auto 右边距吃掉全部剩余空间，
+     把面包屑钉在顶栏左缘（与标签行/正文同一条线） */
+  margin-right: auto;
+  font-size: 13px;
+  color: var(--sh-ink-3);
+  overflow: hidden;
+}
+
+.headerCrumbHome {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
-  background: var(--sh-line);
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--sh-ink-3);
+  cursor: pointer;
+  transition-property: background-color, color, transform;
+  transition-duration: 160ms;
+  transition-timing-function: ease-out;
+
+  &:hover {
+    background: var(--sh-hover);
+    color: var(--sh-ink);
+  }
+
+  &:active {
+    background: var(--sh-active);
+    transform: scale(0.94);
+  }
+
+  &:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--sh-brand) 55%, transparent);
+    outline-offset: 2px;
+  }
+}
+
+.headerCrumbParent {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.headerCrumbSeparator {
+  color: var(--sh-line);
+}
+
+.headerCrumbCurrent {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--sh-ink-2);
+  font-weight: 550;
 }
 
 .headerDivider {
@@ -713,49 +793,6 @@
   z-index: 4;
   margin: 0 4px;
   background: var(--sh-line);
-}
-
-/* 版本 chip：胶囊形态（与 10px 方角体系区分开，明确它是“标签”不是“按钮”），
-   等宽数字防止版本号位数变化时宽度跳动；有更新时才转品牌色。 */
-.versionBadge {
-  display: inline-flex;
-  align-items: center;
-  height: 20px;
-  padding: 0 8px;
-  border: 1px solid var(--sh-line);
-  border-radius: 999px;
-  background: var(--sh-chip-bg);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.01em;
-  line-height: 1;
-  color: var(--sh-ink-3);
-  position: relative;
-  top: 1px;
-  font-variant-numeric: tabular-nums;
-  transition-property: color, border-color, background-color;
-  transition-duration: 160ms;
-
-  &:focus-visible {
-    outline: 2px solid color-mix(in srgb, var(--sh-brand) 55%, transparent);
-    outline-offset: 2px;
-  }
-}
-
-.versionBadgeClickable {
-  cursor: pointer;
-  border-color: var(--sh-tint-strong);
-  background: var(--sh-tint);
-  color: var(--sh-brand-ink);
-
-  &:hover {
-    border-color: var(--sh-brand);
-  }
-}
-
-.versionBadgeDefault {
-  cursor: default;
 }
 
 .collapseBtn {
@@ -1945,87 +1982,29 @@
 // 全部颜色只消费 --sh-* 壳层 token：暗色值已在上方 :global(.dark-mode) .mainLayout
 // 统一重赋，本段无需再写任何暗色分支（历史上成对写 [data-theme="dark"]/.dark 会让
 // 暗色静默失效）。容器查询按导航条自身宽度断点，不受视口与侧栏折叠互相影响。
+/* 多标签页导航条：正文区顶部独立一行（侧栏右侧），竞品同款「文本页签」：
+   无胶囊边框，激活项品牌色文字 + 底部 2px 下划线；右端仅保留全部标签总览。
+   全部颜色只消费 --sh-* 壳层 token：暗色值已在上方 :global(.dark-mode) .mainLayout
+   统一重赋，本段无需再写任何暗色分支。容器查询按导航条自身宽度断点。 */
 .navBar {
   flex: 0 0 auto;
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 10px var(--pg-gutter, 16px) 0;
+  align-items: stretch;
+  height: 40px;
+  padding: 0 16px;
+  background: var(--sh-chip-bg);
+  border-bottom: 1px solid var(--sh-line);
   container-type: inline-size;
   container-name: nav-bar;
   user-select: none;
 }
 
-/* 面包屑行：整行只做「我在哪」，字号与字重都弱于下方标签与页内标题 */
-.navBreadcrumb {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  height: 22px;
-  font-size: 13px;
-  color: var(--sh-ink-3);
-}
-
-.navHomeButton {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--sh-ink-3);
-  cursor: pointer;
-  transition-property: background-color, color, transform;
-  transition-duration: 160ms;
-  transition-timing-function: ease-out;
-
-  &:hover {
-    background: var(--sh-hover);
-    color: var(--sh-ink);
-  }
-
-  &:active {
-    background: var(--sh-active);
-    transform: scale(0.94);
-  }
-
-  &:focus-visible {
-    outline: 2px solid color-mix(in srgb, var(--sh-brand) 55%, transparent);
-    outline-offset: 2px;
-  }
-}
-
-.navCrumbParent {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  color: var(--sh-ink-3);
-}
-
-.navCrumbSeparator {
-  margin: 0 2px;
-  color: var(--sh-line);
-}
-
-.navCrumbCurrent {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--sh-ink-2);
-  font-weight: 550;
-}
-
 .navTabsRow {
   display: flex;
-  align-items: center;
-  gap: 4px;
+  align-items: stretch;
+  gap: 2px;
   min-width: 0;
-  height: 34px;
+  width: 100%;
 }
 
 /* 标签滚动区：隐藏滚动条但保留滚动，溢出时由左右箭头给出线索 */
@@ -2045,44 +2024,43 @@
 
 .navTabs {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  align-items: stretch;
+  gap: 2px;
   height: 100%;
 }
 
-/* 标签：胶囊芯片态，激活才转品牌色并压一条下沿，避免整排高权重块抢正文视线 */
+/* 标签：文本页签态，撑满行高；激活才亮品牌色文字与底部 2px 下划线，
+   避免整排高权重块抢正文视线 */
 .navTab {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   max-width: 200px;
-  height: 28px;
-  padding: 0 8px 0 10px;
-  border: 1px solid var(--sh-line);
-  border-radius: 9px;
-  background: var(--sh-chip-bg);
+  height: 100%;
+  padding: 0 12px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
   color: var(--sh-ink-2);
   font-size: 13px;
   white-space: nowrap;
   cursor: pointer;
-  transition-property: background-color, color, border-color, transform;
+  transition-property: background-color, color, box-shadow;
   transition-duration: 160ms;
   transition-timing-function: ease-out;
 
   &:hover {
-    border-color: color-mix(in srgb, var(--sh-brand) 32%, var(--sh-line));
     background: var(--sh-hover);
     color: var(--sh-ink);
   }
 
   &:focus-visible {
     outline: 2px solid color-mix(in srgb, var(--sh-brand) 55%, transparent);
-    outline-offset: 2px;
+    outline-offset: -2px;
   }
 }
 
 .navTabActive {
-  border-color: color-mix(in srgb, var(--sh-brand) 45%, transparent);
   background: var(--sh-tint);
   color: var(--sh-brand-ink);
   box-shadow: inset 0 -2px 0 var(--sh-brand);
@@ -2151,6 +2129,7 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  align-self: center;
   width: 22px;
   height: 28px;
   padding: 0;
@@ -2166,15 +2145,13 @@
   }
 }
 
+/* 右端操作区：竞品仅保留一个「全部标签」网格图标，裸按钮不加底座 */
 .navTabActions {
   display: inline-flex;
   align-items: center;
   gap: 2px;
   flex-shrink: 0;
-  padding: 2px;
-  border: 1px solid var(--sh-line);
-  border-radius: 10px;
-  background: var(--sh-chip-bg);
+  margin-left: 6px;
 }
 
 .navTabActionBtn {
@@ -2205,13 +2182,6 @@
   &:focus-visible {
     outline: 2px solid color-mix(in srgb, var(--sh-brand) 55%, transparent);
     outline-offset: 2px;
-  }
-}
-
-/* 中等宽度：面包屑只留当前页，父级链交给侧栏高亮表达 */
-@container nav-bar (max-width: 900px) {
-  .navCrumbParent {
-    display: none;
   }
 }
 

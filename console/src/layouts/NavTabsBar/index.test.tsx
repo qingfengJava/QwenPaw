@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * NavTabsBar.test.tsx — 顶部「面包屑 + 多标签页」导航条的交互回归。
+ * NavTabsBar.test.tsx — 顶栏单行多标签页导航条的交互回归。
  *
  * 钉住最易碎且用户最直接感知的几条：
  * 1. 标签文案来自菜单索引（不是 store 里的 key），菜单改名即自动跟随；
@@ -23,7 +23,6 @@ const navigate = vi.fn();
 vi.mock("lucide-react", () => {
   const stub = () => null;
   return {
-    Home: stub,
     X: stub,
     ChevronLeft: stub,
     ChevronRight: stub,
@@ -80,7 +79,7 @@ vi.mock("react-router-dom", async () => {
 
 const api = () => usePageNavStore.getState();
 
-/** 在 tablist 范围内按可见文案取标签（面包屑末项与标签同名，不能用 getByText）。 */
+/** 在 tablist 范围内按可见文案取标签。 */
 function findTab(label: string): HTMLElement {
   return within(screen.getByRole("tablist")).getAllByRole("tab").find((node) =>
     node.textContent?.includes(label),
@@ -110,16 +109,15 @@ describe("NavTabsBar", () => {
     expect(labels).not.toContain("/admin/users");
   });
 
-  it("当前标签高亮，面包屑显示祖先链 + 当前项", () => {
+  it("当前标签高亮（aria-selected）", () => {
     open("/admin/users");
-    const { container } = renderWithProviders(<NavTabsBar />, {
+    renderWithProviders(<NavTabsBar />, {
       initialEntries: ["/admin/users"],
     });
     const tabs = within(screen.getByRole("tablist")).getAllByRole("tab");
     expect(tabs.find((tab) => tab.getAttribute("aria-selected") === "true")?.textContent).toContain(
       "用户管理",
     );
-    expect(container.textContent).toContain("平台管理");
   });
 
   it("点击未激活标签只写 store，不改 URL", () => {
@@ -137,7 +135,7 @@ describe("NavTabsBar", () => {
     open("/admin/users", "/admin/users?page=2");
     renderWithProviders(<NavTabsBar />, { initialEntries: ["/admin/users"] });
 
-    // 面包屑末项与标签同名，必须限定在 tablist 内取标签
+    // tablist 内可能同名文案，仍限定范围取标签
     fireEvent.click(findTab("用户管理"));
     expect(navigate).toHaveBeenCalledWith("/admin/users?page=2");
   });

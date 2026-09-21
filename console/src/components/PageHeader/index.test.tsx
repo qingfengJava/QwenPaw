@@ -1,7 +1,8 @@
 /**
  * Tests for PageHeader component.
  *
- * 面包屑已上移到顶部导航条（layouts/NavTabsBar），本组件只负责「页面标题 + 操作区」。
+ * 页面路径层级已由侧栏高亮与顶部多标签页（layouts/NavTabsBar）表达，
+ * 本组件只负责「页面标题 + 操作区」。
  *
  * Covers:
  * - current 渲染为标题
