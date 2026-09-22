@@ -68,6 +68,11 @@ TEAM_MEMBER_ROLE_LEAD = "lead"
 TEAM_MEMBER_ROLE_MEMBER = "member"
 TEAM_MEMBER_ROLES = (TEAM_MEMBER_ROLE_LEAD, TEAM_MEMBER_ROLE_MEMBER)
 
+#: 员工使用范围（P2 两级发布）：team_only=团队专属、shared=可独立使用。
+USAGE_MODE_TEAM_ONLY = "team_only"
+USAGE_MODE_SHARED = "shared"
+USAGE_MODES = (USAGE_MODE_TEAM_ONLY, USAGE_MODE_SHARED)
+
 
 def expert_agent_id(expert_id: str) -> str:
     """Runtime agent id for one published expert."""
@@ -138,6 +143,10 @@ class ExpertRecord(BaseModel):
     #: Skill bindings (populated by the detail endpoint / publish chain,
     #: not a persisted column on ``experts``).
     skills: List[ExpertSkillBinding] = Field(default_factory=list)
+    #: 使用范围（P2 两级发布）：team_only=团队专属、shared=可独立使用。
+    usage_mode: str = "shared"
+    #: 员工最新已发布版本指针（P2）：指向 published_experts.version。
+    published_version: int = 0
 
 
 class TeamMember(BaseModel):
@@ -147,6 +156,8 @@ class TeamMember(BaseModel):
     role_hint: str = ""
     member_role: str = TEAM_MEMBER_ROLE_MEMBER
     seq: int = 0
+    #: 草稿显式选定的成员发布版本（P2）：None=未指定，发布时禁止为空。
+    expert_version: Optional[int] = None
 
 
 class ExpertTeamRecord(BaseModel):
@@ -172,6 +183,10 @@ class ExpertTeamRecord(BaseModel):
     #: 交付投影"最近交付"分区并存）
     showcase: List[Dict[str, Any]] = Field(default_factory=list)
     members: List[TeamMember] = Field(default_factory=list)
+    #: 草稿修订号（CAS 乐观锁）：每次 PATCH 成功递增，发布不重置。
+    draft_revision: int = 0
+    #: 当前已发布团队版本指针（P2）：指向 expert_team_versions.version。
+    published_version: int = 0
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -248,6 +263,8 @@ class TeamMemberBody(BaseModel):
     role_hint: str = ""
     member_role: str = TEAM_MEMBER_ROLE_MEMBER
     seq: int = 0
+    #: 草稿显式选定的成员发布版本（P2）：None=未指定，v2 发布时禁止为空。
+    expert_version: Optional[int] = None
 
 
 class ExpertTeamCreateBody(BaseModel):
@@ -267,7 +284,45 @@ class ExpertTeamCreateBody(BaseModel):
     showcase: Optional[List[Dict[str, Any]]] = None
 
 
+class TeamActionCapabilities(BaseModel):
+    """当前登录用户对某团队的动作能力（服务端计算，前端只消费）。
+
+    与 RBAC admin:experts 粗粒度权限互补：manageable 表示有配置编辑权，
+    但不自动等于可以发布或执行。公开面只返回此对象，不暴露内部授权逻辑。
+    """
+
+    team_id: str
+    can_view_published: bool = True
+    can_edit_draft: bool = False
+    can_publish: bool = False
+    can_execute: bool = False
+    manageable: bool = False
+
+
+class PublishedTeamCard(BaseModel):
+    """公开面安全 DTO：只暴露组织/职责/运营位，不泄露草稿、内部指令与快照。
+
+    替代 xian 路由手动 dict 裁剪，新增字段时编译期即可发现遗漏。
+    """
+
+    id: str
+    name: str
+    description: str = ""
+    mode: str = TEAM_MODE_ROUTER
+    version: int = 1
+    agent_id: str = ""
+    category: str = "general"
+    tags: List[str] = Field(default_factory=list)
+    member_count: int = 0
+    members: List[Dict[str, Any]] = Field(default_factory=list)
+    sample_tasks: List[Dict[str, Any]] = Field(default_factory=list)
+    showcase: List[Dict[str, Any]] = Field(default_factory=list)
+
+
 class ExpertTeamUpdateBody(BaseModel):
+    #: 乐观锁：客户端携带上次读取的 draft_revision，服务端校验一致才写入，
+    #: 冲突返回 409。None 表示跳过 CAS 校验（向后兼容，仅管理后台内部调用）。
+    expected_revision: Optional[int] = None
     name: Optional[str] = None
     description: Optional[str] = None
     mode: Optional[str] = None

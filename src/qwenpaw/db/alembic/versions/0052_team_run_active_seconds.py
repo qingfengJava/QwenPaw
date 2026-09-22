@@ -11,7 +11,7 @@ Create Date: 2026-09-22
   在引擎收尾时累加，暂停/中断/续跑**不清零**；时间熔断按
   "累计 + 本段耗时"判定（协议8.5：恢复不清零，人工等待不计时）。
 
-幂等 DDL。（psql twin: changelog 20260921/04）。
+幂等 DDL。（psql twin: changelog 20260922/01_team_run_active_seconds.sql）。
 
 @author qingfeng
 """

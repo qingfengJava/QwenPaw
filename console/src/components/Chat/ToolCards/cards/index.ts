@@ -40,6 +40,7 @@ export { default as MaterializeSkillCard } from "./MaterializeSkillCard";
 export { default as ShellCard } from "./ShellCard";
 export { default as RunToolBatchCard } from "./RunToolBatchCard";
 export { default as GenericToolCard } from "./GenericToolCard";
+export { default as TeamChangeCard } from "./TeamChangeCard";
 
 // ── Re-import for registry ────────────────────────────────────────────
 import ReadFileCard from "./ReadFileCard";
@@ -68,6 +69,7 @@ import DelegateExternalAgentCard from "./DelegateExternalAgentCard";
 import MaterializeSkillCard from "./MaterializeSkillCard";
 import ShellCard from "./ShellCard";
 import RunToolBatchCard from "./RunToolBatchCard";
+import TeamChangeCard from "./TeamChangeCard";
 
 // ── Common props type ─────────────────────────────────────────────────
 
@@ -133,4 +135,8 @@ export const BUILTIN_CARD_REGISTRY: Record<string, BuiltinCardComponent> = {
 
   // Workflow
   run_tool_batch: RunToolBatchCard,
+
+  // Team configuration (P5: AI 变更确认卡片)
+  team_prepare_change: TeamChangeCard,
+  team_prepare_publish: TeamChangeCard,
 };

@@ -484,6 +484,22 @@ class ExpertRow(TenantMixin, TimestampMixin, Base):
         default=list,
         server_default="[]",
     )
+    #: 使用范围（P2 两级发布）：team_only=团队专属、shared=可独立授权使用。
+    #: 存量员工迁移为 shared；团队内新建默认 team_only。
+    usage_mode: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="shared",
+        server_default="shared",
+    )
+    #: 员工最新已发布版本指针（P2）：指向 published_experts.version。
+    #: None/0 表示从未发布；发布链成功后更新。
+    published_version: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
 
     __table_args__ = (
         PrimaryKeyConstraint("tenant_id", "id", name="pk_experts"),
@@ -577,6 +593,23 @@ class ExpertTeamRow(TenantMixin, TimestampMixin, Base):
         default=list,
         server_default="[]",
     )
+    #: 草稿修订号（CAS 乐观锁）：每次 PATCH 成功递增；发布不重置。
+    #: 客户端携带 expected_revision 提交 PATCH，服务端校验一致才写入，
+    #: 冲突返回 409。与 version（发布版本号）独立。
+    draft_revision: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+    #: 当前已发布团队版本指针（P2）：指向 expert_team_versions.version。
+    #: 0 表示从未发布；原子发布激活时更新。
+    published_version: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
 
     __table_args__ = (
         PrimaryKeyConstraint("tenant_id", "id", name="pk_expert_teams"),
@@ -613,6 +646,12 @@ class ExpertTeamMemberRow(TenantMixin, TimestampMixin, Base):
         default=0,
         server_default="0",
     )
+    #: 草稿显式选定的成员发布版本（P2）：发布时禁止为空，
+    #: 未发布草稿成员可为空。发布链据此固定成员版本组合。
+    expert_version: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+    )
 
     __table_args__ = (
         PrimaryKeyConstraint(
@@ -646,6 +685,29 @@ class ExpertTeamVersionRow(TenantMixin, TimestampMixin, Base):
         server_default="{}",
     )
     published_by: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    #: 来源草稿修订号（P2）：记录发布时基于哪个 draft_revision，
+    #: 用于冲突检测和审计追溯。
+    source_draft_revision: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+    #: 发布包内容哈希（P2）：spec 的结构化摘要 hash，用于幂等发布
+    # （同 hash 不重复发布）和完整性校验。
+    spec_hash: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default="",
+        server_default="",
+    )
+    #: 发布请求幂等键（P2）：绑定确认请求 ID，重复请求返回原结果。
+    publish_request_id: Mapped[str] = mapped_column(
+        String(128),
+        nullable=False,
+        default="",
+        server_default="",
+    )
 
     __table_args__ = (
         PrimaryKeyConstraint(
@@ -713,6 +775,14 @@ class PublishedExpertRow(TenantMixin, TimestampMixin, Base):
         DateTime(timezone=True),
         nullable=False,
         server_default=text("now()"),
+    )
+    #: 发布包内容哈希（P2）：spec 摘要的 SHA-256，用于幂等发布和
+    #: 完整性校验（发布记录与激活指针保持一致）。
+    spec_hash: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default="",
+        server_default="",
     )
 
     __table_args__ = (

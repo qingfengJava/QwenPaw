@@ -37,7 +37,7 @@ import {
   useLocation,
   useNavigate,
 } from "react-router-dom";
-import { Button, Switch, Tooltip } from "antd";
+import { Button, Spin, Switch, Tooltip } from "antd";
 import { House, Rocket } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { StatusPill, UnderlineTabs } from "@/components/staffdeck";
@@ -45,7 +45,7 @@ import AgentOverviewTab from "@/pages/Agents/AgentOverviewTab";
 import AgentActivityTab from "@/pages/Agents/AgentActivityTab";
 import { TABS } from "@/pages/Agents/detailTabs";
 import { stashAiTunePrompt } from "@/pages/Agents/aiTunePrefill";
-import { lazyImportWithRetry } from "@/utils/lazyWithRetry";
+import { lazyImportWithRetry, lazyWithRetry } from "@/utils/lazyWithRetry";
 import {
   addRouterBasename,
   getAppRelativeLocation,
@@ -64,6 +64,7 @@ import WorkbenchChatPanel, {
   loadChatWidth,
 } from "./WorkbenchChatPanel";
 import WorkbenchVersionsTab from "./WorkbenchVersionsTab";
+import { isTeamTabKey } from "./team/teamTabs";
 import styles from "./workbench.module.less";
 
 // 右栏子页面全部复用现有页面组件（借壳策略：数据域由布局同步到
@@ -91,6 +92,11 @@ const WorkbenchSopPage = lazyImportWithRetry(
 // 避免画布编辑器并入 entry chunk（manualChunks 分片门禁）
 const WorkbenchSopCanvasPage = lazyImportWithRetry(
   "../../pages/Agents/workbench/WorkbenchSopCanvasPage",
+);
+// 专家团详情容器（团队分支专属）：显式 factory 懒加载保留 props 类型，
+// 仅 team_ 前缀 aid 才拉取 chunk，不影响数字员工工作台首屏体积。
+const TeamWorkbenchDetail = lazyWithRetry(
+  () => import("./team/TeamWorkbenchDetail"),
 );
 
 /** 顶层 Tab → 分组键映射（能力 / 运维各为一个二级分组 Tab）。 */
@@ -160,12 +166,23 @@ const PAGE_COMPONENTS: Record<string, ComponentType> = {
 /**
  * 由路径推导顶层 Tab 与二级 Tab。
  */
-function parseWorkbenchPath(pathname: string, aid: string): {
+function parseWorkbenchPath(
+  pathname: string,
+  aid: string,
+  isTeam = false,
+): {
   top: string;
   sub: string | null;
 } {
   const rest = pathname.replace(`/studio/${aid}`, "").replace(/^\//, "");
   const [first, second] = rest.split("/");
+  // 专家团：组织视角五 Tab（white-list 与 teamTabs.ts 对齐），无二级 Tab。
+  if (isTeam) {
+    if (first && isTeamTabKey(first)) {
+      return { top: first, sub: null };
+    }
+    return { top: "overview", sub: null };
+  }
   if (first === "capability" || first === "ops") {
     return {
       top: first,
@@ -262,6 +279,11 @@ function AgentWorkbenchShell({ chatRoute = false }: { chatRoute?: boolean }) {
       ? aid.slice("expert_".length)
       : null;
 
+  // 专家团判定：运行态 agent id 恒为 team_{team_id}（后端
+  // expert_team_agent_id），与 expert_ 前缀判定同模式；命中后右栏
+  // 整体切换为组织视角团队详情，员工 Tab 链路不参与。
+  const isTeam = aid.startsWith("team_");
+
   const refreshPreview = useCallback(async () => {
     if (!expertId) return;
     try {
@@ -305,7 +327,7 @@ function AgentWorkbenchShell({ chatRoute = false }: { chatRoute?: boolean }) {
     );
   }, [agents, aid]);
 
-  const { top, sub } = parseWorkbenchPath(location.pathname, aid);
+  const { top, sub } = parseWorkbenchPath(location.pathname, aid, isTeam);
   // 运行日志详情页：/studio/:aid/sessions/runs/:runId（原嵌套路由参数改为路径解析）。
   const runId =
     location.pathname.match(
@@ -530,7 +552,8 @@ function AgentWorkbenchShell({ chatRoute = false }: { chatRoute?: boolean }) {
       </header>
 
       {/* ── 主体：左聊天 + 右信息（SOP 画布下钻页仅替换右侧内容，
-          左侧聊天面板不覆盖、输入框始终可用，对齐 run log 下钻） ── */}
+          左侧聊天面板不覆盖、输入框始终可用，对齐 run log 下钻）。          专家团 aid（team_ 前缀）时右栏整体交给团队详情容器：
+          自带组织视角五 Tab 条，员工 Tab 条不渲染。 ── */}
       <div className={styles.workbenchBody}>
         <WorkbenchChatPanel
           width={chatWidth}
@@ -542,6 +565,28 @@ function AgentWorkbenchShell({ chatRoute = false }: { chatRoute?: boolean }) {
           onCollapsedChange={setChatCollapsed}
         />
 
+        {isTeam ? (
+          <Suspense
+            fallback={
+              <section className={styles.detailPane}>
+                <div className={styles.emptyWrap}>
+                  <Spin />
+                </div>
+              </section>
+            }
+          >
+            <TeamWorkbenchDetail
+              aid={aid}
+              teamId={aid.slice("team_".length)}
+              canManage={canManage}
+              tab={isTeamTabKey(top) ? top : "overview"}
+              onTabChange={handleTopTab}
+              sessionsSlot={<SessionsPage />}
+              runId={runId}
+              onNavigate={(path) => navigate(path)}
+            />
+          </Suspense>
+        ) : (
         <section className={styles.detailPane}>
           <div className={styles.tabBar}>
             <UnderlineTabs
@@ -654,6 +699,7 @@ function AgentWorkbenchShell({ chatRoute = false }: { chatRoute?: boolean }) {
             )}
           </div>
         </section>
+        )}
       </div>
     </div>
     </WorkbenchSandboxContext.Provider>

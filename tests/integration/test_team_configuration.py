@@ -173,3 +173,10 @@ async def test_t1_team_metadata_shape(enterprise_env):
     roles = {item["value"] for item in meta["member_roles"]}
     assert "lead" in roles and "member" in roles
     assert meta["limits"]["default_max_repair_per_node"] > 0
+    # 协作模式携带机制说明（团队详情页"协作机制卡"数据源，禁止前端硬编码）
+    mode_desc = {
+        item["value"]: item.get("description", "")
+        for item in meta["team_modes"]
+    }
+    assert mode_desc.get("router"), "router 模式必须提供协作机制说明"
+    assert mode_desc.get("pipeline"), "pipeline 模式必须提供协作机制说明"

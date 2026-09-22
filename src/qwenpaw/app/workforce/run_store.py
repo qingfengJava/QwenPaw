@@ -28,6 +28,7 @@ from .contracts import (
     NODE_STATUS_PENDING,
     RUN_INTERRUPTIBLE_STATUSES,
     RUN_STATUS_INTERRUPTED,
+    RUN_TERMINAL_STATUSES,
     DagPlan,
     ResultContract,
 )
@@ -149,8 +150,20 @@ class WorkforceRunStore:
         # 映射为普通 dict（JSONB 已是 dict，datetime 保留原样）
         return dict(row) if row else None
 
-    async def update_run(self, run_id: str, **fields: Any) -> bool:
-        """按白名单更新 run 的若干列（未命中行返回 False）。"""
+    async def update_run(
+        self,
+        run_id: str,
+        *,
+        guard_terminal: bool = False,
+        **fields: Any,
+    ) -> bool:
+        """按白名单更新 run 的若干列（未命中行返回 False）。
+
+        ``guard_terminal`` 为 True 时追加终态守卫条件：目标行已处于
+        终态（done/failed/escalated/canceled）则不写入——DB 层兜底
+        "终态不可被迟到消息覆写"（应用层检查与提交之间的竞态窗口
+        由本条件关闭）。
+        """
         # 未知字段直接拒绝（调用方 bug 早暴露）
         unknown = set(fields) - _RUN_UPDATABLE
         if unknown:
@@ -170,12 +183,17 @@ class WorkforceRunStore:
             else:
                 params[f"v_{key}"] = value
                 sets.append(f"{key} = :v_{key}")
+        # 终态守卫条件：仅写入非终态行（终态集合见 contracts 单一来源）
+        conditions = ""
+        if guard_terminal:
+            params["terminal_statuses"] = list(RUN_TERMINAL_STATUSES)
+            conditions = " AND status != ALL(:terminal_statuses)"
         engine = require_enterprise_engine()
         async with engine.begin() as conn:
             result = await conn.execute(
                 text(
                     f"UPDATE team_runs SET {', '.join(sets)} "
-                    "WHERE tenant_id = :tid AND id = :id"
+                    "WHERE tenant_id = :tid AND id = :id" + conditions
                 ),
                 params,
             )
@@ -187,11 +205,17 @@ class WorkforceRunStore:
         status: str,
         error: str = "",
         escalation_reason: str = "",
+        guard_terminal: bool = False,
     ) -> bool:
-        """流转 run 状态（终态附带原因字段，便于审计与前端展示）。"""
+        """流转 run 状态（终态附带原因字段，便于审计与前端展示）。
+
+        ``guard_terminal`` 为 True 时目标行已终态则拒绝流转
+        （DB 层终态不可覆写守卫，语义见 :meth:`update_run`）。
+        """
         # 每次调用都会写入传入的 error/escalation_reason（含空串清空语义），调用方需自行保证语义
         return await self.update_run(
             run_id,
+            guard_terminal=guard_terminal,
             status=status,
             error=error,
             escalation_reason=escalation_reason,
@@ -762,11 +786,59 @@ class WorkforceRunStore:
         node_key: str,
         tokens: int,
         reason: str = "",
-    ) -> str:
-        """调用前预算预留（pending；返回预留标识供结算/释放）。"""
+        max_total_tokens: int = 0,
+    ) -> Optional[str]:
+        """调用前预算预留（pending；返回预留标识供结算/释放）。
+
+        原子性保证（协议 8.5：并发预留不超售）：
+
+        - 同一事务内先 ``SELECT ... FOR UPDATE`` 锁定 run 行，串行化
+          同一 run 的并发预留（两个并发协程不可能同时通过校验）；
+        - 锁内聚合实际用量（节点已结算 SUM + pending 预留 SUM），
+          ``max_total_tokens > 0`` 且 ``用量 + tokens`` 超限时
+          返回 None 不写入（由调用方升级为预算熔断）。
+
+        ``max_total_tokens <= 0`` 表示不限预算，仅登记预留不做校验
+        （与旧语义兼容）。
+        """
         reservation_id = new_id("resv")
+        tid = current_tenant_id()
         engine = require_enterprise_engine()
         async with engine.begin() as conn:
+            # run 行锁：同 run 并发预留在此串行化（超售窗口由此关闭）
+            locked = await conn.execute(
+                text(
+                    "SELECT id FROM team_runs WHERE tenant_id = :tid "
+                    "AND id = :run FOR UPDATE"
+                ),
+                {"tid": tid, "run": run_id},
+            )
+            if locked.first() is None:
+                raise ValueError(f"run {run_id} 不存在，无法预留预算")
+            if max_total_tokens > 0:
+                # 锁内聚合用量：已结算（节点行）+ 未决预留（pending）
+                settled = await conn.execute(
+                    text(
+                        "SELECT COALESCE(SUM(token_cost), 0) FROM "
+                        "team_run_nodes WHERE tenant_id = :tid "
+                        "AND run_id = :run"
+                    ),
+                    {"tid": tid, "run": run_id},
+                )
+                outstanding = await conn.execute(
+                    text(
+                        "SELECT COALESCE(SUM(reserved_tokens), 0) FROM "
+                        "team_run_budget_reservations WHERE tenant_id = :tid "
+                        "AND run_id = :run AND status = 'pending'"
+                    ),
+                    {"tid": tid, "run": run_id},
+                )
+                usage = int(settled.scalar_one() or 0) + int(
+                    outstanding.scalar_one() or 0
+                )
+                if usage + tokens > max_total_tokens:
+                    # 剩余额度不足：不写入预留，由调用方熔断升级
+                    return None
             await conn.execute(
                 text(
                     "INSERT INTO team_run_budget_reservations (tenant_id, "
@@ -774,7 +846,7 @@ class WorkforceRunStore:
                     "(:tid, :id, :run, :node, :tokens, :reason)"
                 ),
                 {
-                    "tid": current_tenant_id(),
+                    "tid": tid,
                     "id": reservation_id,
                     "run": run_id,
                     "node": node_key,

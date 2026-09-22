@@ -180,6 +180,40 @@ async def create_team_run(
             raise
         return {**existing, "idempotent_replay": True, "nodes": []}
     await store.emit_event(run, "team_run_created", {"goal": goal[:200]})
+    # P3 版本化基准（协议 8.1）：从发布快照解析团队版本与成员版本
+    # 清单，写入执行上下文供后续阶段核对（审计基准）；解析失败仅
+    # 记事件不阻断创建——旧团队/未发布快照按"无版本基准"降级，
+    # 实例漂移防护仍由花名册钉版本 + 引擎漂移暂停承接
+    try:
+        from ..experts.release_runtime import (
+            resolve_team_version_from_store,
+        )
+
+        resolved = await resolve_team_version_from_store(expert_store, team_id)
+        if resolved is not None:
+            persisted_bundle = dict(run.get("context_bundle") or {})
+            execution_ctx = dict(persisted_bundle.get("execution_ctx") or {})
+            execution_ctx["team_version_binding"] = {
+                "team_id": team_id,
+                "team_version": resolved.team_version,
+                "member_versions": dict(resolved.member_versions),
+            }
+            persisted_bundle["execution_ctx"] = execution_ctx
+            await store.update_run(
+                run["id"], context_bundle=persisted_bundle,
+            )
+            await store.emit_event(
+                run,
+                "team_version_bound",
+                {
+                    "team_version": resolved.team_version,
+                    "members": len(resolved.member_versions),
+                },
+            )
+    except Exception:  # noqa: BLE001 - 版本基准缺失不阻断运行创建
+        logger.info(
+            "team_version_binding unavailable for team %s", team_id,
+        )
     start_run_background(run["id"])
     return {**run, "nodes": []}
 
@@ -264,6 +298,12 @@ async def submit_decision(
     pending = _load_pending_decision(run)
     if pending is None or pending.get("decision_id") != decision.decision_id:
         raise DecisionNotFound("决策标识不存在或已失效")
+    # 终态不可覆写：canceled/escalated 等 run 的迟到批准拒绝放行
+    # （审批中心延迟 resolve 回调 / 重复点击不得拉回终态 run 重新执行）
+    if status in engine_mod._RUN_TERMINAL:
+        raise DecisionConflict(
+            f"run 已处于终态 {status}，迟到的决策不再放行"
+        )
     # 批准对象版本校验：过期/重复批准拒绝（重规划后 revision 递增）
     if not decision_matches(decision, int(pending.get("revision", 0))):
         raise DecisionConflict(
@@ -289,6 +329,13 @@ async def _apply_object_approval(
     from . import engine as engine_mod
     from .contracts import ContextBundle
 
+    # TOCTOU 防护：读 run → 校验之间的窗口内状态可能已变终态，
+    # 重读一次拒绝迟到批准（与下方 guard_terminal DB 守卫双层防护）
+    fresh = await store.get_run(run_id)
+    if fresh is not None and fresh.get("status") in engine_mod._RUN_TERMINAL:
+        raise DecisionConflict(
+            f"run 已处于终态 {fresh.get('status')}，迟到的决策不再放行"
+        )
     # 恢复为契约模型再修订（bump 依赖模型方法；持久化用 dict）
     bundle_obj = ContextBundle.model_validate(run.get("context_bundle") or {})
     execution_ctx = dict(bundle_obj.execution_ctx)
@@ -309,7 +356,13 @@ async def _apply_object_approval(
     bundle_obj = bundle_mod.bump(bundle_obj, reason=f"decision:{decision.action}")
     await store.bump_context_version(run_id)
     await store.update_run(run_id, context_bundle=bundle_obj.model_dump())
-    await store.set_run_status(run_id, RUN_STATUS_RUNNING)
+    # guard_terminal：DB 层终态守卫——应用层检查与提交之间的竞态
+    # 窗口内若已变终态，本次放行不生效（终态不可覆写）
+    applied = await store.set_run_status(
+        run_id, RUN_STATUS_RUNNING, guard_terminal=True,
+    )
+    if not applied:
+        raise DecisionConflict("run 已进入终态，批准不再生效")
     await store.emit_event(
         run,
         "decision_applied",

@@ -78,6 +78,7 @@ const META = {
     default_max_total_seconds: 3600,
     default_max_total_tokens: 0,
   },
+  default_runtime_enabled: true,
 };
 
 const CAPS = {
@@ -165,5 +166,41 @@ describe("TeamDetailPage", () => {
     await waitFor(() => {
       expect(screen.getByText("团队不存在或已删除")).toBeInTheDocument();
     });
+  });
+
+  it("保存时保留 orchestration 治理字段（无损保存）", async () => {
+    // 团队 orchestration 含 schema_version / require_plan_approval 等治理字段
+    const teamWithGovernance = {
+      ...TEAM,
+      orchestration: {
+        ...TEAM.orchestration,
+        schema_version: "v2",
+        require_plan_approval: true,
+      },
+    };
+    getTeam.mockResolvedValue(teamWithGovernance);
+    metadata.mockResolvedValue(META);
+    versions.mockResolvedValue([]);
+    capabilities.mockResolvedValue(CAPS);
+    update.mockResolvedValue(teamWithGovernance);
+
+    renderWithProviders(<TeamDetailPage />);
+    await waitFor(() => {
+      expect(screen.getByText("研发交付团队")).toBeInTheDocument();
+    });
+
+    // 触发保存
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => {
+      expect(update).toHaveBeenCalled();
+    });
+    // 验证 update 调用时 orchestration 保留了治理字段
+    const updateCall = update.mock.calls[0];
+    const orch = updateCall[1].orchestration;
+    expect(orch.schema_version).toBe("v2");
+    expect(orch.require_plan_approval).toBe(true);
+    // 表单管理字段也应正常保存
+    expect(typeof orch.runtime_enabled).toBe("boolean");
+    expect(orch.policy).toBeDefined();
   });
 });

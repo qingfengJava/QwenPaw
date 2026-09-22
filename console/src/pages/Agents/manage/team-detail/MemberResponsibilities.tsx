@@ -5,19 +5,28 @@
  * 成员在矩阵中显式标红并给出不可执行原因；技能/工具/知识库/SOP
  * 以数量徽标呈现，详情看员工管理页（职责单一：此处只回答"谁能
  * 做什么、凭什么"）。
+ *
+ * 版本绑定列来自 member-updates 投影（绑定版本 vs 最新发布版本），
+ * 绑定落后时显式标记"可升级"，升级操作在页面级升级提醒条完成。
  */
 import { Alert, Table, Tag, Typography } from "antd";
 import { useTranslation } from "react-i18next";
-import type { TeamCapabilityMember } from "../../../../api/modules/admin/expertTeams";
+import type {
+  MemberUpdateItem,
+  TeamCapabilityMember,
+} from "../../../../api/modules/admin/expertTeams";
 
 export interface MemberResponsibilitiesProps {
   members: TeamCapabilityMember[];
+  /** 成员升级提醒投影（member-updates；绑定版本 vs 最新发布版本）。 */
+  upgrades?: MemberUpdateItem[];
   loading: boolean;
   error: string;
 }
 
 export default function MemberResponsibilities({
   members,
+  upgrades,
   loading,
   error,
 }: MemberResponsibilitiesProps) {
@@ -78,6 +87,46 @@ export default function MemberResponsibilities({
             title: t("admin.teamDetail.colHint", "职责提示"),
             dataIndex: "role_hint",
             render: (hint: string) => hint || "—",
+          },
+          {
+            title: t("admin.teamDetail.colVersion", "版本绑定"),
+            key: "version_binding",
+            width: 160,
+            render: (_, row) => {
+              // 版本绑定数据来自 member-updates 投影（绑定缺失时后端
+              // 显示"—"= 未指定；绑定 < 最新发布版本时标记可升级）
+              const upgrade = upgrades?.find(
+                (u) => u.expert_id === row.expert_id,
+              );
+              if (!upgrade) return "—";
+              const bound =
+                upgrade.bound_version != null
+                  ? `v${upgrade.bound_version}`
+                  : "—";
+              if (upgrade.upgradable) {
+                return (
+                  <span>
+                    <Tag color="warning">
+                      {bound} → {t("admin.teamDetail.upgradable", "可升级")} v
+                      {upgrade.latest_version}
+                    </Tag>
+                  </span>
+                );
+              }
+              return (
+                <span>
+                  <Tag>{bound}</Tag>
+                  {upgrade.latest_version > 0 && (
+                    <Typography.Text
+                      type="secondary"
+                      style={{ fontSize: 12 }}
+                    >
+                      最新 v{upgrade.latest_version}
+                    </Typography.Text>
+                  )}
+                </span>
+              );
+            },
           },
           {
             title: t("admin.teamDetail.colSkills", "技能/工具/知识库"),

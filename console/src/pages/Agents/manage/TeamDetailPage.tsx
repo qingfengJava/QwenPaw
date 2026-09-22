@@ -7,7 +7,7 @@
  * （一个保存入口，避免多处维护配置状态）。运行观察在 XianWork
  * RunDetail，此处不重复运行状态。
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Button,
@@ -29,6 +29,7 @@ import { useAppMessage } from "../../../hooks/useAppMessage";
 import { adminExpertTeamsApi } from "../../../api/modules/admin";
 import type {
   ExpertTeamRecord,
+  MemberUpdateItem,
   TeamCapabilityMember,
   TeamMetadata,
   TeamValidateResult,
@@ -41,12 +42,20 @@ import TeamPolicyForm, {
 } from "./team-detail/TeamPolicyForm";
 import styles from "@/pages/Admin/admin.module.less";
 
-/** orchestration spec → 详情页表单回填值（与列表页弹窗同约定）。 */
-function orchToFormValues(orch: Record<string, unknown> | null | undefined) {
+/** orchestration spec → 详情页表单回填值（与列表页弹窗同约定）。
+ *  runtime_enabled 缺省使用 metadata 默认值（后端唯一来源）。 */
+function orchToFormValues(
+  orch: Record<string, unknown> | null | undefined,
+  defaultRuntimeEnabled = true,
+) {
   const spec = orch ?? {};
   const policy = (spec.policy ?? {}) as Record<string, number>;
+  const runtimeEnabled =
+    typeof spec.runtime_enabled === "boolean"
+      ? spec.runtime_enabled
+      : defaultRuntimeEnabled;
   const values: Record<string, unknown> = {
-    [`${POLICY_FIELD_PREFIX}enabled`]: spec.runtime_enabled === true,
+    [`${POLICY_FIELD_PREFIX}enabled`]: runtimeEnabled,
     [`${POLICY_FIELD_PREFIX}nodes`]:
       Array.isArray(spec.nodes) && spec.nodes.length > 0
         ? JSON.stringify(spec.nodes, null, 2)
@@ -72,8 +81,13 @@ function orchToFormValues(orch: Record<string, unknown> | null | undefined) {
   return values;
 }
 
-/** 表单值 → orchestration spec（保存前组装；校验已由 Form 保证）。 */
-function buildOrchestration(values: Record<string, unknown>) {
+/** 表单值 → orchestration spec（保存前组装；校验已由 Form 保证）。
+ *  无损保存：先展开当前 orchestration 保留治理字段（schema_version /
+ *  require_plan_approval 等表单未管理的字段），再覆盖表单管理字段。 */
+function buildOrchestration(
+  values: Record<string, unknown>,
+  currentOrch?: Record<string, unknown> | null,
+) {
   const policy: Record<string, number> = {};
   for (const name of [
     "max_repair_per_node",
@@ -95,7 +109,10 @@ function buildOrchestration(values: Record<string, unknown>) {
       return [];
     }
   };
+  // 无损合并：保留当前 orchestration 中表单未管理的治理字段
+  const base = (currentOrch ?? {}) as Record<string, unknown>;
   return {
+    ...base,
     runtime_enabled: values[`${POLICY_FIELD_PREFIX}enabled`] === true,
     nodes: parseNodesText(values[`${POLICY_FIELD_PREFIX}nodes`]),
     fast_nodes:
@@ -118,6 +135,7 @@ export default function TeamDetailPage() {
   const [team, setTeam] = useState<ExpertTeamRecord | null>(null);
   const [metadata, setMetadata] = useState<TeamMetadata | null>(null);
   const [members, setMembers] = useState<TeamCapabilityMember[]>([]);
+  const [memberUpdates, setMemberUpdates] = useState<MemberUpdateItem[]>([]);
   const [capLoading, setCapLoading] = useState(false);
   const [capError, setCapError] = useState("");
   const [versions, setVersions] = useState<TeamVersionRow[]>([]);
@@ -132,18 +150,24 @@ export default function TeamDetailPage() {
     setLoading(true);
     setNotFound(false);
     try {
-      const [record, meta, versionRows] = await Promise.all([
+      const [record, meta, versionRows, upgradeItems] = await Promise.all([
         adminExpertTeamsApi.get(teamId),
         adminExpertTeamsApi.metadata().catch(() => null),
         adminExpertTeamsApi.versions(teamId).catch(() => []),
+        adminExpertTeamsApi.memberUpdates(teamId).catch(() => []),
       ]);
       setTeam(record);
       setMetadata(meta);
       setVersions(versionRows);
+      setMemberUpdates(upgradeItems);
       form.setFieldsValue({
         name: record.name,
         description: record.description,
-        ...orchToFormValues(record.orchestration),
+        // 有效配置：runtime_enabled 缺省来自 metadata（前端不硬编码 true/false）
+        ...orchToFormValues(
+          record.orchestration,
+          meta?.default_runtime_enabled ?? true,
+        ),
       });
     } catch {
       setNotFound(true);
@@ -173,6 +197,52 @@ export default function TeamDetailPage() {
     if (teamId) loadCapabilities();
   }, [teamId, loadCapabilities]);
 
+  /** 可升级成员数（绑定版本 < 最新发布版本）。 */
+  const upgradableCount = useMemo(
+    () => memberUpdates.filter((u) => u.upgradable).length,
+    [memberUpdates],
+  );
+
+  /** 一键升级：把可升级成员的版本绑定更新到最新发布版本后保存。 */
+  const handleUpgradeVersions = async () => {
+    if (!team) return;
+    setSaving(true);
+    try {
+      const latestById = new Map(
+        memberUpdates.map((u) => [u.expert_id, u.latest_version]),
+      );
+      // 仅更新可升级成员的绑定，其余成员原样保留（含 null=未指定）
+      const membersBody = team.members.map((m) => {
+        const latest = latestById.get(m.expert_id);
+        const shouldUpgrade =
+          m.expert_version != null && latest != null && latest > m.expert_version;
+        return {
+          expert_id: m.expert_id,
+          role_hint: m.role_hint,
+          member_role: m.member_role,
+          seq: m.seq,
+          expert_version: shouldUpgrade ? latest : m.expert_version,
+        };
+      });
+      const record = await adminExpertTeamsApi.update(teamId, {
+        members: membersBody,
+      });
+      setTeam(record);
+      message.success(
+        t(
+          "admin.teamDetail.upgraded",
+          "成员版本绑定已升级到最新发布版本",
+        ),
+      );
+      load();
+      loadCapabilities();
+    } catch (err) {
+      message.error(String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   /** 保存：基础信息 + 编排/策略统一一次 PATCH（单一保存入口）。 */
   const handleSave = async () => {
     const values = await form.validateFields();
@@ -181,7 +251,8 @@ export default function TeamDetailPage() {
       const record = await adminExpertTeamsApi.update(teamId, {
         name: values.name,
         description: values.description,
-        orchestration: buildOrchestration(values),
+        // 无损保存：传入当前 orchestration 保留治理字段
+        orchestration: buildOrchestration(values, team?.orchestration),
       });
       setTeam(record);
       message.success(t("admin.teamDetail.saved", "已保存"));
@@ -337,11 +408,35 @@ export default function TeamDetailPage() {
               key: "members",
               label: t("admin.teamDetail.tabMembers", "成员职责"),
               children: (
-                <MemberResponsibilities
-                  members={members}
-                  loading={capLoading}
-                  error={capError}
-                />
+                <div>
+                  {upgradableCount > 0 && (
+                    <Alert
+                      type="warning"
+                      showIcon
+                      style={{ marginBottom: 12 }}
+                      message={t(
+                        "admin.teamDetail.upgradeHint",
+                        "{{n}} 个成员有新发布版本，建议升级绑定后再发布团队",
+                        { n: upgradableCount },
+                      )}
+                      action={
+                        <Button
+                          size="small"
+                          loading={saving}
+                          onClick={handleUpgradeVersions}
+                        >
+                          {t("admin.teamDetail.upgradeAll", "全部升级到最新")}
+                        </Button>
+                      }
+                    />
+                  )}
+                  <MemberResponsibilities
+                    members={members}
+                    upgrades={memberUpdates}
+                    loading={capLoading}
+                    error={capError}
+                  />
+                </div>
               ),
             },
             {

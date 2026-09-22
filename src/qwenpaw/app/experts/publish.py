@@ -750,6 +750,15 @@ async def publish_expert_team(
             raise ValueError(
                 f"member expert {member.expert_id} must be published first",
             )
+        # 绑定版本合法性：不得指向不存在的未来版本（绑定 > 最新发布
+        # 说明成员降级/数据漂移，快照会固化失效引用，拒绝发布）
+        bound = member.expert_version
+        latest = int(expert.published_version or 0)
+        if bound is not None and int(bound) > latest:
+            raise ValueError(
+                f"member expert {member.expert_id} 绑定版本 v{bound} "
+                f"超过其最新发布版本 v{latest}，请重新绑定后再发布",
+            )
 
     # Resolve member metadata once for the supervisor prompt (five-step:
     # one batched list query instead of per-member lookups).
@@ -799,6 +808,7 @@ async def publish_expert_team(
             "name": updated.name,
             "description": updated.description,
             "mode": updated.mode,
+            "router_prompt": updated.router_prompt,
             "members": [m.model_dump() for m in updated.members],
             "orchestration": updated.orchestration,
         }

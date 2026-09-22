@@ -1,5 +1,5 @@
 import { lazy, createElement } from "react";
-import type { ComponentType } from "react";
+import type { ComponentType, LazyExoticComponent } from "react";
 import { moduleRegistry } from "../plugins/moduleRegistry";
 
 const MAX_RETRIES = 3;
@@ -20,7 +20,11 @@ function pathToModuleKey(importPath: string): string {
   return key.includes("/") && !/\/index$/.test(key) ? `${key}/index` : key;
 }
 
-function retryImport<T extends ComponentType<unknown>>(
+// 泛型以 props 类型 P 为参数（而非组件类型）：避免 ComponentType<unknown>
+// 的参数逆变拒绝 FC<Props>，同时不需要 any；最终由 React.lazy 自身的
+// ComponentType<any> 约束承接，带 props 的页面组件也能走 retry 且
+// props 类型完整保留。
+function retryImport<T>(
   factory: () => Promise<{ default: T }>,
   retries: number,
 ): Promise<{ default: T }> {
@@ -99,10 +103,10 @@ function withPreload<T>(component: T, factory: () => unknown): T {
  * const ModelsPage = lazyWithRetry(() => import("../../pages/Settings/Models"));
  * ```
  */
-export function lazyWithRetry<T extends ComponentType<unknown>>(
-  factory: () => Promise<{ default: T }>,
+export function lazyWithRetry<P>(
+  factory: () => Promise<{ default: ComponentType<P> }>,
   moduleKeyOrPath?: string,
-) {
+): LazyExoticComponent<ComponentType<P>> {
   return lazy(() =>
     retryImport(factory, MAX_RETRIES).then((mod) => {
       if (!moduleKeyOrPath) return mod;
@@ -110,7 +114,7 @@ export function lazyWithRetry<T extends ComponentType<unknown>>(
         ? pathToModuleKey(moduleKeyOrPath)
         : moduleKeyOrPath;
       const patched = moduleRegistry.get(key, "default");
-      if (patched) return { default: patched as T };
+      if (patched) return { default: patched as ComponentType<P> };
       return mod;
     }),
   );

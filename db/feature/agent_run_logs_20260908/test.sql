@@ -2782,3 +2782,197 @@ COMMENT ON COLUMN team_runs.active_seconds IS
 
 -- 验证：SELECT column_name FROM information_schema.columns
 --       WHERE table_name = 'team_runs' AND column_name = 'active_seconds';
+
+-- ============================================================
+-- [P1 changelog 20260922/02_team_draft_revision.sql 同步] expert_teams 补列 draft_revision（CAS 乐观锁）
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'expert_teams'
+          AND column_name = 'draft_revision'
+    ) THEN
+        ALTER TABLE expert_teams
+            ADD COLUMN draft_revision integer NOT NULL DEFAULT 0;
+    END IF;
+END $$;
+
+COMMENT ON COLUMN expert_teams.draft_revision IS
+    '草稿修订号(CAS 乐观锁): 每次 PATCH 成功递增, 发布不重置, '
+    '客户端携带 expected_revision 校验冲突返回 409';
+
+-- 验证：SELECT column_name FROM information_schema.columns
+--       WHERE table_name = 'expert_teams' AND column_name = 'draft_revision';
+
+-- ============================================================
+-- [P2 changelog 20260922/03_p2_two_level_publish.sql 同步] 两级发布：5 张表补列
+
+-- 1. experts: usage_mode + published_version
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'experts'
+          AND column_name = 'usage_mode'
+    ) THEN
+        ALTER TABLE experts
+            ADD COLUMN usage_mode text NOT NULL DEFAULT 'shared';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'experts'
+          AND column_name = 'published_version'
+    ) THEN
+        ALTER TABLE experts
+            ADD COLUMN published_version integer NOT NULL DEFAULT 0;
+    END IF;
+END $$;
+
+COMMENT ON COLUMN experts.usage_mode IS
+    '使用范围(P2): team_only=团队专属, shared=可独立使用; 存量迁移为 shared';
+COMMENT ON COLUMN experts.published_version IS
+    '员工最新发布版本指针(P2): 指向 published_experts.version, 0=从未发布';
+
+-- 2. expert_teams: published_version
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'expert_teams'
+          AND column_name = 'published_version'
+    ) THEN
+        ALTER TABLE expert_teams
+            ADD COLUMN published_version integer NOT NULL DEFAULT 0;
+    END IF;
+END $$;
+
+COMMENT ON COLUMN expert_teams.published_version IS
+    '当前已发布团队版本指针(P2): 指向 expert_team_versions.version, 0=从未发布';
+
+-- 3. expert_team_members: expert_version
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'expert_team_members'
+          AND column_name = 'expert_version'
+    ) THEN
+        ALTER TABLE expert_team_members
+            ADD COLUMN expert_version integer;
+    END IF;
+END $$;
+
+COMMENT ON COLUMN expert_team_members.expert_version IS
+    '草稿显式选定的成员发布版本(P2): 发布时禁止为空, NULL=未指定';
+
+-- 4. expert_team_versions: source_draft_revision + spec_hash + publish_request_id
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'expert_team_versions'
+          AND column_name = 'source_draft_revision'
+    ) THEN
+        ALTER TABLE expert_team_versions
+            ADD COLUMN source_draft_revision integer NOT NULL DEFAULT 0;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'expert_team_versions'
+          AND column_name = 'spec_hash'
+    ) THEN
+        ALTER TABLE expert_team_versions
+            ADD COLUMN spec_hash varchar(64) NOT NULL DEFAULT '';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'expert_team_versions'
+          AND column_name = 'publish_request_id'
+    ) THEN
+        ALTER TABLE expert_team_versions
+            ADD COLUMN publish_request_id varchar(128) NOT NULL DEFAULT '';
+    END IF;
+END $$;
+
+COMMENT ON COLUMN expert_team_versions.source_draft_revision IS
+    '来源草稿修订号(P2): 发布时基于哪个 draft_revision, 用于冲突检测和审计';
+COMMENT ON COLUMN expert_team_versions.spec_hash IS
+    '发布包内容哈希(P2): spec 摘要 SHA-256, 幂等发布和完整性校验';
+COMMENT ON COLUMN expert_team_versions.publish_request_id IS
+    '发布请求幂等键(P2): 绑定确认请求 ID, 重复请求返回原结果';
+
+-- 5. published_experts: spec_hash
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'published_experts'
+          AND column_name = 'spec_hash'
+    ) THEN
+        ALTER TABLE published_experts
+            ADD COLUMN spec_hash varchar(64) NOT NULL DEFAULT '';
+    END IF;
+END $$;
+
+COMMENT ON COLUMN published_experts.spec_hash IS
+    '发布包内容哈希(P2): spec 摘要 SHA-256, 发布记录与激活指针保持一致';
+
+-- [变更说明] P5 AI 修改安全闭环：新增 team_change_requests 持久化提案表
+-- [变更时间] 2026-09-22
+-- [变更人]   清风
+-- [适用环境] 测试环境（在已有库基础上增量执行）
+-- [同步至 db/feature/agent_run_logs_20260908/test.sql] 是
+-- [同步至 db/feature/agent_run_logs_20260908/prod.sql] 是
+
+-- AI 对话修改团队配置时，模型只能提出候选变更请求，不能直接写草稿。
+-- 用户在聊天界面确认后才由 HTTP 确认端点执行 CAS 写操作。
+-- 本表持久化变更请求的生命周期：pending → applying → applied/rejected/expired/conflict/failed。
+
+CREATE TABLE IF NOT EXISTS team_change_requests (
+    tenant_id       VARCHAR(64)  NOT NULL DEFAULT 'default',
+    request_id      VARCHAR(64)  NOT NULL,
+    team_id         VARCHAR(64)  NOT NULL,
+    operator_id     VARCHAR(128) NOT NULL,
+    session_id      VARCHAR(128) NOT NULL DEFAULT '',
+    kind            VARCHAR(32)  NOT NULL DEFAULT 'save_draft',
+    base_revision   INTEGER      NOT NULL DEFAULT 0,
+    base_published_version INTEGER NOT NULL DEFAULT 0,
+    candidate_hash  VARCHAR(64)  NOT NULL DEFAULT '',
+    candidate_payload JSONB      NOT NULL DEFAULT '{}'::jsonb,
+    validation_result JSONB      NOT NULL DEFAULT '{}'::jsonb,
+    status          VARCHAR(32)  NOT NULL DEFAULT 'pending',
+    error_message   TEXT         NOT NULL DEFAULT '',
+    expires_at      TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT (now() + interval '30 minutes'),
+    created_at      TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+    applied_at      TIMESTAMP WITH TIME ZONE,
+    CONSTRAINT pk_team_change_requests PRIMARY KEY (tenant_id, request_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_team_change_requests_team
+    ON team_change_requests (tenant_id, team_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_team_change_requests_status
+    ON team_change_requests (tenant_id, status)
+    WHERE status IN ('pending', 'applying');
+
+COMMENT ON TABLE team_change_requests IS 'AI 修改团队配置的持久化提案（用户确认后执行）';
+COMMENT ON COLUMN team_change_requests.tenant_id IS '租户标识';
+COMMENT ON COLUMN team_change_requests.request_id IS '提案唯一 ID（UUID）';
+COMMENT ON COLUMN team_change_requests.team_id IS '目标团队 ID';
+COMMENT ON COLUMN team_change_requests.operator_id IS '发起操作的用户名（认证上下文）';
+COMMENT ON COLUMN team_change_requests.session_id IS '来源会话 ID（AI 对话 session）';
+COMMENT ON COLUMN team_change_requests.kind IS '提案类型：save_draft / publish';
+COMMENT ON COLUMN team_change_requests.base_revision IS '创建时的草稿修订号（CAS 基准）';
+COMMENT ON COLUMN team_change_requests.base_published_version IS '创建时的已发布版本号';
+COMMENT ON COLUMN team_change_requests.candidate_hash IS '候选内容 SHA-256 摘要（防篡改比对）';
+COMMENT ON COLUMN team_change_requests.candidate_payload IS '候选变更内容（JSON 结构化补丁）';
+COMMENT ON COLUMN team_change_requests.validation_result IS '校验结果（issues 列表 + 差异卡）';
+COMMENT ON COLUMN team_change_requests.status IS '状态：pending/applying/applied/rejected/expired/conflict/failed';
+COMMENT ON COLUMN team_change_requests.error_message IS '失败/冲突时的错误信息';
+COMMENT ON COLUMN team_change_requests.expires_at IS '候选过期时间（默认 30 分钟）';
+COMMENT ON COLUMN team_change_requests.created_at IS '创建时间';
+COMMENT ON COLUMN team_change_requests.updated_at IS '状态更新时间';
+COMMENT ON COLUMN team_change_requests.applied_at IS '实际执行时间';

@@ -17,7 +17,7 @@ from ...experts.models import (
     expert_team_agent_id,
 )
 from ...experts.publish import archive_expert_team, publish_expert_team
-from ...experts.store import get_expert_store
+from ...experts.store import DraftRevisionConflict, get_expert_store
 from ...kb import bindings as kb_bindings
 from ...rbac import PERM_ADMIN_EXPERTS, require_perm
 from ...write_audit import record_write_audit
@@ -33,6 +33,23 @@ router = APIRouter(
 
 def _manager(request: Request):
     return getattr(request.app.state, "multi_agent_manager", None)
+
+
+def _actor(request: Request) -> str:
+    """从认证上下文取操作者（fail-closed，审计链不虚构身份）。
+
+    认证开启时缺失身份 → 401（不虚构操作者，保证审计与提案
+    operator_id 比对真实）；认证关闭（本机单机桌面模式）→
+    "local"（诚实标识未认证操作者，区别于虚构的 admin 身份）。
+    """
+    user = getattr(request.state, "user", None)
+    if user:
+        return str(user)
+    from ...rbac.deps import rbac_enforcement_enabled
+
+    if rbac_enforcement_enabled():
+        raise HTTPException(status_code=401, detail="认证上下文缺失")
+    return "local"
 
 
 @router.get("", response_model=List[ExpertTeamRecord])
@@ -53,6 +70,7 @@ async def create_team(body: ExpertTeamCreateBody) -> ExpertTeamRecord:
                 role_hint=m.role_hint,
                 member_role=m.member_role,
                 seq=m.seq,
+                expert_version=m.expert_version,
             )
             for m in body.members
         ],
@@ -112,6 +130,28 @@ async def team_versions(team_id: str) -> list:
     return await get_expert_store().list_team_versions(team_id)
 
 
+@router.get("/{team_id}/member-updates")
+async def member_updates(team_id: str) -> list:
+    """成员升级提醒：批量比较团队绑定版本与成员最新发布版本。
+
+    返回列表，每项包含 ``expert_id``、``bound_version``（团队草稿选定版本）、
+    ``latest_version``（成员最新发布指针）、``upgradable``（是否可升级）。
+    不维护易过期的布尔标记，而是实时比较。
+    """
+    store = get_expert_store()
+    team = await store.get_team(team_id)
+    if team is None:
+        raise HTTPException(status_code=404, detail="Expert team not found")
+    # 一次性批量获取成员卡片（五步范式：一次批量查询，内存组装；
+    # 判定逻辑唯一实现在 team_service.compute_member_upgrades）
+    expert_ids = {m.expert_id for m in team.members}
+    cards = await store.list_expert_cards()
+    relevant = [e for e in cards if e.id in expert_ids]
+    from ...experts.team_service import compute_member_upgrades
+
+    return compute_member_upgrades(team.members, relevant)
+
+
 @router.patch("/{team_id}", response_model=ExpertTeamRecord)
 async def update_team(
     team_id: str,
@@ -125,12 +165,14 @@ async def update_team(
                 role_hint=m.role_hint,
                 member_role=m.member_role,
                 seq=m.seq,
+                expert_version=m.expert_version,
             )
             for m in body.members
         ]
     try:
         record = await get_expert_store().update_team(
             team_id,
+            expected_revision=body.expected_revision,
             name=body.name,
             description=body.description,
             mode=body.mode,
@@ -139,6 +181,16 @@ async def update_team(
             orchestration=body.orchestration,
             sample_tasks=body.sample_tasks,
             showcase=body.showcase,
+        )
+    except DraftRevisionConflict as exc:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": str(exc),
+                "team_id": exc.team_id,
+                "expected": exc.expected,
+                "actual": exc.actual,
+            },
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -159,7 +211,7 @@ async def delete_team(team_id: str) -> None:
 @router.post("/{team_id}/publish", response_model=ExpertTeamRecord)
 async def publish(team_id: str, request: Request) -> ExpertTeamRecord:
     """Publish members (validated) then materialize the supervisor."""
-    actor = getattr(request.state, "user", None) or "admin"
+    actor = _actor(request)
     try:
         return await publish_expert_team(
             team_id,
@@ -233,7 +285,7 @@ async def bind_team_kb(
     规则）；存储行 ``agent_id`` 列存 ``team_{team_id}`` 运行态形态、
     ``principal_type='team'``（0048 列，列名不改保兼容）。
     """
-    username = getattr(request.state, "user", None) or "admin"
+    username = _actor(request)
     await _require_team(team_id)
     allowed = await kb_bindings.can_manage_space(body.space_id, username)
     if allowed is None:
@@ -307,7 +359,129 @@ async def unbind_team_kb(
         target=(
             f"{kb_bindings.team_principal_agent_id(team_id)}:{spaceId}"
         ),
-        actor_id=(
-            getattr(request.state, "user", None) or "admin"
-        ),
+        actor_id=_actor(request),
     )
+
+
+# ----------------------------------------------------------------------
+# P5 AI 修改安全闭环：变更提案确认/拒绝/查询端点
+# ----------------------------------------------------------------------
+
+
+class ConfirmChangeRequestBody(BaseModel):
+    """Body for confirming a team change request."""
+    session_id: str = ""
+
+
+@router.get("/{team_id}/change-requests/{request_id}")
+async def get_change_request_status(
+    team_id: str,
+    request_id: str,
+) -> dict:
+    """查询变更提案当前状态（断线重连/追问用）。"""
+    from ...experts.team_changes import get_change_request
+
+    record = await get_change_request(request_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Change request not found")
+    if record["team_id"] != team_id:
+        raise HTTPException(status_code=404, detail="Change request not found")
+    return record
+
+
+@router.post("/{team_id}/change-requests/{request_id}/confirm")
+async def confirm_change_request_endpoint(
+    team_id: str,
+    request_id: str,
+    request: Request,
+    body: ConfirmChangeRequestBody = ConfirmChangeRequestBody(),
+) -> dict:
+    """用户确认变更提案：服务端执行 CAS 写入或发布。
+
+    安全门：从认证上下文取身份，校验租户、权限、提案操作者、会话归属。
+    不信任 body.user_id。
+    """
+    from ...experts.team_changes import confirm_change_request
+    from ...events.bus import get_event_bus, team_config_topic
+    from ...enterprise import current_tenant_id
+
+    actor = _actor(request)
+    result = await confirm_change_request(
+        request_id=request_id,
+        operator_id=actor,
+        session_id=body.session_id,
+    )
+    if not result.get("ok"):
+        status_code = 400
+        error_msg = result.get("error", "")
+        if "不存在" in error_msg:
+            status_code = 404
+        elif "不一致" in error_msg or "无权" in error_msg:
+            status_code = 403
+        elif "过期" in error_msg:
+            status_code = 410
+        elif "冲突" in error_msg:
+            status_code = 409
+        raise HTTPException(status_code=status_code, detail=error_msg)
+    # 发布事件通知前端刷新
+    try:
+        bus = get_event_bus()
+        await bus.publish(
+            team_config_topic(current_tenant_id(), team_id),
+            {
+                "type": "change_applied",
+                "team_id": team_id,
+                "request_id": request_id,
+                "kind": result.get("kind", ""),
+                "actor": actor,
+            },
+        )
+    except Exception:  # noqa: BLE001
+        logger.debug("team event publish failed", exc_info=True)
+    # 审计留痕
+    record_write_audit(
+        tool_name="team_change.confirm",
+        target=f"team:{team_id}:request:{request_id}",
+        actor_id=actor,
+        after={"kind": result.get("kind"), "status": result.get("status")},
+    )
+    return result
+
+
+@router.post("/{team_id}/change-requests/{request_id}/reject")
+async def reject_change_request_endpoint(
+    team_id: str,
+    request_id: str,
+    request: Request,
+) -> dict:
+    """用户拒绝变更提案。"""
+    from ...experts.team_changes import reject_change_request
+    from ...events.bus import get_event_bus, team_config_topic
+    from ...enterprise import current_tenant_id
+
+    actor = _actor(request)
+    result = await reject_change_request(
+        request_id=request_id,
+        operator_id=actor,
+    )
+    if not result.get("ok"):
+        status_code = 400
+        error_msg = result.get("error", "")
+        if "不存在" in error_msg:
+            status_code = 404
+        raise HTTPException(status_code=status_code, detail=error_msg)
+    # 发布事件
+    try:
+        bus = get_event_bus()
+        await bus.publish(
+            team_config_topic(current_tenant_id(), team_id),
+            {
+                "type": "change_rejected",
+                "team_id": team_id,
+                "request_id": request_id,
+                "actor": actor,
+            },
+        )
+    except Exception:  # noqa: BLE001
+        logger.debug("team event publish failed", exc_info=True)
+    return result

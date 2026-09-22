@@ -214,3 +214,63 @@ def test_member_projection_uses_expert_record():
     """成员投影以 ExpertRecord 为档案权威（能力视图的输入契约）。"""
     expert = ExpertRecord(id="e-lead", name="主管")
     assert expert.id == "e-lead"
+
+
+# ---------------------------------------------------------------------------
+# P1-6：v2 团队成员版本绑定必须显式指定
+# ---------------------------------------------------------------------------
+
+
+def _lead_and_member_bound() -> list[TeamMember]:
+    """带版本绑定（expert_version 非空）的标准成员表。"""
+    return [
+        TeamMember(
+            expert_id="e-lead", member_role="lead", seq=0, expert_version=2,
+        ),
+        TeamMember(
+            expert_id="e-member", member_role="member", seq=1,
+            expert_version=1,
+        ),
+    ]
+
+
+def test_v2_team_requires_explicit_member_version_binding():
+    """v2 团队成员缺版本绑定（None）不可发布（绑定缺失让漂移检查失效）。
+
+    版本绑定与有限预算同门：仅发布链（require_finite_budget=True）
+    强制，草稿预检不阻塞配置中间态。
+    """
+    orchestration = {
+        "schema_version": TEAM_CONFIG_SCHEMA_V2,
+        "nodes": [],
+        "policy": {"max_total_tokens": 100000},
+    }
+    issues = validate_publishable_team(
+        _team(members=_lead_and_member(), orchestration=orchestration),
+        require_finite_budget=True,
+    )
+    assert any("expert_version" in issue for issue in issues)
+    # 未绑定成员逐一列出（可定位修复）
+    assert any("e-lead" in issue and "e-member" in issue for issue in issues)
+
+
+def test_v2_team_with_bindings_passes_version_check():
+    """v2 团队成员均已显式绑定 → 无版本绑定问题。"""
+    orchestration = {
+        "schema_version": TEAM_CONFIG_SCHEMA_V2,
+        "nodes": [],
+        "policy": {"max_total_tokens": 100000},
+    }
+    issues = validate_publishable_team(
+        _team(members=_lead_and_member_bound(), orchestration=orchestration),
+        require_finite_budget=True,
+    )
+    assert not any("expert_version" in issue for issue in issues)
+
+
+def test_v1_team_not_retroactively_requires_binding():
+    """v1 存量团队不追溯版本绑定要求（兼容存量数据）。"""
+    issues = validate_publishable_team(
+        _team(members=_lead_and_member(), orchestration={}),
+    )
+    assert not any("expert_version" in issue for issue in issues)

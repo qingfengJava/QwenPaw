@@ -66,6 +66,7 @@ export type {
   ExpertTeamCreateBody,
   ExpertTeamUpdateBody,
   TeamMetadata,
+  MemberUpdateItem,
   TeamCapabilityMember,
   TeamCapabilityView,
   TeamVersionRow,

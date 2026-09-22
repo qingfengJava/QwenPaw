@@ -30,11 +30,30 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
+
+class DraftRevisionConflict(Exception):
+    """CAS 乐观锁冲突：客户端携带的 expected_revision 与服务端不一致。
+
+    路由层捕获后映射为 HTTP 409，客户端应重新拉取最新草稿后重试。
+    """
+
+    def __init__(
+        self, *, team_id: str, expected: int, actual: int,
+    ) -> None:
+        super().__init__(
+            f"draft_revision conflict for team {team_id}: "
+            f"expected {expected}, actual {actual}",
+        )
+        self.team_id = team_id
+        self.expected = expected
+        self.actual = actual
+
 _EXPERT_COLS = (
     "id, name, icon, description, agent_spec, status, version, "
     "owner_id, visibility, is_builtin, title, category, badge, tags, "
     "system_prompt, usage_count, featured, sample_tasks, showcase, "
     "department, work_styles, work_modes, hire_date, "
+    "usage_mode, published_version, "
     "created_at, updated_at"
 )
 _EXPERT_CARD_COLS = (
@@ -42,12 +61,13 @@ _EXPERT_CARD_COLS = (
     "visibility, is_builtin, title, category, badge, tags, "
     "usage_count, featured, sample_tasks, showcase, "
     "department, work_styles, work_modes, hire_date, "
+    "usage_mode, published_version, "
     "created_at, updated_at"
 )
 _TEAM_COLS = (
     "id, name, description, mode, router_prompt, status, version, "
     "owner_id, category, tags, orchestration, sample_tasks, showcase, "
-    "created_at, updated_at"
+    "draft_revision, published_version, created_at, updated_at"
 )
 
 # Composite ordering for the market list: builtins first, then heat,
@@ -91,6 +111,8 @@ def _row_to_expert(row, *, card: bool = False) -> ExpertRecord:
         hire_date=row.hire_date,
         created_at=row.created_at,
         updated_at=row.updated_at,
+        usage_mode=getattr(row, "usage_mode", "shared") or "shared",
+        published_version=getattr(row, "published_version", 0) or 0,
     )
 
 
@@ -110,6 +132,8 @@ def _row_to_team(row, members: List[TeamMember]) -> ExpertTeamRecord:
         sample_tasks=list(row.sample_tasks or []),
         showcase=list(row.showcase or []),
         members=members,
+        draft_revision=getattr(row, "draft_revision", 0) or 0,
+        published_version=getattr(row, "published_version", 0) or 0,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -631,6 +655,8 @@ class ExpertStore:
                     role_hint=member.role_hint,
                     member_role=member.member_role,
                     seq=member.seq or index,
+                    # 版本绑定原样保留（P2 两级发布）；None=未指定
+                    expert_version=member.expert_version,
                 ),
             )
         unique.sort(key=lambda m: m.seq)
@@ -657,7 +683,8 @@ class ExpertStore:
     async def _load_members(self, conn, team_id: str) -> List[TeamMember]:
         result = await conn.execute(
             text(
-                "SELECT expert_id, role_hint, member_role, seq FROM "
+                "SELECT expert_id, role_hint, member_role, seq, "
+                "expert_version FROM "
                 "expert_team_members WHERE tenant_id = :tid "
                 "AND team_id = :team ORDER BY seq"
             ),
@@ -669,6 +696,11 @@ class ExpertStore:
                 role_hint=r.role_hint or "",
                 member_role=r.member_role or "member",
                 seq=r.seq,
+                expert_version=(
+                    int(r.expert_version)
+                    if getattr(r, "expert_version", None) is not None
+                    else None
+                ),
             )
             for r in result
         ]
@@ -683,7 +715,8 @@ class ExpertStore:
             return {}
         result = await conn.execute(
             text(
-                "SELECT team_id, expert_id, role_hint, member_role, seq "
+                "SELECT team_id, expert_id, role_hint, member_role, seq, "
+                "expert_version "
                 "FROM expert_team_members WHERE tenant_id = :tid "
                 "AND team_id = ANY(:teams) ORDER BY seq"
             ),
@@ -697,6 +730,11 @@ class ExpertStore:
                     role_hint=r.role_hint or "",
                     member_role=r.member_role or "member",
                     seq=r.seq,
+                    expert_version=(
+                        int(r.expert_version)
+                        if getattr(r, "expert_version", None) is not None
+                        else None
+                    ),
                 ),
             )
         return grouped
@@ -740,45 +778,75 @@ class ExpertStore:
     async def update_team(
         self,
         team_id: str,
+        *,
+        expected_revision: Optional[int] = None,
         **fields,
     ) -> Optional[ExpertTeamRecord]:
-        sets = []
-        params: dict = {"tid": current_tenant_id(), "id": team_id}
-        if fields.get("name") is not None:
-            sets.append("name = :name")
-            params["name"] = fields["name"]
-        if fields.get("description") is not None:
-            sets.append("description = :desc")
-            params["desc"] = fields["description"]
-        if fields.get("mode") is not None:
-            if fields["mode"] not in TEAM_MODES:
-                raise ValueError(f"mode must be one of {TEAM_MODES}")
-            sets.append("mode = :mode")
-            params["mode"] = fields["mode"]
-        if fields.get("router_prompt") is not None:
-            sets.append("router_prompt = :rp")
-            params["rp"] = fields["router_prompt"]
-        if fields.get("category") is not None:
-            sets.append("category = :category")
-            params["category"] = fields["category"]
-        if fields.get("tags") is not None:
-            sets.append("tags = CAST(:tags AS JSONB)")
-            params["tags"] = json.dumps(fields["tags"])
-        # 运行时编排配置（管理端 workforce 编辑面）：显式传 None 表示
-        # 不修改；传 dict（含空 dict）表示整体替换。
-        if fields.get("orchestration") is not None:
-            sets.append("orchestration = CAST(:orch AS JSONB)")
-            params["orch"] = json.dumps(fields["orchestration"])
-        # 运营位双字段（同语义：None 不修改，list 整体替换）
-        if fields.get("sample_tasks") is not None:
-            sets.append("sample_tasks = CAST(:tasks AS JSONB)")
-            params["tasks"] = json.dumps(fields["sample_tasks"])
-        if fields.get("showcase") is not None:
-            sets.append("showcase = CAST(:cases AS JSONB)")
-            params["cases"] = json.dumps(fields["showcase"])
+        """部分更新团队草稿。
+
+        当 *expected_revision* 不为 None 时执行 CAS 乐观锁校验：
+        当前 draft_revision 必须等于期望值，否则抛出
+        ``DraftRevisionConflict``。成功写入后 draft_revision 递增。
+        """
         engine = require_enterprise_engine()
         async with engine.begin() as conn:
+            # ── CAS 乐观锁：先读后写，同一事务内 ──
+            if expected_revision is not None:
+                current = await conn.execute(
+                    text(
+                        "SELECT draft_revision FROM expert_teams "
+                        "WHERE tenant_id = :tid AND id = :id"
+                    ),
+                    {"tid": current_tenant_id(), "id": team_id},
+                )
+                row = current.first()
+                if row is None:
+                    return None
+                actual = row[0] if row[0] is not None else 0
+                if actual != expected_revision:
+                    raise DraftRevisionConflict(
+                        team_id=team_id,
+                        expected=expected_revision,
+                        actual=actual,
+                    )
+
+            sets = []
+            params: dict = {"tid": current_tenant_id(), "id": team_id}
+            if fields.get("name") is not None:
+                sets.append("name = :name")
+                params["name"] = fields["name"]
+            if fields.get("description") is not None:
+                sets.append("description = :desc")
+                params["desc"] = fields["description"]
+            if fields.get("mode") is not None:
+                if fields["mode"] not in TEAM_MODES:
+                    raise ValueError(f"mode must be one of {TEAM_MODES}")
+                sets.append("mode = :mode")
+                params["mode"] = fields["mode"]
+            if fields.get("router_prompt") is not None:
+                sets.append("router_prompt = :rp")
+                params["rp"] = fields["router_prompt"]
+            if fields.get("category") is not None:
+                sets.append("category = :category")
+                params["category"] = fields["category"]
+            if fields.get("tags") is not None:
+                sets.append("tags = CAST(:tags AS JSONB)")
+                params["tags"] = json.dumps(fields["tags"])
+            # 运行时编排配置（管理端 workforce 编辑面）：显式传 None 表示
+            # 不修改；传 dict（含空 dict）表示整体替换。
+            if fields.get("orchestration") is not None:
+                sets.append("orchestration = CAST(:orch AS JSONB)")
+                params["orch"] = json.dumps(fields["orchestration"])
+            # 运营位双字段（同语义：None 不修改，list 整体替换）
+            if fields.get("sample_tasks") is not None:
+                sets.append("sample_tasks = CAST(:tasks AS JSONB)")
+                params["tasks"] = json.dumps(fields["sample_tasks"])
+            if fields.get("showcase") is not None:
+                sets.append("showcase = CAST(:cases AS JSONB)")
+                params["cases"] = json.dumps(fields["showcase"])
             if sets:
+                # 每次成功写入递增 draft_revision（CAS 保护下的安全递增）
+                sets.append("draft_revision = COALESCE(draft_revision, 0) + 1")
                 await conn.execute(
                     text(
                         "UPDATE expert_teams SET "
@@ -803,8 +871,10 @@ class ExpertStore:
                     await conn.execute(
                         text(
                             "INSERT INTO expert_team_members (tenant_id, "
-                            "team_id, expert_id, role_hint, member_role, seq) "
-                            "VALUES (:tid, :team, :expert, :hint, :mrole, :seq)"
+                            "team_id, expert_id, role_hint, member_role, seq, "
+                            "expert_version) "
+                            "VALUES (:tid, :team, :expert, :hint, :mrole, :seq, "
+                            ":eversion)"
                         ),
                         {
                             "tid": current_tenant_id(),
@@ -813,6 +883,7 @@ class ExpertStore:
                             "hint": member.role_hint,
                             "mrole": member.member_role,
                             "seq": member.seq or index,
+                            "eversion": member.expert_version,
                         },
                     )
         return await self.get_team(team_id)
@@ -867,6 +938,45 @@ class ExpertStore:
                 }
                 for r in result
             ]
+
+    async def get_team_version(
+        self, team_id: str, version: int,
+    ) -> Optional[dict]:
+        """读取指定发布版本的完整快照 spec（无则 None）。
+
+        供运行时版本化解析（release_runtime 快照口径）；spec JSONB
+        字符串形态时安全反序列化，损坏降级空 dict（不抛异常）。
+        """
+        engine = require_enterprise_engine()
+        async with engine.connect() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT team_id, version, spec, published_by, created_at "
+                    "FROM expert_team_versions WHERE tenant_id = :tid "
+                    "AND team_id = :team AND version = :ver"
+                ),
+                {
+                    "tid": current_tenant_id(),
+                    "team": team_id,
+                    "ver": version,
+                },
+            )
+            row = result.first()
+        if row is None:
+            return None
+        spec = row.spec
+        if isinstance(spec, str):
+            try:
+                spec = json.loads(spec)
+            except (json.JSONDecodeError, TypeError):
+                spec = {}
+        return {
+            "team_id": row.team_id,
+            "version": int(row.version),
+            "spec": spec or {},
+            "published_by": row.published_by or "",
+            "published_at": row.created_at,
+        }
 
     async def set_team_status(
         self,

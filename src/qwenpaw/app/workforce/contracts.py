@@ -67,6 +67,15 @@ RUN_STATUS_INTERRUPTED = "interrupted"
 #: run 级状态：用户暂停（协作暂停，非终态；resume 从持久视图恢复）
 RUN_STATUS_PAUSED = "paused"
 
+#: run 级终态集合（单一权威来源）：终态不可被迟到消息/决策覆写。
+#: engine._RUN_TERMINAL 与 run_store 的 DB 层终态守卫均从此派生。
+RUN_TERMINAL_STATUSES = (
+    RUN_STATUS_DONE,
+    RUN_STATUS_FAILED,
+    RUN_STATUS_ESCALATED,
+    RUN_STATUS_CANCELED,
+)
+
 #: run 状态全集（用于路由校验与测试断言）
 RUN_STATUSES = (
     RUN_STATUS_PLANNING,

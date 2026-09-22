@@ -67,6 +67,12 @@ from .sop_ops import (  # noqa: E402
     sop_update_draft,
     sop_publish_draft,
 )
+from .team_configuration import (  # noqa: E402
+    team_get_configuration,
+    team_prepare_change,
+    team_prepare_publish,
+    team_get_change_status,
+)
 
 _BETA_NOTICE_LOGGED = False
 

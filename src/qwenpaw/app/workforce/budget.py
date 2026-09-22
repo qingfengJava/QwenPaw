@@ -65,11 +65,14 @@ async def reserve_node_budget(
     并发成员不会"各自看余额"造成超售；剩余额度不足以分出正份额时
     熔断升级。仅在配置了有限 ``max_total_tokens`` 时调用（不限预算
     无超售面，跳过预留）。
+
+    原子性由 Store 层保证：``reserve_budget`` 事务内锁 run 行并复核
+    用量，并发预留超限返回 None——此处升级为预算熔断（Escalate）。
     """
     # 延迟导入避免与 engine 的循环依赖（与 check_token_budget 同法）
     from .engine import EscalateSignal
 
-    # 预留感知的当前用量（已结算 + 未决预留）
+    # 预留感知的当前用量（已结算 + 未决预留；share 均分的参考值）
     usage = await run_budget_usage(store, run_id)
     # 剩余额度按波次并发均分（并发上限内的节点合计不超剩余额）
     remaining = policy.max_total_tokens - usage
@@ -79,9 +82,20 @@ async def reserve_node_budget(
             f"run 预算剩余 {remaining} 不足并发均分预留"
             f"（预算 {policy.max_total_tokens}，已用 {usage}）"
         )
-    return await store.reserve_budget(
-        run_id, node_key, share, reason="pre-delegate reservation"
+    # 原子预留（Store 层锁内复核用量；None = 并发超限/余量不足）
+    reservation_id = await store.reserve_budget(
+        run_id,
+        node_key,
+        share,
+        reason="pre-delegate reservation",
+        max_total_tokens=policy.max_total_tokens,
     )
+    if reservation_id is None:
+        raise EscalateSignal(
+            f"run 预算并发预留失败（预算 {policy.max_total_tokens}，"
+            f"本轮份额 {share} 超出剩余额度），熔断升级待人工处理"
+        )
+    return reservation_id
 
 
 async def release_quietly(store, reservation_id: str) -> None:

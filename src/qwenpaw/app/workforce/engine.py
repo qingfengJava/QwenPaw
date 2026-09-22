@@ -58,6 +58,7 @@ from .contracts import (
     RUN_STATUS_PAUSED,
     RUN_STATUS_PLANNING,
     RUN_STATUS_RUNNING,
+    RUN_TERMINAL_STATUSES,
     ContextBundle,
     DagNode,
     DagPlan,
@@ -86,13 +87,8 @@ from .verifier import (
 
 logger = logging.getLogger(__name__)
 
-#: run 级终态集合（幂等保护：终态 run 不再执行）
-_RUN_TERMINAL = {
-    RUN_STATUS_DONE,
-    RUN_STATUS_FAILED,
-    RUN_STATUS_ESCALATED,
-    RUN_STATUS_CANCELED,
-}
+#: run 级终态集合（幂等保护：终态 run 不再执行；派生自 contracts 单一来源）
+_RUN_TERMINAL = frozenset(RUN_TERMINAL_STATUSES)
 
 #: 运行中的后台任务登记表（run_id → asyncio.Task；cancel 入口）
 _active_tasks: Dict[str, asyncio.Task] = {}

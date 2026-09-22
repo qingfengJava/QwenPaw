@@ -15,9 +15,40 @@ from typing import Any, Dict, List
 
 from ..workforce.contracts import RunPolicy
 from .capability_view import team_capability_view
-from .models import TEAM_MEMBER_ROLE_LEAD, TEAM_MEMBER_ROLE_MEMBER, TEAM_MODES
+from .models import (
+    TEAM_MEMBER_ROLE_LEAD,
+    TEAM_MEMBER_ROLE_MEMBER,
+    TEAM_MODES,
+    ExpertRecord,
+    TeamMember,
+)
 from .store import get_expert_store
 from .team_config import summarize_team_config, validate_publishable_team
+
+#: 协作模式说明（团队详情页"协作机制卡"唯一数据源，前端禁止硬编码文案）。
+#: 键与 TEAM_MODES 对齐；未知模式回退空串由前端降级展示。
+TEAM_MODE_DESCRIPTIONS: Dict[str, str] = {
+    "router": (
+        "主理人（中央大脑）接收需求后，判断最匹配的成员专家并派发任务；"
+        "未预置编排模板时由中央大脑按需求单次规划分工，跨专业问题先给结论再分成员视角补充。"
+    ),
+    "pipeline": (
+        "成员按预设顺序接力完成各自阶段的产出，后一阶段在前一阶段产出的基础上深化，"
+        "最终由收尾环节汇总收束，形成完整交付。"
+    ),
+}
+
+#: 提案状态元数据（前端唯一文案来源；与 team_changes.py 状态机对齐，
+#: color 为 antd Tag 色板语义值，前端可覆盖）。本地声明避免依赖 DB 层。
+CHANGE_REQUEST_STATUSES: List[Dict[str, str]] = [
+    {"value": "pending", "label": "待确认", "color": "blue"},
+    {"value": "applying", "label": "执行中", "color": "processing"},
+    {"value": "applied", "label": "已生效", "color": "success"},
+    {"value": "rejected", "label": "已拒绝", "color": "default"},
+    {"value": "expired", "label": "已过期", "color": "warning"},
+    {"value": "conflict", "label": "冲突", "color": "error"},
+    {"value": "failed", "label": "失败", "color": "error"},
+]
 
 
 async def team_metadata() -> Dict[str, Any]:
@@ -29,7 +60,14 @@ async def team_metadata() -> Dict[str, Any]:
             {"value": TEAM_MEMBER_ROLE_LEAD, "label": "主理人（Leader）"},
             {"value": TEAM_MEMBER_ROLE_MEMBER, "label": "成员"},
         ],
-        "team_modes": [{"value": mode, "label": mode} for mode in TEAM_MODES],
+        "team_modes": [
+            {
+                "value": mode,
+                "label": mode,
+                "description": TEAM_MODE_DESCRIPTIONS.get(mode, ""),
+            }
+            for mode in TEAM_MODES
+        ],
         "limits": {
             "default_max_repair_per_node": default_policy.max_repair_per_node,
             "default_max_replan": default_policy.max_replan,
@@ -37,6 +75,10 @@ async def team_metadata() -> Dict[str, Any]:
             "default_max_total_seconds": default_policy.max_total_seconds,
             "default_max_total_tokens": default_policy.max_total_tokens,
         },
+        # 运行时编排缺省启用（前端展示"有效配置"的唯一来源，禁止前端硬编码 true/false）
+        "default_runtime_enabled": True,
+        # 提案状态枚举（前端唯一文案来源，禁止硬编码中文状态文案）
+        "change_request_statuses": CHANGE_REQUEST_STATUSES,
     }
 
 
@@ -76,4 +118,42 @@ async def validate_team(team_id: str) -> Dict[str, Any]:
     }
 
 
-__all__ = ["team_metadata", "validate_team"]
+def compute_member_upgrades(
+    members: List[TeamMember],
+    expert_cards: List[ExpertRecord],
+) -> List[Dict[str, Any]]:
+    """成员升级判定：批量比较团队绑定版本与成员最新发布版本。
+
+    ``member-updates`` 端点与单测共用的唯一实现（消除双份维护的
+    漂移风险）。
+
+    Args:
+        members: 团队成员列表（含 expert_version 绑定）
+        expert_cards: 员工卡片列表（ExpertRecord 投影）
+
+    Returns:
+        每项含 expert_id / expert_name / bound_version /
+        latest_version / upgradable
+    """
+    by_id = {e.id: e for e in expert_cards}
+    result: List[Dict[str, Any]] = []
+    for member in members:
+        expert = by_id.get(member.expert_id)
+        bound = member.expert_version
+        latest = int(expert.published_version or 0) if expert else 0
+        result.append({
+            "expert_id": member.expert_id,
+            "expert_name": expert.name if expert else "",
+            "bound_version": bound,
+            "latest_version": latest,
+            "upgradable": latest > (bound or 0),
+        })
+    return result
+
+
+__all__ = [
+    "CHANGE_REQUEST_STATUSES",
+    "compute_member_upgrades",
+    "team_metadata",
+    "validate_team",
+]

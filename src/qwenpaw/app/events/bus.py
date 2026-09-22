@@ -229,6 +229,15 @@ def sop_expert_topic(tenant_id: str, expert_id: str) -> str:
     return f"sop-expert:{tenant_id}:{expert_id}"
 
 
+def team_config_topic(tenant_id: str, team_id: str) -> str:
+    """Canonical topic name for one team's config change stream.
+
+    P5 AI 修改安全闭环：AI 工具创建/确认/拒绝提案时向本 topic publish，
+    前端 useTeamDetail 经 SSE 订阅实时刷新对应分区（草稿/版本/能力投影）。
+    """
+    return f"team-config:{tenant_id}:{team_id}"
+
+
 def now_ms() -> int:
     """Epoch milliseconds (event timestamps for clients)."""
     return int(time.time() * 1000)

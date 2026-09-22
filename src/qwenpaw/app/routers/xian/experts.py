@@ -34,6 +34,7 @@ from ...experts.models import (
     ExpertSkillsBody,
     ExpertSkillBinding,
     ExpertUpdateBody,
+    PublishedTeamCard,
     expert_agent_id,
     expert_team_agent_id,
 )
@@ -341,23 +342,21 @@ async def list_expert_teams(
                     "member_role": member.member_role,
                 }
             )
-        visible.append(
-            {
-                "id": team.id,
-                "name": team.name,
-                "description": team.description,
-                "mode": team.mode,
-                "version": team.version,
-                "agent_id": agent_id,
-                "category": team.category,
-                "tags": team.tags,
-                "member_count": len(team.members),
-                "members": members,
-                # 运营位（详情页「任务示例」/「使用案例」数据源）
-                "sample_tasks": team.sample_tasks,
-                "showcase": team.showcase,
-            }
+        card = PublishedTeamCard(
+            id=team.id,
+            name=team.name,
+            description=team.description,
+            mode=team.mode,
+            version=team.version,
+            agent_id=agent_id,
+            category=team.category,
+            tags=team.tags,
+            member_count=len(team.members),
+            members=members,
+            sample_tasks=team.sample_tasks,
+            showcase=team.showcase,
         )
+        visible.append(card.model_dump())
     return visible
 
 

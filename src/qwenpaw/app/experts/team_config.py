@@ -137,6 +137,22 @@ def validate_publishable_team(
                     "v2 正式团队必须配置有限 token 预算"
                     "（orchestration.policy.max_total_tokens > 0）",
                 )
+        # 5. v2 团队成员版本绑定必须显式指定（P2 两级发布；仅发布
+        # 链强制——草稿阶段未绑定是合法中间态，绑定缺失会让运行时
+        # 版本核验直接跳过，快照语义失真）
+        version = str(team.orchestration.get("schema_version") or "")
+        if (
+            require_finite_budget
+            and version == TEAM_CONFIG_SCHEMA_V2
+        ):
+            unbound = [
+                m.expert_id for m in team.members if not m.expert_version
+            ]
+            if unbound:
+                issues.append(
+                    "v2 团队每个成员必须显式绑定发布版本（expert_version）: "
+                    + ", ".join(unbound),
+                )
     return issues
 
 
@@ -164,12 +180,55 @@ def summarize_team_config(team: ExpertTeamRecord) -> Dict[str, Any]:
     }
 
 
+def resolve_effective_config(team: ExpertTeamRecord) -> Dict[str, Any]:
+    """统一有效配置解析：合并默认值与团队自定义，返回运行时可直接消费的配置。
+
+    此函数是“有效配置”的唯一入口：
+
+    - 解析 orchestration（版本适配）；
+    - 缺失字段用引擎默认值填充（RunPolicy 默认值）；
+    - 返回字典包含 schema_version、解析后的 spec、最终生效的 policy、
+      以及成员投影（lead/members 分离）。
+
+    与 ``summarize_team_config`` 的区别：后者是元数据摘要（轻量、前端
+    枚举用），本函数是运行时完整配置投影（引擎消费用）。
+    """
+    spec_dict: Dict[str, Any] = {}
+    if team.orchestration:
+        try:
+            parsed_spec = parse_team_orchestration(team.orchestration)
+            spec_dict = parsed_spec.model_dump()
+        except Exception:  # noqa: BLE001 - 非法配置返回空 spec
+            spec_dict = {}
+
+    # 有效 policy：解析结果 > 引擎默认
+    effective_policy = spec_dict.get("policy") or RunPolicy().model_dump()
+
+    leads = _lead_ids(team)
+    member_ids = [m.expert_id for m in team.members]
+
+    return {
+        "schema_version": str(
+            (team.orchestration or {}).get("schema_version")
+            or TEAM_CONFIG_SCHEMA_V1,
+        ),
+        "spec": spec_dict,
+        "policy": effective_policy,
+        "runtime_enabled": spec_dict.get("runtime_enabled", True),
+        "lead_expert_ids": leads,
+        "member_expert_ids": member_ids,
+        "has_template": bool(spec_dict.get("nodes")),
+        "fast_chain_enabled": bool(spec_dict.get("fast_nodes")),
+    }
+
+
 __all__ = [
     "OrchestrationSpecV2",
     "SUPPORTED_TEAM_CONFIG_VERSIONS",
     "TEAM_CONFIG_SCHEMA_V1",
     "TEAM_CONFIG_SCHEMA_V2",
     "parse_team_orchestration",
+    "resolve_effective_config",
     "summarize_team_config",
     "validate_publishable_team",
 ]

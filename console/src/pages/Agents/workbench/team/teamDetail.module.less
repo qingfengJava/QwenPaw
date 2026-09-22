@@ -1,0 +1,204 @@
+/**
+ * teamDetail.module.less — 专家团工作台详情页样式。
+ *
+ * 卡片容器复用全局 sd-card；此处仅承载 Hero 画像头与层级组织架构
+ * 图等页面专属结构，色板/圆角全部走 staffdeck tokens（--sd-*），
+ * 与 AgentOverviewTab / TeamDetailPage 视觉同源。
+ */
+
+/* ── Hero 画像头 ── */
+
+.heroHead {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.heroAvatar {
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  flex: 0 0 auto;
+}
+
+.heroTitleWrap {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.heroTitleRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.heroName {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--sd-ink);
+}
+
+.heroDesc {
+  margin: 12px 0 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--sd-text-2);
+}
+
+/* ── 区块卡标题 ── */
+
+.sectionTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--sd-ink);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* ── 层级组织架构图 ── */
+
+.orgChart {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  margin-top: 14px;
+}
+
+.leaderRow {
+  display: flex;
+  justify-content: center;
+}
+
+/* 汇报关系连接线：Leader 卡底部中心向下的一条浅色竖线 */
+.connector {
+  width: 1px;
+  height: 22px;
+  margin: 0 auto;
+  background: var(--sd-line);
+}
+
+.memberGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+.memberCard {
+  border: 0.5px solid var(--sd-line);
+  border-radius: var(--sd-radius-lg);
+  padding: 12px 14px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* 未发布成员：显式标红并提示不可执行（与能力矩阵同口径） */
+.memberCardBlocked {
+  border-color: var(--sd-danger, #ff4d4f);
+  background: rgba(255, 77, 79, 0.04);
+}
+
+.memberInfo {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.memberName {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--sd-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memberTitle {
+  font-size: 12px;
+  color: var(--sd-text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memberHint {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--sd-text-2);
+}
+
+.memberBlockedReason {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--sd-danger, #ff4d4f);
+}
+
+/* ── 团队建设区 ── */
+
+.taskChipRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.taskChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: 0.5px solid var(--sd-line);
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--sd-ink);
+  cursor: pointer;
+  background: transparent;
+  transition: border-color 150ms ease, background 150ms ease;
+}
+
+.taskChip:hover {
+  border-color: var(--sd-ink);
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.caseList {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.caseRow {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 0.5px solid var(--sd-line);
+  border-radius: var(--sd-radius-lg);
+}
+
+.caseTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--sd-ink);
+  flex: 0 0 auto;
+}
+
+.caseDesc {
+  font-size: 12px;
+  color: var(--sd-text-2);
+  min-width: 0;
+}
