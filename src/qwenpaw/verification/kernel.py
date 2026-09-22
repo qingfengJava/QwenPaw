@@ -117,6 +117,8 @@ class JudgeRequest:
     #: 是否要求裁决器从任务目标原文推导显式要求清单并逐条对照
     #: （与 ``criteria`` 可叠加：标准为空时它是唯一尺子，非空时作补充）
     derive_requirements: bool = False
+    #: 裁决所依据的上下文/标准版本（None=未采集；验收记录须绑定该版本）
+    context_revision: Optional[int] = None
 
 
 @dataclass
@@ -136,6 +138,10 @@ class Verdict:
     reason: str = ""
     #: FAIL 归因：repairable / structural / dependency_changed
     failure_kind: str = FAILURE_KIND_REPAIRABLE
+    #: 裁决依据的上下文/标准版本（由请求回填，供验收记录绑定）
+    context_revision: Optional[int] = None
+    #: 证据引用（裁决器自述的可选字段；不可替代确定性证据）
+    evidence_refs: List[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -285,6 +291,7 @@ def parse_verdict(
     attempt: int,
     acceptance: Sequence[str] = (),
     repair_model: type[RepairBrief] = RepairBrief,
+    context_revision: Optional[int] = None,
 ) -> Verdict:
     """解析裁决 JSON；任何无法裁决的情况一律 ESCALATE。
 
@@ -294,6 +301,8 @@ def parse_verdict(
         attempt: 本次裁决对应的返工轮次。
         acceptance: 复验标准（默认沿用任务验收标准）。
         repair_model: 返工指令的具体类型（L1 传 RepairContract）。
+        context_revision: 裁决依据的上下文/标准版本（回填 Verdict，
+            供上层验收记录绑定；不参与裁决本身）。
 
     Returns:
         :class:`Verdict`：PASS / FAIL（附 :class:`RepairBrief`）/ ESCALATE。
@@ -304,16 +313,25 @@ def parse_verdict(
         return Verdict(
             VERDICT_ESCALATE,
             reason="验收器未输出结构化裁决，升级人工复核",
+            context_revision=context_revision,
         )
+    # 裁决器自述证据引用（可选字段；缺失不阻断，仅作留痕）
+    evidence_refs = [str(e) for e in data.get("evidence_refs", []) if str(e).strip()]
     # PASS 直接通过（reason 保留裁决说明）
     if str(data.get("verdict", "")).upper() == VERDICT_PASS:
-        return Verdict(VERDICT_PASS, reason=str(data.get("reason", "")))
+        return Verdict(
+            VERDICT_PASS,
+            reason=str(data.get("reason", "")),
+            context_revision=context_revision,
+            evidence_refs=evidence_refs,
+        )
     # FAIL 必须给出具体问题，否则视为无法裁决
     issues = [str(i) for i in data.get("issues", []) if str(i).strip()]
     if not issues:
         return Verdict(
             VERDICT_ESCALATE,
             reason="验收器判定 FAIL 但未给出具体问题，升级人工复核",
+            context_revision=context_revision,
         )
     # 组装结构化返工指令（复验标准一律取任务验收标准，不采信裁决器自述，
     # 避免裁决器改写复验标准导致复验口径漂移）
@@ -331,4 +349,6 @@ def parse_verdict(
         repair=repair,
         reason=str(data.get("reason", "")),
         failure_kind=_normalize_failure_kind(data.get("failure_kind")),
+        context_revision=context_revision,
+        evidence_refs=evidence_refs,
     )

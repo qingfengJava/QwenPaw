@@ -65,6 +65,12 @@ export type {
   TeamMember,
   ExpertTeamCreateBody,
   ExpertTeamUpdateBody,
+  TeamMetadata,
+  TeamCapabilityMember,
+  TeamCapabilityView,
+  TeamVersionRow,
+  TeamValidateResult,
+  TeamKbBindingRow,
 } from "./expertTeams";
 export { adminWorkforceApi } from "./workforce";
 export type {

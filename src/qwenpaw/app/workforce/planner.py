@@ -67,6 +67,10 @@ class PlanOutcome:
     error: str = ""
     #: 规划来源：orchestration（模板）/ llm（中央大脑生成）
     source: str = "orchestration"
+    #: 规划本身的 token 消耗（重规划/重试轮累计；规划计入预算）
+    token_cost: int = 0
+    #: 用量是否真实采集（规划走本地通道必然采集；供账本区分未知）
+    usage_reported: bool = True
 
 
 def _expert_tool_names(expert: Optional[ExpertRecord]) -> List[str]:
@@ -145,6 +149,18 @@ def build_task_contract(
                     f"覆盖流程《{sop.get('name')}》步骤「{title}」：{outcome}",
                 )
     criteria = criteria[:8]
+    # 全局需求覆盖（T3）：final/integration 汇总节点把需求基线
+    # （RequirementBrief）验收标准并入质量准则且优先级最高——沿用
+    # 既有 verify 通道实现全局验收，不新建全局验证器
+    if node.node_type in (NODE_TYPE_FINAL, NODE_TYPE_INTEGRATION):
+        brief = bundle.task_ctx.get("requirement_brief") or {}
+        brief_acceptance = [
+            str(a).strip()
+            for a in (brief.get("acceptance") or [])
+            if str(a).strip()
+        ]
+        if brief_acceptance:
+            criteria = (brief_acceptance + criteria)[:8]
     # 组装契约（objective 缺省时按节点类型给兜底文案）
     objective = node.objective or f"完成节点 {node.node_key} 的任务"
     return TaskContract(
@@ -401,17 +417,19 @@ async def plan_run(
     记忆回灌）；模板路径不消费这两项（节点指派已固定）。
     """
     member_ids = {expert.id for expert in members}
-    # ---- 路径 1：orchestration 预置模板（不依赖 LLM） ----
+    # ---- 运行时编排开关（统一门）：orchestration 显式关闭时无论是否有
+    # 模板节点都回退提示词级团队——动态 LLM 规划同样属于"运行时编排"，
+    # 只在模板分支校验会放行关闭了编排的团队走 LLM 生成任务图 ----
     raw_orch = team.orchestration or {}
+    if isinstance(raw_orch, dict) and raw_orch.get("runtime_enabled") is False:
+        return PlanOutcome(error="该团队未启用运行时编排（runtime_enabled=false）")
+    # ---- 路径 1：orchestration 预置模板（不依赖 LLM） ----
     if isinstance(raw_orch, dict) and raw_orch.get("nodes"):
         try:
             # 严格 schema 校验（读写唯一入口，拦截漂移）
             spec = OrchestrationSpec.model_validate(raw_orch)
         except Exception as exc:  # noqa: BLE001 - 模板损坏按失败处理
             return PlanOutcome(error=f"orchestration 模板非法: {exc}")
-        # 模板显式关闭运行时编排 → 回退提示词级团队语义
-        if not spec.runtime_enabled:
-            return PlanOutcome(error="该团队未启用运行时编排（runtime_enabled=false）")
         # 快慢链选择：复杂信号→标准链；小需求→快速链（若配置）
         nodes, source = pick_template_nodes(spec, goal)
         # 图校验 + 成员校验（快速链与标准链同一套严格校验）
@@ -448,6 +466,8 @@ async def plan_run(
     outcome = await _llm_plan_once(lead, prompt, member_ids)
     # 校验失败：携带错误定向重试一次（禁止静默修复非法 DAG）
     if outcome.error and not outcome.clarification:
+        # 首轮规划消耗必须保留（失败重试也是真实消耗，不能凭空消失）
+        first_call_tokens = outcome.token_cost
         retry_prompt = _render_planning_prompt(
             goal,
             team,
@@ -458,6 +478,7 @@ async def plan_run(
             team_lessons=team_lessons,
         )
         outcome = await _llm_plan_once(lead, retry_prompt, member_ids)
+        outcome.token_cost += first_call_tokens
         # 重试仍失败 → 报错终止（run 置 failed，用户可改需求后重建）
         if outcome.error and not outcome.clarification:
             return PlanOutcome(
@@ -482,13 +503,17 @@ async def _llm_plan_once(
     prompt: str,
     member_ids: set,
 ) -> PlanOutcome:
-    """单次 LLM 规划调用（通道异常按 error 返回，不抛出）。"""
+    """单次 LLM 规划调用（通道异常按 error 返回，不抛出）。
+
+    回执为具名三元组 ``(回复文本, session_id, total_tokens)``——规划
+    消耗必须归集进 PlanOutcome（run 级预算依据），不能只解包前两项。
+    """
     # 延迟导入避免循环依赖（delegator 不依赖 planner）
     from .delegator import call_expert_text
 
     try:
         # 走既有 A2A 通道调 lead 专家（每次规划独立 session，不复用）
-        reply, _session = await call_expert_text(
+        reply, _session, plan_tokens = await call_expert_text(
             expert_agent_id(lead.id),
             prompt,
             session_id=None,
@@ -496,5 +521,7 @@ async def _llm_plan_once(
         data = _parse_plan_json(reply)
     except Exception as exc:  # noqa: BLE001 - 通道/解析异常统一按规划失败
         return PlanOutcome(error=f"规划调用失败: {exc}", source="llm")
-    # JSON 合法 → 转换并校验
-    return _plan_from_llm_payload(data, member_ids)
+    # JSON 合法 → 转换并校验（规划消耗随结果一并上报）
+    outcome = _plan_from_llm_payload(data, member_ids)
+    outcome.token_cost = plan_tokens
+    return outcome

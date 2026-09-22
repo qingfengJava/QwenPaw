@@ -34,6 +34,7 @@ from ...workforce.contracts import (
     NODE_STATUS_PENDING,
     RUN_STATUS_AWAITING_CONFIRM,
     RUN_STATUS_CANCELED,
+    RUN_STATUS_DONE,
     RUN_STATUS_ESCALATED,
     RUN_STATUS_FAILED,
     RUN_STATUS_INTERRUPTED,
@@ -41,16 +42,23 @@ from ...workforce.contracts import (
     RUN_STATUS_RUNNING,
     Clarification,
     ContextBundle,
-    RunPolicy,
+    HumanDecision,
 )
 from ...workforce.planner import build_task_contract
-from ...workforce.contracts import DagNode
+from ...workforce.contracts import DagNode, RequirementBrief
+from ...workforce.projection import build_run_view
+from ...workforce import service as workforce_service
 from ...workforce.run_store import get_run_store, run_topic
 from .projects import _require_role, caller_username
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/workforce", tags=["xian-workforce"])
+
+#: run 级终态集合（取消/裁决等生命周期操作不得改写历史终态）
+_RUN_TERMINAL_STATUSES = frozenset(
+    {RUN_STATUS_DONE, RUN_STATUS_FAILED, RUN_STATUS_ESCALATED, RUN_STATUS_CANCELED},
+)
 
 #: SSE 空闲保活间隔（与项目 feed 一致，防代理断连）
 _KEEPALIVE_S = 25.0
@@ -77,6 +85,28 @@ class RunCreateBody(BaseModel):
     source_chat_id: Optional[str] = None
     #: 关联项目（项目 AI 升级 / 跨用户移交的前提）
     project_id: Optional[str] = None
+    #: 幂等键（可选；重复聊天升级以同键提交不会创建多个 run，
+    #: 命中既有 run 原样返回。作为 run 主键落库，格式收紧防注入）
+    idempotency_key: Optional[str] = Field(
+        default=None,
+        pattern=r"^[A-Za-z0-9_-]{1,64}$",
+    )
+
+
+class DecisionBody(BaseModel):
+    """统一决策请求体（协议 15；decision_id 绑定服务端挂起摘要）。"""
+
+    #: 决定标识（服务端挂起时签发，见详情接口 pending_decision）
+    decision_id: str
+    #: 决定动作（与 HumanDecision 契约一致）
+    action: str = Field(
+        pattern=r"^(confirm_requirement|approve_plan|approve_action|"
+        r"resume|cancel|handover)$",
+    )
+    #: 批准对象的期望修订号（不匹配即拒绝——过期批准不放行新内容）
+    expected_revision: int = 0
+    #: 审批备注（留痕）
+    comment: str = ""
 
 
 class ClarifyBody(BaseModel):
@@ -155,63 +185,37 @@ async def create_run(
     request: Request,
     service: ProjectService = Depends(get_project_service),
 ) -> Dict[str, Any]:
-    """创建并后台启动一次专家团任务（三通道共用入口）。"""
-    store = get_run_store()
+    """创建并后台启动一次专家团任务（三通道共用入口）。
+
+    准入与幂等统一收敛在 workforce service（T3）：发布校验、治理面
+    策略、花名册投影与需求基线构造均由服务层负责，路由只做调用方
+    权限与项目归属校验。
+    """
     caller = caller_username(request)
-    # 团队存在且已发布（未发布团队无运行时成员可用）
-    expert_store = ExpertStore()
-    team = await expert_store.get_team(body.team_id)
-    if team is None:
-        raise HTTPException(status_code=404, detail="Team not found")
-    # 未发布团队不可发起（与 admin 试运行通道同款校验）
-    if team.status != "published":
-        raise HTTPException(status_code=400, detail="Team is not published")
     # 项目归属校验（挂项目的 run：caller 必须是项目成员）
     if body.project_id:
         await _require_role(service, request, body.project_id, "")
-    # 熔断策略：只读治理面——团队 orchestration.policy（管理端配置），
-    # 未配置用引擎默认。请求体不参与（员工不可自行放宽熔断上限）。
-    policy: Dict[str, Any] = {}
-    if isinstance(team.orchestration, dict) and team.orchestration.get("policy"):
-        policy = RunPolicy.model_validate(team.orchestration["policy"]).model_dump()
-    # 构建初始上下文束（成员花名册投影，不带 agent_spec）
-    members = []
-    for member in team.members:
-        expert = await expert_store.get_expert(member.expert_id)
-        if expert is not None:
-            members.append(expert)
-    roster = [
-        {
-            "expert_id": e.id,
-            "name": e.name,
-            "title": e.title,
-            "role_hint": next(
-                (m.role_hint for m in team.members if m.expert_id == e.id),
-                "",
-            ),
-        }
-        for e in members
-    ]
-    bundle = bundle_mod.build_initial_bundle(
-        body.goal,
-        team.name,
-        roster,
-        caller,
+    # 幂等键与调用方绑定（跨用户同键互不干扰，防越权命中他人 run）
+    idempotency_key = (
+        f"{caller}:{body.idempotency_key}" if body.idempotency_key else None
     )
-    # 落库（planning 态）+ 创建事件 + 后台启动引擎
-    run = await store.create_run(
-        team_id=body.team_id,
-        goal=body.goal,
-        initiator_id=caller,
-        project_id=body.project_id,
-        source_chat_id=body.source_chat_id,
-        policy=policy,
-        context_bundle=bundle.model_dump(),
-    )
-    await store.emit_event(run, "team_run_created", {"goal": body.goal[:200]})
-    engine_mod.start_run_background(run["id"])
-    # 返回详情（含空节点列表）
-    return {**run, "nodes": []}
+    try:
+        return await workforce_service.create_team_run(
+            team_id=body.team_id,
+            goal=body.goal,
+            initiator_id=caller,
+            project_id=body.project_id,
+            source_chat_id=body.source_chat_id,
+            idempotency_key=idempotency_key,
+        )
+    except LookupError as exc:
+        if str(exc) == "team_not_found":
+            raise HTTPException(status_code=404, detail="Team not found")
+        raise HTTPException(status_code=404, detail="Run not found")
+    except ValueError as exc:
+        if str(exc) == "team_not_published":
+            raise HTTPException(status_code=400, detail="Team is not published")
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.get("/runs")
@@ -247,13 +251,27 @@ async def get_run_detail(
     request: Request,
     service: ProjectService = Depends(get_project_service),
 ) -> Dict[str, Any]:
-    """run 详情：DAG 计划 + 全部节点留痕（契约/结果/裁决/返工记录）。"""
+    """run 详情：DAG 计划 + 节点留痕 + 账本投影（尝试/修订/事件）。
+
+    ``allowed_actions``/``waiting_reason`` 由服务端从权威状态推导下发，
+    前端不自创授权规则（单一来源）；事件为持久账本回放（SSE 仅传输）。
+    """
     store = get_run_store()
     # 加载并校验访问权
     run = await _load_run_or_404(run_id, request, service)
     # 节点全量（时间线渲染数据源）
     nodes = await store.list_nodes(run_id)
-    return {**run, "nodes": nodes}
+    # 账本增量（T2）：尝试/修订/事件并行读取后内存组装
+    attempts = await store.list_attempts(run_id)
+    revisions = await store.list_revisions(run_id)
+    events = await store.list_events(run_id)
+    return build_run_view(
+        run,
+        nodes,
+        attempts=attempts,
+        revisions=revisions,
+        events=events,
+    )
 
 
 @router.get("/runs/{run_id}/events")
@@ -319,9 +337,11 @@ async def cancel_run(
     """取消运行中的 run（传播取消到后台任务；终态幂等）。"""
     store = get_run_store()
     run = await _load_run_or_404(run_id, request, service)
-    # 终态不可取消（幂等返回当前状态）
-    if run["status"] == RUN_STATUS_CANCELED:
-        return {"status": RUN_STATUS_CANCELED}
+    # 终态保护：done/failed/escalated/canceled 都是历史事实，取消请求
+    # 不得改写（幂等返回当前状态）——完成态 run 被"取消"会让验收结果
+    # 与最终状态互相矛盾，审计链断裂
+    if run["status"] in _RUN_TERMINAL_STATUSES:
+        return {"status": run["status"]}
     # 传播协作取消（引擎收敛 canceled 终态与事件）
     cancelled = await engine_mod.cancel_run(run_id)
     if not cancelled:
@@ -337,15 +357,58 @@ async def resume_run(
     request: Request,
     service: ProjectService = Depends(get_project_service),
 ) -> Dict[str, Any]:
-    """续跑中断/失败的 run（从已完成节点之后恢复，幂等跳过 done）。"""
-    store = get_run_store()
+    """续跑中断/暂停的 run（从已完成节点之后恢复，幂等跳过 done）。"""
     run = await _load_run_or_404(run_id, request, service)
-    # 仅中断态允许续跑（failed 需人工评估后另行处理，防止盲重放）
-    if run["status"] != RUN_STATUS_INTERRUPTED:
-        raise HTTPException(status_code=409, detail=f"状态 {run['status']} 不可续跑")
-    # 重入引擎（done 节点自动跳过）
-    engine_mod.start_run_background(run_id)
-    return {"status": RUN_STATUS_RUNNING}
+    _ = run
+    # 校验与重入统一走服务层（interrupted / paused 均可续跑）
+    try:
+        return await workforce_service.resume_paused_run(run_id)
+    except workforce_service.DecisionConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@router.post("/runs/{run_id}/pause")
+async def pause_run(
+    run_id: str,
+    request: Request,
+    service: ProjectService = Depends(get_project_service),
+) -> Dict[str, Any]:
+    """暂停运行中的 run（协作挂起；区别于 cancel 终态，可续跑）。"""
+    await _load_run_or_404(run_id, request, service)
+    try:
+        return await workforce_service.pause_run(run_id)
+    except workforce_service.DecisionConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@router.post("/runs/{run_id}/decisions")
+async def submit_run_decision(
+    run_id: str,
+    body: DecisionBody,
+    request: Request,
+    service: ProjectService = Depends(get_project_service),
+) -> Dict[str, Any]:
+    """统一决策处置（协议 15）：需求确认/计划批准/续跑/取消。
+
+    ``decision_id`` 绑定服务端挂起时签发的摘要（详情接口
+    ``context_bundle.execution_ctx.pending_decision`` 投影）；
+    ``expected_revision`` 不匹配当前修订号即 409（过期批准拒绝）。
+    """
+    await _load_run_or_404(run_id, request, service)
+    decision = HumanDecision(
+        decision_id=body.decision_id,
+        action=body.action,
+        expected_revision=body.expected_revision,
+        comment=body.comment,
+    )
+    try:
+        return await workforce_service.submit_decision(run_id, decision)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Run not found")
+    except workforce_service.DecisionNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except workforce_service.DecisionConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
 @router.post("/runs/{run_id}/clarify")
@@ -367,6 +430,25 @@ async def answer_clarification(
     for question, answer in body.answers.items():
         history.append({"question": question, "answer": answer})
     bundle.task_ctx["clarifications"] = history
+    # 需求基线修订（T3）：答复并入 inputs、清空对应缺口、修订号递增
+    # ——需求是版本化事实，重规划后的计划批准门绑定新修订号
+    brief = RequirementBrief.model_validate(
+        bundle.task_ctx.get("requirement_brief") or {}
+    )
+    for question, answer in body.answers.items():
+        brief.inputs.append(f"{question} → {answer}")
+        if question in brief.input_gaps:
+            brief.input_gaps.remove(question)
+    brief.revision = brief.revision + 1
+    bundle.task_ctx["requirement_brief"] = brief.model_dump()
+    # 需求修订留痕（T2 账本 kind=requirement）
+    await get_run_store().record_revision(
+        run_id,
+        kind="requirement",
+        revision=brief.revision,
+        reason="clarification_answered",
+        payload={"answers": body.answers},
+    )
     # 版本 bump（澄清答复改变了任务事实；reason 入版本历史轨迹）+ 持久化
     bundle = bundle_mod.bump(bundle, reason="clarification")
     new_version = await store.bump_context_version(run_id)

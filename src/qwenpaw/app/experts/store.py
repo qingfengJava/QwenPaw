@@ -817,6 +817,57 @@ class ExpertStore:
                     )
         return await self.get_team(team_id)
 
+    async def record_team_version(
+        self,
+        team_id: str,
+        version: int,
+        spec: dict,
+        published_by: str = "",
+    ) -> None:
+        """写入不可变发布快照（publish 成功后调用；重发布=新行）。
+
+        ON CONFLICT DO NOTHING：同版本重复发布不覆盖既有审计快照
+        （幂等发布链路下的留痕保护）。
+        """
+        engine = require_enterprise_engine()
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO expert_team_versions (tenant_id, team_id, "
+                    "version, spec, published_by) VALUES (:tid, :team, :ver, "
+                    "CAST(:spec AS JSONB), :by) ON CONFLICT DO NOTHING"
+                ),
+                {
+                    "tid": current_tenant_id(),
+                    "team": team_id,
+                    "ver": version,
+                    "spec": json.dumps(spec, ensure_ascii=False, default=str),
+                    "by": published_by,
+                },
+            )
+
+    async def list_team_versions(self, team_id: str) -> List[dict]:
+        """团队发布版本清单（version 降序；仅审计摘要不含完整 spec）。"""
+        engine = require_enterprise_engine()
+        async with engine.connect() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT team_id, version, published_by, created_at FROM "
+                    "expert_team_versions WHERE tenant_id = :tid "
+                    "AND team_id = :team ORDER BY version DESC"
+                ),
+                {"tid": current_tenant_id(), "team": team_id},
+            )
+            return [
+                {
+                    "team_id": r.team_id,
+                    "version": r.version,
+                    "published_by": r.published_by or "",
+                    "published_at": r.created_at,
+                }
+                for r in result
+            ]
+
     async def set_team_status(
         self,
         team_id: str,

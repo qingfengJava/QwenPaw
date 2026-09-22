@@ -24,10 +24,75 @@ logger = logging.getLogger(__name__)
 
 
 async def run_total_tokens(store, run_id: str) -> int:
-    """聚合 run 全部节点的 token 消耗（含返工轮累计值）。"""
-    # 节点行逐条求和（节点数有限，无需 SQL 聚合）
+    """聚合 run 全部节点的 token 消耗（含返工轮累计值）。
+
+    T5 起优先走 SQL SUM（``sum_node_tokens``）——预算检查在完成驱动
+    调度下高频执行，逐节点反序列化 JSON 的开销必须避免（协议8.5）；
+    旧调用方（测试桩）缺该方法时回退 list_nodes 聚合。
+    """
+    # 轻量聚合路径（生产 RunStore 恒有该方法）
+    sum_tokens = getattr(store, "sum_node_tokens", None)
+    if sum_tokens is not None:
+        return int(await sum_tokens(run_id) or 0)
+    # 兼容回退：节点行逐条求和（节点数有限）
     nodes: List[Dict[str, Any]] = await store.list_nodes(run_id)
     return sum(int(n.get("token_cost", 0) or 0) for n in nodes)
+
+
+async def run_budget_usage(store, run_id: str) -> int:
+    """预留感知的 run 预算用量（T2 账本；T5 调度熔断的计量口径）。
+
+    = 已结算节点累计（节点行 token_cost）+ 未决预留（预留即占额，
+    防并发"各自看余额"超售）。结算/释放后预留从 outstanding 消失，
+    实际用量已在节点行体现——同一笔消耗不会被双计。
+    """
+    # 已结算消耗（节点行累计）
+    settled = await run_total_tokens(store, run_id)
+    # 未决预留（pending 按预留额、settled 按实际用量计入）
+    outstanding = await store.outstanding_tokens(run_id)
+    return settled + outstanding
+
+
+async def reserve_node_budget(
+    store,
+    run_id: str,
+    node_key: str,
+    policy: RunPolicy,
+) -> str:
+    """委派前原子预留（T4）：预留额 = 剩余预算按波次并发均分。
+
+    预留即占额（pending 预留计入 ``run_budget_usage`` 的 outstanding），
+    并发成员不会"各自看余额"造成超售；剩余额度不足以分出正份额时
+    熔断升级。仅在配置了有限 ``max_total_tokens`` 时调用（不限预算
+    无超售面，跳过预留）。
+    """
+    # 延迟导入避免与 engine 的循环依赖（与 check_token_budget 同法）
+    from .engine import EscalateSignal
+
+    # 预留感知的当前用量（已结算 + 未决预留）
+    usage = await run_budget_usage(store, run_id)
+    # 剩余额度按波次并发均分（并发上限内的节点合计不超剩余额）
+    remaining = policy.max_total_tokens - usage
+    share = remaining // max(1, policy.parallelism)
+    if share <= 0:
+        raise EscalateSignal(
+            f"run 预算剩余 {remaining} 不足并发均分预留"
+            f"（预算 {policy.max_total_tokens}，已用 {usage}）"
+        )
+    return await store.reserve_budget(
+        run_id, node_key, share, reason="pre-delegate reservation"
+    )
+
+
+async def release_quietly(store, reservation_id: str) -> None:
+    """释放预留（异常路径兜底；失败仅告警，不改变原失败路径）。"""
+    # 无预留（不限预算/预留前失败）直接返回
+    if not reservation_id:
+        return
+    try:
+        await store.release_reservation(reservation_id)
+    except Exception:  # pragma: no cover - 释放失败不改变失败路径
+        logger.warning("释放预算预留 %s 失败（已忽略）", reservation_id)
 
 
 def check_token_budget(total_tokens: int, policy: RunPolicy) -> None:

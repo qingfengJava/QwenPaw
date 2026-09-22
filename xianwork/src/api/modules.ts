@@ -640,7 +640,8 @@ export type TeamRunStatus =
   | "failed"
   | "escalated"
   | "canceled"
-  | "interrupted";
+  | "interrupted"
+  | "paused";
 
 /** 节点状态机值。 */
 export type TeamNodeStatus =
@@ -694,6 +695,29 @@ export interface TeamRun {
   updated_at?: string | null;
   /** 详情接口附带；列表接口无此字段。 */
   nodes?: TeamRunNode[];
+  /** ---- 以下为 T2/T3 投影字段（详情接口；前端不自创授权规则） ---- */
+  /** 服务端推导的用户可执行动作清单（approve_plan/clarify/cancel/resume/escalation…）。 */
+  allowed_actions?: string[];
+  /** v2 等待语义：plan_approval（计划批准门）/ requirement_confirm（澄清等待）。 */
+  waiting_reason?: string;
+  /** 计划批准门挂起的决策对象（服务端签发；approve_plan 时回传 decision_id）。 */
+  pending_decision?: {
+    decision_id: string;
+    action: string;
+    revision: number;
+    summary?: string;
+  } | null;
+  /** 已批准决策留痕（谁在何时批准了哪个修订）。 */
+  approved_decisions?: Array<{
+    decision_id: string;
+    action: string;
+    revision: number;
+    decided_by?: string;
+  }>;
+  /** 进度摘要（列表页/详情头部共用）。 */
+  progress?: { done_nodes: number; total_nodes: number; finished: boolean };
+  /** 累计活跃执行时间（秒；恢复/续跑不清零，T5）。 */
+  active_seconds?: number;
 }
 
 export interface TeamRunCreateBody {
@@ -759,6 +783,26 @@ export const workforceApi = {
   ) =>
     request<{ node_key: string; assignee_user_id: string }>(
       `/xian/workforce/runs/${enc(runId)}/nodes/${enc(nodeKey)}/handover`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  /** 暂停运行（协作挂起；在途节点收敛后进入 paused，T5）。 */
+  pause: (runId: string) =>
+    request<{ status: string }>(`/xian/workforce/runs/${enc(runId)}/pause`, {
+      method: "POST",
+    }),
+  /** 统一决策（协议 15）：approve_plan / confirm_requirement / resume /
+   *  cancel 等；decision_id 绑定服务端挂起摘要，过期修订号即拒绝。 */
+  decide: (
+    runId: string,
+    body: {
+      decision_id: string;
+      action: string;
+      expected_revision?: number;
+      comment?: string;
+    },
+  ) =>
+    request<{ status: string; context_version?: number }>(
+      `/xian/workforce/runs/${enc(runId)}/decisions`,
       { method: "POST", body: JSON.stringify(body) },
     ),
 };

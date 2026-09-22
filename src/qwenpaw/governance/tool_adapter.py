@@ -9,6 +9,7 @@ Replaces the GuardedFunctionTool. Each tool call goes through two layers:
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from typing import Any, Optional
@@ -33,6 +34,100 @@ _NO_RETRY_INSTRUCTION = (
     " not be completed and, if appropriate, ask them how they want"
     " to proceed."
 )
+
+#: 团队可信信封在 request_context 中的注入键（T4，delegator 注入）
+TEAM_ENVELOPE_CONTEXT_KEY = "team_envelope"
+
+
+def team_envelope_from_context(request_context: Any) -> Any:
+    """从请求上下文解析并验签团队可信信封（协议02/16）。
+
+    返回 ``None`` = 无信封（非团队委派，走既有治理路径）；
+    返回信封实例 = 已通过 HMAC 验签的授权载荷；
+    抛 ``ValueError`` = 键存在但载荷畸形或签名缺失/不匹配（篡改
+    证据，调用方必须 fail-closed deny——外部请求自填的信封无效）。
+    """
+    # 非字典上下文视为无信封（既有非团队请求路径）
+    if not isinstance(request_context, dict):
+        return None
+    raw = request_context.get(TEAM_ENVELOPE_CONTEXT_KEY)
+    if raw is None:
+        return None
+    # 兼容字符串形态（SSE/存储往返序列化后的信封）
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception as exc:
+            raise ValueError("team envelope payload is not valid JSON") from exc
+    if not isinstance(raw, dict):
+        raise ValueError("team envelope payload must be an object")
+    # 剥离签名字段后验签（不改动调用方持有的原 dict）
+    payload = {k: v for k, v in raw.items() if k != "sig"}
+    signature = raw.get("sig") or ""
+    from .envelope_auth import verify_envelope_payload
+
+    if not signature or not verify_envelope_payload(payload, signature):
+        raise ValueError("team envelope signature missing or mismatched")
+    # 延迟导入：governance 不在模块加载期引入 workforce 包
+    from ..app.workforce.contracts import TrustedExecutionEnvelope
+
+    return TrustedExecutionEnvelope.model_validate(payload)
+
+
+def _scope_allows(delegate_scope: Any, tool_policy_name: str) -> bool:
+    """判断工具是否落在信封委托范围内（精确匹配或尾部 ``*`` 通配）。
+
+    大小写不敏感：范围条目由需求作者书写（如 ``WebSearch``），工具
+    策略名经 registry 规范化（``WebSearch`` → ``Websearch``），按
+    小写归一比较避免书写形态差异导致误拒。
+    """
+    name_lower = tool_policy_name.lower()
+    for entry in delegate_scope or []:
+        entry = str(entry or "").strip()
+        if not entry:
+            continue
+        # 尾部通配（如 ``execute*``）按前缀匹配；否则精确匹配
+        if entry.endswith("*"):
+            if name_lower.startswith(entry[:-1].lower()):
+                return True
+        elif entry.lower() == name_lower:
+            return True
+    return False
+
+
+def _team_envelope_decision(self: Any, envelope: Any) -> Any:
+    """按信封强制授权边界（治理合成：ALLOW / DENY，无 ask 后门）。
+
+    范围内 ALLOW；范围外 DENY（最终拒绝）。该分支先于一切
+    approval_level 短路（含 off），团队硬约束不可被开发模式旁路。
+    """
+    from agentscope.permission import PermissionBehavior, PermissionDecision
+
+    tool_policy_name = DEFAULT_REGISTRY.python_to_policy_name(
+        getattr(self, "name", "Unknown"),
+    )
+    if _scope_allows(envelope.delegate_scope, tool_policy_name):
+        return PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            message=(
+                "governance: team envelope in scope "
+                f"(tool={tool_policy_name}, run={envelope.run_id})."
+            ),
+        )
+    logger.warning(
+        "团队信封拒绝越界工具调用: tool=%s run=%s node=%s scope=%s",
+        tool_policy_name,
+        envelope.run_id,
+        envelope.node_key,
+        envelope.delegate_scope,
+    )
+    return PermissionDecision(
+        behavior=PermissionBehavior.DENY,
+        message=(
+            f"governance: tool '{tool_policy_name}' is outside the "
+            "team delegate scope (final for this request)."
+        ),
+    )
 
 
 def _is_execution_level_off() -> bool:
@@ -318,9 +413,28 @@ async def _policy_tool_check_permissions(
 
     governor = getattr(self, "_qp_governor", None)
     self._qp_raw_params = input_data or {}
+    request_ctx = getattr(self, "_qp_request_context", None) or {}
+
+    # ── 团队信封强制分支（T4：协议15/16 治理合成，off 不得短路）──
+    # 信封存在 → 授权边界只看 delegate_scope（范围内 ALLOW、范围外
+    # DENY，无 ask 后门）；畸形/伪造信封 → fail-closed DENY。该分支
+    # 必须先于 approval_level=off 短路与 governor 判空：团队硬约束
+    # 不可被开发模式或治理层缺失旁路。
+    try:
+        team_envelope = team_envelope_from_context(request_ctx)
+    except ValueError as exc:
+        logger.error("团队信封校验失败（拒绝执行）: %s", exc)
+        return PermissionDecision(
+            behavior=PermissionBehavior.DENY,
+            message=(
+                "governance: invalid team envelope "
+                f"({exc}) — request denied."
+            ),
+        )
+    if team_envelope is not None:
+        return _team_envelope_decision(self, team_envelope)
 
     # ── Effective approval_level check (session > agent) ──
-    request_ctx = getattr(self, "_qp_request_context", None) or {}
     effective_level = _resolve_effective_approval_level(request_ctx)
 
     # ── Mail F1 exploration mode: force STRICT for every tool ──

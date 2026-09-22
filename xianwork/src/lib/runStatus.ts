@@ -22,6 +22,8 @@ export const RUN_STATUS_META: Record<
   escalated: { label: "已升级人工", icon: "fa-solid fa-user-gear", tone: "#dc2626" },
   canceled: { label: "已取消", icon: "fa-solid fa-ban", tone: "#6b7280" },
   interrupted: { label: "已中断（可续跑）", icon: "fa-solid fa-plug-circle-xmark", tone: "#b45309" },
+  // 用户暂停/版本漂移暂停（协作挂起，非终态；T5 引入）
+  paused: { label: "已暂停（可续跑）", icon: "fa-solid fa-pause", tone: "#b45309" },
 };
 
 /** 纯文本短标签（列表行内联展示用）。 */
@@ -46,3 +48,6 @@ export const ACTIVE_RUN_STATUSES = new Set([
   "repairing",
   "aggregating",
 ]);
+
+/** 可恢复态（协作挂起；续跑按钮的显示依据，T5 引入 paused）。 */
+export const RESUMABLE_RUN_STATUSES = new Set(["interrupted", "paused"]);

@@ -24,7 +24,7 @@ Specification 的数据载体），定义中央大脑（L1 Workforce ReAct）与
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Sequence
 
 from pydantic import BaseModel, Field
 
@@ -64,6 +64,8 @@ RUN_STATUS_ESCALATED = "escalated"
 RUN_STATUS_CANCELED = "canceled"
 #: run 级状态：进程中断（启动恢复扫描将 running 改写为此状态，可续跑）
 RUN_STATUS_INTERRUPTED = "interrupted"
+#: run 级状态：用户暂停（协作暂停，非终态；resume 从持久视图恢复）
+RUN_STATUS_PAUSED = "paused"
 
 #: run 状态全集（用于路由校验与测试断言）
 RUN_STATUSES = (
@@ -78,6 +80,7 @@ RUN_STATUSES = (
     RUN_STATUS_ESCALATED,
     RUN_STATUS_CANCELED,
     RUN_STATUS_INTERRUPTED,
+    RUN_STATUS_PAUSED,
 )
 
 #: run 活跃态集合（进程重启时需扫描改写为 interrupted 的状态）
@@ -186,6 +189,23 @@ class TaskContract(BaseModel):
 
     #: 节点标识（与 team_run_nodes.node_key 一致）
     task_id: str
+    # ---- 版本身份（协议05：任务契约记录完整版本向量；缺省兼容旧数据） ----
+    #: 所属运行标识（team_runs.id；模板预览等场景允许为空）
+    run_id: str = ""
+    #: 计划修订版本（重规划递增；0=未登记）
+    plan_revision: int = 0
+    #: 指派修订版本（改派递增；0=未登记）
+    assignment_revision: int = 0
+    #: 需求基线修订版本（RequirementBrief.revision）
+    requirement_revision: int = 0
+    #: 引用的上下文束版本（ContextBundle.version）
+    context_version: int = 0
+    #: 业务责任人展示名（人工负责人或 Leader，非执行者）
+    owner_display: str = ""
+    #: 风险等级（高风险动作须另行审批，低风险契约不豁免治理）
+    risk_level: Literal["low", "medium", "high"] = "low"
+    #: 是否允许内部再拆分子任务（协议13：新团队默认关闭自由递归委派）
+    allow_subtask_split: bool = False
     #: 本节点的目标（一句话说清"要完成什么"）
     objective: str
     #: 全局上下文不可变快照（含 context_version，引自 ContextBundle）
@@ -239,8 +259,11 @@ class ResultContract(BaseModel):
     confidence: float = 0.8
     #: 是否需要人工复核（解析降级 / 低置信度时置 True）
     needs_review: bool = False
-    #: 本节点 token 消耗（委派器从回执 usage 统计，0=未采集）
+    #: 本节点 token 消耗（委派器从回执 usage 统计；usage_reported=False
+    #: 时该值为未知而非零，预算账本不得按 0 结算）
     token_cost: int = 0
+    #: 回执是否携带真实 usage 采集（False=未知消耗，明示而非视为零）
+    usage_reported: bool = False
 
 
 class RepairContract(RepairBrief):
@@ -446,3 +469,353 @@ class Clarification(BaseModel):
     options: Dict[str, List[str]] = Field(default_factory=dict)
     #: 用户答复记录（question -> answer；重入规划的输入）
     answers: Dict[str, str] = Field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Harness Runtime Specification 协议对象（T-1 冻结）
+#
+# 本区段只承载 17 项运行协议的数据结构与纯函数（输入/输出/状态/失败语义），
+# 不依赖任何引擎模块；协议到实现的接线分布在 planner/delegator/engine/
+# run_store/harnesses 等既有模块（映射见计划第十四节）。
+# ---------------------------------------------------------------------------
+
+# ---- 协议01 Task Lifecycle：等待语义（v2 可恢复等待 ≠ 终态） ----
+
+#: 等待原因：缺输入（依赖未满足）
+WAIT_REASON_MISSING_INPUT = "missing_input"
+#: 等待原因：需求待确认
+WAIT_REASON_REQUIREMENT_CONFIRM = "requirement_confirm"
+#: 等待原因：计划待批准
+WAIT_REASON_PLAN_APPROVAL = "plan_approval"
+#: 等待原因：风险动作待审批
+WAIT_REASON_TOOL_APPROVAL = "tool_approval"
+#: 等待原因：预算不足
+WAIT_REASON_BUDGET = "budget"
+#: 等待原因：质量升级人工
+WAIT_REASON_QUALITY_ESCALATION = "quality_escalation"
+#: 等待原因：员工版本漂移
+WAIT_REASON_VERSION_DRIFT = "version_drift"
+#: 等待原因：外部结果未知待核对
+WAIT_REASON_UNKNOWN_RESULT = "unknown_result"
+
+#: 等待原因全集（状态可恢复，等待即暂停派发并释放执行槽）
+WAIT_REASONS = frozenset(
+    {
+        WAIT_REASON_MISSING_INPUT,
+        WAIT_REASON_REQUIREMENT_CONFIRM,
+        WAIT_REASON_PLAN_APPROVAL,
+        WAIT_REASON_TOOL_APPROVAL,
+        WAIT_REASON_BUDGET,
+        WAIT_REASON_QUALITY_ESCALATION,
+        WAIT_REASON_VERSION_DRIFT,
+        WAIT_REASON_UNKNOWN_RESULT,
+    },
+)
+
+# ---- 协议01/12：节点 v2 状态（在既有 pending..failed 上扩展） ----
+
+#: 节点状态：已就绪（依赖满足、等待派发；v2）
+NODE_STATUS_READY = "ready"
+#: 节点状态：可恢复等待（配 wait_reason；v2，非终态）
+NODE_STATUS_WAITING = "waiting"
+#: 节点终态：已取消（v2）
+NODE_STATUS_CANCELED = "canceled"
+#: 节点终态：被新修订取代（重规划保留旧图时标记；v2）
+NODE_STATUS_SUPERSEDED = "superseded"
+
+# ---- 协议03 ReAct State Machine：L1 认知触发事件 ----
+
+#: L1 认知触发：失败归因不明
+REACT_TRIGGER_FAILURE_ATTRIBUTION = "failure_attribution"
+#: L1 认知触发：依赖变化使当前计划失效
+REACT_TRIGGER_DEPENDENCY_CHANGED = "dependency_changed"
+#: L1 认知触发：需求/全局决策变化
+REACT_TRIGGER_REQUIREMENT_CHANGED = "requirement_changed"
+#: L1 认知触发：新信息使当前计划失效
+REACT_TRIGGER_NEW_INFO = "new_info_invalidates_plan"
+
+#: L1 认知触发全集：仅以下事件触发 Leader 重新思考；
+#: 正常 DAG 推进不消耗认知调用（普通工具进度只推进事件序号）
+REACT_TRIGGERS = frozenset(
+    {
+        REACT_TRIGGER_FAILURE_ATTRIBUTION,
+        REACT_TRIGGER_DEPENDENCY_CHANGED,
+        REACT_TRIGGER_REQUIREMENT_CHANGED,
+        REACT_TRIGGER_NEW_INFO,
+    },
+)
+
+# ---- 协议13 Memory：作用域与组织经验晋级顺序 ----
+
+#: 记忆作用域：一次执行的短期状态
+MEMORY_SCOPE_WORKING = "working"
+#: 记忆作用域：本次委托的修订与产物
+MEMORY_SCOPE_TASK = "task"
+#: 记忆作用域：受用户/员工作用域隔离的持久偏好
+MEMORY_SCOPE_EMPLOYEE = "employee"
+#: 记忆作用域：受审核的稳定事实与组织经验
+MEMORY_SCOPE_ORG = "org"
+
+#: 组织经验进入共享知识的治理动作顺序（缺步即不得发布）
+MEMORY_ORG_PROMOTION_STEPS = (
+    "propose",
+    "sanitize",
+    "dedupe",
+    "approve",
+    "publish",
+)
+
+
+class RequirementBrief(BaseModel):
+    """需求基线（协议04 规划输入；L1 需求确认的版本化产物）。
+
+    聊天中的"只调研、不要下单"必须落入 ``exclusions`` /
+    ``resource_scope`` 成为可校验的执行约束，而不是对话里的一句话。
+    """
+
+    #: 需求修订版本（澄清/范围变更递增）
+    revision: int = 1
+    #: 原始需求引用（聊天/工单/文档的定位标识）
+    source_ref: str = ""
+    #: 业务目标（一句话）
+    business_goal: str = ""
+    #: 范围：做什么
+    scope: List[str] = Field(default_factory=list)
+    #: 范围：明确不做什么（硬约束）
+    exclusions: List[str] = Field(default_factory=list)
+    #: 用户已提供的输入
+    inputs: List[str] = Field(default_factory=list)
+    #: 输入缺口（澄清问题的依据；清空后方可进入计划批准）
+    input_gaps: List[str] = Field(default_factory=list)
+    #: 交付物清单
+    deliverables: List[str] = Field(default_factory=list)
+    #: 验收标准（最终全局验收的尺子）
+    acceptance: List[str] = Field(default_factory=list)
+    #: 绝对期限（ISO 8601 字符串；空=未约定）
+    deadline: str = ""
+    #: 已识别风险
+    risks: List[str] = Field(default_factory=list)
+    #: 授权资源范围（可访问的业务资源/动作类型）
+    resource_scope: List[str] = Field(default_factory=list)
+    #: 未确认假设（不得作为已确认事实传播）
+    unconfirmed_assumptions: List[str] = Field(default_factory=list)
+
+
+class ContextVector(BaseModel):
+    """五类上下文的版本向量（协议06）。
+
+    Global/Task/Employee/Execution/Result 各自独立递增；
+    普通工具进度只推进 execution_revision，不提升全局决策版本。
+    """
+
+    #: 全局决策版本
+    global_revision: int = 1
+    #: 任务事实版本
+    task_revision: int = 1
+    #: 员工能力投影版本
+    employee_revision: int = 1
+    #: 执行进度版本
+    execution_revision: int = 1
+    #: 结果事实版本
+    result_revision: int = 1
+
+
+class TrustedExecutionEnvelope(BaseModel):
+    """服务端控制面可信载荷（协议02/16）。
+
+    租户、发起人、委托范围与授权边界仅由服务端控制面生成与校验；
+    模型输出、外部请求或成员回执不可覆盖其任何字段。与业务语义的
+    "Execution Context"（执行到哪了）不是同一对象。
+    """
+
+    #: 租户标识（隔离硬边界）
+    tenant_id: str
+    #: 发起人用户标识
+    initiator_user_id: str = ""
+    #: 委托范围（允许的资源/动作类型）
+    delegate_scope: List[str] = Field(default_factory=list)
+    #: 团队标识
+    team_id: str = ""
+    #: 运行标识
+    run_id: str = ""
+    #: 节点标识
+    node_key: str = ""
+    #: 尝试标识
+    attempt_id: str = ""
+    #: 父会话/根执行标识
+    root_session_id: str = ""
+    #: 本次子执行标识（先落库、后启动成员）
+    execution_id: str = ""
+    #: 有效策略快照引用（不内联凭据）
+    policy_snapshot_ref: str = ""
+    #: 预算预留引用（调用前原子预留）
+    budget_reservation_id: str = ""
+
+
+class SkillSelection(BaseModel):
+    """技能选择记录（协议07）：声明/候选/实载分开留痕。
+
+    ``required`` 项缺失即阻塞派发；``selected=False`` 必须给出
+    ``skip_reason``（非必需候选可跳过并解释）。
+    """
+
+    #: 技能标识
+    skill_key: str
+    #: 是否为任务必需
+    required: bool = False
+    #: 是否被实际选中
+    selected: bool = False
+    #: 未选原因（可解释性）
+    skip_reason: str = ""
+    #: 锁定的版本/内容指纹（切换阶段需重新选择并留痕）
+    version: str = ""
+
+
+def missing_required_skills(selections: Sequence[SkillSelection]) -> List[str]:
+    """协议07：返回未选中的必需技能（非空即阻塞派发）。
+
+    保证必需项不因候选排序/数量上限被静默裁掉。
+    """
+    # 只收集"必需且未选中"的技能键
+    return [item.skill_key for item in selections if item.required and not item.selected]
+
+
+class ToolObservation(BaseModel):
+    """归一化工具回执（协议08）：区分传输/执行/业务效果三类成功。
+
+    Observer 依赖本结构区分"查询返回空""执行失败""副作用未知"；
+    ``usage_ref`` 为空表示用量未知（不得按零结算）。
+    """
+
+    #: 工具标识
+    tool_key: str = ""
+    #: 回执整体状态
+    status: Literal["success", "warning", "error"] = "success"
+    #: 传输层成功（HTTP/连接层面）
+    transport_ok: bool = True
+    #: 工具执行成功（区别于传输成功）
+    executed: bool = False
+    #: 业务效果确认（区别于执行成功；回执/核对依据）
+    business_effect_confirmed: bool = False
+    #: 一句话结果摘要
+    summary: str = ""
+    #: 证据/产物引用
+    evidence_refs: List[str] = Field(default_factory=list)
+    #: 错误类别（瞬时/权限/参数/下游…）
+    error_category: str = ""
+    #: 是否可安全重试（副作用未知时必须为 False）
+    retryable: bool = False
+    #: 副作用状态：无 / 已提交 / 未知
+    side_effect_state: Literal["none", "committed", "unknown"] = "none"
+    #: 计量事件引用（空=未知消耗）
+    usage_ref: str = ""
+
+
+class PlanRevision(BaseModel):
+    """计划/需求/上下文修订记录（协议12）：重规划不删除旧图。
+
+    ``invalid_scope`` 说明本次修订使哪些节点失效（可解释），未列入
+    范围的已完成结果在输入指纹/验收标准仍满足时可复用。
+    """
+
+    #: 修订对象类型
+    kind: Literal["requirement", "plan", "context"] = "plan"
+    #: 新修订版本号
+    revision: int = 1
+    #: 变更原因（可解释性）
+    reason: str = ""
+    #: 被取代的旧版本（0=首发）
+    superseded_revision: int = 0
+    #: 本次修订的失效节点范围
+    invalid_scope: List[str] = Field(default_factory=list)
+
+
+class HumanDecision(BaseModel):
+    """人工/授权决定（协议15）：绑定具体修订，过期批准不放行新内容。"""
+
+    #: 决定标识（服务端登记的需求/计划/动作摘要绑定）
+    decision_id: str
+    #: 决定动作
+    action: Literal[
+        "confirm_requirement",
+        "approve_plan",
+        "approve_action",
+        "resume",
+        "cancel",
+        "handover",
+    ]
+    #: 批准对象的期望修订版本（不匹配即拒绝）
+    expected_revision: int = 0
+    #: 审批备注
+    comment: str = ""
+
+
+def decision_matches(decision: HumanDecision, current_revision: int) -> bool:
+    """协议15：批准对象版本与当前版本一致才有效（过期/重复批准拒绝）。"""
+    # 期望版本与当前版本不一致即视为过期
+    return decision.expected_revision == current_revision
+
+
+class TraceLink(BaseModel):
+    """Trace 关联（协议17）：团队运行 ↔ 员工执行 ↔ 观测 span。
+
+    Trace 为 best-effort 观测：链路丢失不丢失业务账本（关键业务状态
+    仍以 run/node/attempt 记录为权威）。
+    """
+
+    #: 团队运行标识
+    team_run_id: str = ""
+    #: 节点标识
+    node_key: str = ""
+    #: 尝试标识
+    attempt_id: str = ""
+    #: 员工 agent 运行标识
+    agent_run_id: str = ""
+    #: 员工会话标识
+    session_id: str = ""
+    #: 关联 span 标识清单
+    span_ids: List[str] = Field(default_factory=list)
+
+
+class PolicyDecision(BaseModel):
+    """治理裁决（协议16）：拒绝优先；ask 未决不视为 allow。"""
+
+    #: 裁决值
+    decision: Literal["allow", "deny", "ask"] = "ask"
+    #: 裁决理由
+    reason: str = ""
+    #: 审计记录引用
+    audit_ref: str = ""
+
+
+def compose_policy_decisions(decisions: Sequence[PolicyDecision]) -> PolicyDecision:
+    """协议16：多层治理裁决合成（平台→租户→团队→成员→任务）。
+
+    顺序：任一层 deny 即 deny > 任一层 ask 即 ask > 全部 allow 即 allow；
+    空输入保守返回 ask，不留裸放行。
+    """
+    # 拒绝优先：任一层拒绝直接返回该拒绝
+    for item in decisions:
+        if item.decision == "deny":
+            return item
+    # 其次询问：任一层要求审批即询问
+    for item in decisions:
+        if item.decision == "ask":
+            return item
+    # 全部允许 → 允许（返回首个 allow 携带其审计引用）
+    for item in decisions:
+        return item
+    # 无任何治理输入时保守询问
+    return PolicyDecision(decision="ask", reason="无治理输入，保守询问")
+
+
+def min_positive_limit(*values: int) -> int:
+    """协议16：多层有限上限取最小值（0=未配置层，忽略；全未配置返回 0）。
+
+    预算与并发合成的统一口径：只能取各层有限上限中最小值，不能被
+    某一层"未配置"放大。
+    """
+    # 过滤未配置（0/负值）的层
+    positives = [value for value in values if value and value > 0]
+    # 有配置层取最小，否则返回 0 表示无有效上限（由调用方决定默认值）
+    return min(positives) if positives else 0

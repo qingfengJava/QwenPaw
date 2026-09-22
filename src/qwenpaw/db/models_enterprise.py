@@ -625,6 +625,39 @@ class ExpertTeamMemberRow(TenantMixin, TimestampMixin, Base):
     )
 
 
+class ExpertTeamVersionRow(TenantMixin, TimestampMixin, Base):
+    """不可变团队发布配置快照（T1：expert_team_versions）。
+
+    每次团队发布写入一行（version=发布时的团队版本号，team 内唯一），
+    ``spec`` 保存成员职责与 orchestration 完整快照供审计与运行核对；
+    行不可更新（重发布=新行）。快照只用于审计比对，执行时仍检查
+    即时撤权——不成为新授权来源（计划 §8.1）。
+    """
+
+    __tablename__ = "expert_team_versions"
+
+    team_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    #: 发布时的团队版本号（expert_teams.version 快照；team 内唯一）
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    spec: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default="{}",
+    )
+    published_by: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+    __table_args__ = (
+        PrimaryKeyConstraint(
+            "tenant_id",
+            "team_id",
+            "version",
+            name="pk_expert_team_versions",
+        ),
+        Index("ix_expert_team_versions_team", "tenant_id", "team_id"),
+    )
+
+
 class ExpertSkillRow(TenantMixin, TimestampMixin, Base):
     """Binding of one shared-registry skill to one expert.
 
@@ -905,6 +938,14 @@ class TeamRunRow(TenantMixin, TimestampMixin, Base):
         default=0,
         server_default="0",
     )
+    #: 累计活跃执行时间（秒；T5）：各执行段累加，恢复/续跑不清零，
+    #: 时间熔断按"累计 + 本段耗时"判定（人工等待不计时）
+    active_seconds: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
     error: Mapped[str] = mapped_column(
         Text, nullable=False, default="", server_default="",
     )
@@ -1010,4 +1051,167 @@ class TeamRunNodeRow(TenantMixin, TimestampMixin, Base):
             name="pk_team_run_nodes",
         ),
         Index("ix_team_run_nodes_run", "tenant_id", "run_id"),
+    )
+
+
+class TeamRunRevisionRow(TenantMixin, TimestampMixin, Base):
+    """运行修订记录（T2：team_run_revisions，计划 §8.2）。
+
+    requirement/plan/context 三类修订各自递增 revision；payload 保存
+    完整契约或被取代的旧图（重规划不删除历史——旧图进入修订行，
+    node 行层面的清理只服务于调度，不再销毁证据）。
+    """
+
+    __tablename__ = "team_run_revisions"
+
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    #: 修订对象类型: requirement | plan | context
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    payload: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default="{}",
+    )
+
+    __table_args__ = (
+        PrimaryKeyConstraint(
+            "tenant_id",
+            "run_id",
+            "kind",
+            "revision",
+            name="pk_team_run_revisions",
+        ),
+        Index("ix_team_run_revisions_run", "tenant_id", "run_id"),
+    )
+
+
+class TeamRunAttemptRow(TenantMixin, TimestampMixin, Base):
+    """实际执行尝试记录（T2：team_run_attempts，计划 §8.2）。
+
+    规划、节点委派、汇总的每次真实执行一行：先落库（started）再启动
+    成员；结束回写 completed/failed 与 usage（usage_reported=False 表
+    示消耗未知，预算账本不得按零结算）。
+    """
+
+    __tablename__ = "team_run_attempts"
+
+    id: Mapped[str] = mapped_column(String(64), nullable=False)
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    node_key: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    #: 实际执行的员工专家（final/brain 自执行为空串）
+    expert_id: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default="",
+        server_default="",
+    )
+    session_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    #: started | completed | failed
+    status: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="started",
+        server_default="started",
+    )
+    usage_reported: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+    )
+    token_cost: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+    error: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+    __table_args__ = (
+        PrimaryKeyConstraint("tenant_id", "id", name="pk_team_run_attempts"),
+        Index(
+            "ix_team_run_attempts_node",
+            "tenant_id",
+            "run_id",
+            "node_key",
+        ),
+    )
+
+
+class TeamRunEventRow(TenantMixin, TimestampMixin, Base):
+    """持久运行事件（T2：team_run_events，计划 §8.2/§8.6）。
+
+    全部 run（含未挂项目）的有序留痕：run 内 seq 单调递增（与提交
+    顺序一致），SSE 只是传输通道；回放/审计以本表为权威。
+    """
+
+    __tablename__ = "team_run_events"
+
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    kind: Mapped[str] = mapped_column(String(48), nullable=False)
+    actor: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    payload: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default="{}",
+    )
+
+    __table_args__ = (
+        PrimaryKeyConstraint(
+            "tenant_id",
+            "run_id",
+            "seq",
+            name="pk_team_run_events",
+        ),
+        Index("ix_team_run_events_seq", "tenant_id", "run_id", "seq"),
+    )
+
+
+class TeamRunBudgetReservationRow(TenantMixin, TimestampMixin, Base):
+    """预算预留/结算记录（T2：team_run_budget_reservations，计划 §8.5）。
+
+    调用前原子预留（pending），结算后按实际用量落 settled；并发请求
+    通过 pending 预留之和参与预算判断，防止"各自看余额"超售。
+    """
+
+    __tablename__ = "team_run_budget_reservations"
+
+    id: Mapped[str] = mapped_column(String(64), nullable=False)
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    node_key: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    #: pending | settled | released
+    status: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="pending",
+        server_default="pending",
+    )
+    reserved_tokens: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+    used_tokens: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+    reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+    __table_args__ = (
+        PrimaryKeyConstraint("tenant_id", "id", name="pk_team_run_budget_resv"),
+        Index(
+            "ix_team_run_budget_resv_run",
+            "tenant_id",
+            "run_id",
+            "status",
+        ),
     )

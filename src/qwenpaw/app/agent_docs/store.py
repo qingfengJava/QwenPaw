@@ -91,12 +91,22 @@ class AgentDocsStore:
     """
 
     def __init__(self, engine: Any = None, tenant_id: str = "default") -> None:
-        if engine is None:
-            from ...db.engine import create_pg_engine
-
-            engine = create_pg_engine()
-        self._engine = engine
+        # 注入引擎（测试/特殊部署）直接使用；未注入时**不**在构造期绑定
+        # 引擎——create_pg_engine 的池按创建时事件循环缓存，单例 store
+        # 跨 loop 复用冻结引擎会把 Future 挂到错误 loop（影子写任务
+        # 永久悬挂并泄漏 idle in transaction 连接，最终 loop.close()
+        # 在 Windows proactor 上死锁）。改为每次操作经 _get_engine()
+        # 惰性解析，由工厂按当前 loop 取/建池（跨 loop 防腐）。
+        self._injected_engine = engine
         self._tenant_id = tenant_id
+
+    def _get_engine(self) -> Any:
+        """Resolve the engine for the *current* event loop (lazy)."""
+        if self._injected_engine is not None:
+            return self._injected_engine
+        from ...db.engine import create_pg_engine
+
+        return create_pg_engine()
 
     # -- write path --------------------------------------------------------
 
@@ -133,7 +143,7 @@ class AgentDocsStore:
         else:
             env = environment or environment_for_agent(agent_id)
         now = datetime.now(timezone.utc)
-        async with self._engine.begin() as conn:
+        async with self._get_engine().begin() as conn:
             result = await conn.execute(
                 text(
                     "INSERT INTO agent_documents (tenant_id, agent_id, "
@@ -206,7 +216,7 @@ class AgentDocsStore:
         env = environment or environment_for_agent(agent_id)
         now = datetime.now(timezone.utc)
         written = 0
-        async with self._engine.begin() as conn:
+        async with self._get_engine().begin() as conn:
             for doc_type, content in documents.items():
                 result = await conn.execute(
                     text(
@@ -344,7 +354,7 @@ class AgentDocsStore:
             env = environment or "draft"
         else:
             env = environment or environment_for_agent(agent_id)
-        async with self._engine.connect() as conn:
+        async with self._get_engine().connect() as conn:
             result = await conn.execute(
                 text(
                     "SELECT agent_id, doc_type, environment, owner_user_id, "
@@ -387,7 +397,7 @@ class AgentDocsStore:
             env = environment or "draft"
         else:
             env = environment or environment_for_agent(agent_id)
-        async with self._engine.connect() as conn:
+        async with self._get_engine().connect() as conn:
             result = await conn.execute(
                 text(
                     "SELECT agent_id, doc_type, environment, owner_user_id, "
@@ -426,7 +436,7 @@ class AgentDocsStore:
         from sqlalchemy import text
 
         owner_clause = "AND owner_user_id = :owner" if owner_user_id else ""
-        async with self._engine.connect() as conn:
+        async with self._get_engine().connect() as conn:
             result = await conn.execute(
                 text(
                     "SELECT agent_id, doc_type, environment, owner_user_id, "
@@ -473,7 +483,7 @@ class AgentDocsStore:
         from sqlalchemy import text
 
         now = datetime.now(timezone.utc)
-        async with self._engine.begin() as conn:
+        async with self._get_engine().begin() as conn:
             # 幂等 upsert：内容未变时 WHERE 拦截 → RETURNING 空集
             result = await conn.execute(
                 text(
@@ -534,7 +544,7 @@ class AgentDocsStore:
         """Return one revision snapshot (with content) or None."""
         from sqlalchemy import text
 
-        async with self._engine.connect() as conn:
+        async with self._get_engine().connect() as conn:
             result = await conn.execute(
                 text(
                     "SELECT agent_id, doc_type, environment, version, "
@@ -571,7 +581,7 @@ class AgentDocsStore:
         """List revision snapshots of one document (newest first)."""
         from sqlalchemy import text
 
-        async with self._engine.connect() as conn:
+        async with self._get_engine().connect() as conn:
             result = await conn.execute(
                 text(
                     "SELECT version, content_hash, published_by, "

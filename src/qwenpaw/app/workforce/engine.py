@@ -10,15 +10,17 @@
 
 主循环（Plan-then-Execute）：
 
-    规划(一次) → 波次拓扑调度 → 节点{委派→验收→(FAIL)返工循环}
+    规划(一次) → 完成驱动有界调度（T5：节点完成即释放下游，in-flight
+    受 parallelism 约束）→ 节点{委派→验收→(FAIL)返工循环}
     → 全部完成 → final 汇总节点(中央大脑自执行) → done + 回推事件
 
 熔断（RunPolicy 纯计数器）：max_repair_per_node / max_replan /
-max_total_seconds 任一超限 → escalated 终态（人工裁决 API 恢复）。
+max_total_seconds（按累计活跃时间判定，恢复不清零）任一超限 →
+escalated 终态（人工裁决 API 恢复）。
 
 崩溃恢复：节点边界的 contract/result 即 PG checkpoint；进程重启后
 活跃 run 被 run_store 标记 interrupted，重入 run_team_run 从已完成
-节点之后续跑（幂等：done 节点直接跳过）。
+节点之后续跑（幂等：done 节点直接跳过；滞留中间态节点回退 pending）。
 
 @author qingfeng
 """
@@ -30,6 +32,7 @@ import logging
 import time
 from typing import Any, Dict, List, Optional
 
+from ..enterprise import new_id
 from ..experts.models import (
     TEAM_MEMBER_ROLE_LEAD,
     ExpertRecord,
@@ -37,6 +40,7 @@ from ..experts.models import (
 )
 from ..experts.store import ExpertStore
 from . import bundle as bundle_mod
+from . import scheduler as scheduler_mod
 from .contracts import (
     NODE_ACTIVE_STATUSES,
     NODE_STATUS_DELEGATED,
@@ -51,6 +55,7 @@ from .contracts import (
     RUN_STATUS_ESCALATED,
     RUN_STATUS_FAILED,
     RUN_STATUS_INTERRUPTED,
+    RUN_STATUS_PAUSED,
     RUN_STATUS_PLANNING,
     RUN_STATUS_RUNNING,
     ContextBundle,
@@ -170,6 +175,25 @@ async def cancel_run(run_id: str) -> bool:
 #: cancel 等待终态落库的上限（秒）
 _CANCEL_WAIT_S = 10.0
 
+
+async def pause_background_task(run_id: str) -> bool:
+    """请求暂停：取消后台任务并等待收敛（不写 canceled 终态）。
+
+    调用方（service.pause_run）已预置 paused 状态；
+    ``_guarded_run`` 的 CancelledError 收敛分支检测到 paused 时保持
+    该状态不变（与 cancel 语义的唯一分叉点），仅清理节点中间态。
+    """
+    task = _active_tasks.get(run_id)
+    if task is None or task.done():
+        return False
+    task.cancel()
+    # 有界等待后台任务收敛（超时接受异步收敛，同 cancel_run）
+    try:
+        await asyncio.wait_for(asyncio.shield(task), timeout=_CANCEL_WAIT_S)
+    except asyncio.TimeoutError:
+        pass
+    return True
+
 #: run 认领 advisory lock 的键前缀（会话级锁：进程死亡连接断开自动释放）
 _RUN_CLAIM_LOCK_PREFIX = "workforce-run:"
 
@@ -266,13 +290,28 @@ async def _guarded_run(run_id: str) -> None:
     try:
         await run_team_run(run_id, started_at=started_at)
     except asyncio.CancelledError:
-        # 用户取消：确保终态为 canceled（cancel_run 可能已写状态，幂等补写）
+        # 用户取消/暂停：确保终态正确（cancel_run 可能已写状态，幂等补写）。
+        # paused 分叉：暂停是协作挂起（非终态），保持 paused 不改写，
+        # 仅清理节点中间态（续跑从持久视图恢复）
         run = await store.get_run(run_id)
-        if run is not None and run["status"] not in _RUN_TERMINAL:
+        if run is not None and run["status"] == RUN_STATUS_PAUSED:
+            await _reset_active_nodes(store, run_id)
+        elif run is not None and run["status"] not in _RUN_TERMINAL:
             await store.set_run_status(run_id, RUN_STATUS_CANCELED)
             await store.emit_event(run, "team_run_canceled")
-        # 取消后节点中间态清理（数据视图一致性，见 _reset_active_nodes）
-        await _reset_active_nodes(store, run_id)
+            # 取消后节点中间态清理（数据视图一致性，见 _reset_active_nodes）
+            await _reset_active_nodes(store, run_id)
+        # 在途动作核对（T5/协议8.4）：停止派发与在途执行后，挂起的
+        # registered 动作不可能完成——置 reverted 留痕，杜绝悬挂登记
+        # 被误读为已执行（副作用重复由重新登记承接）
+        try:
+            from .lifecycle import reconcile_resumed_run
+
+            await reconcile_resumed_run(
+                store, run_id, reason="reconciled_on_stop"
+            )
+        except Exception:
+            logger.debug("停止核对失败 run=%s", run_id, exc_info=True)
     except EscalateSignal as exc:
         # 熔断：终态 escalated + 人工介入入口事件
         run = await store.get_run(run_id)
@@ -290,6 +329,18 @@ async def _guarded_run(run_id: str) -> None:
             await store.set_run_status(run_id, RUN_STATUS_FAILED, error=str(exc))
             await store.emit_event(run, "team_run_failed", {"error": str(exc)})
     finally:
+        # 累计活跃执行时间（T5/协议8.5）：本段用时累加进 run 行——
+        # 暂停/中断/续跑都不清零，时间熔断按"累计 + 本段"判定
+        try:
+            elapsed = int(time.monotonic() - started_at)
+            prev = await store.get_run(run_id)
+            if elapsed > 0 and prev is not None:
+                await store.update_run(
+                    run_id,
+                    active_seconds=int(prev.get("active_seconds") or 0) + elapsed,
+                )
+        except Exception:
+            logger.debug("累计执行时间回写失败 run=%s", run_id, exc_info=True)
         # 无论何种终态都释放认领锁（进程死亡时连接断开锁亦自动释放）
         await _release_run_claim(run_id, lock_conn)
 
@@ -298,7 +349,8 @@ async def run_team_run(run_id: str, started_at: Optional[float] = None) -> None:
     """执行一次 run 的完整状态机（幂等可重入：done 节点跳过）。
 
     started_at 为进程内单调时钟起点（时间熔断基准；续跑时由
-    _guarded_run 重新起算——已执行时间的严格恢复留迭代项）。
+    _guarded_run 重新起算，已执行时间经 run 行 ``active_seconds``
+    累计恢复——时间熔断按"累计 + 本段"判定，恢复不清零）。
     """
     store = get_run_store()
     # 加载 run 与终态幂等保护
@@ -327,9 +379,39 @@ async def run_team_run(run_id: str, started_at: Optional[float] = None) -> None:
     policy = (
         RunPolicy.model_validate(run["policy"]) if run.get("policy") else RunPolicy()
     )
-    # 状态进入执行态（planning/interrupted → running）
+    # 状态进入执行态（planning/interrupted → running；入口状态留给
+    # 续跑核对判定）
+    entry_status = run["status"]
+    # 版本漂移检查（T5/协议8.1）：调用前核验实际员工版本——创建时
+    # 钉住的成员版本与当前实例不一致 → 暂停要求显式处理（不静默
+    # 切换、不回滚共享实例）。旧 run（未钉版本）不参与检查
+    pinned_versions = {
+        str(r.get("expert_id")): int(r.get("version") or 0)
+        for r in ((bundle.task_ctx or {}).get("roster") or [])
+        if r.get("expert_id") and r.get("version") is not None
+    }
+    if pinned_versions:
+        from .lifecycle import drifted_members
+
+        live_versions = {e.id: int(e.version or 0) for e in members}
+        drift = drifted_members(pinned_versions, live_versions)
+        if drift:
+            await store.set_run_status(run_id, RUN_STATUS_PAUSED)
+            await store.emit_event(
+                run, "version_drift_detected", {"members": drift}
+            )
+            logger.warning(
+                "run %s 成员版本漂移，暂停待显式处理: %s", run_id, drift
+            )
+            return
     await store.set_run_status(run_id, RUN_STATUS_RUNNING)
     await store.emit_event(run, "run_started", {"team": team.name})
+    # 续跑核对（T5/协议8.4）：中断/暂停恢复时先核对在途外部动作——
+    # 挂起登记置 reverted 留痕，重放由重新登记承接（副作用不重复）
+    if entry_status in (RUN_STATUS_INTERRUPTED, RUN_STATUS_PAUSED):
+        from .lifecycle import reconcile_resumed_run
+
+        await reconcile_resumed_run(store, run_id)
     # ---- Re-plan 外层循环：dependency_changed 归因时清图重规划后重入 ----
     while True:
         # ---- 规划阶段（已有 plan 则跳过：续跑 / 重入） ----
@@ -348,116 +430,151 @@ async def run_team_run(run_id: str, started_at: Optional[float] = None) -> None:
             run = await store.get_run(run_id)
             if run["status"] != RUN_STATUS_RUNNING:
                 return
-        # ---- 执行阶段：波次拓扑调度 ----
-        replanned = False
-        while True:
-            # 每轮重读 run/节点状态（并行完成后的最新视图）
-            run = await store.get_run(run_id)
-            if run["status"] in _RUN_TERMINAL:
-                return
-            # 依赖关系以持久化的 plan 为权威（节点行不存 deps）
-            plan = DagPlan.model_validate(run["plan"])
-            plan_by_key = {n.node_key: n for n in plan.nodes}
-            nodes = await store.list_nodes(run_id)
-            done_keys = {
-                n["node_key"] for n in nodes if n["status"] == NODE_STATUS_DONE
-            }
-            pending_keys = [
-                n["node_key"] for n in nodes if n["status"] == NODE_STATUS_PENDING
-            ]
-            # 全部完成 → 进入汇总收尾
-            if not pending_keys:
-                break
-            # 就绪节点：依赖全部 done（deps 来自 plan 定义）
-            ready = [
-                key
-                for key in pending_keys
-                if all(dep in done_keys for dep in plan_by_key[key].deps)
-            ]
-            # 有 pending 但无 ready = DAG 死锁（校验过不应发生，防御失败）
-            if not ready:
-                await store.set_run_status(
-                    run_id,
-                    RUN_STATUS_FAILED,
-                    error="DAG 调度死锁（存在无法就绪的节点）",
-                )
-                await store.emit_event(
-                    run, "team_run_failed", {"error": "DAG 调度死锁"}
-                )
-                return
-            # 时间与 token 双熔断（每波开始前检查）
-            _check_time_budget(clock_start, policy)
-            from .budget import check_token_budget, run_total_tokens
-
-            total_tokens = await run_total_tokens(store, run_id)
-            check_token_budget(total_tokens, policy)
-            # 并发执行本波节点（信号量限流；单节点异常不中断同波其他节点）
-            semaphore = asyncio.Semaphore(max(1, policy.parallelism))
-            results = await asyncio.gather(
-                *(
-                    _run_node_bounded(
-                        semaphore,
-                        store,
-                        run_id,
-                        run,
-                        policy,
-                        bundle,
-                        node_key,
-                        members_by_id,
-                        member_skills,
-                        lead_id,
-                        clock_start,
-                    )
-                    for node_key in ready
-                ),
-                return_exceptions=True,
-            )
-            # 同波内熔断信号优先冒泡（escalated 终态）
-            for item in results:
-                if isinstance(item, EscalateSignal):
-                    raise item
-            # 同波内取消信号冒泡（让 _guarded_run 收敛 canceled）
-            for item in results:
-                if isinstance(item, asyncio.CancelledError):
-                    raise item
-            # Re-plan 信号：清图重规划（受 max_replan 熔断），重入外层循环
-            replan_signal = next(
-                (i for i in results if isinstance(i, ReplanSignal)), None
-            )
-            if replan_signal is not None:
-                await _handle_replan(store, run_id, bundle, replan_signal, policy)
-                replanned = True
-                break
-            # 通道瞬时异常：run 转 interrupted（可续跑）而非 failed（死路）
-            interrupt_signal = next(
-                (i for i in results if isinstance(i, RunInterruptSignal)), None
-            )
-            if interrupt_signal is not None:
+        else:
+            # 恢复卫生（T5）：滞留中间态节点回退 pending——崩溃恢复后
+            # 节点行可能停留在 delegated/verifying（执行器已消失，结果
+            # 未知），不回退会让调度把可续跑 run 误判为死锁
+            await _reset_active_nodes(store, run_id)
+        # ---- 执行阶段：完成驱动有界调度（T5/协议8.5）----
+        # 某节点验收完成后立即释放其下游（不等同批无关任务结束）；
+        # in-flight 数量受 RunPolicy.parallelism 约束（取代旧信号量 +
+        # 整波 gather 的批量等待）。信号语义与旧循环对齐：
+        # escalate/cancel → 立即取消在途并冒泡；replan/interrupt →
+        # 让在途自然收敛后处置（已完成工作不浪费）
+        replan_signal: Optional[ReplanSignal] = None
+        interrupt_signal: Optional[RunInterruptSignal] = None
+        # 时间熔断基数：本段起点的累计活跃秒数（恢复不清零）
+        base_seconds = int(run.get("active_seconds") or 0)
+        dispatcher = scheduler_mod.BoundedDispatcher(max(1, policy.parallelism))
+        try:
+            while True:
+                # 每轮重读 run/节点状态（轻投影：完成驱动下重读频率
+                # 更高，禁止反复反序列化全量节点 JSON）
                 run = await store.get_run(run_id)
-                await store.set_run_status(
-                    run_id, RUN_STATUS_INTERRUPTED, error=interrupt_signal.reason
-                )
-                await store.emit_event(
-                    run, "run_interrupted", {"reason": interrupt_signal.reason}
-                )
-                return
-            # 其余节点执行异常不得静默：否则主循环会把同一 pending 节点
-            # 无限重新 gather（引擎空转烧 CPU、run 永不终态）。统一冒泡给
-            # _guarded_run 收敛为 failed 终态并留痕日志。
-            for item in results:
-                if isinstance(item, BaseException) and not isinstance(
-                    item,
-                    (
-                        EscalateSignal,
-                        asyncio.CancelledError,
-                        ReplanSignal,
-                        RunInterruptSignal,
-                    ),
-                ):
-                    logger.error("节点执行异常（run=%s）: %r", run_id, item)
-                    raise item
-        if replanned:
+                if run["status"] in _RUN_TERMINAL:
+                    return
+                # 依赖关系以持久化的 plan 为权威（节点行不存 deps）
+                plan = DagPlan.model_validate(run["plan"])
+                nodes = await store.list_node_states(run_id)
+                pending_keys = [
+                    n["node_key"] for n in nodes if n["status"] == NODE_STATUS_PENDING
+                ]
+                # 全部完成（且无在途）→ 进入汇总收尾
+                if not pending_keys and dispatcher.empty:
+                    break
+                # 就绪节点：依赖全部 done 且尚未在途（完成即补位派发）
+                ready = [
+                    key
+                    for key in scheduler_mod.ready_nodes(plan.nodes, nodes)
+                    if key not in dispatcher.keys
+                ]
+                # 有 pending 但既无就绪又无在途 = DAG 死锁（防御失败）
+                if not ready and dispatcher.empty:
+                    await store.set_run_status(
+                        run_id,
+                        RUN_STATUS_FAILED,
+                        error="DAG 调度死锁（存在无法就绪的节点）",
+                    )
+                    await store.emit_event(
+                        run, "team_run_failed", {"error": "DAG 调度死锁"}
+                    )
+                    return
+                # 时间与 token 双熔断（每次派发轮检查；T4 起用预留感知
+                # 口径，未决预留同样占额）
+                _check_time_budget(clock_start, policy, base_seconds=base_seconds)
+                from .budget import check_token_budget, run_budget_usage
+
+                check_token_budget(await run_budget_usage(store, run_id), policy)
+                # 派发至并发上限（coro_factory 在 submit 内即时求值，
+                # 捕获当前 run 快照与节点键）
+                for key in ready:
+                    if not dispatcher.submit(
+                        key,
+                        lambda k=key: _execute_node(
+                            store,
+                            run_id,
+                            run,
+                            policy,
+                            bundle,
+                            k,
+                            members_by_id,
+                            member_skills,
+                            lead_id,
+                            clock_start,
+                        ),
+                    ):
+                        break
+                # 等待任一完成（完成即释放调度位，下游节点立即就绪）
+                completed = await dispatcher.wait_completed()
+                stop_dispatch = False
+                for _key, task in completed:
+                    # 任务被取消（外层取消传播）→ 冒泡收敛
+                    if task.cancelled():
+                        raise asyncio.CancelledError
+                    exc = task.exception()
+                    if exc is None:
+                        continue
+                    if isinstance(exc, (EscalateSignal, asyncio.CancelledError)):
+                        raise exc
+                    if isinstance(exc, ReplanSignal):
+                        replan_signal = exc
+                        stop_dispatch = True
+                    elif isinstance(exc, RunInterruptSignal):
+                        if interrupt_signal is None and replan_signal is None:
+                            interrupt_signal = exc
+                        stop_dispatch = True
+                    else:
+                        # 其余节点执行异常不得静默：否则主循环会把同一
+                        # pending 节点无限重新派发（引擎空转烧 CPU）。统一
+                        # 冒泡给 _guarded_run 收敛为 failed 终态并留痕日志
+                        logger.error(
+                            "节点执行异常（run=%s, node=%s）: %r", run_id, _key, exc
+                        )
+                        raise exc
+                if stop_dispatch:
+                    # replan/interrupt：让在途自然收敛（旧整波 gather 语义，
+                    # 已派发工作不浪费）；收敛期间发现更高优先级信号按
+                    # Escalate > Replan > Interrupt 处理
+                    for _key, task in await dispatcher.drain():
+                        dexc = None if task.cancelled() else task.exception()
+                        if dexc is None:
+                            continue
+                        if isinstance(dexc, (EscalateSignal, asyncio.CancelledError)):
+                            raise dexc
+                        if isinstance(dexc, ReplanSignal):
+                            if replan_signal is None:
+                                replan_signal = dexc
+                        elif isinstance(dexc, RunInterruptSignal):
+                            if interrupt_signal is None and replan_signal is None:
+                                interrupt_signal = dexc
+                        else:
+                            logger.error(
+                                "节点执行异常（run=%s, node=%s）: %r", run_id, _key, dexc
+                            )
+                            raise dexc
+                    # 跳出内层调度循环去处置信号：旧图 pending 节点不再
+                    # 进入死锁判定（重规划/中断语义 = 旧图未完成节点由
+                    # 信号处置路径接管，不应在收敛后继续空转派发）
+                    break
+        except BaseException:
+            # 熔断/取消/意外异常：停止新派发并取消在途（取消传播协议：
+            # 停止新派发 → 请求停止在途子执行 → 收敛状态由护栏完成）
+            await dispatcher.cancel_all()
+            raise
+        # 收敛信号处置（此时无在途任务；优先级 Replan > Interrupt）
+        if replan_signal is not None:
+            await _handle_replan(store, run_id, bundle, replan_signal, policy)
             continue
+        if interrupt_signal is not None:
+            run = await store.get_run(run_id)
+            await store.set_run_status(
+                run_id, RUN_STATUS_INTERRUPTED, error=interrupt_signal.reason
+            )
+            await store.emit_event(
+                run, "run_interrupted", {"reason": interrupt_signal.reason}
+            )
+            return
+        # 全部节点完成（无信号）→ 退出执行阶段进入汇总收尾
         break
     # ---- 汇总收尾（final 节点已在执行阶段完成，此处收束状态） ----
     await store.set_run_status(run_id, RUN_STATUS_AGGREGATING)
@@ -607,6 +724,15 @@ async def _plan_phase(
         return
     # 成功：物化任务图与节点行
     await store.save_plan(run_id, outcome.plan)
+    # 计划修订留痕（T2 账本）：每次物化即快照入账，重规划不删历史，
+    # 修订号 = 重规划代数 + 1（首版计划为 revision 1）
+    await store.record_revision(
+        run_id,
+        kind="plan",
+        revision=1 + int(run.get("replan_count", 0) or 0),
+        reason=outcome.source,
+        payload=outcome.plan.model_dump(),
+    )
     await store.emit_event(
         run,
         "plan_ready",
@@ -628,6 +754,69 @@ async def _plan_phase(
         # 持久化：版本号单点递增 + 束内容整列覆盖
         await store.bump_context_version(run_id)
         await store.update_run(run_id, context_bundle=bundle.model_dump())
+    # 计划批准门（T3）：v2 编排开启 require_plan_approval 时挂起等待
+    # 人工批准。等待态复用 awaiting_confirm（v1 兼容），v2 语义经
+    # waiting_reason=plan_approval 投影；批准对象绑定 plan 修订号——
+    # 重规划/澄清答复递增修订号使旧批准自动失效（协议 15）。
+    if _plan_approval_required(team):
+        from . import approvals as approvals_mod
+        from .service import _store_pending_decision
+
+        decision_id = new_id("dec")
+        plan_revision = 1 + int(run.get("replan_count", 0) or 0)
+        approval_summary = {
+            "digest": decision_text[:300],
+            "source": outcome.source,
+            "node_keys": [n.node_key for n in outcome.plan.nodes],
+        }
+        # 挂起决策对象随上下文束持久化（服务端唯一签发点）
+        pending_bundle = _store_pending_decision(
+            bundle.model_dump(),
+            decision_id=decision_id,
+            kind="plan",
+            revision=plan_revision,
+            summary=approval_summary,
+        )
+        await store.bump_context_version(run_id)
+        await store.update_run(run_id, context_bundle=pending_bundle)
+        await store.set_run_status(run_id, RUN_STATUS_AWAITING_CONFIRM)
+        # 审批中心待办登记（best-effort 桥接；回填 request_id 供处置同步）
+        approval_request_id = await approvals_mod.issue_team_approval(
+            run_id=run_id,
+            decision_id=decision_id,
+            kind="plan",
+            revision=plan_revision,
+            summary=approval_summary,
+            initiator_id=str(run.get("initiator_id") or ""),
+        )
+        if approval_request_id:
+            execution_ctx = dict(pending_bundle.get("execution_ctx") or {})
+            pending_obj = dict(execution_ctx.get("pending_decision") or {})
+            pending_obj["approval_request_id"] = approval_request_id
+            execution_ctx["pending_decision"] = pending_obj
+            pending_bundle["execution_ctx"] = execution_ctx
+            await store.update_run(run_id, context_bundle=pending_bundle)
+        await store.emit_event(
+            run,
+            "plan_awaiting_approval",
+            {"decision_id": decision_id, "plan_revision": plan_revision},
+        )
+        return
+
+
+def _plan_approval_required(team: Any) -> bool:
+    """团队 v2 编排是否要求计划批准门（v1/解析失败一律 False）。
+
+    v1 存量配置无此语义（宽松解析不报错），只有 v2 严格配置显式
+    开启 ``require_plan_approval`` 才挂起——默认不改变既有行为。
+    """
+    try:
+        from ..experts.team_config import parse_team_orchestration
+
+        spec = parse_team_orchestration(getattr(team, "orchestration", None))
+    except Exception:  # noqa: BLE001 - 配置异常不阻塞执行
+        return False
+    return bool(getattr(spec, "require_plan_approval", False))
 
 
 async def _handle_replan(
@@ -666,6 +855,15 @@ async def _handle_replan(
     # 持久化：版本号由 bump_context_version 单点递增，束内容整列覆盖
     await store.bump_context_version(run_id)
     await store.update_run(run_id, context_bundle=bundle.model_dump())
+    # 重规划修订留痕（T2 账本）：被取代的旧图快照进入 context 修订
+    # payload——节点行即将删除，账本里仍可完整回溯旧图（不删历史）
+    await store.record_revision(
+        run_id,
+        kind="context",
+        revision=bundle.version,
+        reason=f"re-plan: {signal.reason}",
+        payload={"superseded_plan": run.get("plan") or {}},
+    )
     # 清空任务图（节点行删除；plan 清空触发外层循环重入规划）
     await store.reset_nodes_for_replan(run_id)
     await store.update_run(run_id, plan={}, summary="", result={})
@@ -677,35 +875,6 @@ async def _handle_replan(
         "replan_started",
         {"reason": signal.reason, "context_version": bundle.version},
     )
-
-
-async def _run_node_bounded(
-    semaphore: asyncio.Semaphore,
-    store,
-    run_id: str,
-    run: Dict[str, Any],
-    policy: RunPolicy,
-    bundle: ContextBundle,
-    node_key: str,
-    members_by_id: Dict[str, ExpertRecord],
-    member_skills: Dict[str, List[str]],
-    lead_id: str,
-    clock_start: float,
-) -> None:
-    """信号量包裹的单节点执行（限制同波并发委派数）。"""
-    async with semaphore:
-        await _execute_node(
-            store,
-            run_id,
-            run,
-            policy,
-            bundle,
-            node_key,
-            members_by_id,
-            member_skills,
-            lead_id,
-            clock_start,
-        )
 
 
 async def _execute_node(
@@ -732,11 +901,14 @@ async def _execute_node(
     plan = DagPlan.model_validate(current_run["plan"])
     dag_node = next(n for n in plan.nodes if n.node_key == node_key)
     node_row = await store.get_node(run_id, node_key)
+    # 实际执行者以节点行为准：移交/人工裁决改派写入节点行，plan 内旧
+    # 指派仅作兼容投影——读取 plan 会让移交"更新了节点行却仍派给旧人"
+    node_assignee = (node_row or {}).get("assignee_expert_id") or ""
     # 契约：首执行构建持久化；重入（续跑/返工）复用已存契约
     if node_row and node_row.get("contract"):
         contract = TaskContract.model_validate(node_row["contract"])
     else:
-        expert = members_by_id.get(dag_node.assignee_expert_id)
+        expert = members_by_id.get(node_assignee or dag_node.assignee_expert_id)
         contract = build_task_contract(
             dag_node,
             expert,
@@ -749,15 +921,24 @@ async def _execute_node(
     attempt = (node_row or {}).get("attempt", 0)
     repair_count = (node_row or {}).get("repair_count", 0)
     session_id = (node_row or {}).get("session_id") or None
-    expert_id = dag_node.assignee_expert_id
+    expert_id = node_assignee or dag_node.assignee_expert_id
     # ---- 委派 → 验收 →（FAIL）返工循环 ----
     while True:
         # 预算检查前移：每轮委派前核对时间与 token 预算——波次开始时
-        # 的检查无法覆盖"单波内 900s×并发"的无监督超支窗口
-        _check_time_budget(clock_start, policy)
-        from .budget import check_token_budget, run_total_tokens
+        # 的检查无法覆盖"单波内 900s×并发"的无监督超支窗口。T4 起用
+        # 预留感知口径（已结算 + 未决预留），防止并发"各自看余额"超售
+        _check_time_budget(
+            clock_start,
+            policy,
+            base_seconds=int(current_run.get("active_seconds") or 0),
+        )
+        from .budget import (
+            check_token_budget,
+            release_quietly,
+            run_budget_usage,
+        )
 
-        check_token_budget(await run_total_tokens(store, run_id), policy)
+        check_token_budget(await run_budget_usage(store, run_id), policy)
         # 取最近一次返工契约（首轮为空）
         node_now = await store.get_node(run_id, node_key) or {}
         repair = (
@@ -772,6 +953,39 @@ async def _execute_node(
         await store.emit_event(
             run, "node_started", {"node_key": node_key, "attempt": attempt + 1}
         )
+        # 尝试账本（T2）：先落库后启动成员——本次执行在账本必有痕迹，
+        # usage_reported 初始为 False（消耗未知，不得按零结算）
+        attempt_id = await store.record_attempt(
+            run_id,
+            node_key,
+            attempt + 1,
+            expert_id=expert_id,
+            session_id=session_id or "",
+        )
+        # 预算原子预留（T4）：有限预算先占额再调用——预留即占额
+        # （pending 计入 run_budget_usage 的 outstanding），并发成员
+        # 不会"各自看余额"造成超售；不限预算（max_total_tokens=0）
+        # 无超售面，跳过预留
+        reservation_id = ""
+        if policy.max_total_tokens > 0:
+            from .budget import reserve_node_budget
+
+            reservation_id = await reserve_node_budget(
+                store, run_id, node_key, policy
+            )
+        # 可信执行信封（T4/协议02）：服务端生成（范围取需求基线
+        # resource_scope，模型输出与外部请求不可覆盖），绑定尝试与
+        # 预算预留；随请求经内部通道注入（附签名），成员侧工具治理
+        # 按信封范围强制（off 不得短路）。取 current_run 保证读到
+        # 最新需求基线（澄清修订后不携带过期范围）
+        from .action_ledger import build_execution_envelope
+
+        envelope = build_execution_envelope(
+            current_run,
+            node_key,
+            attempt_id,
+            budget_reservation_id=reservation_id,
+        )
         # 执行节点：final/integration 由中央大脑自执行，成员节点走委派
         try:
             if expert_id:
@@ -781,6 +995,7 @@ async def _execute_node(
                     repair=repair,
                     session_id=session_id,
                     timeout=DELEGATE_TIMEOUT_S,
+                    envelope=envelope,
                 )
             else:
                 result, session_id = await _execute_brain_node(
@@ -791,6 +1006,9 @@ async def _execute_node(
                     repair,
                 )
         except (EscalateSignal, asyncio.CancelledError, ReplanSignal):
+            # 中断/升级/取消路径：预留未消费即释放（防 outstanding
+            # 永久占额）；用量未知已由尝试账本 usage_reported=False 留痕
+            await release_quietly(store, reservation_id)
             raise
         except Exception as exc:
             # 通道瞬时异常（网络/超时/5xx）：节点回 pending（保留 attempt
@@ -798,6 +1016,10 @@ async def _execute_node(
             # interrupted 可续跑——一次抖动不再报废整个 run 的已完成
             # checkpoint（与 verify 通道的 ESCALATE 恢复语义对称）。
             logger.warning("节点 %s 执行通道异常: %s", node_key, exc)
+            # 预算预留随失败释放（失败用量未知，不得永久占额）
+            await release_quietly(store, reservation_id)
+            # 尝试收尾（T2）：异常路径明确 failed，不伪造用量
+            await store.finish_attempt(attempt_id, "failed", error=str(exc))
             await store.update_node(run_id, node_key, status=NODE_STATUS_PENDING)
             raise RunInterruptSignal(f"节点 {node_key} 执行通道异常: {exc}") from exc
         attempt += 1
@@ -815,6 +1037,21 @@ async def _execute_node(
             attempt=attempt,
             token_cost=token_total,
         )
+        # 尝试收尾（T2）：本轮真实用量落账；usage_reported=False 表示
+        # 回执未携带 usage（未知消耗，预算面不得按零结算）
+        await store.finish_attempt(
+            attempt_id,
+            "completed",
+            token_cost=int(result.token_cost or 0),
+            usage_reported=bool(result.usage_reported),
+            session_id=session_id,
+        )
+        # 预算结算（T4）：预留按回执实际用量落账（pending → settled，
+        # outstanding 移除；实际消耗由节点行 token_cost 承担，防双计）
+        if reservation_id:
+            await store.settle_reservation(
+                reservation_id, int(result.token_cost or 0)
+            )
         await store.emit_event(
             run,
             "node_result",
@@ -952,8 +1189,11 @@ async def _execute_brain_node(
         timeout=DELEGATE_TIMEOUT_S,
     )
     brain_result = parse_result_contract(reply, contract.task_id)
-    # token 消耗写入结果契约（与其他节点一致的预算口径）
+    # token 消耗写入结果契约（与其他节点一致的预算口径）；usage 来自
+    # 回执采集器三元组，属真实采集值——明示 usage_reported 供预算账本
+    # 区分"未知消耗"（False）与"已按实落账"（True）
     brain_result.token_cost = _brain_tokens
+    brain_result.usage_reported = True
     return brain_result, session_id
 
 
@@ -1070,15 +1310,22 @@ async def _load_team_context(team_id: str):
     return team, members, member_skills, member_caps
 
 
-def _check_time_budget(clock_start: float, policy: RunPolicy) -> None:
-    """时间熔断检查（超限抛 EscalateSignal）。"""
+def _check_time_budget(
+    clock_start: float, policy: RunPolicy, base_seconds: int = 0
+) -> None:
+    """时间熔断检查（累计活跃秒数 + 本段耗时；超限抛 EscalateSignal）。
+
+    T5 起按"累计活跃执行时间"判定（协议8.5）：暂停/中断期间的人工
+    等待不计入，各执行段在 ``_guarded_run`` 收尾时累加进 run 行，
+    恢复/续跑不清零。
+    """
     # 0 = 不限时
     if policy.max_total_seconds <= 0:
         return
-    elapsed = time.monotonic() - clock_start
+    elapsed = base_seconds + int(time.monotonic() - clock_start)
     if elapsed > policy.max_total_seconds:
         raise EscalateSignal(
-            f"run 总时长 {int(elapsed)}s 超过上限 {policy.max_total_seconds}s"
+            f"run 累计时长 {elapsed}s 超过上限 {policy.max_total_seconds}s"
         )
 
 

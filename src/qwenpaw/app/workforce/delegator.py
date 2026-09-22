@@ -27,6 +27,7 @@ from .contracts import (
     RepairContract,
     ResultContract,
     TaskContract,
+    TrustedExecutionEnvelope,
     RESULT_STATUS_COMPLETED,
 )
 
@@ -67,6 +68,7 @@ async def call_expert_text(
     session_id: Optional[str] = None,
     timeout: float = DELEGATE_TIMEOUT_S,
     from_agent: str = "workforce",
+    envelope: Optional[TrustedExecutionEnvelope] = None,
 ) -> Tuple[str, str, int]:
     """底层通道：调一个已配置的专家 agent，返回 ``(回复文本, session_id,
     total_tokens)``。
@@ -91,6 +93,18 @@ async def call_expert_text(
         session_id=session_id,
         from_agent=from_agent,
     )
+    # 团队可信信封注入（T4/协议02）：随 request_context 经内部通道
+    # 传输，附进程级 HMAC 签名——外部伪造请求自填的信封验签必败
+    # （tool_adapter fail-closed deny），授权语义只认签名载荷
+    if envelope is not None:
+        from ...governance.envelope_auth import sign_envelope_payload
+
+        envelope_dump = envelope.model_dump()
+        request_payload.setdefault("request_context", {})
+        request_payload["request_context"]["team_envelope"] = {
+            **envelope_dump,
+            "sig": sign_envelope_payload(envelope_dump),
+        }
     # 归一化本机 API 基址：resolve_agent_api_base_url 只返回 host:port，
     # 必须经 _normalize_api_base_url 补 /api 前缀（委派目标路由为
     # /api/console/chat；漏补前缀会让全部委派调用 404，引擎静默全灭）
@@ -283,12 +297,15 @@ async def delegate(
     repair: Optional[RepairContract] = None,
     session_id: Optional[str] = None,
     timeout: float = DELEGATE_TIMEOUT_S,
+    envelope: Optional[TrustedExecutionEnvelope] = None,
 ) -> Tuple[ResultContract, str]:
     """委派执行一个节点：渲染 prompt → 调成员专家 → 解析结果契约。
 
     返回 ``(ResultContract, session_id)``；session_id 由调用方回写
     节点行（返工轮传入同一 session 延续成员上下文）。本节点 token
     消耗填入 ``ResultContract.token_cost``（run 级预算依据）。
+    ``envelope`` 为服务端生成的可信执行信封（T4）：存在时随请求注入
+    request_context（附签名），成员侧工具治理按信封范围强制。
     """
     # 成员专家的运行时 agent 标识（expert_{id}，发布链已物化）
     to_agent = expert_agent_id(expert_id)
@@ -300,6 +317,7 @@ async def delegate(
         prompt,
         session_id=session_id,
         timeout=timeout,
+        envelope=envelope,
     )
     # 容错解析结构化结果（解析失败自动降级 needs_review）
     result = parse_result_contract(reply_text, contract.task_id)

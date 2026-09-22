@@ -4,7 +4,7 @@
  * orchestration spec editor (preset DAG template JSON + RunPolicy)
  * and the team test-run entry (Phase 3 workforce).
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Button,
   Divider,
@@ -21,6 +21,7 @@ import {
   Typography,
 } from "antd";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 import { PageHeader } from "@/components/PageHeader";
 import { useAppMessage } from "../../../hooks/useAppMessage";
 import {
@@ -145,6 +146,7 @@ function validateNodesJson(
 function ExpertTeamsPage() {
   const { t } = useTranslation();
   const { message } = useAppMessage();
+  const navigate = useNavigate();
   const [teams, setTeams] = useState<ExpertTeamRecord[]>([]);
   const [experts, setExperts] = useState<ExpertRecord[]>([]);
   const [loading, setLoading] = useState(false);
@@ -237,8 +239,23 @@ function ExpertTeamsPage() {
     return values;
   };
 
+  /** 成员元数据缓存：保存时回传 member_role/role_hint（编辑不丢 lead）。 */
+  const memberMetaRef = useRef<
+    Map<string, { member_role: string; role_hint: string }>
+  >(new Map());
+
   const openEditor = (team: ExpertTeamRecord | "new") => {
     setEditing(team);
+    if (team === "new") {
+      memberMetaRef.current = new Map();
+    } else {
+      memberMetaRef.current = new Map(
+        team.members.map((m) => [
+          m.expert_id,
+          { member_role: m.member_role ?? "member", role_hint: m.role_hint ?? "" },
+        ]),
+      );
+    }
     form.setFieldsValue(
       team === "new"
         ? {
@@ -274,6 +291,10 @@ function ExpertTeamsPage() {
     const members = memberIds.map((expert_id, index) => ({
       expert_id,
       seq: index,
+      // 已存成员回传原职责/角色；新添加成员缺省 member（防止编辑整体
+      // 替换时把 lead 静默降级——与后端角色往返修复配套）
+      member_role: memberMetaRef.current.get(expert_id)?.member_role ?? "member",
+      role_hint: memberMetaRef.current.get(expert_id)?.role_hint ?? "",
     }));
     const orchestration = buildOrchestration(values);
     const sampleTasks = (values.sample_tasks ?? []).filter(
@@ -396,7 +417,15 @@ function ExpertTeamsPage() {
         dataSource={teams}
         pagination={false}
         columns={[
-          { title: t("admin.teamsX.name", "Name"), dataIndex: "name" },
+          {
+            title: t("admin.teamsX.name", "Name"),
+            dataIndex: "name",
+            render: (name: string, team) => (
+              <Typography.Link onClick={() => navigate(`/agents/teams/${team.id}`)}>
+                {name}
+              </Typography.Link>
+            ),
+          },
           {
             title: t("admin.teamsX.mode", "Mode"),
             dataIndex: "mode",

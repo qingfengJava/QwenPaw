@@ -88,6 +88,9 @@ const AgentCronRunsPage = lazyImportWithRetry(
 const AgentsTeamsPage = lazyImportWithRetry(
   "../../pages/Agents/manage/TeamsPage.tsx",
 );
+const AgentsTeamDetailPage = lazyImportWithRetry(
+  "../../pages/Agents/manage/TeamDetailPage.tsx",
+);
 const AgentsRunsPage = lazyImportWithRetry(
   "../../pages/Agents/manage/RunsPage.tsx",
 );
@@ -294,6 +297,12 @@ export const BUILTIN_ROUTES: Route[] = [
     id: "core.agents-teams",
     path: "/agents/teams",
     component: withRequireAdmin(AgentsTeamsPage),
+  },
+  {
+    // 团队详情（T6）：配置工作台（概览/成员职责/协作流程/Harness 治理）
+    id: "core.agents-team-detail",
+    path: "/agents/teams/:teamId",
+    component: withRequireAdmin(AgentsTeamDetailPage),
   },
   {
     id: "core.agents-runs",

@@ -7,6 +7,8 @@ import type { ExpertRecord } from "./experts";
 export interface TeamMember {
   expert_id: string;
   role_hint: string;
+  /** 团队内职责角色：lead=主理人 / member=成员（缺省 member）。 */
+  member_role: string;
   seq: number;
 }
 
@@ -33,6 +35,8 @@ export interface ExpertTeamRecord {
 export interface TeamMemberBody {
   expert_id: string;
   role_hint?: string;
+  /** 团队内职责角色（lead/member）；省略时后端补 member。 */
+  member_role?: string;
   seq?: number;
 }
 
@@ -56,6 +60,56 @@ export interface ExpertTeamUpdateBody {
   orchestration?: Record<string, unknown> | null;
   sample_tasks?: Array<{ title: string; prompt: string }> | null;
   showcase?: Array<{ title: string; desc: string; tags?: string[] }> | null;
+}
+
+/** GET /metadata — 团队配置元数据（角色/模式/默认限额；前端枚举唯一来源）。 */
+export interface TeamMetadata {
+  member_roles: Array<{ value: string; label: string }>;
+  team_modes: Array<{ value: string; label: string }>;
+  limits: {
+    default_max_repair_per_node: number;
+    default_max_replan: number;
+    default_parallelism: number;
+    default_max_total_seconds: number;
+    default_max_total_tokens: number;
+  };
+}
+
+/** GET /{team_id}/capabilities — 团队有效能力投影（声明≠可执行）。 */
+export interface TeamCapabilityMember {
+  expert_id: string;
+  name: string;
+  title: string;
+  member_role: string;
+  role_hint: string;
+  /** 员工是否已发布（可执行前提；未发布即团队不可运行该成员）。 */
+  published: boolean;
+  skills: unknown[];
+  tools: string[];
+  kb_ids: string[];
+  sops: unknown[];
+  unavailable_reason: string;
+}
+
+export interface TeamCapabilityView {
+  team_id: string;
+  members: TeamCapabilityMember[];
+}
+
+/** GET /{team_id}/versions — 发布版本审计摘要（version 降序）。 */
+export interface TeamVersionRow {
+  team_id: string;
+  version: number;
+  published_by: string;
+  published_at: string | null;
+}
+
+/** POST /{team_id}/validate — 发布预检结果（ok=false 时 issues 非空）。 */
+export interface TeamValidateResult {
+  ok: boolean;
+  issues: string[];
+  config: Record<string, unknown>;
+  members: TeamCapabilityMember[];
 }
 
 const enc = encodeURIComponent;
@@ -105,6 +159,26 @@ export const adminExpertTeamsApi = {
     request<ExpertTeamRecord>(`/admin/expert-teams/${enc(teamId)}/archive`, {
       method: "POST",
     }),
+
+  /** GET /metadata — 配置元数据（角色/模式/默认限额；枚举唯一来源）。 */
+  metadata: () => request<TeamMetadata>("/admin/expert-teams/metadata"),
+
+  /** GET /{team_id}/capabilities — 有效能力投影（能力矩阵数据源）。 */
+  capabilities: (teamId: string) =>
+    request<TeamCapabilityView>(
+      `/admin/expert-teams/${enc(teamId)}/capabilities`,
+    ),
+
+  /** POST /{team_id}/validate — 发布预检（配置+成员可用性问题清单）。 */
+  validate: (teamId: string) =>
+    request<TeamValidateResult>(
+      `/admin/expert-teams/${enc(teamId)}/validate`,
+      { method: "POST" },
+    ),
+
+  /** GET /{team_id}/versions — 发布版本审计摘要（version 降序）。 */
+  versions: (teamId: string) =>
+    request<TeamVersionRow[]>(`/admin/expert-teams/${enc(teamId)}/versions`),
 
   /** GET /{team_id}/kb-bindings — 团队绑定行（名称/scope 已组装，T6）。 */
   listKbBindings: (teamId: string) =>

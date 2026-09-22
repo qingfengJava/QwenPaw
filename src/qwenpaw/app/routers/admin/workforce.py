@@ -26,11 +26,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 
 from ...enterprise import current_tenant_id, require_enterprise_engine
-from ...experts.store import ExpertStore
 from ...rbac import PERM_ADMIN_EXPERTS, require_perm
-from ...workforce import bundle as bundle_mod
-from ...workforce import engine as engine_mod
-from ...workforce.contracts import RunPolicy
 from ...workforce.run_store import get_run_store
 
 logger = logging.getLogger(__name__)
@@ -129,50 +125,25 @@ async def create_test_run(
 ) -> Dict[str, Any]:
     """团队试运行：验证 orchestration 编排配置（管理端专用通道）。
 
-    与 xian 创建通道共用 run_store / bundle / engine 链路；initiator
-    记为管理员账号（request.state.user），goal 缺省用内置试运行目标。
+    与 xian 创建通道共用 workforce service 准入（T3）：发布校验/
+    策略投影/需求基线/引擎启动全部同源；initiator 记为管理员账号
+    （request.state.user），goal 缺省用内置试运行目标。
     """
-    store = get_run_store()
-    expert_store = ExpertStore()
-    team = await expert_store.get_team(team_id)
-    if team is None:
-        raise HTTPException(status_code=404, detail="Team not found")
-    if team.status != "published":
-        raise HTTPException(status_code=400, detail="Team is not published")
+    from ...workforce import service as workforce_service
+
     actor = getattr(request.state, "user", None) or "admin"
     goal = body.goal.strip() or "试运行：验证团队编排配置（管理员发起）"
-    # 熔断策略：团队模板优先（试运行即验证模板本身）
-    policy: Dict[str, Any] = {}
-    if isinstance(team.orchestration, dict) and team.orchestration.get("policy"):
-        policy = RunPolicy.model_validate(team.orchestration["policy"]).model_dump()
-    # 成员花名册投影（与 xian 创建通道一致）
-    members = []
-    for member in team.members:
-        expert = await expert_store.get_expert(member.expert_id)
-        if expert is not None:
-            members.append(expert)
-    if not members:
-        raise HTTPException(status_code=400, detail="Team has no published members")
-    roster = [
-        {
-            "expert_id": e.id,
-            "name": e.name,
-            "title": e.title,
-            "role_hint": next(
-                (m.role_hint for m in team.members if m.expert_id == e.id),
-                "",
-            ),
-        }
-        for e in members
-    ]
-    bundle = bundle_mod.build_initial_bundle(goal, team.name, roster, actor)
-    run = await store.create_run(
-        team_id=team_id,
-        goal=goal,
-        initiator_id=actor,
-        policy=policy,
-        context_bundle=bundle.model_dump(),
-    )
-    await store.emit_event(run, "team_run_created", {"goal": goal[:200], "test_run": True})
-    engine_mod.start_run_background(run["id"])
-    return {**run, "nodes": []}
+    try:
+        return await workforce_service.create_team_run(
+            team_id=team_id,
+            goal=goal,
+            initiator_id=actor,
+        )
+    except LookupError as exc:
+        if str(exc) == "team_not_found":
+            raise HTTPException(status_code=404, detail="Team not found")
+        raise HTTPException(status_code=404, detail="Run not found")
+    except ValueError as exc:
+        if str(exc) == "team_not_published":
+            raise HTTPException(status_code=400, detail="Team is not published")
+        raise HTTPException(status_code=400, detail=str(exc))

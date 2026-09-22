@@ -51,6 +51,7 @@ async def create_team(body: ExpertTeamCreateBody) -> ExpertTeamRecord:
             TeamMember(
                 expert_id=m.expert_id,
                 role_hint=m.role_hint,
+                member_role=m.member_role,
                 seq=m.seq,
             )
             for m in body.members
@@ -61,12 +62,54 @@ async def create_team(body: ExpertTeamCreateBody) -> ExpertTeamRecord:
     )
 
 
+@router.get("/metadata")
+async def team_metadata() -> dict:
+    """团队配置元数据（可用角色/模式/有效限额；前端唯一枚举来源）。
+
+    静态路径必须注册在 ``/{team_id}`` 之前，否则会被路径参数吞掉。
+    """
+    from ...experts.team_service import team_metadata as build_metadata
+
+    return await build_metadata()
+
+
 @router.get("/{team_id}", response_model=ExpertTeamRecord)
 async def get_team(team_id: str) -> ExpertTeamRecord:
     record = await get_expert_store().get_team(team_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Expert team not found")
     return record
+
+
+@router.get("/{team_id}/capabilities")
+async def team_capabilities(team_id: str) -> dict:
+    """团队有效能力投影（能力矩阵数据源；声明≠可执行）。"""
+    from ...experts.capability_view import team_capability_view
+
+    record = await get_expert_store().get_team(team_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Expert team not found")
+    return await team_capability_view(team_id)
+
+
+@router.post("/{team_id}/validate")
+async def validate_team(team_id: str) -> dict:
+    """发布预检：配置跨字段 + 成员可用性 + 模板引用（返回问题清单）。"""
+    from ...experts.team_service import validate_team as run_validate
+
+    record = await get_expert_store().get_team(team_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Expert team not found")
+    return await run_validate(team_id)
+
+
+@router.get("/{team_id}/versions")
+async def team_versions(team_id: str) -> list:
+    """团队发布版本清单（version 降序的审计摘要）。"""
+    record = await get_expert_store().get_team(team_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Expert team not found")
+    return await get_expert_store().list_team_versions(team_id)
 
 
 @router.patch("/{team_id}", response_model=ExpertTeamRecord)
@@ -80,6 +123,7 @@ async def update_team(
             TeamMember(
                 expert_id=m.expert_id,
                 role_hint=m.role_hint,
+                member_role=m.member_role,
                 seq=m.seq,
             )
             for m in body.members

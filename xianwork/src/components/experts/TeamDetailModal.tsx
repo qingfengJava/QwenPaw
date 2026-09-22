@@ -103,6 +103,14 @@ export default function TeamDetailModal({
                 : "协调者根据请求判断最匹配的成员专家，以该专家的专业视角完整作答；跨专业问题先给结论，再分成员视角补充。"}
             </p>
           </div>
+          <div className="expert-detail-section">
+            <h4>使用前须知</h4>
+            <p className="expert-detail-persona">
+              发起任务后，团队按计划分工协作：主理人负责理解需求与调度，成员各自完成
+              交付并由平台验收；触及返工上限、时限或预算会自动暂停并升级人工裁决，
+              需要你补充信息或批准时会在任务详情页提示。执行过程与产出在任务详情全程可查。
+            </p>
+          </div>
           {tasks.length > 0 && (
             <div className="expert-detail-section">
               <h4>任务示例</h4>

@@ -123,6 +123,8 @@ describe("RunDetail 状态机渲染", () => {
       makeRun({
         status: "escalated",
         escalation_reason: "节点 task-1 连续返工超限",
+        // 服务端授权投影（T2）：escalation 动作由 allowed_actions 声明
+        allowed_actions: ["escalation", "cancel"],
         nodes: [
           nodeRow({ status: "failed", verdict: "ESCALATE", repair_count: 3 }),
         ],
@@ -139,6 +141,38 @@ describe("RunDetail 状态机渲染", () => {
   it("interrupted：显示续跑入口", () => {
     renderPage(makeRun({ status: "interrupted", summary: "" }));
     expect(screen.getByText("续跑")).toBeTruthy();
+  });
+
+  it("paused：挂起说明 + 续跑入口（T5 协作挂起语义）", () => {
+    renderPage(
+      makeRun({
+        status: "paused",
+        summary: "",
+        allowed_actions: ["resume", "cancel"],
+      }),
+    );
+    expect(screen.getByText("任务已暂停")).toBeTruthy();
+    expect(screen.getByText("续跑")).toBeTruthy();
+  });
+
+  it("plan_approval：计划批准门按 allowed_actions 渲染（T3）", () => {
+    renderPage(
+      makeRun({
+        status: "awaiting_confirm",
+        summary: "",
+        allowed_actions: ["approve_plan", "clarify", "cancel"],
+        pending_decision: {
+          decision_id: "dec_1",
+          action: "approve_plan",
+          revision: 2,
+          summary: "三节点交付计划",
+        },
+      }),
+    );
+    expect(screen.getByText(/等待你批准/)).toBeTruthy();
+    expect(screen.getByText("批准计划")).toBeTruthy();
+    // 未批准时不显示澄清卡（等待语义由 waiting_reason 区分）
+    expect(screen.queryByText("提交答复")).toBeNull();
   });
 
   it("awaiting_confirm：澄清问答卡，未作答时提交禁用", () => {

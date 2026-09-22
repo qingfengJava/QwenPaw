@@ -566,7 +566,7 @@ def _patch_llm_seams(monkeypatch, plan, delegate_impl=None, verify_impl=None):
         return PlanOutcome(plan=plan, source="orchestration")
 
     async def fake_delegate(
-        expert_id, contract, repair=None, session_id=None, timeout=None
+        expert_id, contract, repair=None, session_id=None, timeout=None, envelope=None
     ):
         if delegate_impl is not None:
             return delegate_impl(expert_id, contract, repair)
@@ -727,7 +727,7 @@ async def test_engine_canceled_mid_run(enterprise_env, run_store, monkeypatch):
     delegate_started = asyncio.Event()
 
     async def slow_delegate(
-        expert_id, contract, repair=None, session_id=None, timeout=None
+        expert_id, contract, repair=None, session_id=None, timeout=None, envelope=None
     ):
         delegate_started.set()
         await asyncio.sleep(30)
@@ -1536,7 +1536,7 @@ async def test_cancel_awaits_terminal_and_resets_active_nodes(
     delegate_started = asyncio.Event()
 
     async def slow_delegate(
-        expert_id, contract, repair=None, session_id=None, timeout=None
+        expert_id, contract, repair=None, session_id=None, timeout=None, envelope=None
     ):
         delegate_started.set()
         await asyncio.sleep(30)
@@ -1722,3 +1722,121 @@ async def test_team_lessons_feedback_into_planning(
     # 教训进入规划上下文（含本次熔断归因）
     assert captured["team_lessons"]
     assert lesson_reason in captured["team_lessons"]
+
+
+# ---------------------------------------------------------------------------
+# T0 兼容接缝回归（成员角色往返 / 改派命中实际目标 / 终态取消保护）
+# 纯单元版本见 tests/unit/app/test_workforce_seams.py（规划回执与开关门）。
+# ---------------------------------------------------------------------------
+
+
+async def test_t0_member_role_survives_admin_roundtrip(enterprise_env):
+    """管理端创建/编辑团队后 lead 与成员角色不丢失（路由层透传修复）。"""
+    from qwenpaw.app.experts.models import (
+        ExpertTeamCreateBody,
+        ExpertTeamUpdateBody,
+        TeamMemberBody,
+    )
+    from qwenpaw.app.experts.store import get_expert_store
+    from qwenpaw.app.routers.admin.expert_teams import create_team, update_team
+
+    store = get_expert_store()
+    lead = await store.create_expert(name="T0主管", icon="L", description="")
+    member = await store.create_expert(name="T0成员", icon="M", description="")
+    # 创建：lead 角色 + 成员角色随请求体入存储
+    body = ExpertTeamCreateBody(
+        name="T0角色往返",
+        members=[
+            TeamMemberBody(expert_id=lead.id, member_role="lead", seq=0),
+            TeamMemberBody(expert_id=member.id, member_role="member", seq=1),
+        ],
+    )
+    created = await create_team(body)
+    roles = {m.expert_id: m.member_role for m in created.members}
+    assert roles[lead.id] == "lead"
+    assert roles[member.id] == "member"
+    # 编辑：成员清单整体替换后 lead 仍保留（此前被路由丢弃回 member）
+    body2 = ExpertTeamUpdateBody(
+        members=[
+            TeamMemberBody(expert_id=lead.id, member_role="lead", seq=0),
+            TeamMemberBody(expert_id=member.id, member_role="member", seq=1),
+        ],
+    )
+    updated = await update_team(created.id, body2)
+    roles2 = {m.expert_id: m.member_role for m in updated.members}
+    assert roles2[lead.id] == "lead"
+
+
+async def test_t0_reassignment_targets_node_row_expert(
+    enterprise_env, run_store, monkeypatch
+):
+    """移交/改派写入节点行后，引擎必须委派节点行执行者而非 plan 旧指派。"""
+    from qwenpaw.app.workforce import engine as engine_mod
+
+    team, lead, member = await _seed_team()
+    plan = _two_node_plan(lead.id, member.id)
+    _patch_llm_seams(monkeypatch, plan, delegate_impl=None)
+    # 委派记录器：捕获真实调用目标
+    delegated: list[str] = []
+
+    async def rec_delegate(expert_id, contract, repair=None, session_id=None, timeout=None, envelope=None):
+        delegated.append(expert_id)
+        return _ok_result(f"{expert_id} 完成"), session_id or "sess"
+
+    monkeypatch.setattr(engine_mod, "delegate", rec_delegate)
+    run = await run_store.create_run(
+        team_id=team.id, goal="设计登录页", initiator_id="alice"
+    )
+    await run_store.save_plan(run["id"], plan)
+    # 模拟移交：节点行改派给 lead（plan 内旧指派仍是 member）
+    await run_store.update_node(
+        run["id"],
+        "task-1",
+        assignee_expert_id=lead.id,
+        assignee_user_id="bob",
+        status="pending",
+    )
+    await engine_mod.run_team_run(run["id"])
+    assert delegated, "必须发生真实委派"
+    # 改派命中实际目标：委派给节点行执行者（lead），而非 plan 内旧指派 member
+    assert delegated[0] == lead.id
+    assert member.id not in delegated
+
+
+async def test_t0_cancel_terminal_run_keeps_history(
+    enterprise_env, run_store, monkeypatch
+):
+    """done/failed/escalated 终态 run 的取消请求不改写历史状态（幂等返回）。"""
+    from starlette.requests import Request as StarletteRequest
+
+    from qwenpaw.app.routers.xian import workforce as wf_router
+
+    team, lead, member = await _seed_team()
+    run = await run_store.create_run(
+        team_id=team.id, goal="G", initiator_id="alice"
+    )
+    # 已完成终态（历史事实）：summary 与状态分两步落库
+    await run_store.update_run(run["id"], summary="已交付")
+    await run_store.set_run_status(run["id"], "done")
+    # 直接以构造的 Request 调路由协程（发起人 alice 放行访问校验）
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": f"/runs/{run['id']}/cancel",
+        "headers": [],
+        "query_string": b"",
+        "state": {},
+    }
+    request = StarletteRequest(scope)
+    request.state.user = "alice"
+    result = await wf_router.cancel_run(run["id"], request, service=object())
+    # 幂等返回当前历史终态，而不是把它改写成 canceled
+    assert result == {"status": "done"}
+    assert (await run_store.get_run(run["id"]))["status"] == "done"
+    # 对照：非终态 run 仍可正常取消
+    run2 = await run_store.create_run(
+        team_id=team.id, goal="G2", initiator_id="alice"
+    )
+    result2 = await wf_router.cancel_run(run2["id"], request, service=object())
+    assert result2 == {"status": "canceled"}
+    assert (await run_store.get_run(run2["id"]))["status"] == "canceled"

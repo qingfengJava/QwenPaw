@@ -57,6 +57,7 @@ _RUN_UPDATABLE = {
     "escalation_reason",
     "source_chat_id",
     "project_id",
+    "active_seconds",
 }
 
 #: node 表可被 update_node 更新的字段白名单
@@ -308,6 +309,44 @@ class WorkforceRunStore:
             rows = result.mappings().all()
         return [dict(row) for row in rows]
 
+    async def list_node_states(self, run_id: str) -> List[Dict[str, Any]]:
+        """节点状态轻投影（T5；调度循环高频重读专用）。
+
+        仅取调度与预算判定所需列，**不含 contract/result JSON 大列**——
+        完成驱动调度下重读频率高于旧波次循环，避免反复反序列化
+        全量节点 JSON（协议8.5：避免循环读取全部节点 JSON）。
+        """
+        engine = require_enterprise_engine()
+        async with engine.begin() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT node_key, status, attempt, repair_count, "
+                    "token_cost, assignee_expert_id FROM team_run_nodes "
+                    "WHERE tenant_id = :tid AND run_id = :rid "
+                    "ORDER BY node_key"
+                ),
+                {"tid": current_tenant_id(), "rid": run_id},
+            )
+            rows = result.mappings().all()
+        return [dict(row) for row in rows]
+
+    async def sum_node_tokens(self, run_id: str) -> int:
+        """SQL 聚合 run 全部节点 token 消耗（预算检查的轻量口径）。
+
+        节点行 token_cost 为累计列：SUM 一次取回，替代逐节点
+        反序列化（协议8.5：预算增量汇总）。
+        """
+        engine = require_enterprise_engine()
+        async with engine.begin() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT COALESCE(SUM(token_cost), 0) FROM team_run_nodes "
+                    "WHERE tenant_id = :tid AND run_id = :rid"
+                ),
+                {"tid": current_tenant_id(), "rid": run_id},
+            )
+            return int(result.scalar_one() or 0)
+
     async def get_node(self, run_id: str, node_key: str) -> Optional[Dict[str, Any]]:
         """取单个节点行（不存在返回 None）。"""
         engine = require_enterprise_engine()
@@ -473,7 +512,16 @@ class WorkforceRunStore:
             project_id = run.get("project_id")
             if project_id:
                 await bus.publish(feed_topic(tid, project_id), event)
-            # PG 持久留痕（挂项目才写；feed_events.project_id NOT NULL）
+            # 持久事件（T2）：全部 run 有序留痕（team_run_events），无项目
+            # run 也可回放；先落库再投递项目 feed，Trace/总线故障不丢账本
+            await self._persist_run_event(
+                tid,
+                run["id"],
+                kind=kind,
+                actor=actor,
+                payload=payload or {},
+            )
+            # 项目 feed 留痕（挂项目才写；feed_events.project_id NOT NULL）
             if project_id:
                 engine = require_enterprise_engine()
                 async with engine.begin() as conn:
@@ -493,8 +541,307 @@ class WorkforceRunStore:
                         },
                     )
         except Exception:  # pragma: no cover - best-effort 事件通道
-            # 事件通道故障不阻塞编排（持久真相在 run/node 行）
+            # 事件通道故障不阻塞编排（持久真相在 run/node 行 + 事件表）
             logger.exception("workforce 事件发射失败 kind=%s", kind)
+
+    # ------------------------------------------------------------------
+    # 运行账本（T2）：修订 / 尝试 / 事件 / 预算预留
+    # ------------------------------------------------------------------
+
+    async def _persist_run_event(
+        self,
+        tenant_id: str,
+        run_id: str,
+        kind: str,
+        actor: str,
+        payload: Dict[str, Any],
+    ) -> int:
+        """写入一条持久事件（run 内 seq 单调；单事务取号+插入）。
+
+        取号子查询与 INSERT 复用同一组参数，asyncpg 会分别按列类型
+        （varchar）与比较符（text）推导出不一致类型——全部参数显式
+        ``::varchar`` 归一，避免 AmbiguousParameterError。
+        """
+        engine = require_enterprise_engine()
+        async with engine.begin() as conn:
+            result = await conn.execute(
+                text(
+                    "INSERT INTO team_run_events (tenant_id, run_id, seq, "
+                    "kind, actor, payload) VALUES "
+                    "(CAST(:tid AS VARCHAR), CAST(:run AS VARCHAR), "
+                    "(SELECT COALESCE(MAX(seq), 0) + 1 FROM team_run_events "
+                    "WHERE tenant_id = CAST(:tid AS VARCHAR) "
+                    "AND run_id = CAST(:run AS VARCHAR)), "
+                    "CAST(:kind AS VARCHAR), CAST(:actor AS VARCHAR), "
+                    "CAST(:payload AS JSONB)) "
+                    "RETURNING seq"
+                ),
+                {
+                    "tid": tenant_id,
+                    "run": run_id,
+                    "kind": kind,
+                    "actor": actor,
+                    "payload": _json_dumps(payload),
+                },
+            )
+            return int(result.scalar_one())
+
+    async def list_events(
+        self,
+        run_id: str,
+        after_seq: int = 0,
+        limit: int = 500,
+    ) -> List[Dict[str, Any]]:
+        """按序读取持久事件（回放/补读；after_seq 之后的增量）。"""
+        engine = require_enterprise_engine()
+        async with engine.begin() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT run_id, seq, kind, actor, payload, created_at "
+                    "FROM team_run_events WHERE tenant_id = :tid "
+                    "AND run_id = :run AND seq > :after "
+                    "ORDER BY seq ASC LIMIT :limit"
+                ),
+                {
+                    "tid": current_tenant_id(),
+                    "run": run_id,
+                    "after": after_seq,
+                    "limit": limit,
+                },
+            )
+            return [dict(row) for row in result.mappings().all()]
+
+    async def record_revision(
+        self,
+        run_id: str,
+        kind: str,
+        revision: int,
+        reason: str = "",
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """登记一条运行修订（requirement/plan/context；重规划不删历史）。"""
+        engine = require_enterprise_engine()
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO team_run_revisions (tenant_id, run_id, "
+                    "kind, revision, reason, payload) VALUES (:tid, :run, "
+                    ":kind, :rev, :reason, CAST(:payload AS JSONB)) "
+                    "ON CONFLICT DO NOTHING"
+                ),
+                {
+                    "tid": current_tenant_id(),
+                    "run": run_id,
+                    "kind": kind,
+                    "rev": revision,
+                    "reason": reason,
+                    "payload": _json_dumps(payload or {}),
+                },
+            )
+
+    async def list_revisions(
+        self,
+        run_id: str,
+        kind: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """读取修订记录（kind 可选过滤；revision 升序）。"""
+        engine = require_enterprise_engine()
+        conditions = ["tenant_id = :tid", "run_id = :run"]
+        params: Dict[str, Any] = {
+            "tid": current_tenant_id(),
+            "run": run_id,
+        }
+        if kind:
+            conditions.append("kind = :kind")
+            params["kind"] = kind
+        async with engine.begin() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT run_id, kind, revision, reason, payload, "
+                    "created_at FROM team_run_revisions WHERE "
+                    + " AND ".join(conditions)
+                    + " ORDER BY kind, revision"
+                ),
+                params,
+            )
+            return [dict(row) for row in result.mappings().all()]
+
+    async def record_attempt(
+        self,
+        run_id: str,
+        node_key: str,
+        attempt: int,
+        expert_id: str = "",
+        session_id: str = "",
+    ) -> str:
+        """登记执行尝试（先落库再启动成员；返回尝试标识）。"""
+        attempt_id = new_id("att")
+        engine = require_enterprise_engine()
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO team_run_attempts (tenant_id, id, run_id, "
+                    "node_key, attempt, expert_id, session_id) VALUES "
+                    "(:tid, :id, :run, :node, :attempt, :expert, :session)"
+                ),
+                {
+                    "tid": current_tenant_id(),
+                    "id": attempt_id,
+                    "run": run_id,
+                    "node": node_key,
+                    "attempt": attempt,
+                    "expert": expert_id,
+                    "session": session_id,
+                },
+            )
+        return attempt_id
+
+    async def finish_attempt(
+        self,
+        attempt_id: str,
+        status: str,
+        token_cost: int = 0,
+        usage_reported: bool = False,
+        error: str = "",
+        session_id: Optional[str] = None,
+    ) -> bool:
+        """关闭一次执行尝试（completed/failed；usage 未知明示）。"""
+        engine = require_enterprise_engine()
+        async with engine.begin() as conn:
+            result = await conn.execute(
+                text(
+                    "UPDATE team_run_attempts SET status = :status, "
+                    "token_cost = :cost, usage_reported = :reported, "
+                    "error = :error, "
+                    "session_id = COALESCE(:session, session_id) "
+                    "WHERE tenant_id = :tid AND id = :id"
+                ),
+                {
+                    "tid": current_tenant_id(),
+                    "id": attempt_id,
+                    "status": status,
+                    "cost": token_cost,
+                    "reported": usage_reported,
+                    "error": error,
+                    "session": session_id,
+                },
+            )
+        return bool(result.rowcount)
+
+    async def list_attempts(
+        self,
+        run_id: str,
+        node_key: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """读取执行尝试（节点可过滤；时间升序）。"""
+        engine = require_enterprise_engine()
+        conditions = ["tenant_id = :tid", "run_id = :run"]
+        params: Dict[str, Any] = {
+            "tid": current_tenant_id(),
+            "run": run_id,
+        }
+        if node_key:
+            conditions.append("node_key = :node")
+            params["node"] = node_key
+        async with engine.begin() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT id, run_id, node_key, attempt, expert_id, "
+                    "session_id, status, usage_reported, token_cost, "
+                    "error, created_at FROM team_run_attempts WHERE "
+                    + " AND ".join(conditions)
+                    + " ORDER BY created_at, id"
+                ),
+                params,
+            )
+            return [dict(row) for row in result.mappings().all()]
+
+    async def reserve_budget(
+        self,
+        run_id: str,
+        node_key: str,
+        tokens: int,
+        reason: str = "",
+    ) -> str:
+        """调用前预算预留（pending；返回预留标识供结算/释放）。"""
+        reservation_id = new_id("resv")
+        engine = require_enterprise_engine()
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO team_run_budget_reservations (tenant_id, "
+                    "id, run_id, node_key, reserved_tokens, reason) VALUES "
+                    "(:tid, :id, :run, :node, :tokens, :reason)"
+                ),
+                {
+                    "tid": current_tenant_id(),
+                    "id": reservation_id,
+                    "run": run_id,
+                    "node": node_key,
+                    "tokens": tokens,
+                    "reason": reason,
+                },
+            )
+        return reservation_id
+
+    async def settle_reservation(
+        self,
+        reservation_id: str,
+        used_tokens: int,
+    ) -> bool:
+        """按实际用量结算预留（usage 未知时按预留额全额占用）。"""
+        engine = require_enterprise_engine()
+        async with engine.begin() as conn:
+            result = await conn.execute(
+                text(
+                    "UPDATE team_run_budget_reservations SET status = "
+                    "'settled', used_tokens = :used WHERE tenant_id = :tid "
+                    "AND id = :id AND status = 'pending'"
+                ),
+                {
+                    "tid": current_tenant_id(),
+                    "id": reservation_id,
+                    "used": used_tokens,
+                },
+            )
+        return bool(result.rowcount)
+
+    async def release_reservation(self, reservation_id: str) -> bool:
+        """释放预留（取消/未发生调用；释放后不再占用预算）。"""
+        engine = require_enterprise_engine()
+        async with engine.begin() as conn:
+            result = await conn.execute(
+                text(
+                    "UPDATE team_run_budget_reservations SET status = "
+                    "'released', used_tokens = 0 WHERE tenant_id = :tid "
+                    "AND id = :id AND status = 'pending'"
+                ),
+                {
+                    "tid": current_tenant_id(),
+                    "id": reservation_id,
+                },
+            )
+        return bool(result.rowcount)
+
+    async def outstanding_tokens(self, run_id: str) -> int:
+        """run 未决预留额度（仅 pending；结算/释放后不再计入）。
+    
+        只统计 pending 状态的预留额：settled 的实际用量已体现在节点行
+        token_cost（由 run_total_tokens 聚合），released 从未消耗——两处
+        都不该重复入账。预算口径 = run_total_tokens + 本值（见
+        budget.run_budget_usage），预留即占额，防并发超售。
+        """
+        engine = require_enterprise_engine()
+        async with engine.begin() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT COALESCE(SUM(reserved_tokens), 0) "
+                    "FROM team_run_budget_reservations WHERE tenant_id = :tid "
+                    "AND run_id = :run AND status = 'pending'"
+                ),
+                {"tid": current_tenant_id(), "run": run_id},
+            )
+            return int(result.scalar_one() or 0)
 
     # ------------------------------------------------------------------
     # 启动恢复扫描（Checkpoint Protocol 的入口）

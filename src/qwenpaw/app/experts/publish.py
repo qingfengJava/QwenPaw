@@ -735,6 +735,15 @@ async def publish_expert_team(
     if not team.members:
         raise ValueError("an expert team needs at least one member")
 
+    # 发布预检（T1）：唯一 lead / 配置版本 / 模板 DAG / v2 有限预算。
+    # 规则唯一来源 team_config.validate_publishable_team，发布与
+    # POST /validate 预检同口径，不允许发布链绕过配置门。
+    from .team_config import validate_publishable_team
+
+    issues = validate_publishable_team(team, require_finite_budget=True)
+    if issues:
+        raise ValueError("团队发布预检未通过: " + "; ".join(issues))
+
     for member in team.members:
         expert = await store.get_expert(member.expert_id)
         if expert is None or expert.status != EXPERT_STATUS_PUBLISHED:
@@ -783,6 +792,22 @@ async def publish_expert_team(
         EXPERT_STATUS_PUBLISHED,
         bump_version=True,
     )
+    # 发布版本快照（T1）：以最终版本号固化成员职责与 orchestration，
+    # 供 GET /{team_id}/versions 审计与后续运行版本核对
+    if updated is not None:
+        snapshot_spec = {
+            "name": updated.name,
+            "description": updated.description,
+            "mode": updated.mode,
+            "members": [m.model_dump() for m in updated.members],
+            "orchestration": updated.orchestration,
+        }
+        await store.record_team_version(
+            team_id,
+            updated.version,
+            snapshot_spec,
+            published_by=published_by,
+        )
     if manager is not None:
         try:
             await manager.reload_agent(agent_id)
