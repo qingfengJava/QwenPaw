@@ -7,16 +7,16 @@ ARG UV_IMAGE=agentscope-registry.ap-southeast-1.cr.aliyuncs.com/agentscope/uv:la
 # -----------------------------------------------------------------------------
 FROM ${NODE_IMAGE} AS console-builder
 WORKDIR /app
-COPY console /app/console
-RUN cd /app/console && npm ci --include=dev && npm run build
+COPY staffos-console /app/staffos-console
+RUN cd /app/staffos-console && npm ci --include=dev && npm run build
 
 # -----------------------------------------------------------------------------
-# Stage 1b: build the XianWork user SPA (served under /xianwork).
+# Stage 1b: build the StaffOS portal SPA (served under /xianwork).
 # -----------------------------------------------------------------------------
-FROM ${NODE_IMAGE} AS xianwork-builder
+FROM ${NODE_IMAGE} AS portal-builder
 WORKDIR /app
-COPY xianwork /app/xianwork
-RUN cd /app/xianwork && npm ci --include=dev && npm run build
+COPY staffos-portal /app/staffos-portal
+RUN cd /app/staffos-portal && npm ci --include=dev && npm run build
 
 # Alias for uv binary so COPY --from can reference a build-arg image.
 FROM ${UV_IMAGE} AS uv-src
@@ -102,14 +102,14 @@ WORKDIR ${WORKSPACE_DIR}
 RUN python3 -m venv venv
 ENV PATH="/app/venv/bin:$PATH"
 
-COPY pyproject.toml setup.py README.md ./
-COPY src ./src
-COPY packages/qwenpawmail-mcp/src/qwenpawmail_mcp ./packages/qwenpawmail-mcp/src/qwenpawmail_mcp
-COPY website/public/docs/ ./src/qwenpaw/docs/
+COPY staffos-server/pyproject.toml staffos-server/setup.py README.md ./
+COPY staffos-server/src ./src
+COPY staffos-server/packages/qwenpawmail-mcp/src/qwenpawmail_mcp ./packages/qwenpawmail-mcp/src/qwenpawmail_mcp
+COPY staffos-website/public/docs/ ./src/qwenpaw/docs/
 # Inject console dist from build stage (repo does not commit dist).
-COPY --from=console-builder /app/console/dist/ ./src/qwenpaw/console/
-# Inject the XianWork SPA dist (served under /xianwork by qwenpaw.app._app).
-COPY --from=xianwork-builder /app/xianwork/dist/ ./src/qwenpaw/xianwork/
+COPY --from=console-builder /app/staffos-console/dist/ ./src/qwenpaw/console/
+# Inject the portal SPA dist (served under /xianwork by qwenpaw.app._app).
+COPY --from=portal-builder /app/staffos-portal/dist/ ./src/qwenpaw/xianwork/
 # Speed up Python package installation with uv.
 COPY --from=uv-src /uv /bin/uv
 # Pin setuptools <82: lark-oapi still calls pkg_resources.declare_namespace

@@ -1,16 +1,16 @@
-name: Tests
+﻿name: Tests
 
 on:
   push:
     branches: [main, master, dev, develop]
     paths:
-      - 'src/**'
-      - 'tests/**'
-      - 'scripts/check-channels.sh'
-      - 'scripts/check_channel_contracts.py'
+      - 'staffos-server/src/**'
+      - 'staffos-server/tests/**'
+      - 'staffos-server/scripts/check-channels.sh'
+      - 'staffos-server/scripts/check_channel_contracts.py'
       - '.gitattributes'
-      - 'pyproject.toml'
-      - 'setup.py'
+      - 'staffos-server/pyproject.toml'
+      - 'staffos-server/setup.py'
       - 'deploy/Dockerfile'
       - '.github/workflows/tests.yml'
   pull_request:
@@ -63,13 +63,13 @@ jobs:
         with:
           filters: |
             code:
-              - 'src/**'
-              - 'tests/**'
-              - 'scripts/check-channels.sh'
-              - 'scripts/check_channel_contracts.py'
+              - 'staffos-server/src/**'
+              - 'staffos-server/tests/**'
+              - 'staffos-server/scripts/check-channels.sh'
+              - 'staffos-server/scripts/check_channel_contracts.py'
               - '.gitattributes'
-              - 'pyproject.toml'
-              - 'setup.py'
+              - 'staffos-server/pyproject.toml'
+              - 'staffos-server/setup.py'
               - '.github/workflows/tests.yml'
 
   approval-gate:
@@ -125,21 +125,21 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: console/package-lock.json
+          cache-dependency-path: staffos-console/package-lock.json
 
       - name: Build console frontend
         shell: bash
         env:
           NODE_OPTIONS: "--max-old-space-size=8192"
         run: |
-          cd console && npm ci && npm run build
+          cd staffos-console && npm ci && npm run build
 
       - name: Copy console build into package
         shell: bash
         run: |
-          rm -rf src/qwenpaw/console/*
-          mkdir -p src/qwenpaw/console
-          cp -R console/dist/* src/qwenpaw/console/
+          rm -rf staffos-server/src/qwenpaw/console/*
+          mkdir -p staffos-server/src/qwenpaw/console
+          cp -R staffos-console/dist/* staffos-server/src/qwenpaw/console/
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -149,12 +149,14 @@ jobs:
 
       - name: Install dependencies
         shell: bash
+        working-directory: staffos-server
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev,test,full]"
 
       - name: Run unit tests
         shell: bash
+        working-directory: staffos-server
         env:
           COVERAGE_FILE: .coverage.unit
         run: |
@@ -173,6 +175,7 @@ jobs:
       - name: Run Hub Local runtime E2E
         if: matrix.python-version == '3.11'
         shell: bash
+        working-directory: staffos-server
         env:
           QWENPAW_LOCAL_RUNTIME_E2E: '1'
         run: |
@@ -187,8 +190,8 @@ jobs:
         with:
           name: coverage-data-unit
           path: |
-            .coverage.unit
-            coverage.unit.xml
+            staffos-server/.coverage.unit
+            staffos-server/coverage.unit.xml
           retention-days: 1
           include-hidden-files: true
 
@@ -218,21 +221,21 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: console/package-lock.json
+          cache-dependency-path: staffos-console/package-lock.json
 
       - name: Build console frontend
         shell: bash
         env:
           NODE_OPTIONS: "--max-old-space-size=8192"
         run: |
-          cd console && npm ci && npm run build
+          cd staffos-console && npm ci && npm run build
 
       - name: Copy console build into package
         shell: bash
         run: |
-          rm -rf src/qwenpaw/console/*
-          mkdir -p src/qwenpaw/console
-          cp -R console/dist/* src/qwenpaw/console/
+          rm -rf staffos-server/src/qwenpaw/console/*
+          mkdir -p staffos-server/src/qwenpaw/console
+          cp -R staffos-console/dist/* staffos-server/src/qwenpaw/console/
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -242,19 +245,21 @@ jobs:
 
       - name: Install dependencies
         shell: bash
+        working-directory: staffos-server
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev,test,full]"
 
       - name: Check channel contract coverage
-        run: python scripts/check_channel_contracts.py
+        run: python staffos-server/scripts/check_channel_contracts.py
 
       - name: Validate channel check script
         shell: bash
-        run: bash -n scripts/check-channels.sh
+        run: bash -n staffos-server/scripts/check-channels.sh
 
       - name: Run contract tests
         shell: bash
+        working-directory: staffos-server
         env:
           COVERAGE_FILE: .coverage.contract
         run: |
@@ -277,8 +282,8 @@ jobs:
         with:
           name: coverage-data-contract
           path: |
-            .coverage.contract
-            coverage.contract.xml
+            staffos-server/.coverage.contract
+            staffos-server/coverage.contract.xml
           retention-days: 1
           include-hidden-files: true
 
@@ -335,21 +340,21 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: console/package-lock.json
+          cache-dependency-path: staffos-console/package-lock.json
 
       - name: Build console frontend
         shell: bash
         env:
           NODE_OPTIONS: "--max-old-space-size=8192"
         run: |
-          cd console && npm ci && npm run build
+          cd staffos-console && npm ci && npm run build
 
       - name: Copy console build into package
         shell: bash
         run: |
-          rm -rf src/qwenpaw/console/*
-          mkdir -p src/qwenpaw/console
-          cp -R console/dist/* src/qwenpaw/console/
+          rm -rf staffos-server/src/qwenpaw/console/*
+          mkdir -p staffos-server/src/qwenpaw/console
+          cp -R staffos-console/dist/* staffos-server/src/qwenpaw/console/
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -359,6 +364,7 @@ jobs:
 
       - name: Install dependencies
         shell: bash
+        working-directory: staffos-server
         run: |
           python -m pip install --upgrade pip
           # The macOS runner ships setuptools 65.5.0, which pip's resolver
@@ -389,6 +395,7 @@ jobs:
       - name: Check if integrated tests exist
         id: check-integrated
         shell: bash
+        working-directory: staffos-server
         run: |
           if [ -d "tests/integration" ] && compgen -G "tests/integration/*.py" > /dev/null; then
             echo "has_tests=true" >> "$GITHUB_OUTPUT"
@@ -431,6 +438,7 @@ jobs:
           matrix.os == 'ubuntu-latest' &&
           matrix.python-version == '3.11'
         shell: bash
+        working-directory: staffos-server
         run: |
           # Guard: every integration test must carry a priority marker.
           # If the fallback shard collects anything, a new unclassified
@@ -450,6 +458,7 @@ jobs:
       - name: Run integrated tests
         if: steps.check-integrated.outputs.has_tests == 'true'
         shell: bash
+        working-directory: staffos-server
         env:
           # Subprocess coverage on the ubuntu/py3.11 entry only. conftest.py
           # treats empty / missing as off, so the other matrix entries do
@@ -505,8 +514,8 @@ jobs:
         with:
           name: coverage-data-integration-${{ matrix.shard }}
           path: |
-            .coverage.integration.${{ matrix.shard }}
-            coverage.integration.${{ matrix.shard }}.xml
+            staffos-server/.coverage.integration.${{ matrix.shard }}
+            staffos-server/coverage.integration.${{ matrix.shard }}.xml
           retention-days: 1
           include-hidden-files: true
           # The fallback shard produces no data file when every

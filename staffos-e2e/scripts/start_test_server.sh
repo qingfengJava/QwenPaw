@@ -74,6 +74,7 @@ elif command -v qwenpaw &>/dev/null; then
 else
   # Search common venv locations
   for candidate in \
+    "$REPO_ROOT/../staffos-server/.venv/bin/python" \
     "$REPO_ROOT/.venv/bin/python" \
     "$REPO_ROOT/../.venv/bin/python" \
     "$HOME/qwenpaw_space/.venv/bin/python" \

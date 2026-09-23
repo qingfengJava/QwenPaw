@@ -6,7 +6,7 @@ REM 一键重启 QwenPaw 后端：让项目根目录 .env（QWENPAW_STORAGE_BACK
 REM 请在自己的终端/资源管理器中运行（不要在 IDE 沙箱里跑，沙箱无权限杀旧进程）。
 
 REM 无论从哪里调用，都先切到项目根目录
-cd /d "%~dp0.."
+cd /d "%~dp0..\staffos-server"
 
 echo [1/3] 查找并终止 8188 / 8189 端口上的旧后端进程 ...
 

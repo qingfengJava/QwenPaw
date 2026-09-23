@@ -1,5 +1,5 @@
-# Publish Python package to PyPI when a release is created.
-# Build includes console frontend (see scripts/wheel_build.sh).
+﻿# Publish Python package to PyPI when a release is created.
+# Build includes console frontend (see staffos-server/scripts/wheel_build.sh).
 # Manual trigger: can optionally force push to PyPI or just upload artifacts.
 # Release trigger: publishes to PyPI.
 #
@@ -42,23 +42,23 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
-          cache-dependency-path: console/package-lock.json
+          cache-dependency-path: staffos-console/package-lock.json
 
       - name: Build console frontend
         run: |
-          cd console && npm ci && npm run build
+          cd staffos-console && npm ci && npm run build
 
       - name: Copy console build into package
         run: |
-          rm -rf src/qwenpaw/console/*
-          mkdir -p src/qwenpaw/console
-          cp -R console/dist/* src/qwenpaw/console/
+          rm -rf staffos-server/src/qwenpaw/console/*
+          mkdir -p staffos-server/src/qwenpaw/console
+          cp -R staffos-console/dist/* staffos-server/src/qwenpaw/console/
 
       - name: Bundle docs into package
         run: |
-          rm -rf src/qwenpaw/docs
-          mkdir -p src/qwenpaw/docs
-          cp website/public/docs/*.md src/qwenpaw/docs/
+          rm -rf staffos-server/src/qwenpaw/docs
+          mkdir -p staffos-server/src/qwenpaw/docs
+          cp staffos-website/public/docs/*.md staffos-server/src/qwenpaw/docs/
 
       - name: Install build dependencies
         run: |
@@ -66,20 +66,21 @@ jobs:
           pip install setuptools wheel build
 
       - name: Build package
+        working-directory: staffos-server
         run: python -m build
 
       - name: Upload dist artifacts
         uses: actions/upload-artifact@v4
         with:
           name: qwenpaw-dist
-          path: dist/
+          path: staffos-server/dist/
           retention-days: 30
 
       - name: Upload version metadata
         uses: actions/upload-artifact@v4
         with:
           name: qwenpaw-version
-          path: src/qwenpaw/__version__.py
+          path: staffos-server/src/qwenpaw/__version__.py
           retention-days: 30
 
   # ── Stage 2: Verify installation ───────────────────────────────────────────

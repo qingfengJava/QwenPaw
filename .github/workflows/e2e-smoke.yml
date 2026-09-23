@@ -1,4 +1,4 @@
-name: E2E Smoke Tests
+﻿name: E2E Smoke Tests
 
 on:
   pull_request:
@@ -8,14 +8,14 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     branches: [main, master, dev, develop]
     paths:
-      - 'console/**'
-      - 'e2e/**'
+      - 'staffos-console/**'
+      - 'staffos-e2e/**'
       - '.github/workflows/e2e-smoke.yml'
   push:
     branches: [main, master, dev, develop]
     paths:
-      - 'console/**'
-      - 'e2e/**'
+      - 'staffos-console/**'
+      - 'staffos-e2e/**'
       - '.github/workflows/e2e-smoke.yml'
 
 jobs:
@@ -37,14 +37,14 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: console/package-lock.json
+          cache-dependency-path: staffos-console/package-lock.json
 
       - name: Install frontend dependencies
-        working-directory: console
+        working-directory: staffos-console
         run: npm ci
 
       - name: Start frontend dev server
-        working-directory: console
+        working-directory: staffos-console
         run: |
           npm run dev &
           # Wait for dev server to be ready
@@ -63,13 +63,13 @@ jobs:
             ${{ runner.os }}-pip-e2e-
 
       - name: Install E2E dependencies
-        working-directory: e2e
+        working-directory: staffos-e2e
         run: |
           pip install -r requirements.txt
           playwright install chromium --with-deps
 
       - name: Run UI smoke tests
-        working-directory: e2e
+        working-directory: staffos-e2e
         env:
           QWENPAW_BASE_URL: http://localhost:5173
           QWENPAW_HEADLESS: 'true'

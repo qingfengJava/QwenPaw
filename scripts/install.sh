@@ -163,8 +163,8 @@ _CONSOLE_COPIED=0
 _CONSOLE_AVAILABLE=0
 prepare_console() {
     local repo_dir="$1"
-    local console_src="$repo_dir/console/dist"
-    local console_dest="$repo_dir/src/qwenpaw/console"
+    local console_src="$repo_dir/staffos-console/dist"
+    local console_dest="$repo_dir/staffos-server/src/qwenpaw/console"
 
     # Already populated
     if [ -f "$console_dest/index.html" ]; then
@@ -183,7 +183,7 @@ prepare_console() {
     fi
 
     # Try to build if npm is available
-    if [ ! -f "$repo_dir/console/package.json" ]; then
+    if [ ! -f "$repo_dir/staffos-console/package.json" ]; then
         warn "Console source not found — the web UI won't be available."
         return
     fi
@@ -191,12 +191,12 @@ prepare_console() {
     if ! command -v npm &>/dev/null; then
         warn "npm not found — skipping console frontend build."
         warn "Install Node.js from https://nodejs.org/ then re-run this installer,"
-        warn "or run 'cd console && npm ci && npm run build' manually."
+        warn "or run 'cd staffos-console && npm ci && npm run build' manually."
         return
     fi
 
     info "Building console frontend (npm ci && npm run build)..."
-    (cd "$repo_dir/console" && npm ci && npm run build)
+    (cd "$repo_dir/staffos-console" && npm ci && npm run build)
     if [ -f "$console_src/index.html" ]; then
         mkdir -p "$console_dest"
         cp -R "$console_src/"* "$console_dest/"
@@ -213,7 +213,7 @@ prepare_console() {
 cleanup_console() {
     local repo_dir="$1"
     if [ "$_CONSOLE_COPIED" = 1 ]; then
-        rm -rf "$repo_dir/src/qwenpaw/console/"*
+        rm -rf "$repo_dir/staffos-server/src/qwenpaw/console/"*
     fi
 }
 
@@ -221,8 +221,8 @@ cleanup_console() {
 _DOCS_COPIED=0
 prepare_docs() {
     local repo_dir="$1"
-    local docs_src="$repo_dir/website/public/docs"
-    local docs_dest="$repo_dir/src/qwenpaw/docs"
+    local docs_src="$repo_dir/staffos-website/public/docs"
+    local docs_dest="$repo_dir/staffos-server/src/qwenpaw/docs"
 
     if [ -d "$docs_dest" ] && ls "$docs_dest"/*.md >/dev/null 2>&1; then
         return
@@ -238,7 +238,7 @@ prepare_docs() {
 cleanup_docs() {
     local repo_dir="$1"
     if [ "$_DOCS_COPIED" = 1 ]; then
-        rm -rf "$repo_dir/src/qwenpaw/docs"
+        rm -rf "$repo_dir/staffos-server/src/qwenpaw/docs"
     fi
 }
 

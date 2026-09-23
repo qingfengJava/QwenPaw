@@ -12,7 +12,8 @@ import importlib.util
 import json
 from pathlib import Path
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+# 仓库根：pack/[0] → unit/[1] → tests/[2] → staffos-server/[3] → 仓库根/[4]
+REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 SCRIPT_FILE = (
     REPOSITORY_ROOT / "scripts" / "pack" / "generate_plugin_metadata.py"
 )

@@ -1,4 +1,4 @@
-name: Real behavior proof
+﻿name: Real behavior proof
 
 # Check that PRs from external contributors include a real problem
 # description and validation evidence in the PR body.  Maintainer and
@@ -41,7 +41,7 @@ jobs:
       - name: Check real behavior proof
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: python scripts/github/real_behavior_proof_check.py
+        run: python staffos-server/scripts/github/real_behavior_proof_check.py
 
       - name: Add needs-context label on failure
         # Fork PRs do not have permission to write labels on the target

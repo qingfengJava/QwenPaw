@@ -30,20 +30,20 @@ pytest.ini
 .eslintrc
 .stylelintrc
 
-# Frontend: exclude build artifacts; ship pre-built src/console/dist in image
-website
-!website/
-!website/public/
-!website/public/docs/
-!website/public/docs/**
-console/node_modules
-console/dist
-console/.vite
+# Frontend: exclude build artifacts; ship pre-built src/console/dist in image   
+staffos-website
+!staffos-website/
+!staffos-website/public/
+!staffos-website/public/docs/
+!staffos-website/public/docs/**
+staffos-console/node_modules
+staffos-console/dist
+staffos-console/.vite
 node_modules
 **/node_modules
 **/dist
-!src/qwenpaw/console/dist
-!src/qwenpaw/console/dist/**
+!staffos-server/src/qwenpaw/console/dist
+!staffos-server/src/qwenpaw/console/dist/**
 **/.vite
 
 # Example and local config (mount at runtime instead)

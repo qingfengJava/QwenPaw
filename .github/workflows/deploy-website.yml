@@ -1,4 +1,4 @@
-# Deploy website to GitHub Pages (see scripts/website_build.sh).
+﻿# Deploy website to GitHub Pages (see scripts/website_build.sh).
 # Custom domain: qwenpaw.agentscope.io (CNAME).
 name: Deploy website to GitHub Pages
 
@@ -49,14 +49,14 @@ jobs:
         with:
           node-version: "22"
           cache: "pnpm"
-          cache-dependency-path: website/pnpm-lock.yaml
+          cache-dependency-path: staffos-website/pnpm-lock.yaml
 
       - name: Install dependencies
-        working-directory: website
+        working-directory: staffos-website
         run: pnpm install --frozen-lockfile
 
       - name: Build
-        working-directory: website
+        working-directory: staffos-website
         env:
           VITE_BASE_PATH: "/"
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
@@ -131,7 +131,7 @@ jobs:
               sys.exit(0)
 
           contributors.sort(key=lambda x: x["login"].lower())
-          with open("website/dist/contributors_data.json", "w") as f:
+          with open("staffos-website/dist/contributors_data.json", "w") as f:
               json.dump(contributors, f, indent=2)
           print(f"Generated contributors_data.json ({len(contributors)} contributors)")
           PYEOF
@@ -140,21 +140,21 @@ jobs:
       # (e.g. qwenpaw.agentscope.io/install.sh) instead of raw.githubusercontent.com,
       # which may be blocked by some firewalls.
       - name: Copy installation scripts to dist
-        run: cp scripts/install.sh scripts/install.ps1 scripts/install.bat website/dist/
+        run: cp scripts/install.sh scripts/install.ps1 scripts/install.bat staffos-website/dist/
 
       # 404.html fallback for unknown paths (real routes from build script).
       - name: 404 fallback for GitHub Pages
-        run: cp website/dist/index.html website/dist/404.html
+        run: cp staffos-website/dist/index.html staffos-website/dist/404.html
 
       - name: Deploy to GitHub Pages
         if: ${{ !inputs.dry_run }}
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: website/dist
+          publish_dir: staffos-website/dist
           cname: qwenpaw.agentscope.io
 
       - name: Dry-run notice
         if: ${{ inputs.dry_run }}
         run: |
-          echo "DRY-RUN: would deploy website/dist to GitHub Pages (cname qwenpaw.agentscope.io)"
+          echo "DRY-RUN: would deploy staffos-website/dist to GitHub Pages (cname qwenpaw.agentscope.io)"

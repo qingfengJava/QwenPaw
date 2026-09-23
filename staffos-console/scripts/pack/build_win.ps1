@@ -2,7 +2,9 @@
 # Requires: conda, node/npm (for console), NSIS (makensis) on PATH.
 
 $ErrorActionPreference = "Stop"
-$RepoRoot = (Get-Item $PSScriptRoot).Parent.Parent.FullName
+$ConsoleRoot = (Get-Item $PSScriptRoot).Parent.Parent.FullName
+$RepoRoot = (Get-Item $ConsoleRoot).Parent.FullName
+$ServerRoot = Join-Path $RepoRoot "staffos-server"
 Set-Location $RepoRoot
 Write-Host "[build_win] REPO_ROOT=$RepoRoot"
 $PackDir = $PSScriptRoot
@@ -25,7 +27,7 @@ New-Item -ItemType Directory -Force -Path $Dist | Out-Null
 
 Write-Host "== Building wheel (includes console frontend) =="
 # Skip wheel_build if dist already has a wheel for current version
-$VersionFile = Join-Path $RepoRoot "src\qwenpaw\__version__.py"
+$VersionFile = Join-Path $ServerRoot "src\qwenpaw\__version__.py"
 $CurrentVersion = ""
 if (Test-Path $VersionFile) {
   $m = (Get-Content $VersionFile -Raw) -match '__version__\s*=\s*"([^"]+)"'
@@ -48,7 +50,7 @@ if ($CurrentVersion) {
   }
 }
 if ($RunWheelBuild) {
-  $WheelBuildScript = Join-Path $RepoRoot "scripts\wheel_build.ps1"
+  $WheelBuildScript = Join-Path $ServerRoot "scripts\wheel_build.ps1"
   if (-not (Test-Path $WheelBuildScript)) {
     throw "wheel_build.ps1 not found: $WheelBuildScript"
   }

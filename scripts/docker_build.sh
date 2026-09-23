@@ -21,9 +21,9 @@ shift || true
 DISABLED_CHANNELS="${QWENPAW_DISABLED_CHANNELS:-imessage}"
 QWENPAW_VERSION=$(sed -n \
     's/^__version__[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' \
-    src/qwenpaw/__version__.py)
+    staffos-server/src/qwenpaw/__version__.py)
 if [ -z "$QWENPAW_VERSION" ]; then
-    echo "[docker_build] Failed to read src/qwenpaw/__version__.py" >&2
+    echo "[docker_build] Failed to read staffos-server/src/qwenpaw/__version__.py" >&2
     exit 1
 fi
 

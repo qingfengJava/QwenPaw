@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-LOCALES_DIR = Path(__file__).resolve().parent.parent / "console" / "src" / "locales"
+LOCALES_DIR = Path(__file__).resolve().parent.parent / "src" / "locales"
 
 # 键 → (zh, en, ja, ru, vi, id, pt-BR)
 KB_KEYS: dict[str, tuple[str, ...]] = {

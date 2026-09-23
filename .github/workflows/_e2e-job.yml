@@ -1,4 +1,4 @@
-# Reusable E2E Playwright job.
+﻿# Reusable E2E Playwright job.
 # Called by e2e-integration.yml (manual dispatch) and
 # full-tests-nightly.yml (nightly four-tier coverage pipeline).
 name: E2E Playwright Job
@@ -41,21 +41,21 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: console/package-lock.json
+          cache-dependency-path: staffos-console/package-lock.json
 
       - name: Build console frontend
         shell: bash
         env:
           NODE_OPTIONS: "--max-old-space-size=8192"
         run: |
-          cd console && npm ci && npm run build
+          cd staffos-console && npm ci && npm run build
 
       - name: Copy console build into package
         shell: bash
         run: |
-          rm -rf src/qwenpaw/console/*
-          mkdir -p src/qwenpaw/console
-          cp -R console/dist/* src/qwenpaw/console/
+          rm -rf staffos-server/src/qwenpaw/console/*
+          mkdir -p staffos-server/src/qwenpaw/console
+          cp -R staffos-console/dist/* staffos-server/src/qwenpaw/console/
 
       # ---- Install Python dependencies ----
       - name: Set up Python 3.11
@@ -66,10 +66,11 @@ jobs:
 
       - name: Install backend + E2E dependencies
         shell: bash
+        working-directory: staffos-server
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
-          pip install -r e2e/requirements.txt
+          pip install -r ../staffos-e2e/requirements.txt
           playwright install chromium --with-deps
 
       # ---- Prepare coverage ----
@@ -77,7 +78,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p .e2e_coverage
-          SRC_ABS=$(cd src/qwenpaw && pwd)
+          SRC_ABS=$(cd staffos-server/src/qwenpaw && pwd)
           {
             echo "[run]"
             echo "parallel = true"
@@ -134,7 +135,7 @@ jobs:
       # ---- Run E2E tests ----
       - name: Run E2E tests
         shell: bash
-        working-directory: e2e
+        working-directory: staffos-e2e
         run: |
           pytest tests/ -m "${{ inputs.test_marker }}" -v --tb=short --reruns=1 --reruns-delay=3
 

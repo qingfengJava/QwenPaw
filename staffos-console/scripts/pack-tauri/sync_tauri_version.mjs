@@ -6,15 +6,19 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(scriptDir, "../..");
-const versionFile = path.join(repoRoot, "src/qwenpaw/__version__.py");
+const projectRoot = path.resolve(scriptDir, "../..");
+const serverRoot = path.resolve(projectRoot, "..", "staffos-server");
+const versionFile = path.join(
+  serverRoot,
+  "src/qwenpaw/__version__.py",
+);
 const tauriConfigFile = path.join(
-  repoRoot,
-  "console/src-tauri/tauri.conf.json",
+  projectRoot,
+  "src-tauri/tauri.conf.json",
 );
 const tauriVersionConfigFile = path.join(
-  repoRoot,
-  "console/src-tauri/tauri.version.conf.json",
+  projectRoot,
+  "src-tauri/tauri.version.conf.json",
 );
 
 function readPythonVersion() {

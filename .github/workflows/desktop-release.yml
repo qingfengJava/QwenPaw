@@ -1,4 +1,4 @@
-# Build QwenPaw Desktop:
+﻿# Build QwenPaw Desktop:
 # - Legacy desktop: Windows (conda-pack + NSIS), macOS (conda-pack -> .app)
 # - Tauri desktop: Windows/macOS app bundles with PyInstaller backend sidecar
 # Runs on release publish and manual dispatch.
@@ -68,7 +68,7 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
-          cache-dependency-path: console/package-lock.json
+          cache-dependency-path: staffos-console/package-lock.json
 
       - name: Set up Miniconda
         uses: conda-incubator/setup-miniconda@v3
@@ -92,7 +92,7 @@ jobs:
 
       - name: Build Windows installer
         shell: pwsh
-        run: conda run -n qwenpaw-build pwsh -File ./scripts/pack/build_win.ps1
+        run: conda run -n qwenpaw-build pwsh -File ./staffos-console/scripts/pack/build_win.ps1
 
       - name: List dist (on failure)
         if: failure()
@@ -131,7 +131,7 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
-          cache-dependency-path: console/package-lock.json
+          cache-dependency-path: staffos-console/package-lock.json
 
       - name: Set up Miniconda
         uses: conda-incubator/setup-miniconda@v3
@@ -149,8 +149,8 @@ jobs:
         env:
           NODE_OPTIONS: "--max-old-space-size=8192"
         run: |
-          chmod +x scripts/pack/build_macos.sh
-          conda run -n qwenpaw-build bash -c 'CREATE_ZIP=1 ./scripts/pack/build_macos.sh'
+          chmod +x staffos-console/scripts/pack/build_macos.sh
+          conda run -n qwenpaw-build bash -c 'CREATE_ZIP=1 ./staffos-console/scripts/pack/build_macos.sh'
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
@@ -192,7 +192,7 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
-          cache-dependency-path: console/package-lock.json
+          cache-dependency-path: staffos-console/package-lock.json
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -200,7 +200,7 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: console/src-tauri
+          workspaces: staffos-staffos-console/src-tauri
 
       - name: Install NSIS
         uses: negrutiu/nsis-install@v2
@@ -223,7 +223,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           TAURI_UPDATER_PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
           TAURI_UPDATER_ENDPOINTS: ${{ vars.TAURI_UPDATER_ENDPOINTS }}
-        run: ./scripts/pack-tauri/build_win_pyinstaller.ps1
+        run: ./staffos-console/scripts/pack-tauri/build_win_pyinstaller.ps1
 
       - name: Stage Tauri Windows installer and updater assets
         shell: pwsh
@@ -233,7 +233,7 @@ jobs:
           $output = "dist/QwenPaw-Tauri-${{ steps.version.outputs.version }}-Windows-setup.exe"
           if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
             $installer = Get-ChildItem `
-              "console/src-tauri/target/release/bundle/nsis/*-setup.exe" |
+              "staffos-staffos-console/src-tauri/target/release/bundle/nsis/*-setup.exe" |
               Select-Object -First 1
             if (-not $installer) {
               throw "No Tauri Windows installer found"
@@ -242,12 +242,12 @@ jobs:
             Write-Host "Staged installer without updater metadata: $output"
             exit 0
           }
-          python scripts/pack-tauri/generate_update_manifest.py stage `
-            --bundle-dir console/src-tauri/target/release/bundle/nsis `
+          python staffos-console/scripts/pack-tauri/generate_update_manifest.py stage `
+            --bundle-dir staffos-staffos-console/src-tauri/target/release/bundle/nsis `
             --pattern '*-setup.exe' `
             --target windows-x86_64 `
             --output $output `
-            --pubkey-config console/src-tauri/tauri.version.conf.json
+            --pubkey-config staffos-staffos-console/src-tauri/tauri.version.conf.json
 
       - name: Verify desktop (Tauri Windows)
         timeout-minutes: 10
@@ -348,7 +348,7 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
-          cache-dependency-path: console/package-lock.json
+          cache-dependency-path: staffos-console/package-lock.json
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -356,7 +356,7 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: console/src-tauri
+          workspaces: staffos-staffos-console/src-tauri
 
       - name: Clean dist directory
         run: rm -rf dist && mkdir -p dist
@@ -372,8 +372,8 @@ jobs:
           TAURI_UPDATER_PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
           TAURI_UPDATER_ENDPOINTS: ${{ vars.TAURI_UPDATER_ENDPOINTS }}
         run: |
-          chmod +x scripts/pack-tauri/build_macos_pyinstaller.sh
-          bash scripts/pack-tauri/build_macos_pyinstaller.sh
+          chmod +x staffos-console/scripts/pack-tauri/build_macos_pyinstaller.sh
+          bash staffos-console/scripts/pack-tauri/build_macos_pyinstaller.sh
 
       - name: Verify desktop (Tauri macOS)
         timeout-minutes: 10
@@ -716,7 +716,7 @@ jobs:
             exit 0
           fi
           NOTES="${RELEASE_BODY:-QwenPaw Desktop ${VERSION}}"
-          python scripts/pack-tauri/generate_update_manifest.py manifest \
+          python staffos-console/scripts/pack-tauri/generate_update_manifest.py manifest \
             --version "$VERSION" \
             --base-url "$OSS_BASE" \
             --target-base "windows-x86_64=${OSS_BASE}/win-tauri" \

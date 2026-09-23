@@ -1,4 +1,4 @@
-name: NPM Format (website & console)
+﻿name: NPM Format (website & console)
 
 on:
   push:
@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: website
+        working-directory: staffos-website
     steps:
       # Draft PRs defer the real run: this job still reports a green
       # placeholder so the required-check context stays present (GitHub
@@ -61,7 +61,7 @@ jobs:
         with:
           node-version: "22"
           cache: "pnpm"
-          cache-dependency-path: website/pnpm-lock.yaml
+          cache-dependency-path: staffos-website/pnpm-lock.yaml
 
       - name: Install dependencies
         if: steps.draft.outputs.value != 'true'
@@ -88,7 +88,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: console
+        working-directory: staffos-console
     steps:
       - name: Detect draft PR
         id: draft
@@ -114,7 +114,7 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
-          cache-dependency-path: console/package-lock.json
+          cache-dependency-path: staffos-console/package-lock.json
 
       - name: Install dependencies
         if: steps.draft.outputs.value != 'true'

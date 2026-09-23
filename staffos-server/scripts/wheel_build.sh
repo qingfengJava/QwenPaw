@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Build a full wheel package including the latest console frontend.
-# Run from repo root: bash scripts/wheel_build.sh
+# Run from repo root: bash staffos-server/scripts/wheel_build.sh
 set -e
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-CONSOLE_DIR="$REPO_ROOT/console"
+CONSOLE_DIR="$REPO_ROOT/../staffos-console"
 CONSOLE_DEST="$REPO_ROOT/src/qwenpaw/console"
 
 echo "[wheel_build] Building console frontend..."
@@ -20,7 +20,7 @@ mkdir -p "$CONSOLE_DEST"
 cp -R "$CONSOLE_DIR/dist/"* "$CONSOLE_DEST/"
 
 echo "[wheel_build] Bundling website docs into package..."
-DOCS_SRC="$REPO_ROOT/website/public/docs"
+DOCS_SRC="$REPO_ROOT/../staffos-website/public/docs"
 DOCS_DEST="$REPO_ROOT/src/qwenpaw/docs"
 rm -rf "$DOCS_DEST"
 mkdir -p "$DOCS_DEST"

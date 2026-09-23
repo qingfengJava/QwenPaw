@@ -19,10 +19,12 @@ from PyInstaller.utils.hooks import (
     get_package_paths,
 )
 
-REPO_ROOT = Path(SPECPATH).parent.parent
+CONSOLE_ROOT = Path(SPECPATH).parent.parent
+REPO_ROOT = CONSOLE_ROOT.parent
+SERVER_ROOT = REPO_ROOT / "staffos-server"
 
-SRC = REPO_ROOT / "src" / "qwenpaw"
-MAIL_MCP_SRC = REPO_ROOT / "packages" / "qwenpawmail-mcp" / "src"
+SRC = SERVER_ROOT / "src" / "qwenpaw"
+MAIL_MCP_SRC = SERVER_ROOT / "packages" / "qwenpawmail-mcp" / "src"
 if sys.platform == "darwin":
     codesign_identity = os.environ.get(
         "PYINSTALLER_CODESIGN_IDENTITY"
@@ -43,11 +45,11 @@ def collect_tree(source_dir, target_dir):
 # Match the legacy desktop package: the FastAPI backend serves the web console
 # from qwenpaw/console, so Tauri can navigate to the backend-hosted same-origin
 # console after the sidecar is ready.
-CONSOLE_DIST = REPO_ROOT / "console" / "dist"
+CONSOLE_DIST = CONSOLE_ROOT / "dist"
 if not (CONSOLE_DIST / "index.html").is_file():
     raise SystemExit(
         f"console dist not found at {CONSOLE_DIST}; "
-        "run npm run build:prod in console/ before PyInstaller"
+        "run npm run build:prod in staffos-console/ before PyInstaller"
     )
 
 _data_dirs = [
@@ -175,7 +177,7 @@ ENTRY_SCRIPTS = (BACKEND_ENTRY, CLI_ENTRY)
 
 a = Analysis(
     [str(path) for path in ENTRY_SCRIPTS],
-    pathex=[str(REPO_ROOT), str(REPO_ROOT / "src"), str(MAIL_MCP_SRC)],
+    pathex=[str(CONSOLE_ROOT), str(SERVER_ROOT / "src"), str(MAIL_MCP_SRC)],
     binaries=[*qoder_binaries, *codex_binaries],
     datas=datas,
     hiddenimports=[

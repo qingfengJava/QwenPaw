@@ -12,19 +12,20 @@ param()
 
 $ErrorActionPreference = "Stop"
 $REPO_ROOT = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$SERVER_ROOT = (Resolve-Path (Join-Path $REPO_ROOT "..\staffos-server")).Path
 Set-Location $REPO_ROOT
 
 $DIST = if ($env:DIST) { $env:DIST } else { "dist" }
 if (-not [System.IO.Path]::IsPathRooted($DIST)) {
     $DIST = Join-Path $REPO_ROOT $DIST
 }
-$BINARIES_DIR = Join-Path $REPO_ROOT "console\src-tauri\binaries"
+$BINARIES_DIR = Join-Path $REPO_ROOT "src-tauri\binaries"
 $PYTHON_RUNTIME_DIR = Join-Path $BINARIES_DIR "python-runtime"
 $RUNTIME_PYTHON_DIR = Join-Path $PYTHON_RUNTIME_DIR "python"
 $NATIVE_HOST_PYTHON = Join-Path $RUNTIME_PYTHON_DIR "python.exe"
 $BUILD_VENV = Join-Path $DIST "pyinstaller-venv"
 $PYTHON_BIN = Join-Path $BUILD_VENV "Scripts\python.exe"
-$VERSION_FILE = "src\qwenpaw\__version__.py"
+$VERSION_FILE = "..\staffos-server\src\qwenpaw\__version__.py"
 
 # Extract version
 if (Test-Path $VERSION_FILE) {
@@ -150,7 +151,7 @@ Write-Host "== Installing project dependencies ==" -ForegroundColor Yellow
 # half-removed pkg_resources (module present, declare_namespace gone), which
 # raises an AttributeError the fallback does not catch — crashing the Feishu
 # channel. The pin keeps every environment in the known-good state.
-Install-PythonPackages -Packages @("-e", ".[full]", "setuptools<82")
+Install-PythonPackages -Packages @("-e", "$($SERVER_ROOT)[full]", "setuptools<82")
 Write-Host "Project dependencies installed with full extras" -ForegroundColor Green
 
 # Fix agent-client-protocol namespace collision
@@ -237,7 +238,7 @@ $NATIVE_HOST_REQUIREMENTS = Join-Path $REPO_ROOT "scripts\pack-tauri\native-host
     -r $NATIVE_HOST_REQUIREMENTS
 Assert-LastExit "Failed to install Chrome Native Messaging host dependencies"
 & $NATIVE_HOST_PYTHON `
-    (Join-Path $REPO_ROOT "plugins\bundle\chrome\assets\scripts\nm_host.py") `
+    (Join-Path $REPO_ROOT "..\plugins\bundle\chrome\assets\scripts\nm_host.py") `
     --check-runtime
 Assert-LastExit "Bundled Python runtime cannot run the Native Messaging host"
 Write-Host ""
@@ -251,7 +252,7 @@ $CARGO_BIN = (Get-Command cargo -ErrorAction SilentlyContinue).Source
 if (-not $CARGO_BIN) {
     throw "cargo not found; Rust toolchain is required to build qwenpaw-computer-use-helper"
 }
-$TAURI_DIR = Join-Path $REPO_ROOT "console\src-tauri"
+$TAURI_DIR = Join-Path $REPO_ROOT "src-tauri"
 Push-Location $TAURI_DIR
 try {
     & $CARGO_BIN build --release --bin qwenpaw-computer-use-helper

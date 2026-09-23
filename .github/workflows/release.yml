@@ -1,4 +1,4 @@
-# QwenPaw unified release orchestrator (draft-driven, all-or-nothing).
+﻿# QwenPaw unified release orchestrator (draft-driven, all-or-nothing).
 #
 # Flow (方案二 · 草稿变体):
 #   1. A maintainer creates a DRAFT GitHub Release (tag + notes), does NOT publish.
@@ -105,10 +105,10 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Validate tag matches src/qwenpaw/__version__.py
+      - name: Validate tag matches staffos-server/src/qwenpaw/__version__.py
         run: |
           python -m pip install --quiet packaging
-          ver="$(sed -n 's/^__version__[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' src/qwenpaw/__version__.py)"
+          ver="$(sed -n 's/^__version__[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' staffos-server/src/qwenpaw/__version__.py)"
           tag="${{ steps.pick.outputs.tag }}"
           python - "${tag#v}" "$ver" <<'PY'
           import sys
@@ -119,7 +119,7 @@ jobs:
               if Version(tag_ver) != Version(ver):
                   print(
                       f"::error::Draft tag '{tag_ver}' does not match "
-                      f"src/qwenpaw/__version__.py '{ver}'. "
+                      f"staffos-server/src/qwenpaw/__version__.py '{ver}'. "
                       f"Fix the tag or bump the version before releasing."
                   )
                   sys.exit(1)
@@ -158,23 +158,23 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
-          cache-dependency-path: console/package-lock.json
+          cache-dependency-path: staffos-console/package-lock.json
 
       - name: Build console frontend
         run: |
-          cd console && npm ci && npm run build
+          cd staffos-console && npm ci && npm run build
 
       - name: Copy console build into package
         run: |
-          rm -rf src/qwenpaw/console/*
-          mkdir -p src/qwenpaw/console
-          cp -R console/dist/* src/qwenpaw/console/
+          rm -rf staffos-server/src/qwenpaw/console/*
+          mkdir -p staffos-server/src/qwenpaw/console
+          cp -R staffos-console/dist/* staffos-server/src/qwenpaw/console/
 
       - name: Bundle docs into package
         run: |
-          rm -rf src/qwenpaw/docs
-          mkdir -p src/qwenpaw/docs
-          cp website/public/docs/*.md src/qwenpaw/docs/
+          rm -rf staffos-server/src/qwenpaw/docs
+          mkdir -p staffos-server/src/qwenpaw/docs
+          cp staffos-website/public/docs/*.md staffos-server/src/qwenpaw/docs/
 
       - name: Install build dependencies
         run: |
@@ -195,7 +195,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: qwenpaw-version
-          path: src/qwenpaw/__version__.py
+          path: staffos-server/src/qwenpaw/__version__.py
           retention-days: 7
 
   verify-web:

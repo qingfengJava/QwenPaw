@@ -1,4 +1,4 @@
-name: CodeQL
+﻿name: CodeQL
 
 # Security vulnerability scanning for QwenPaw.
 #
@@ -12,9 +12,9 @@ name: CodeQL
 # Two shards, one per language — each scans its own file set, so findings
 # are deduplicated across languages and no CI time is wasted on
 # re-scanning the same files:
-#   python      → all Python (src/qwenpaw/** + scripts/**), minus the
+#   python      → all Python (staffos-server/src/qwenpaw/** + scripts/**), minus the
 #                  test/repro exclusions in codeql-config.yml
-#   typescript  → console/src/** (React/Vite frontend)
+#   typescript  → staffos-console/src/** (React/Vite frontend)
 # Tests are intentionally excluded (see codeql-config.yml paths-ignore):
 # they contain intentionally "unsafe" patterns that are not real
 # vulnerabilities.
@@ -27,10 +27,10 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     branches: [main, master, dev, develop]
     paths:
-      - 'src/**'
-      - 'console/src/**'
+      - 'staffos-server/src/**'
+      - 'staffos-console/src/**'
       - 'scripts/**'
-      - 'tests/**'
+      - 'staffos-server/tests/**'
       - '.github/workflows/codeql.yml'
       - '.github/codeql-config.yml'
   push:

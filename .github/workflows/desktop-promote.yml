@@ -1,4 +1,4 @@
-# Reusable "promote" step of the desktop release — runs ONLY after the release
+﻿# Reusable "promote" step of the desktop release — runs ONLY after the release
 # has been flipped to published (called by release.yml's post-finalize job).
 #
 # It promotes the already-uploaded versioned OSS files to `latest`, generates
@@ -151,7 +151,7 @@ jobs:
             exit 0
           fi
           NOTES="${RELEASE_BODY:-QwenPaw Desktop ${VERSION}}"
-          python scripts/pack-tauri/generate_update_manifest.py manifest \
+          python staffos-console/scripts/pack-tauri/generate_update_manifest.py manifest \
             --version "$VERSION" \
             --base-url "$OSS_BASE" \
             --target-base "windows-x86_64=${OSS_BASE}/win-tauri" \

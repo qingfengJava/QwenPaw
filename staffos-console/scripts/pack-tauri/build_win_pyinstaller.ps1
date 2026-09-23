@@ -14,7 +14,7 @@ $DIST = if ($env:DIST) { $env:DIST } else { "dist" }
 if (-not [System.IO.Path]::IsPathRooted($DIST)) {
     $DIST = Join-Path $REPO_ROOT $DIST
 }
-$VERSION_FILE = "src\qwenpaw\__version__.py"
+$VERSION_FILE = "..\staffos-server\src\qwenpaw\__version__.py"
 
 function Invoke-NativeWithRetry {
     param(
@@ -123,7 +123,6 @@ Write-Host ""
 
 # Step 1: Build console static assets
 Write-Host "== Step 1: Building Console Static Assets ==" -ForegroundColor Yellow
-Set-Location console
 
 Write-Host "Installing frontend dependencies..."
 npm ci
@@ -132,13 +131,13 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "Generating Tauri icons..."
-npm exec -- tauri icon ../scripts/pack/assets/icon.svg
+npm exec -- tauri icon scripts/pack/assets/icon.svg
 if ($LASTEXITCODE -ne 0) {
     throw "Tauri icon generation failed"
 }
 
 Write-Host "Syncing Tauri version..."
-node ../scripts/pack-tauri/sync_tauri_version.mjs
+node scripts/pack-tauri/sync_tauri_version.mjs
 if ($LASTEXITCODE -ne 0) {
     throw "Tauri version sync failed"
 }
@@ -173,7 +172,7 @@ if (-not $env:CARGO_HTTP_MULTIPLEXING) {
     $env:CARGO_HTTP_MULTIPLEXING = "false"
 }
 
-$TAURI_MANIFEST = Join-Path $REPO_ROOT "console\src-tauri\Cargo.toml"
+$TAURI_MANIFEST = Join-Path $REPO_ROOT "src-tauri\Cargo.toml"
 Invoke-NativeWithRetry -Description "cargo fetch for Tauri dependencies" -Command {
     cargo fetch --locked --target x86_64-pc-windows-msvc --manifest-path $TAURI_MANIFEST
 }
@@ -183,13 +182,11 @@ Write-Host ""
 
 # Step 3: Build Tauri app
 Write-Host "== Step 3: Building Tauri App ==" -ForegroundColor Yellow
-$BUNDLE_DIR = Join-Path $REPO_ROOT "console\src-tauri\target\release\bundle"
+$BUNDLE_DIR = Join-Path $REPO_ROOT "src-tauri\target\release\bundle"
 $NSIS_DIR = Join-Path $BUNDLE_DIR "nsis"
 if (Test-Path $NSIS_DIR) {
     Remove-Item -Recurse -Force $NSIS_DIR
 }
-
-Set-Location console
 
 Write-Host "Building for Windows..."
 npm exec -- tauri build --config src-tauri/tauri.version.conf.json

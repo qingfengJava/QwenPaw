@@ -1,4 +1,4 @@
-# One-click desktop release verification for fork repositories.
+﻿# One-click desktop release verification for fork repositories.
 # Builds the Tauri desktop packages (macOS + Windows) and runs the
 # end-to-end UI verification (Playwright + headless browser) against
 # the freshly built product.
@@ -66,7 +66,7 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
-          cache-dependency-path: console/package-lock.json
+          cache-dependency-path: staffos-console/package-lock.json
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -83,8 +83,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           TAURI_UPDATER_PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
         run: |
-          chmod +x scripts/pack-tauri/build_macos_pyinstaller.sh
-          bash scripts/pack-tauri/build_macos_pyinstaller.sh
+          chmod +x staffos-console/scripts/pack-tauri/build_macos_pyinstaller.sh
+          bash staffos-console/scripts/pack-tauri/build_macos_pyinstaller.sh
 
       - name: Verify desktop (Tauri macOS)
         timeout-minutes: 10
@@ -135,7 +135,7 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
-          cache-dependency-path: console/package-lock.json
+          cache-dependency-path: staffos-console/package-lock.json
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -149,12 +149,12 @@ jobs:
           # Authenticate the python-build-standalone release lookup in
           # stage_python_runtime.py to avoid anonymous API rate limits.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./scripts/pack-tauri/build_win_pyinstaller.ps1
+        run: ./staffos-console/scripts/pack-tauri/build_win_pyinstaller.ps1
 
       - name: Stage Tauri Windows installer
         shell: pwsh
         run: |
-          $installer = Get-ChildItem "console/src-tauri/target/release/bundle/nsis/*.exe" |
+          $installer = Get-ChildItem "staffos-staffos-console/src-tauri/target/release/bundle/nsis/*.exe" |
             Select-Object -First 1
           if (-not $installer) { throw "No Tauri Windows installer found" }
           $target = "dist/QwenPaw-Tauri-${{ steps.version.outputs.version }}-Windows-setup.exe"

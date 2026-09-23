@@ -10,7 +10,7 @@ set -e
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$REPO_ROOT"
 
-VERSION=$(sed -n 's/^__version__[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' src/qwenpaw/__version__.py)
+VERSION=$(sed -n 's/^__version__[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "${REPO_ROOT}/../staffos-server/src/qwenpaw/__version__.py")
 
 echo "========================================="
 echo "QwenPaw Tauri Build - macOS (PyInstaller)"
@@ -78,15 +78,13 @@ echo ""
 
 # Step 1: Build console static assets
 echo "== Step 1: Building Console Static Assets =="
-cd console
 npm ci
 echo "Generating Tauri icons..."
-npm exec -- tauri icon ../scripts/pack/assets/icon.svg
+npm exec -- tauri icon scripts/pack/assets/icon.svg
 echo "Syncing Tauri version..."
-node ../scripts/pack-tauri/sync_tauri_version.mjs
+node scripts/pack-tauri/sync_tauri_version.mjs
 echo "Building console frontend..."
 npm run build:prod
-cd ..
 echo "Console static assets built"
 echo ""
 
@@ -98,21 +96,19 @@ echo ""
 
 echo "== Step 2b: Signing PyInstaller Backend =="
 bash "${SIGN_MACOS_BUNDLE}" \
-    "${REPO_ROOT}/console/src-tauri/binaries/qwenpaw-backend" \
+    "${REPO_ROOT}/src-tauri/binaries/qwenpaw-backend" \
     "${APPLE_SIGNING_IDENTITY}"
 echo "PyInstaller backend signed"
 echo ""
 
 # Step 3: Build Tauri app
 echo "== Step 3: Building Tauri App =="
-BUNDLE_DIR="${REPO_ROOT}/console/src-tauri/target/release/bundle"
+BUNDLE_DIR="${REPO_ROOT}/src-tauri/target/release/bundle"
 rm -rf "${BUNDLE_DIR}/dmg" "${BUNDLE_DIR}/macos"
-cd console
 echo "Building for macOS..."
 npm exec -- tauri build \
     --config src-tauri/tauri.version.conf.json \
     --bundles app
-cd ..
 echo "Tauri app built"
 echo ""
 
@@ -187,7 +183,7 @@ if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
         --target "${UPDATER_TARGET}" \
         --output "${UPDATER_NAME}" \
         --pubkey-config \
-        "${REPO_ROOT}/console/src-tauri/tauri.version.conf.json"
+        "${REPO_ROOT}/src-tauri/tauri.version.conf.json"
     UPDATER_RESULT="${UPDATER_NAME}"
 else
     UPDATER_RESULT="not generated (updater signing key is not set)"

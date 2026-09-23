@@ -3,7 +3,9 @@
 # Requires: conda, node/npm (for console). Optional: icon.icns in assets/.
 
 set -e
-REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+CONSOLE_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+REPO_ROOT="$(cd "${CONSOLE_ROOT}/.." && pwd)"
+SERVER_ROOT="${REPO_ROOT}/staffos-server"
 cd "$REPO_ROOT"
 PACK_DIR="$(cd "$(dirname "$0")" && pwd)"
 DIST="${DIST:-dist}"
@@ -13,7 +15,7 @@ APP_DIR="${DIST}/${APP_NAME}.app"
 
 echo "== Building wheel (includes console frontend) =="
 # Skip wheel_build if dist already has a wheel for current version
-VERSION_FILE="${REPO_ROOT}/src/qwenpaw/__version__.py"
+VERSION_FILE="${SERVER_ROOT}/src/qwenpaw/__version__.py"
 CURRENT_VERSION=""
 if [[ -f "${VERSION_FILE}" ]]; then
   CURRENT_VERSION="$(
@@ -23,12 +25,12 @@ if [[ -f "${VERSION_FILE}" ]]; then
 fi
 if [[ -n "${CURRENT_VERSION}" ]]; then
   shopt -s nullglob
-  whls=("${REPO_ROOT}/dist/qwenpaw-${CURRENT_VERSION}-"*.whl)
+  whls=("${SERVER_ROOT}/dist/qwenpaw-${CURRENT_VERSION}-"*.whl)
   if [[ ${#whls[@]} -gt 0 ]]; then
     echo "dist/ already has wheel for version ${CURRENT_VERSION}, skipping."
   else
     # Clean up old wheels to avoid confusion
-    old_whls=("${REPO_ROOT}/dist/qwenpaw-"*.whl)
+    old_whls=("${SERVER_ROOT}/dist/qwenpaw-"*.whl)
     if [[ ${#old_whls[@]} -gt 0 ]]; then
       echo "Removing old wheel files: ${old_whls[*]}"
       rm -f "${old_whls[@]}"
@@ -136,7 +138,7 @@ if [[ -f "${PACK_DIR}/assets/icon.icns" ]]; then
   echo "== Using pre-generated icon.icns =="
 else
   echo "Warning: icon.icns not found at ${PACK_DIR}/assets/icon.icns"
-  echo "Generate it first: bash scripts/pack/generate_icons.sh"
+  echo "Generate it first: bash staffos-console/scripts/pack/generate_icons.sh"
 fi
 
 # Info.plist (include icon key if icon.icns exists)

@@ -15,7 +15,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
+SERVER_ROOT = REPO_ROOT / "staffos-server"
 ENV_PREFIX = "qwenpaw_pack_"
 
 # Packages affected by conda-unpack bug on Windows (conda-pack Issue #154)
@@ -55,19 +56,19 @@ def _pick_wheel(wheel_arg: str | None) -> Path:
     if wheel_arg:
         wheel_path = Path(wheel_arg).expanduser()
         if not wheel_path.is_absolute():
-            wheel_path = (REPO_ROOT / wheel_path).resolve()
+            wheel_path = (SERVER_ROOT / wheel_path).resolve()
         if not wheel_path.exists():
             raise FileNotFoundError(f"Wheel not found: {wheel_path}")
         return wheel_path
 
     wheels = sorted(
-        (REPO_ROOT / "dist").glob("qwenpaw-*.whl"),
+        (SERVER_ROOT / "dist").glob("qwenpaw-*.whl"),
         key=lambda p: p.stat().st_mtime,
         reverse=True,
     )
     if not wheels:
         raise FileNotFoundError(
-            "No wheel found in dist/. Run: bash scripts/wheel_build.sh",
+            "No wheel found in staffos-server/dist/. Run: bash staffos-server/scripts/wheel_build.sh",
         )
     return wheels[0]
 

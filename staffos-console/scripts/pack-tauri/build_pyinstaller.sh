@@ -12,16 +12,17 @@
 set -e
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+SERVER_ROOT="${REPO_ROOT}/../staffos-server"
 cd "$REPO_ROOT"
 
 DIST="${DIST:-dist}"
-BINARIES_DIR="${REPO_ROOT}/console/src-tauri/binaries"
+BINARIES_DIR="${REPO_ROOT}/src-tauri/binaries"
 PYTHON_RUNTIME_DIR="${BINARIES_DIR}/python-runtime"
 RUNTIME_PYTHON_DIR="${PYTHON_RUNTIME_DIR}/python"
 NATIVE_HOST_PYTHON="${RUNTIME_PYTHON_DIR}/bin/python3"
 BUILD_VENV="${DIST}/pyinstaller-venv"
 PYTHON_BIN="${BUILD_VENV}/bin/python"
-VERSION=$(sed -n 's/^__version__[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' src/qwenpaw/__version__.py)
+VERSION=$(sed -n 's/^__version__[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "${SERVER_ROOT}/src/qwenpaw/__version__.py")
 
 echo "========================================="
 echo "QwenPaw PyInstaller Build"
@@ -96,7 +97,7 @@ echo "== Installing project dependencies =="
 # half-removed pkg_resources (module present, declare_namespace gone), which
 # raises an AttributeError the fallback does not catch — crashing the Feishu
 # channel. The pin keeps every environment in the known-good state.
-install_python_packages -e ".[full]" "setuptools<82"
+install_python_packages -e "${SERVER_ROOT}[full]" "setuptools<82"
 echo "Project dependencies installed with full extras"
 
 # Fix agent-client-protocol namespace collision
@@ -177,7 +178,7 @@ echo "== Installing bundled Python helper dependencies =="
     --only-binary=:all: \
     -r "${REPO_ROOT}/scripts/pack-tauri/native-host-requirements.txt"
 "$NATIVE_HOST_PYTHON" \
-    "${REPO_ROOT}/plugins/bundle/chrome/assets/scripts/nm_host.py" \
+    "${REPO_ROOT}/../plugins/bundle/chrome/assets/scripts/nm_host.py" \
     --check-runtime
 echo ""
 

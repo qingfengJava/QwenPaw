@@ -1,4 +1,4 @@
-# Reusable verification gate: install the built artefacts, boot the server,
+﻿# Reusable verification gate: install the built artefacts, boot the server,
 # and hit /api/version before any publish step runs.
 # Called by publish-pypi.yml, docker-release.yml, and fork-verify.yml.
 
@@ -244,7 +244,7 @@ jobs:
         run: |
           expected=$(python3 -c "
           import re, pathlib
-          text = pathlib.Path('src/qwenpaw/__version__.py').read_text()
+          text = pathlib.Path('staffos-server/src/qwenpaw/__version__.py').read_text()
           print(re.search(r'__version__\s*=\s*\"([^\"]+)\"', text).group(1))
           ")
           response=$(curl -sf http://127.0.0.1:8088/api/version)
@@ -289,21 +289,21 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
-          cache-dependency-path: console/package-lock.json
+          cache-dependency-path: staffos-console/package-lock.json
 
       - name: Build console frontend
         shell: bash
         env:
           NODE_OPTIONS: "--max-old-space-size=8192"
         run: |
-          cd console && npm ci && npm run build
+          cd staffos-console && npm ci && npm run build
 
       - name: Copy console build into package
         shell: bash
         run: |
-          rm -rf src/qwenpaw/console/*
-          mkdir -p src/qwenpaw/console
-          cp -R console/dist/* src/qwenpaw/console/
+          rm -rf staffos-server/src/qwenpaw/console/*
+          mkdir -p staffos-server/src/qwenpaw/console
+          cp -R staffos-console/dist/* staffos-server/src/qwenpaw/console/
 
       - name: Run install script (Linux/macOS)
         if: runner.os != 'Windows'
@@ -329,7 +329,7 @@ jobs:
           # Verify version matches source
           expected=$(python -c "
           import re, pathlib
-          text = pathlib.Path('src/qwenpaw/__version__.py').read_text()
+          text = pathlib.Path('staffos-server/src/qwenpaw/__version__.py').read_text()
           print(re.search(r'__version__\s*=\s*\"([^\"]+)\"', text).group(1))
           ")
           actual=$(qwenpaw --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+[a-zA-Z0-9.]*' | head -1)

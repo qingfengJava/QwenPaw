@@ -1,4 +1,4 @@
-# Reusable "prepare" half of the desktop release: build the Tauri desktop
+﻿# Reusable "prepare" half of the desktop release: build the Tauri desktop
 # packages (Windows + macOS), run the install/launch/chat UI verification,
 # and upload the installers + updater sidecars as run artifacts.
 #
@@ -60,7 +60,7 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
-          cache-dependency-path: console/package-lock.json
+          cache-dependency-path: staffos-console/package-lock.json
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -68,7 +68,7 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: console/src-tauri
+          workspaces: staffos-staffos-console/src-tauri
 
       - name: Install NSIS
         uses: negrutiu/nsis-install@v2
@@ -91,7 +91,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           TAURI_UPDATER_PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
           TAURI_UPDATER_ENDPOINTS: ${{ vars.TAURI_UPDATER_ENDPOINTS }}
-        run: ./scripts/pack-tauri/build_win_pyinstaller.ps1
+        run: ./staffos-console/scripts/pack-tauri/build_win_pyinstaller.ps1
 
       - name: Stage Tauri Windows installer and updater assets
         shell: pwsh
@@ -101,7 +101,7 @@ jobs:
           $output = "dist/QwenPaw-Tauri-${{ steps.version.outputs.version }}-Windows-setup.exe"
           if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
             $installer = Get-ChildItem `
-              "console/src-tauri/target/release/bundle/nsis/*-setup.exe" |
+              "staffos-staffos-console/src-tauri/target/release/bundle/nsis/*-setup.exe" |
               Select-Object -First 1
             if (-not $installer) {
               throw "No Tauri Windows installer found"
@@ -110,12 +110,12 @@ jobs:
             Write-Host "Staged installer without updater metadata: $output"
             exit 0
           }
-          python scripts/pack-tauri/generate_update_manifest.py stage `
-            --bundle-dir console/src-tauri/target/release/bundle/nsis `
+          python staffos-console/scripts/pack-tauri/generate_update_manifest.py stage `
+            --bundle-dir staffos-staffos-console/src-tauri/target/release/bundle/nsis `
             --pattern '*-setup.exe' `
             --target windows-x86_64 `
             --output $output `
-            --pubkey-config console/src-tauri/tauri.version.conf.json
+            --pubkey-config staffos-staffos-console/src-tauri/tauri.version.conf.json
 
       - name: Verify desktop (Tauri Windows)
         timeout-minutes: 10
@@ -208,7 +208,7 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
-          cache-dependency-path: console/package-lock.json
+          cache-dependency-path: staffos-console/package-lock.json
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -216,7 +216,7 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: console/src-tauri
+          workspaces: staffos-staffos-console/src-tauri
 
       - name: Clean dist directory
         run: rm -rf dist && mkdir -p dist
@@ -232,8 +232,8 @@ jobs:
           TAURI_UPDATER_PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
           TAURI_UPDATER_ENDPOINTS: ${{ vars.TAURI_UPDATER_ENDPOINTS }}
         run: |
-          chmod +x scripts/pack-tauri/build_macos_pyinstaller.sh
-          bash scripts/pack-tauri/build_macos_pyinstaller.sh
+          chmod +x staffos-console/scripts/pack-tauri/build_macos_pyinstaller.sh
+          bash staffos-console/scripts/pack-tauri/build_macos_pyinstaller.sh
 
       - name: Verify desktop (Tauri macOS)
         timeout-minutes: 10

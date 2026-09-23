@@ -5,18 +5,18 @@ Run from **repo root**.
 ## Build wheel (with latest console)
 
 ```bash
-bash scripts/wheel_build.sh
+bash staffos-server/scripts/wheel_build.sh
 ```
 
-- Builds the console frontend (`console/`), copies `console/dist` to `src/qwenpaw/console/dist`, then builds the wheel. Output: `dist/*.whl`.
+- Builds the console frontend (`staffos-console/`), copies `staffos-console/dist` to `staffos-server/src/qwenpaw/console/`, then builds the wheel. Output: `staffos-server/dist/*.whl`.
 
 ## Build website
 
 ```bash
-bash scripts/website_build.sh
+bash staffos-website/scripts/website_build.sh
 ```
 
-- Installs dependencies (pnpm or npm) and runs the Vite build. Output: `website/dist/`.
+- Installs dependencies (pnpm or npm) and runs the Vite build. Output: `staffos-website/dist/`.
 
 ## Build Docker image
 

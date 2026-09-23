@@ -1,11 +1,11 @@
 # Build a full wheel package including the latest console frontend.
-# Run from repo root: pwsh -File scripts/wheel_build.ps1
+# Run from repo root: pwsh -File staffos-server/scripts/wheel_build.ps1
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = (Get-Item $PSScriptRoot).Parent.FullName
 Set-Location $RepoRoot
 
-$ConsoleDir = Join-Path $RepoRoot "console"
+$ConsoleDir = Join-Path $RepoRoot "..\staffos-console"
 $ConsoleDest = Join-Path $RepoRoot "src\qwenpaw\console"
 
 Write-Host "[wheel_build] Building console frontend..."
@@ -29,7 +29,7 @@ $ConsoleDist = Join-Path $ConsoleDir "dist"
 Copy-Item -Path (Join-Path $ConsoleDist "*") -Destination $ConsoleDest -Recurse -Force
 
 Write-Host "[wheel_build] Bundling website docs into package..."
-$DocsSrc = Join-Path $RepoRoot "website\public\docs"
+$DocsSrc = Join-Path $RepoRoot "..\staffos-website\public\docs"
 $DocsDest = Join-Path $RepoRoot "src\qwenpaw\docs"
 if (Test-Path $DocsDest) { Remove-Item -Recurse -Force $DocsDest }
 New-Item -ItemType Directory -Force -Path $DocsDest | Out-Null

@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Build the website (Vite). Run from repo root: bash scripts/website_build.sh
+# Build the website (Vite). Run from repo root: bash staffos-website/scripts/website_build.sh
 set -e
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-WEBSITE_DIR="$REPO_ROOT/website"
+WEBSITE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$WEBSITE_DIR"
 
 echo "[website_build] Installing dependencies..."

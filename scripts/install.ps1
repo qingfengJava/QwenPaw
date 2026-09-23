@@ -220,8 +220,8 @@ $script:ConsoleAvailable = $false
 function Prepare-Console {
     param([string]$RepoDir)
 
-    $consoleSrc  = Join-Path $RepoDir "console\dist"
-    $consoleDest = Join-Path $RepoDir "src\qwenpaw\console"
+    $consoleSrc  = Join-Path $RepoDir "staffos-console\dist"
+    $consoleDest = Join-Path $RepoDir "staffos-server\src\qwenpaw\console"
 
     # Already populated
     if (Test-Path (Join-Path $consoleDest "index.html")) { $script:ConsoleAvailable = $true; return }
@@ -237,7 +237,7 @@ function Prepare-Console {
     }
 
     # Try to build if npm is available
-    $packageJson = Join-Path $RepoDir "console\package.json"
+    $packageJson = Join-Path $RepoDir "staffos-console\package.json"
     if (-not (Test-Path $packageJson)) {
         Write-Warn "Console source not found - the web UI won't be available."
         return
@@ -246,12 +246,12 @@ function Prepare-Console {
     if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
         Write-Warn "npm not found - skipping console frontend build."
         Write-Warn "Install Node.js from https://nodejs.org/ then re-run this installer,"
-        Write-Warn "or run 'cd console && npm ci && npm run build' manually."
+        Write-Warn "or run 'cd staffos-console && npm ci && npm run build' manually."
         return
     }
 
     Write-Info "Building console frontend (npm ci && npm run build)..."
-    Push-Location (Join-Path $RepoDir "console")
+    Push-Location (Join-Path $RepoDir "staffos-console")
     try {
         npm ci
         if ($LASTEXITCODE -ne 0) { Write-Warn "npm ci failed - the web UI won't be available."; return }
