@@ -31,8 +31,8 @@ from computer_use.protocol import (
 from qwenpaw.app.computer_use import COMPUTER_USE_PROTOCOL_VERSION
 
 _SERVER = (
-    Path(__file__).resolve().parents[4]
-    / "console"
+    Path(__file__).resolve().parents[5]
+    / "staffos-console"
     / "src-tauri"
     / "src"
     / "computer_use_server"
@@ -40,7 +40,7 @@ _SERVER = (
 _DISPATCH = _SERVER / "dispatch.rs"
 _PROTOCOL = _SERVER.parent / "computer_use_protocol.rs"
 _PLUGIN_PROTOCOL = (
-    Path(__file__).resolve().parents[4]
+    Path(__file__).resolve().parents[5]
     / "plugins"
     / "bundle"
     / "computer-use"

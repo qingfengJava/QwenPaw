@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-_REPO = Path(__file__).resolve().parents[3]
+_REPO = Path(__file__).resolve().parents[4]
 _I18N_PATH = (
     _REPO
     / "plugins"

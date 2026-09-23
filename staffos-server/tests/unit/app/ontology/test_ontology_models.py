@@ -25,9 +25,10 @@ from qwenpaw.app.ontology import models
 pytestmark = pytest.mark.unit
 
 #: 仓库根（tests/unit/app/ontology/ → 上溯四级）
+# staffos-server 项目根（src/qwenpaw 与 db/ 所在）
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 
-#: 含种子的三轨文件（相对仓库根）
+#: 含种子的三轨文件（相对 staffos-server 根）
 _SEED_FILES = (
     Path("src/qwenpaw/db/alembic/versions/0047_kb_ontology.py"),
     Path(

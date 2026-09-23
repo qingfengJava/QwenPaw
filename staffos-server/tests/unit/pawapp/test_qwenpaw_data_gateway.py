@@ -11,7 +11,8 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import HTTPException
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+# 仓库根（pawapp→unit→tests→staffos-server→仓库根）
+REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 GATEWAY_FILE = (
     REPOSITORY_ROOT
     / "plugins"

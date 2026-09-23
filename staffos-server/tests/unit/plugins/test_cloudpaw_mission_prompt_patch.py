@@ -54,6 +54,11 @@ def test_mission_patch_accepts_upstream_prompt_kwargs(monkeypatch):
     """Both patched prompt paths accept the upstream mission kwargs."""
     mission_prompts, mission_handler = _load_mission_prompts(monkeypatch)
 
+    # plugins/ 生态位于仓库根（staffos-server 的上一级），注入后方可 import
+    repo_root = str(Path(__file__).resolve().parents[4])
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+
     from plugins.bundle.cloudpaw.hooks import _patch_mission_master_prompt
 
     _patch_mission_master_prompt()

@@ -6,7 +6,8 @@ import sys
 from pathlib import Path
 
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+# 仓库根：pawapp/[0] → unit/[1] → tests/[2] → staffos-server/[3] → 仓库根/[4]
+REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 RUNTIME_FILE = (
     REPOSITORY_ROOT
     / "plugins"

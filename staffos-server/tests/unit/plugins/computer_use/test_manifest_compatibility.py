@@ -8,7 +8,7 @@ from qwenpaw._version_compat import check_plugin_version_compat
 from qwenpaw.plugins.architecture import PluginManifest
 
 _MANIFEST = (
-    Path(__file__).resolve().parents[4]
+    Path(__file__).resolve().parents[5]
     / "plugins"
     / "bundle"
     / "computer-use"
