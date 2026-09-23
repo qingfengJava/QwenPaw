@@ -861,39 +861,11 @@ if CORS_ORIGINS:
     )
 
 
-_CONSOLE_STATIC_ENV = "QWENPAW_CONSOLE_STATIC_DIR"
-
-
 def _resolve_console_static_dir() -> str:
-    from ..constant import EnvVarLoader
+    """Delegate to the shared resolver (single source of truth)."""
+    from ..utils.console_static import resolve_console_static_dir
 
-    static_dir = EnvVarLoader.get_str(_CONSOLE_STATIC_ENV)
-    if static_dir:
-        return static_dir
-    # Shipped dist lives in the package as static data
-    pkg_dir = Path(__file__).resolve().parent.parent
-    candidate = pkg_dir / "console"
-    if candidate.is_dir() and (candidate / "index.html").exists():
-        return str(candidate)
-
-    # Fallback to repo data
-    repo_dir = pkg_dir.parent.parent
-    candidate = repo_dir / "console" / "dist"
-    if candidate.is_dir() and (candidate / "index.html").exists():
-        return str(candidate)
-
-    # Fallback to cwd data
-    cwd = Path(os.getcwd())
-    for subdir in ("console/dist", "console_dist"):
-        candidate = cwd / subdir
-        if candidate.is_dir() and (candidate / "index.html").exists():
-            return str(candidate)
-
-    fallback = cwd / "console" / "dist"
-    logger.warning(
-        f"Console static directory not found. Falling back to '{fallback}'.",
-    )
-    return str(fallback)
+    return resolve_console_static_dir()
 
 
 _CONSOLE_STATIC_DIR = _resolve_console_static_dir()

@@ -4,10 +4,20 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Load .env file from project root before reading any env vars
-_env_path = Path(__file__).resolve().parent.parent.parent / ".env"
+# Load .env file from the server project root before reading any env vars
+# (constant.py now lives at staffos-server/src/qwenpaw/, so the primary
+# lookup resolves to staffos-server/.env after the project-level flat
+# restructure).
+_env_path = Path(__file__).resolve().parents[2] / ".env"
 if _env_path.exists():
     load_dotenv(_env_path)
+
+# Compatibility: also honor the pre-restructure repo-root .env without
+# overriding values already provided by the server-level file or the
+# real process environment (load_dotenv defaults to override=False).
+_repo_env_path = Path(__file__).resolve().parents[3] / ".env"
+if _repo_env_path != _env_path and _repo_env_path.exists():
+    load_dotenv(_repo_env_path)
 
 
 def _get_env(key: str, default: str = "") -> str:

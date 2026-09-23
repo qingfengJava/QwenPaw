@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import json
+import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -298,6 +300,123 @@ class TestRunProviderConfigMigration:
         manager = _FakeManager([])
         assert await migration.run_provider_config_migration(manager) is True
         assert reconciled["count"] == 1
+
+
+class TestTempWorkdirGuard:
+    """临时工作目录 + 共享真实 PG DSN 时必须拒绝全量导入。
+
+    回归背景（2026-09-23 事故）：临时冒烟实例继承用户级
+    ``QWENPAW_PG_DSN``，因独立 SECRET_DIR 缺 manifest 触发全量导入，
+    把种子 provider 状态覆盖进真实库（冲掉禁用开关/模型参数/key）。
+    """
+
+    async def test_temp_workdir_refuses_import(
+        self,
+        monkeypatch,
+        tmp_path,
+    ):
+        """pytest 的 tmp_path 本身位于系统临时目录下，天然命中闸门。"""
+        monkeypatch.setattr(
+            provider_store,
+            "pg_provider_plane_available",
+            lambda: True,
+        )
+        monkeypatch.setattr(
+            provider_store,
+            "provider_storage_backend",
+            lambda: "pg",
+        )
+        monkeypatch.setattr(
+            migration,
+            "WORKING_DIR",
+            str(tmp_path / "qp_some_smoke_workdir"),
+        )
+        monkeypatch.delenv(
+            migration.TEMP_IMPORT_ALLOW_ENV,
+            raising=False,
+        )
+        imported = {"count": 0}
+
+        async def _import(manager):
+            imported["count"] += 1
+            return 0
+
+        monkeypatch.setattr(migration, "_import_file_plane_to_pg", _import)
+        manager = _FakeManager([])
+        assert await migration.run_provider_config_migration(manager) is True
+        assert imported["count"] == 0
+        assert not migration._manifest_path().exists()
+
+    async def test_temp_workdir_allows_import_with_opt_in(
+        self,
+        monkeypatch,
+    ):
+        """显式设置放行开关后，隔离环境的导入行为不变。"""
+        monkeypatch.setattr(
+            provider_store,
+            "pg_provider_plane_available",
+            lambda: True,
+        )
+        monkeypatch.setattr(
+            provider_store,
+            "provider_storage_backend",
+            lambda: "dual",
+        )
+        monkeypatch.setattr(
+            migration,
+            "WORKING_DIR",
+            str(Path(tempfile.gettempdir()) / "qp_isolated_workdir"),
+        )
+        monkeypatch.setenv(migration.TEMP_IMPORT_ALLOW_ENV, "1")
+
+        async def _import(manager):
+            return 2
+
+        monkeypatch.setattr(migration, "_import_file_plane_to_pg", _import)
+
+        async def _no_env(manager):
+            return []
+
+        monkeypatch.setattr(migration, "_migrate_env_keys", _no_env)
+        manager = _FakeManager([])
+        assert await migration.run_provider_config_migration(manager) is True
+        payload = json.loads(
+            migration._manifest_path().read_text(encoding="utf-8"),
+        )
+        assert payload["imported_providers"] == 2
+
+    async def test_normal_workdir_import_unaffected(
+        self,
+        monkeypatch,
+    ):
+        """常规安装目录（~/.copaw）不在临时目录下，导入行为不变。"""
+        monkeypatch.setattr(
+            provider_store,
+            "pg_provider_plane_available",
+            lambda: True,
+        )
+        monkeypatch.setattr(
+            provider_store,
+            "provider_storage_backend",
+            lambda: "dual",
+        )
+        monkeypatch.setattr(
+            migration,
+            "WORKING_DIR",
+            str(Path.home() / ".copaw"),
+        )
+
+        async def _import(manager):
+            return 1
+
+        monkeypatch.setattr(migration, "_import_file_plane_to_pg", _import)
+
+        async def _no_env(manager):
+            return []
+
+        monkeypatch.setattr(migration, "_migrate_env_keys", _no_env)
+        manager = _FakeManager([])
+        assert await migration.run_provider_config_migration(manager) is True
 
 
 class TestReconcileFilePlaneKeys:

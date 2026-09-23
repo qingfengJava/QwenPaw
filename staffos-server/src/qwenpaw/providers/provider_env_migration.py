@@ -26,11 +26,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..constant import SECRET_DIR
+from ..constant import SECRET_DIR, WORKING_DIR
 from . import provider_store
 from .provider_model_state import PROVIDER_SNAPSHOT_SCHEMA_VERSION
 
@@ -41,6 +42,9 @@ logger = logging.getLogger(__name__)
 
 #: manifest 文件名（落在 SECRET_DIR，参照 backfill_history 范式）
 MANIFEST_NAME = ".provider_pg_migrated.json"
+
+#: 临时工作目录导入闸门的显式放行开关（迁移演练等受控场景使用）
+TEMP_IMPORT_ALLOW_ENV = "QWENPAW_ALLOW_TEMP_PROVIDER_IMPORT"
 
 #: manifest 版本：投影结构变化时 +1，旧 manifest 自动重跑全量导入
 MANIFEST_VERSION = 3
@@ -94,6 +98,21 @@ def _iter_all_providers(manager: "ProviderManager"):
 
 def _manifest_path() -> Path:
     return SECRET_DIR / MANIFEST_NAME
+
+
+def _is_temp_working_dir() -> bool:
+    """Return True when WORKING_DIR lives under the system temp directory.
+
+    临时工作目录（如 %TEMP% 下的冒烟/演练实例）若继承用户级
+    ``QWENPAW_PG_DSN``，缺失 manifest 会触发全量导入并把种子状态
+    覆盖进真实库（2026-09-23 provider 平面污染事故）。本函数作为
+    最后防线识别该场景，供导入入口拒绝写路径。
+    """
+    try:
+        working = Path(WORKING_DIR).expanduser().resolve()
+        return working.is_relative_to(Path(tempfile.gettempdir()).resolve())
+    except (OSError, ValueError):
+        return False
 
 
 def _file_snapshot_path(provider_id: str) -> Path | None:
@@ -275,6 +294,33 @@ async def run_provider_config_migration(
                 )
         return True
     # manifest 缺失或版本过旧（如新增行级模型投影）：重跑全量导入
+    # 防污染闸门：临时工作目录共享真实 PG DSN 时，全量导入会把种子
+    # 状态覆盖进真实库；仅允许只读权威读，拒绝导入与 manifest 落盘。
+    if (
+        _is_temp_working_dir()
+        and os.environ.get(TEMP_IMPORT_ALLOW_ENV) != "1"
+    ):
+        logger.error(
+            "Provider config plane: refusing one-shot import from a "
+            "temp working dir (%s) sharing a real PG DSN; set %s=1 to "
+            "override in an isolated environment.",
+            WORKING_DIR,
+            TEMP_IMPORT_ALLOW_ENV,
+        )
+        if backend == provider_store._BACKEND_PG:  # noqa: SLF001
+            try:
+                restored = await manager.load_providers_from_pg()
+                logger.info(
+                    "Provider config plane: restored %d providers from "
+                    "PG (read-only authoritative read, import skipped).",
+                    restored,
+                )
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "Provider config plane: PG authoritative read failed.",
+                    exc_info=True,
+                )
+        return True
 
     try:
         imported = await _import_file_plane_to_pg(manager)
