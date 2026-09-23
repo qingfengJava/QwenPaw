@@ -20,7 +20,7 @@ QwenPaw/                                # 仓库根
 │   ├── src/  src-tauri/                #   src-tauri 为 Tauri 桌面端壳
 │   ├── scripts/pack-tauri/  scripts/pack/   # 桌面安装包打包脚本（PyInstaller/Tauri/NSIS）
 │   └── package.json
-├── staffos-portal/                     # 企业员工端前端（原 xianwork，自包含）
+├── staffos-work/                       # 企业员工端前端（原 xianwork，自包含）
 ├── staffos-website/                    # 官网/文档站（自包含）
 ├── staffos-e2e/                        # Playwright E2E 测试框架（自包含）
 ├── plugins/                            # 插件生态（apps/channel/tool/bundle，原位）
@@ -37,7 +37,7 @@ QwenPaw/                                # 仓库根
 
 | 分区 | 语义 |
 | --- | --- |
-| `staffos-server` `staffos-console` `staffos-portal` `staffos-website` `staffos-e2e` | 五个自包含项目：各自管理依赖、构建、测试 |
+| `staffos-server` `staffos-console` `staffos-work` `staffos-website` `staffos-e2e` | 五个自包含项目：各自管理依赖、构建、测试 |
 | `plugins` | 插件生态集合（非单一项目） |
 | `deploy` `docker-compose.yml` `scripts/pack` | 工程级交付设施（跨项目编排） |
 | `docs` `.github` | 工程治理 |
@@ -49,7 +49,7 @@ QwenPaw/                                # 仓库根
 | 源（构建产物） | 目标（后端包内） | 执行者 |
 | --- | --- | --- |
 | `staffos-console/dist/` | `staffos-server/src/qwenpaw/console/` | `staffos-server/scripts/wheel_build.sh\|.ps1`、`scripts/install.sh`、`deploy/Dockerfile` |
-| `staffos-portal/dist/` | `staffos-server/src/qwenpaw/xianwork/` | `deploy/Dockerfile` |
+| `staffos-work/dist/` | `staffos-server/src/qwenpaw/xianwork/` | `deploy/Dockerfile` |
 | `staffos-website/public/docs/` | `staffos-server/src/qwenpaw/docs/` | `wheel_build`、`install.sh`、`deploy/Dockerfile` |
 
 注入目标已在 `.gitignore`（`staffos-server/src/qwenpaw/console|docs`）与
@@ -65,7 +65,7 @@ QwenPaw/                                # 仓库根
 | 控制台前端 dev | `staffos-console` | `npm run dev`（5173，/api 代理到后端） |
 | 控制台前端 build | `staffos-console` | `npm run build` |
 | 桌面端打包 | `staffos-console` | `scripts/pack-tauri/build_win_pyinstaller.ps1` 等 |
-| 员工端 dev | `staffos-portal` | `npm run dev`（5174，/api 代理到后端） |
+| 员工端 dev | `staffos-work` | `npm run dev`（5174，/api 代理到后端） |
 | 官网 build | `staffos-website` | `npm run build` 或 `scripts/website_build.sh` |
 | E2E 测试 | `staffos-e2e` | `scripts/start_test_server.sh --bg` 后 `pytest tests/` |
 | Docker 镜像 | 仓库根 | `bash scripts/docker_build.sh [TAG]` |
@@ -76,3 +76,5 @@ QwenPaw/                                # 仓库根
 - 2026-09-23：项目级平铺重组（本文件所述结构）。原 `console/ xianwork/ website/ e2e/`
   与根下 Python 资产（`src/ tests/ db/ packages/ pyproject.toml` 等）按上述映射迁移；
   内部品牌命名（qwenpaw → staffos）留待后续专项替换。
+- 2026-09-23：`staffos-portal` 更名为 `staffos-work`（目录、`deploy/Dockerfile`
+  与本文件引用同步）。

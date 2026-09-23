@@ -11,12 +11,12 @@ COPY staffos-console /app/staffos-console
 RUN cd /app/staffos-console && npm ci --include=dev && npm run build
 
 # -----------------------------------------------------------------------------
-# Stage 1b: build the StaffOS portal SPA (served under /xianwork).
+# Stage 1b: build the StaffOS work SPA (served under /xianwork).
 # -----------------------------------------------------------------------------
-FROM ${NODE_IMAGE} AS portal-builder
+FROM ${NODE_IMAGE} AS work-builder
 WORKDIR /app
-COPY staffos-portal /app/staffos-portal
-RUN cd /app/staffos-portal && npm ci --include=dev && npm run build
+COPY staffos-work /app/staffos-work
+RUN cd /app/staffos-work && npm ci --include=dev && npm run build
 
 # Alias for uv binary so COPY --from can reference a build-arg image.
 FROM ${UV_IMAGE} AS uv-src
@@ -108,8 +108,8 @@ COPY staffos-server/packages/qwenpawmail-mcp/src/qwenpawmail_mcp ./packages/qwen
 COPY staffos-website/public/docs/ ./src/qwenpaw/docs/
 # Inject console dist from build stage (repo does not commit dist).
 COPY --from=console-builder /app/staffos-console/dist/ ./src/qwenpaw/console/
-# Inject the portal SPA dist (served under /xianwork by qwenpaw.app._app).
-COPY --from=portal-builder /app/staffos-portal/dist/ ./src/qwenpaw/xianwork/
+# Inject the work SPA dist (served under /xianwork by qwenpaw.app._app).
+COPY --from=work-builder /app/staffos-work/dist/ ./src/qwenpaw/xianwork/
 # Speed up Python package installation with uv.
 COPY --from=uv-src /uv /bin/uv
 # Pin setuptools <82: lark-oapi still calls pkg_resources.declare_namespace
