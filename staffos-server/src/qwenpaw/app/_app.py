@@ -923,8 +923,9 @@ def _resolve_xianwork_static_dir() -> Optional[str]:
     pkg_dir = Path(__file__).resolve().parent.parent
     for candidate in (
         pkg_dir / "xianwork",
-        pkg_dir.parent.parent / "xianwork" / "dist",
-        Path(os.getcwd()) / "xianwork" / "dist",
+        # Project-per-dir layout: src/qwenpaw -> src -> staffos-server -> repo root
+        pkg_dir.parents[2] / "staffos-work" / "dist",
+        Path(os.getcwd()) / "staffos-work" / "dist",
     ):
         if candidate.is_dir() and (candidate / "index.html").exists():
             return str(candidate)
