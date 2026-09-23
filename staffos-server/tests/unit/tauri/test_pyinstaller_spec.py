@@ -9,7 +9,13 @@ import pytest
 
 # 仓库根（tauri→unit→tests→staffos-server→仓库根）：spec 在 staffos-console/scripts/pack-tauri
 REPO_ROOT = Path(__file__).resolve().parents[4]
-SPEC_PATH = REPO_ROOT / "scripts" / "pack-tauri" / "qwenpaw.spec"
+SPEC_PATH = (
+    REPO_ROOT
+    / "staffos-console"
+    / "scripts"
+    / "pack-tauri"
+    / "qwenpaw.spec"
+)
 
 
 def _collected_submodule_packages() -> set[str]:
