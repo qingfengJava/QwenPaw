@@ -9,13 +9,15 @@ from packaging.version import Version
 import yaml
 
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+# staffos-server 项目根（pyproject.toml 所在）与仓库根（.github 所在）
+SERVER_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[4]
 
 
 def test_fork_desktop_build_uses_supported_python() -> None:
     """Both platform builders must bootstrap a project-supported Python."""
     project = tomllib.loads(
-        (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"),
+        (SERVER_ROOT / "pyproject.toml").read_text(encoding="utf-8"),
     )
     supported = SpecifierSet(project["project"]["requires-python"])
     workflow = yaml.safe_load(

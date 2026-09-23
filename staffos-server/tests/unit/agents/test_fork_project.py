@@ -31,7 +31,8 @@ from qwenpaw.agents.fork_project import (
     update_fork_head,
 )
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
+# 仓库根（agents→unit→tests→staffos-server→仓库根）：plugins 在仓库根
+_REPO_ROOT = Path(__file__).resolve().parents[4]
 _FORK_GUARD = (
     _REPO_ROOT
     / "plugins"

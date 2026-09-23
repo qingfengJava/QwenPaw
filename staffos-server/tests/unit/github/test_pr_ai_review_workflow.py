@@ -3,7 +3,8 @@ from pathlib import Path
 
 import yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+# 仓库根（github→unit→tests→staffos-server→仓库根）：workflows 在仓库根
+REPO_ROOT = Path(__file__).resolve().parents[4]
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "pr-ai-review.yml"
 
 

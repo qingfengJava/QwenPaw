@@ -7,7 +7,8 @@ from pathlib import Path
 import pytest
 
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+# 仓库根（tauri→unit→tests→staffos-server→仓库根）：spec 在 staffos-console/scripts/pack-tauri
+REPO_ROOT = Path(__file__).resolve().parents[4]
 SPEC_PATH = REPO_ROOT / "scripts" / "pack-tauri" / "qwenpaw.spec"
 
 

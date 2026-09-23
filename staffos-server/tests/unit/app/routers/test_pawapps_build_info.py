@@ -8,7 +8,8 @@ from pathlib import Path
 from qwenpaw.app.routers.pawapps import _build_app_info
 
 CREATOR_PLUGIN_JSON = (
-    Path(__file__).resolve().parents[4]
+    # 仓库根（routers→app→unit→tests→staffos-server→仓库根）：plugins 在仓库根
+    Path(__file__).resolve().parents[5]
     / "plugins"
     / "apps"
     / "qwenpaw-creator"
